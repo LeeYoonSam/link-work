@@ -6,6 +6,7 @@ import { registerProjectIpc } from './ipc/project.ipc'
 import { registerTaskIpc } from './ipc/task.ipc'
 import { registerCalendarIpc } from './ipc/calendar.ipc'
 import { startNotificationService } from './services/notification'
+import { createTrayWidget } from './services/tray-widget'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -49,6 +50,7 @@ app.whenReady().then(() => {
   registerTaskIpc()
   registerCalendarIpc()
   startNotificationService()
+  createTrayWidget()
 
   createWindow()
 
