@@ -44,7 +44,9 @@
     "appId": "com.linkwork.app",
     "productName": "LinkWork",
     "mac": {
-      "target": "dmg"
+      "target": "dmg",
+      "icon": "resources/icon.icns",
+      "category": "public.app-category.productivity"
     },
     "files": [
       "out/**/*",
