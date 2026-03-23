@@ -5,6 +5,4 @@ dist
 *.db-journal
 *.db-wal
 *.db-shm
-.omc/state/
-.omc/sessions/
-.omc/prd.json
+.omc/

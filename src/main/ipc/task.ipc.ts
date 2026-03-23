@@ -37,11 +37,14 @@ export function registerTaskIpc(): void {
     return db.prepare('SELECT * FROM tasks WHERE project_id = ? ORDER BY sort_order ASC').all(projectId)
   })
 
+  const ALLOWED_TASK_FIELDS = new Set(['name', 'start_date', 'end_date', 'status', 'sort_order'])
+
   ipcMain.handle('task:update', (_event, id: number, input: Partial<TaskInput>) => {
     const fields: string[] = []
     const values: unknown[] = []
 
     for (const [key, value] of Object.entries(input)) {
+      if (!ALLOWED_TASK_FIELDS.has(key)) continue
       fields.push(`${key} = ?`)
       values.push(value)
     }

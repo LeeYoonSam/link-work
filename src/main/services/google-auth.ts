@@ -1,5 +1,6 @@
 import { OAuth2Client } from 'google-auth-library'
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, safeStorage } from 'electron'
+import { randomBytes } from 'crypto'
 import { getDatabase } from '../db/database'
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
@@ -41,10 +42,13 @@ export async function authenticate(): Promise<boolean> {
   const client = getOAuth2Client()
   if (!client) throw new Error('Google OAuth2 credentials not configured')
 
+  const state = randomBytes(32).toString('hex')
+
   const authUrl = client.generateAuthUrl({
     access_type: 'offline',
     scope: SCOPES,
-    prompt: 'consent'
+    prompt: 'consent',
+    state
   })
 
   return new Promise((resolve, reject) => {
@@ -52,13 +56,21 @@ export async function authenticate(): Promise<boolean> {
       width: 500,
       height: 700,
       show: true,
-      webPreferences: { nodeIntegration: false, contextIsolation: true }
+      webPreferences: { nodeIntegration: false, contextIsolation: true, webSecurity: true }
     })
 
     const http = require('http')
     const server = http.createServer(async (req: any, res: any) => {
       const url = new URL(req.url, 'http://localhost:8945')
+      const returnedState = url.searchParams.get('state')
       const code = url.searchParams.get('code')
+
+      if (!returnedState || returnedState !== state) {
+        res.writeHead(400, { 'Content-Type': 'text/html' })
+        res.end('<html><body><h2>Invalid state parameter</h2></body></html>')
+        return
+      }
+
       if (code) {
         res.writeHead(200, { 'Content-Type': 'text/html' })
         res.end('<html><body><h2>Authentication successful! You can close this window.</h2></body></html>')
@@ -75,6 +87,11 @@ export async function authenticate(): Promise<boolean> {
       }
     })
 
+    server.on('error', (err: Error) => {
+      authWindow.close()
+      reject(new Error(`OAuth server failed to start: ${err.message}`))
+    })
+
     server.listen(8945, () => {
       authWindow.loadURL(authUrl)
     })
@@ -86,14 +103,32 @@ export async function authenticate(): Promise<boolean> {
   })
 }
 
+function encrypt(value: string): string {
+  if (safeStorage.isEncryptionAvailable()) {
+    return safeStorage.encryptString(value).toString('base64')
+  }
+  return value
+}
+
+function decrypt(value: string): string {
+  if (safeStorage.isEncryptionAvailable()) {
+    try {
+      return safeStorage.decryptString(Buffer.from(value, 'base64'))
+    } catch {
+      return value
+    }
+  }
+  return value
+}
+
 function saveTokens(tokens: { access_token?: string | null; refresh_token?: string | null; expiry_date?: number | null; [key: string]: unknown }): void {
   const db = getDatabase()
   db.prepare(
     `INSERT OR REPLACE INTO auth_tokens (id, provider, access_token, refresh_token, expiry_date, updated_at)
      VALUES (1, 'google', ?, ?, ?, datetime('now'))`
   ).run(
-    tokens.access_token as string,
-    tokens.refresh_token as string || null,
+    tokens.access_token ? encrypt(tokens.access_token) : null,
+    tokens.refresh_token ? encrypt(tokens.refresh_token) : null,
     tokens.expiry_date ? String(tokens.expiry_date) : null
   )
 }
@@ -105,8 +140,8 @@ export function loadTokens(): Record<string, unknown> | null {
     | undefined
   if (!row) return null
   return {
-    access_token: row.access_token,
-    refresh_token: row.refresh_token,
+    access_token: row.access_token ? decrypt(row.access_token) : null,
+    refresh_token: row.refresh_token ? decrypt(row.refresh_token) : null,
     expiry_date: row.expiry_date ? Number(row.expiry_date) : undefined
   }
 }

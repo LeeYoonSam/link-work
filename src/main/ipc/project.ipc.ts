@@ -63,11 +63,17 @@ export function registerProjectIpc(): void {
     return db.prepare('SELECT * FROM projects WHERE id = ?').get(id)
   })
 
+  const ALLOWED_PROJECT_FIELDS = new Set([
+    'name', 'description', 'dev_start_date', 'dev_end_date',
+    'qa_start_date', 'qa_end_date', 'deploy_date', 'status'
+  ])
+
   ipcMain.handle('project:update', (_event, id: number, input: Partial<ProjectInput>) => {
     const fields: string[] = []
     const values: unknown[] = []
 
     for (const [key, value] of Object.entries(input)) {
+      if (!ALLOWED_PROJECT_FIELDS.has(key)) continue
       fields.push(`${key} = ?`)
       values.push(value)
     }
