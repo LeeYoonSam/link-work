@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 
 interface TrayProject {
   name: string
+  devEndDate: string
   deployDate: string
-  daysLeft: number
+  devDaysLeft: number
+  deployDaysLeft: number
   progress: number
 }
 
@@ -16,6 +18,12 @@ interface TrayEvent {
 interface TrayData {
   projects: TrayProject[]
   events: TrayEvent[]
+}
+
+function getDdayText(days: number): string {
+  if (days < 0) return `D+${Math.abs(days)}`
+  if (days === 0) return 'D-Day'
+  return `D-${days}`
 }
 
 function getUrgencyColor(daysLeft: number): string {
@@ -78,13 +86,14 @@ export default function TrayPanel(): React.ReactNode {
                     <span className="text-sm font-medium text-gray-900 truncate mr-2">
                       {project.name}
                     </span>
-                    <span className={`text-xs font-bold shrink-0 ${getUrgencyColor(project.daysLeft)}`}>
-                      {project.daysLeft < 0
-                        ? `${Math.abs(project.daysLeft)}d over`
-                        : project.daysLeft === 0
-                          ? 'Today!'
-                          : `${project.daysLeft}d`}
-                    </span>
+                    <div className="flex gap-2 shrink-0">
+                      <span className={`text-xs font-bold ${getUrgencyColor(project.devDaysLeft)}`} title="Dev End">
+                        Dev {getDdayText(project.devDaysLeft)}
+                      </span>
+                      <span className={`text-xs font-bold ${getUrgencyColor(project.deployDaysLeft)}`} title="Deploy">
+                        Deploy {getDdayText(project.deployDaysLeft)}
+                      </span>
+                    </div>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-1.5">
                     <div
@@ -94,7 +103,9 @@ export default function TrayPanel(): React.ReactNode {
                   </div>
                   <div className="flex justify-between mt-1">
                     <span className="text-xs text-gray-400">{project.progress}%</span>
-                    <span className="text-xs text-gray-400">Deploy {project.deployDate}</span>
+                    <span className="text-xs text-gray-400">
+                      Dev ~{project.devEndDate} / Deploy {project.deployDate}
+                    </span>
                   </div>
                 </div>
               ))}

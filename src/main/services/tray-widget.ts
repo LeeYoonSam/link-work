@@ -10,7 +10,7 @@ let panelWindow: BrowserWindow | null = null
 let updateInterval: ReturnType<typeof setInterval> | null = null
 
 interface TrayData {
-  projects: { name: string; deployDate: string; daysLeft: number; progress: number }[]
+  projects: { name: string; devEndDate: string; deployDate: string; devDaysLeft: number; deployDaysLeft: number; progress: number }[]
   events: { summary: string; time: string; allDay: boolean }[]
 }
 
@@ -18,9 +18,9 @@ function getActiveProjects(): TrayData['projects'] {
   const db = getDatabase()
   const projects = db
     .prepare(
-      "SELECT name, dev_start_date, deploy_date FROM projects WHERE status = 'active' ORDER BY deploy_date ASC"
+      "SELECT name, dev_start_date, dev_end_date, deploy_date FROM projects WHERE status = 'active' ORDER BY deploy_date ASC"
     )
-    .all() as { name: string; dev_start_date: string; deploy_date: string }[]
+    .all() as { name: string; dev_start_date: string; dev_end_date: string; deploy_date: string }[]
 
   const today = new Date()
   return projects.map((p) => {
@@ -29,8 +29,10 @@ function getActiveProjects(): TrayData['projects'] {
     const progress = total > 0 ? Math.min(100, Math.max(0, Math.round((elapsed / total) * 100))) : 100
     return {
       name: p.name,
+      devEndDate: p.dev_end_date,
       deployDate: p.deploy_date,
-      daysLeft: differenceInCalendarDays(new Date(p.deploy_date), today),
+      devDaysLeft: differenceInCalendarDays(new Date(p.dev_end_date), today),
+      deployDaysLeft: differenceInCalendarDays(new Date(p.deploy_date), today),
       progress
     }
   })
@@ -145,7 +147,7 @@ export function createTrayWidget(): void {
   // Auto-refresh tooltip
   updateInterval = setInterval(async () => {
     const projects = getActiveProjects()
-    const urgent = projects.filter((p) => p.daysLeft <= 3)
+    const urgent = projects.filter((p) => p.deployDaysLeft <= 3)
     const tooltip = urgent.length > 0
       ? `LinkWork - ${urgent.length} urgent`
       : `LinkWork - ${projects.length} active`
