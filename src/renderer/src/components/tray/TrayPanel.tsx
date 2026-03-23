@@ -87,10 +87,24 @@ export default function TrayPanel(): React.ReactNode {
                       {project.name}
                     </span>
                     <div className="flex gap-2 shrink-0">
-                      <span className={`text-xs font-bold ${getUrgencyColor(project.devDaysLeft)}`} title="Dev End">
+                      <span
+                        className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+                          project.devDaysLeft <= 3 ? 'bg-orange-100 text-orange-700' :
+                          project.devDaysLeft <= 7 ? 'bg-amber-100 text-amber-700' :
+                          'bg-sky-100 text-sky-700'
+                        }`}
+                        title="Dev End"
+                      >
                         Dev {getDdayText(project.devDaysLeft)}
                       </span>
-                      <span className={`text-xs font-bold ${getUrgencyColor(project.deployDaysLeft)}`} title="Deploy">
+                      <span
+                        className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+                          project.deployDaysLeft <= 3 ? 'bg-red-100 text-red-700' :
+                          project.deployDaysLeft <= 7 ? 'bg-yellow-100 text-yellow-700' :
+                          'bg-green-100 text-green-700'
+                        }`}
+                        title="Deploy"
+                      >
                         Deploy {getDdayText(project.deployDaysLeft)}
                       </span>
                     </div>
