@@ -150,12 +150,20 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
           onChange={(e) => setNewTaskName(e.target.value)}
           placeholder="New task name"
           className={`flex-1 ${inputClass}`}
-          onKeyDown={(e) => e.key === 'Enter' && handleAddTask()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              handleAddTask()
+            }
+          }}
         />
         <input
           type="date"
           value={newStartDate}
-          onChange={(e) => setNewStartDate(e.target.value)}
+          onChange={(e) => {
+            setNewStartDate(e.target.value)
+            if (!newEndDate) setNewEndDate(e.target.value)
+          }}
           className={inputClass}
         />
         <input

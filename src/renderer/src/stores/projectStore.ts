@@ -31,7 +31,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   currentProject: null,
   tasks: [],
   loading: false,
-  view: 'projects',
+  view: 'dashboard',
   projectView: 'list',
   editingProject: null,
 

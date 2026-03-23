@@ -1,4 +1,5 @@
-import type { Project } from '../../types'
+import { useEffect, useState } from 'react'
+import type { Project, Task } from '../../types'
 import { format } from 'date-fns'
 
 type UrgencyLevel = 'early' | 'mid' | 'late'
@@ -29,14 +30,30 @@ const urgencyConfig: Record<UrgencyLevel, { bg: string; bar: string; text: strin
   late: { bg: 'bg-red-50', bar: 'bg-red-500', text: 'text-red-700', label: 'Late' }
 }
 
+const taskStatusColors: Record<string, string> = {
+  pending: 'bg-gray-300',
+  in_progress: 'bg-yellow-400',
+  done: 'bg-green-500'
+}
+
 interface Props {
   project: Project
 }
 
 export default function ProjectProgress({ project }: Props): React.ReactNode {
+  const [tasks, setTasks] = useState<Task[]>([])
+
+  useEffect(() => {
+    window.api.task.list(project.id).then(setTasks)
+  }, [project.id])
+
   const progress = calculateProgress(project.dev_start_date, project.deploy_date)
   const level = getUrgencyLevel(progress)
   const config = urgencyConfig[level]
+
+  const doneTasks = tasks.filter((t) => t.status === 'done').length
+  const totalTasks = tasks.length
+  const taskProgress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0
 
   return (
     <div className={`border rounded-lg p-4 ${config.bg} border-gray-200`}>
@@ -61,12 +78,40 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
         </div>
       </div>
 
-      <div className="w-full bg-gray-200 rounded-full h-2.5">
+      <div className="w-full bg-gray-200 rounded-full h-2.5 mb-3">
         <div
           className={`h-2.5 rounded-full transition-all duration-500 ${config.bar}`}
           style={{ width: `${progress}%` }}
         />
       </div>
+
+      {totalTasks > 0 ? (
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-xs text-gray-600 font-medium">
+              Tasks: {doneTasks}/{totalTasks} done
+            </span>
+            <span className="text-xs text-gray-500">{taskProgress}%</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-1.5 mb-2">
+            <div
+              className="h-1.5 rounded-full bg-green-500 transition-all duration-500"
+              style={{ width: `${taskProgress}%` }}
+            />
+          </div>
+          <div className="flex gap-1 flex-wrap">
+            {tasks.map((task) => (
+              <div
+                key={task.id}
+                title={`${task.name} (${task.status})`}
+                className={`w-2.5 h-2.5 rounded-full ${taskStatusColors[task.status]}`}
+              />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <span className="text-xs text-gray-400">No tasks</span>
+      )}
     </div>
   )
 }
