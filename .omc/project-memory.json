@@ -1,0 +1,257 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1774226501841,
+  "projectRoot": "/Users/leeyoonsam/Documents/LinkWork",
+  "techStack": {
+    "languages": [],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {},
+  "hotPaths": [
+    {
+      "path": "src/main/index.ts",
+      "accessCount": 5,
+      "lastAccessed": 1774230392620,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 4,
+      "lastAccessed": 1774230384397,
+      "type": "file"
+    },
+    {
+      "path": "src/main/services/google-auth.ts",
+      "accessCount": 4,
+      "lastAccessed": 1774230387648,
+      "type": "file"
+    },
+    {
+      "path": "src/preload/index.ts",
+      "accessCount": 4,
+      "lastAccessed": 1774230392922,
+      "type": "file"
+    },
+    {
+      "path": "src/preload/index.d.ts",
+      "accessCount": 4,
+      "lastAccessed": 1774230393337,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/types/index.ts",
+      "accessCount": 4,
+      "lastAccessed": 1774230393820,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/App.tsx",
+      "accessCount": 4,
+      "lastAccessed": 1774230398235,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/env.d.ts",
+      "accessCount": 3,
+      "lastAccessed": 1774230232200,
+      "type": "file"
+    },
+    {
+      "path": "src/main/services/notification.ts",
+      "accessCount": 3,
+      "lastAccessed": 1774230481681,
+      "type": "file"
+    },
+    {
+      "path": "src/main/db/database.ts",
+      "accessCount": 2,
+      "lastAccessed": 1774229993484,
+      "type": "file"
+    },
+    {
+      "path": "src/main/ipc/project.ipc.ts",
+      "accessCount": 2,
+      "lastAccessed": 1774229999263,
+      "type": "file"
+    },
+    {
+      "path": "src/main/ipc/task.ipc.ts",
+      "accessCount": 2,
+      "lastAccessed": 1774229999689,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/stores/projectStore.ts",
+      "accessCount": 2,
+      "lastAccessed": 1774230001486,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/styles/globals.css",
+      "accessCount": 2,
+      "lastAccessed": 1774230001503,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/components/layout/Sidebar.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774230007778,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/components/layout/Header.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774230008180,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/components/project/ProjectList.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774230008608,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/components/project/ProjectForm.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774230009051,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/components/project/ProjectDetail.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774230009846,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/components/project/TaskList.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774230010028,
+      "type": "file"
+    },
+    {
+      "path": "electron.vite.config.ts",
+      "accessCount": 2,
+      "lastAccessed": 1774230011095,
+      "type": "file"
+    },
+    {
+      "path": "tsconfig.web.json",
+      "accessCount": 2,
+      "lastAccessed": 1774230223214,
+      "type": "file"
+    },
+    {
+      "path": "src",
+      "accessCount": 2,
+      "lastAccessed": 1774230384271,
+      "type": "directory"
+    },
+    {
+      "path": "src/main/services/google-calendar.ts",
+      "accessCount": 2,
+      "lastAccessed": 1774230388021,
+      "type": "file"
+    },
+    {
+      "path": "src/main/ipc/calendar.ipc.ts",
+      "accessCount": 2,
+      "lastAccessed": 1774230388451,
+      "type": "file"
+    },
+    {
+      "path": "src/main/utils/date.ts",
+      "accessCount": 2,
+      "lastAccessed": 1774230389289,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/stores/calendarStore.ts",
+      "accessCount": 2,
+      "lastAccessed": 1774230398594,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/components/calendar/CalendarView.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774230399378,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/components/calendar/CalendarSettings.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774230399498,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/components/dashboard/Dashboard.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774230406959,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/components/dashboard/ProjectProgress.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774230407417,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/components/dashboard/TodaySchedule.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774230407788,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 2,
+      "lastAccessed": 1774230407982,
+      "type": "file"
+    },
+    {
+      "path": "tsconfig.json",
+      "accessCount": 1,
+      "lastAccessed": 1774227799833,
+      "type": "file"
+    },
+    {
+      "path": "tsconfig.node.json",
+      "accessCount": 1,
+      "lastAccessed": 1774227802045,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/index.html",
+      "accessCount": 1,
+      "lastAccessed": 1774227857476,
+      "type": "file"
+    },
+    {
+      "path": "src/renderer/src/main.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1774227858756,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
