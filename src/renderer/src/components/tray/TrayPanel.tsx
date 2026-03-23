@@ -89,9 +89,9 @@ export default function TrayPanel(): React.ReactNode {
                     <div className="flex gap-2 shrink-0">
                       <span
                         className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                          project.devDaysLeft <= 3 ? 'bg-orange-100 text-orange-700' :
-                          project.devDaysLeft <= 7 ? 'bg-amber-100 text-amber-700' :
-                          'bg-sky-100 text-sky-700'
+                          project.devDaysLeft <= 3 ? 'bg-red-200 text-red-800' :
+                          project.devDaysLeft <= 7 ? 'bg-red-100 text-red-600' :
+                          'bg-rose-50 text-rose-500'
                         }`}
                         title="Dev End"
                       >
@@ -99,9 +99,9 @@ export default function TrayPanel(): React.ReactNode {
                       </span>
                       <span
                         className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                          project.deployDaysLeft <= 3 ? 'bg-red-200 text-red-800' :
-                          project.deployDaysLeft <= 7 ? 'bg-red-100 text-red-600' :
-                          'bg-rose-50 text-rose-500'
+                          project.deployDaysLeft <= 3 ? 'bg-green-200 text-green-800' :
+                          project.deployDaysLeft <= 7 ? 'bg-green-100 text-green-600' :
+                          'bg-emerald-50 text-emerald-500'
                         }`}
                         title="Deploy"
                       >
