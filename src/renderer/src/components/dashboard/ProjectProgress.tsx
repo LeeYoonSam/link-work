@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import type { Project, Task } from '../../types'
 import { format, eachDayOfInterval, isSameDay, isWithinInterval, isBefore, startOfDay } from 'date-fns'
 
@@ -46,6 +46,17 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
 
   useEffect(() => {
     window.api.task.list(project.id).then(setTasks)
+  }, [project.id])
+
+  const cycleStatus = useCallback(async (task: Task) => {
+    const nextStatus: Record<string, string> = {
+      pending: 'in_progress',
+      in_progress: 'done',
+      done: 'pending'
+    }
+    await window.api.task.update(task.id, { status: nextStatus[task.status] })
+    const updated = await window.api.task.list(project.id)
+    setTasks(updated)
   }, [project.id])
 
   const progress = calculateProgress(project.dev_start_date, project.deploy_date)
@@ -139,21 +150,30 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
               <div className="flex items-end gap-0 mb-1">
                 <div className="w-32 shrink-0 text-xs font-medium text-gray-500 pr-2">Task</div>
                 <div className="flex gap-px flex-1">
-                  {timelineDays.map((day) => (
+                  {timelineDays.map((day) => {
+                    const isToday = isSameDay(day, today)
+                    const showDate = isToday ||
+                      day.getDate() === 1 ||
+                      timelineDays.indexOf(day) === 0 ||
+                      day.getDate() % 5 === 0
+                    return (
                     <div
                       key={day.toISOString()}
                       className={`text-center text-xs leading-tight ${
-                        isSameDay(day, today) ? 'font-bold text-blue-600' : 'text-gray-400'
+                        isToday ? 'font-bold text-blue-600 bg-blue-100 rounded' : 'text-gray-400'
                       }`}
                       style={{ width: '20px', minWidth: '20px' }}
                     >
-                      {day.getDate() === 1 || timelineDays.indexOf(day) === 0
-                        ? format(day, 'M/d')
-                        : day.getDate() % 5 === 0
-                          ? format(day, 'd')
+                      {isToday
+                        ? format(day, 'd')
+                        : showDate
+                          ? (day.getDate() === 1 || timelineDays.indexOf(day) === 0)
+                            ? format(day, 'M/d')
+                            : format(day, 'd')
                           : ''}
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
                 <div className="w-20 shrink-0 text-xs font-medium text-gray-500 text-center pl-2">
                   Status
@@ -209,11 +229,16 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
                       })}
                     </div>
                     <div className="w-20 shrink-0 text-center pl-2">
-                      <span
-                        className={`inline-block px-1.5 py-0.5 rounded-full text-xs font-medium ${statusCfg.badge}`}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          cycleStatus(task)
+                        }}
+                        className={`inline-block px-1.5 py-0.5 rounded-full text-xs font-medium cursor-pointer hover:opacity-70 transition-opacity ${statusCfg.badge}`}
+                        title="Click to change status"
                       >
                         {statusCfg.label}
-                      </span>
+                      </button>
                     </div>
                   </div>
                 )
