@@ -1,119 +1,110 @@
-import { Tray, Menu, nativeImage, BrowserWindow, app } from 'electron'
+import { Tray, BrowserWindow, nativeImage, screen, ipcMain, app } from 'electron'
 import { join } from 'path'
 import { getDatabase } from '../db/database'
-import { getTodayEvents } from './google-calendar'
+import { getTodayEvents, CalendarEvent } from './google-calendar'
 import { differenceInCalendarDays, format } from 'date-fns'
+import { is } from '@electron-toolkit/utils'
 
 let tray: Tray | null = null
+let panelWindow: BrowserWindow | null = null
 let updateInterval: ReturnType<typeof setInterval> | null = null
 
-interface ActiveProject {
-  name: string
-  deploy_date: string
-  daysLeft: number
+interface TrayData {
+  projects: { name: string; deployDate: string; daysLeft: number; progress: number }[]
+  events: { summary: string; time: string; allDay: boolean }[]
 }
 
-function getActiveProjects(): ActiveProject[] {
+function getActiveProjects(): TrayData['projects'] {
   const db = getDatabase()
   const projects = db
-    .prepare("SELECT name, deploy_date FROM projects WHERE status = 'active' ORDER BY deploy_date ASC")
-    .all() as { name: string; deploy_date: string }[]
+    .prepare(
+      "SELECT name, dev_start_date, deploy_date FROM projects WHERE status = 'active' ORDER BY deploy_date ASC"
+    )
+    .all() as { name: string; dev_start_date: string; deploy_date: string }[]
 
   const today = new Date()
-  return projects.map((p) => ({
-    name: p.name,
-    deploy_date: p.deploy_date,
-    daysLeft: differenceInCalendarDays(new Date(p.deploy_date), today)
+  return projects.map((p) => {
+    const total = differenceInCalendarDays(new Date(p.deploy_date), new Date(p.dev_start_date))
+    const elapsed = differenceInCalendarDays(today, new Date(p.dev_start_date))
+    const progress = total > 0 ? Math.min(100, Math.max(0, Math.round((elapsed / total) * 100))) : 100
+    return {
+      name: p.name,
+      deployDate: p.deploy_date,
+      daysLeft: differenceInCalendarDays(new Date(p.deploy_date), today),
+      progress
+    }
+  })
+}
+
+async function getTrayData(): Promise<TrayData> {
+  const projects = getActiveProjects()
+  const calEvents = await getTodayEvents()
+  const events = calEvents.map((e: CalendarEvent) => ({
+    summary: e.summary,
+    time: e.allDay ? 'All Day' : format(new Date(e.start), 'HH:mm'),
+    allDay: e.allDay
   }))
+  return { projects, events }
 }
 
-async function buildMenu(): Promise<Menu> {
-  const projects = getActiveProjects()
-  const events = await getTodayEvents()
-
-  const menuItems: Electron.MenuItemConstructorOptions[] = []
-
-  // Header
-  menuItems.push({ label: 'LinkWork', enabled: false })
-  menuItems.push({ type: 'separator' })
-
-  // Active Projects
-  if (projects.length > 0) {
-    menuItems.push({ label: 'Active Projects', enabled: false })
-    for (const p of projects) {
-      const daysText =
-        p.daysLeft < 0
-          ? `${Math.abs(p.daysLeft)}d overdue`
-          : p.daysLeft === 0
-            ? 'Deploy today!'
-            : `${p.daysLeft}d left`
-      const urgency = p.daysLeft <= 3 ? ' ⚠️' : ''
-      menuItems.push({
-        label: `  ${p.name} — ${daysText}${urgency}`,
-        enabled: false
-      })
-    }
-  } else {
-    menuItems.push({ label: 'No active projects', enabled: false })
-  }
-
-  menuItems.push({ type: 'separator' })
-
-  // Today's Schedule
-  if (events.length > 0) {
-    menuItems.push({ label: `Today's Schedule (${events.length})`, enabled: false })
-    for (const event of events) {
-      const time = event.allDay ? 'All Day' : format(new Date(event.start), 'HH:mm')
-      menuItems.push({
-        label: `  ${time}  ${event.summary}`,
-        enabled: false
-      })
-    }
-  } else {
-    menuItems.push({ label: 'No events today', enabled: false })
-  }
-
-  menuItems.push({ type: 'separator' })
-
-  // Actions
-  menuItems.push({
-    label: 'Open LinkWork',
-    click: () => {
-      const windows = BrowserWindow.getAllWindows()
-      if (windows.length > 0) {
-        windows[0].show()
-        windows[0].focus()
-      }
+function createPanelWindow(): BrowserWindow {
+  const panel = new BrowserWindow({
+    width: 340,
+    height: 480,
+    show: false,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    transparent: true,
+    hasShadow: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false
     }
   })
 
-  menuItems.push({
-    label: 'Refresh',
-    click: () => updateTrayMenu()
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    panel.loadURL(`${process.env['ELECTRON_RENDERER_URL']}#tray-panel`)
+  } else {
+    panel.loadFile(join(__dirname, '../renderer/index.html'), { hash: 'tray-panel' })
+  }
+
+  panel.on('blur', () => {
+    panel.hide()
   })
 
-  menuItems.push({ type: 'separator' })
-  menuItems.push({ label: 'Quit', click: () => app.quit() })
-
-  return Menu.buildFromTemplate(menuItems)
+  return panel
 }
 
-async function updateTrayMenu(): Promise<void> {
-  if (!tray) return
-  const menu = await buildMenu()
-  tray.setContextMenu(menu)
+function showPanel(): void {
+  if (!tray || !panelWindow) return
 
-  // Update tooltip with summary
-  const projects = getActiveProjects()
-  const urgent = projects.filter((p) => p.daysLeft <= 3)
-  const tooltip = urgent.length > 0
-    ? `LinkWork — ${urgent.length} urgent project(s)`
-    : `LinkWork — ${projects.length} active project(s)`
-  tray.setToolTip(tooltip)
+  const trayBounds = tray.getBounds()
+  const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y })
+  const panelBounds = panelWindow.getBounds()
+
+  const x = Math.round(trayBounds.x + trayBounds.width / 2 - panelBounds.width / 2)
+  const y = display.workArea.y
+
+  panelWindow.setPosition(x, y)
+
+  // Send fresh data
+  getTrayData().then((data) => {
+    panelWindow?.webContents.send('tray:data', data)
+  })
+
+  panelWindow.show()
+  panelWindow.focus()
 }
 
 export function createTrayWidget(): void {
-  // Create a small template icon (16x16 for macOS menu bar)
   const iconPath = join(__dirname, '../../resources/icon.png')
   let icon: Electron.NativeImage
 
@@ -121,29 +112,55 @@ export function createTrayWidget(): void {
     icon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 })
     icon.setTemplateImage(true)
   } catch {
-    // Fallback: create a simple icon
     icon = nativeImage.createEmpty()
   }
 
   tray = new Tray(icon)
   tray.setToolTip('LinkWork')
 
-  // Initial menu build
-  updateTrayMenu()
+  panelWindow = createPanelWindow()
 
-  // Auto-refresh every 2 minutes
-  updateInterval = setInterval(updateTrayMenu, 2 * 60 * 1000)
-
-  // Click to show menu (macOS default behavior)
   tray.on('click', () => {
-    updateTrayMenu()
+    if (panelWindow?.isVisible()) {
+      panelWindow.hide()
+    } else {
+      showPanel()
+    }
   })
+
+  // IPC for panel requesting data
+  ipcMain.handle('tray:getData', async () => {
+    return getTrayData()
+  })
+
+  ipcMain.handle('tray:openApp', () => {
+    const windows = BrowserWindow.getAllWindows().filter((w) => w !== panelWindow)
+    if (windows.length > 0) {
+      windows[0].show()
+      windows[0].focus()
+    }
+    panelWindow?.hide()
+  })
+
+  // Auto-refresh tooltip
+  updateInterval = setInterval(async () => {
+    const projects = getActiveProjects()
+    const urgent = projects.filter((p) => p.daysLeft <= 3)
+    const tooltip = urgent.length > 0
+      ? `LinkWork - ${urgent.length} urgent`
+      : `LinkWork - ${projects.length} active`
+    tray?.setToolTip(tooltip)
+  }, 2 * 60 * 1000)
 }
 
 export function destroyTrayWidget(): void {
   if (updateInterval) {
     clearInterval(updateInterval)
     updateInterval = null
+  }
+  if (panelWindow) {
+    panelWindow.destroy()
+    panelWindow = null
   }
   if (tray) {
     tray.destroy()

@@ -5,9 +5,19 @@ import ProjectForm from './components/project/ProjectForm'
 import ProjectDetail from './components/project/ProjectDetail'
 import Dashboard from './components/dashboard/Dashboard'
 import CalendarView from './components/calendar/CalendarView'
+import TrayPanel from './components/tray/TrayPanel'
 import { useProjectStore } from './stores/projectStore'
 
 function App(): React.ReactNode {
+  // Check if this is the tray panel window
+  if (window.location.hash === '#tray-panel') {
+    return (
+      <div className="h-screen bg-transparent">
+        <TrayPanel />
+      </div>
+    )
+  }
+
   const { view, projectView } = useProjectStore()
 
   const renderContent = (): React.ReactNode => {

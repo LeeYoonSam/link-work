@@ -1,5 +1,5 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
-import type { ProjectAPI, TaskAPI, CalendarAPI } from '../renderer/src/types'
+import type { ProjectAPI, TaskAPI, CalendarAPI, TrayAPI } from '../renderer/src/types'
 
 declare global {
   interface Window {
@@ -7,6 +7,7 @@ declare global {
     api: {
       project: ProjectAPI
       task: TaskAPI
+      tray: TrayAPI
       calendar: CalendarAPI
     }
   }

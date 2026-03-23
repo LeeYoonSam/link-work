@@ -65,6 +65,11 @@ export interface TaskAPI {
   delete: (id: number) => Promise<{ success: boolean }>
 }
 
+export interface TrayAPI {
+  getData: () => Promise<unknown>
+  openApp: () => Promise<void>
+}
+
 export interface CalendarEvent {
   id: string
   summary: string

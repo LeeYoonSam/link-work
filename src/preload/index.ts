@@ -16,6 +16,10 @@ const api = {
     update: (id: number, input: Record<string, unknown>) => ipcRenderer.invoke('task:update', id, input),
     delete: (id: number) => ipcRenderer.invoke('task:delete', id)
   },
+  tray: {
+    getData: () => ipcRenderer.invoke('tray:getData'),
+    openApp: () => ipcRenderer.invoke('tray:openApp')
+  },
   calendar: {
     auth: () => ipcRenderer.invoke('calendar:auth'),
     getEvents: () => ipcRenderer.invoke('calendar:events'),
