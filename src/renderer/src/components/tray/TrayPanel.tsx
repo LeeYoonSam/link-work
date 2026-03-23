@@ -99,9 +99,9 @@ export default function TrayPanel(): React.ReactNode {
                       </span>
                       <span
                         className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                          project.deployDaysLeft <= 3 ? 'bg-red-100 text-red-700' :
-                          project.deployDaysLeft <= 7 ? 'bg-yellow-100 text-yellow-700' :
-                          'bg-green-100 text-green-700'
+                          project.deployDaysLeft <= 3 ? 'bg-red-200 text-red-800' :
+                          project.deployDaysLeft <= 7 ? 'bg-red-100 text-red-600' :
+                          'bg-rose-50 text-rose-500'
                         }`}
                         title="Deploy"
                       >
