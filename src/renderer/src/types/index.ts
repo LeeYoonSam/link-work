@@ -123,6 +123,7 @@ export interface DocumentAPI {
   listAll: () => Promise<Document[]>
   update: (id: number, input: Partial<DocumentInput>) => Promise<Document>
   delete: (id: number) => Promise<{ success: boolean }>
+  reorder: (items: { id: number; sort_order: number }[]) => Promise<{ success: boolean }>
   open: (url: string, type: 'link' | 'file') => Promise<{ success: boolean }>
 }
 
@@ -151,5 +152,33 @@ export interface VariableAPI {
   create: (input: VariableInput) => Promise<{ id: number }>
   list: () => Promise<Variable[]>
   update: (id: number, input: Partial<VariableInput>) => Promise<Variable>
+  delete: (id: number) => Promise<{ success: boolean }>
+  reorder: (items: { id: number; sort_order: number }[]) => Promise<{ success: boolean }>
+}
+
+export interface Memo {
+  id: number
+  content: string
+  is_archived: number
+  is_important: number
+  color: string
+  created_at: string
+  updated_at: string
+}
+
+export interface MemoInput {
+  content: string
+  color?: string
+  is_important?: number
+}
+
+export interface MemoAPI {
+  create: (input: MemoInput) => Promise<{ id: number }>
+  list: (archived?: boolean) => Promise<Memo[]>
+  listImportant: () => Promise<Memo[]>
+  update: (id: number, input: Partial<MemoInput>) => Promise<Memo>
+  archive: (id: number) => Promise<{ success: boolean }>
+  restore: (id: number) => Promise<{ success: boolean }>
+  toggleImportant: (id: number) => Promise<{ success: boolean; is_important: number }>
   delete: (id: number) => Promise<{ success: boolean }>
 }

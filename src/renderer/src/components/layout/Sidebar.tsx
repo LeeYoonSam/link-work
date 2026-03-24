@@ -5,6 +5,7 @@ const navItems = [
   { id: 'projects' as const, label: 'Projects', icon: '▤' },
   { id: 'documents' as const, label: 'Documents', icon: '◫' },
   { id: 'variables' as const, label: 'Variables', icon: '⚙' },
+  { id: 'memos' as const, label: 'Memos', icon: '▪' },
   { id: 'calendar' as const, label: 'Calendar', icon: '▦' }
 ]
 

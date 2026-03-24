@@ -83,5 +83,22 @@ export function initDatabase(): void {
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS memos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      content TEXT NOT NULL,
+      is_archived INTEGER NOT NULL DEFAULT 0,
+      is_important INTEGER NOT NULL DEFAULT 0,
+      color TEXT DEFAULT 'default',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
   `)
+
+  // Migrations for existing databases
+  const columns = db.prepare("PRAGMA table_info(memos)").all() as { name: string }[]
+  const columnNames = columns.map((c) => c.name)
+  if (columns.length > 0 && !columnNames.includes('is_important')) {
+    db.exec("ALTER TABLE memos ADD COLUMN is_important INTEGER NOT NULL DEFAULT 0")
+  }
 }

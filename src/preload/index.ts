@@ -36,6 +36,8 @@ const api = {
     update: (id: number, input: Record<string, unknown>) =>
       ipcRenderer.invoke('document:update', id, input),
     delete: (id: number) => ipcRenderer.invoke('document:delete', id),
+    reorder: (items: { id: number; sort_order: number }[]) =>
+      ipcRenderer.invoke('document:reorder', items),
     open: (url: string, type: string) => ipcRenderer.invoke('document:open', url, type)
   },
   variable: {
@@ -43,7 +45,20 @@ const api = {
     list: () => ipcRenderer.invoke('variable:list'),
     update: (id: number, input: Record<string, unknown>) =>
       ipcRenderer.invoke('variable:update', id, input),
-    delete: (id: number) => ipcRenderer.invoke('variable:delete', id)
+    delete: (id: number) => ipcRenderer.invoke('variable:delete', id),
+    reorder: (items: { id: number; sort_order: number }[]) =>
+      ipcRenderer.invoke('variable:reorder', items)
+  },
+  memo: {
+    create: (input: Record<string, unknown>) => ipcRenderer.invoke('memo:create', input),
+    list: (archived?: boolean) => ipcRenderer.invoke('memo:list', archived),
+    listImportant: () => ipcRenderer.invoke('memo:listImportant'),
+    update: (id: number, input: Record<string, unknown>) =>
+      ipcRenderer.invoke('memo:update', id, input),
+    archive: (id: number) => ipcRenderer.invoke('memo:archive', id),
+    restore: (id: number) => ipcRenderer.invoke('memo:restore', id),
+    toggleImportant: (id: number) => ipcRenderer.invoke('memo:toggleImportant', id),
+    delete: (id: number) => ipcRenderer.invoke('memo:delete', id)
   }
 }
 
