@@ -6,7 +6,7 @@ interface ProjectStore {
   currentProject: Project | null
   tasks: Task[]
   loading: boolean
-  view: 'dashboard' | 'projects' | 'calendar' | 'documents'
+  view: 'dashboard' | 'projects' | 'calendar' | 'documents' | 'variables'
   projectView: 'list' | 'form' | 'detail'
   editingProject: Project | null
 

@@ -125,3 +125,31 @@ export interface DocumentAPI {
   delete: (id: number) => Promise<{ success: boolean }>
   open: (url: string, type: 'link' | 'file') => Promise<{ success: boolean }>
 }
+
+export type VariableViewType = 'general' | 'secret'
+
+export interface Variable {
+  id: number
+  key: string
+  value: string
+  description: string | null
+  view_type: VariableViewType
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface VariableInput {
+  key: string
+  value: string
+  description?: string
+  view_type?: VariableViewType
+  sort_order?: number
+}
+
+export interface VariableAPI {
+  create: (input: VariableInput) => Promise<{ id: number }>
+  list: () => Promise<Variable[]>
+  update: (id: number, input: Partial<VariableInput>) => Promise<Variable>
+  delete: (id: number) => Promise<{ success: boolean }>
+}

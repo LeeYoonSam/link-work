@@ -6,6 +6,7 @@ import ProjectDetail from './components/project/ProjectDetail'
 import Dashboard from './components/dashboard/Dashboard'
 import CalendarView from './components/calendar/CalendarView'
 import DocumentList from './components/document/DocumentList'
+import VariableList from './components/variable/VariableList'
 import TrayPanel from './components/tray/TrayPanel'
 import { useProjectStore } from './stores/projectStore'
 
@@ -38,6 +39,8 @@ function App(): React.ReactNode {
         }
       case 'documents':
         return <DocumentList />
+      case 'variables':
+        return <VariableList />
       case 'calendar':
         return <CalendarView />
       default:

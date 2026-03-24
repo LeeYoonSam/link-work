@@ -37,6 +37,13 @@ const api = {
       ipcRenderer.invoke('document:update', id, input),
     delete: (id: number) => ipcRenderer.invoke('document:delete', id),
     open: (url: string, type: string) => ipcRenderer.invoke('document:open', url, type)
+  },
+  variable: {
+    create: (input: Record<string, unknown>) => ipcRenderer.invoke('variable:create', input),
+    list: () => ipcRenderer.invoke('variable:list'),
+    update: (id: number, input: Record<string, unknown>) =>
+      ipcRenderer.invoke('variable:update', id, input),
+    delete: (id: number) => ipcRenderer.invoke('variable:delete', id)
   }
 }
 

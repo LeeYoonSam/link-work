@@ -6,6 +6,7 @@ import { registerProjectIpc } from './ipc/project.ipc'
 import { registerTaskIpc } from './ipc/task.ipc'
 import { registerCalendarIpc } from './ipc/calendar.ipc'
 import { registerDocumentIpc } from './ipc/document.ipc'
+import { registerVariableIpc } from './ipc/variable.ipc'
 import { startNotificationService } from './services/notification'
 import { createTrayWidget } from './services/tray-widget'
 
@@ -51,6 +52,7 @@ app.whenReady().then(() => {
   registerTaskIpc()
   registerCalendarIpc()
   registerDocumentIpc()
+  registerVariableIpc()
   startNotificationService()
   createTrayWidget()
 

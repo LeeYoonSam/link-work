@@ -1,5 +1,5 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
-import type { ProjectAPI, TaskAPI, CalendarAPI, TrayAPI, DocumentAPI } from '../renderer/src/types'
+import type { ProjectAPI, TaskAPI, CalendarAPI, TrayAPI, DocumentAPI, VariableAPI } from '../renderer/src/types'
 
 declare global {
   interface Window {
@@ -10,6 +10,7 @@ declare global {
       tray: TrayAPI
       calendar: CalendarAPI
       document: DocumentAPI
+      variable: VariableAPI
     }
   }
 }

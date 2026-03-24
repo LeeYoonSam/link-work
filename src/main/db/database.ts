@@ -72,5 +72,16 @@ export function initDatabase(): void {
       updated_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS variables (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      description TEXT,
+      view_type TEXT NOT NULL DEFAULT 'general',
+      sort_order INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
   `)
 }
