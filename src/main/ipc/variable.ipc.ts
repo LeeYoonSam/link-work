@@ -51,6 +51,17 @@ export function registerVariableIpc(): void {
     return db.prepare('SELECT * FROM variables WHERE id = ?').get(id)
   })
 
+  ipcMain.handle('variable:reorder', (_event, items: { id: number; sort_order: number }[]) => {
+    const stmt = db.prepare('UPDATE variables SET sort_order = ? WHERE id = ?')
+    const transaction = db.transaction((list: { id: number; sort_order: number }[]) => {
+      for (const item of list) {
+        stmt.run(item.sort_order, item.id)
+      }
+    })
+    transaction(items)
+    return { success: true }
+  })
+
   ipcMain.handle('variable:delete', (_event, id: number) => {
     db.prepare('DELETE FROM variables WHERE id = ?').run(id)
     return { success: true }

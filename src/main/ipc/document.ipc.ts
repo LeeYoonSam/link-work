@@ -73,6 +73,17 @@ export function registerDocumentIpc(): void {
     return { success: true }
   })
 
+  ipcMain.handle('document:reorder', (_event, items: { id: number; sort_order: number }[]) => {
+    const stmt = db.prepare('UPDATE documents SET sort_order = ? WHERE id = ?')
+    const transaction = db.transaction((list: { id: number; sort_order: number }[]) => {
+      for (const item of list) {
+        stmt.run(item.sort_order, item.id)
+      }
+    })
+    transaction(items)
+    return { success: true }
+  })
+
   ipcMain.handle('document:open', async (_event, url: string, type: string) => {
     try {
       if (type === 'file') {

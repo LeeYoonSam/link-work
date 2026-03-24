@@ -11,6 +11,7 @@ interface DocumentStore {
   updateDocument: (id: number, input: Partial<DocumentInput>) => Promise<void>
   deleteDocument: (id: number) => Promise<void>
   openDocument: (url: string, type: 'link' | 'file') => Promise<void>
+  reorderDocuments: (items: { id: number; sort_order: number }[]) => Promise<void>
 }
 
 export const useDocumentStore = create<DocumentStore>((set, get) => ({
@@ -46,5 +47,10 @@ export const useDocumentStore = create<DocumentStore>((set, get) => ({
 
   openDocument: async (url, type) => {
     await window.api.document.open(url, type)
+  },
+
+  reorderDocuments: async (items) => {
+    await window.api.document.reorder(items)
+    await get().fetchAllDocuments()
   }
 }))

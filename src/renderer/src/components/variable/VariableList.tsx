@@ -4,11 +4,13 @@ import VariableForm from './VariableForm'
 import type { Variable } from '../../types'
 
 export default function VariableList(): React.ReactNode {
-  const { variables, fetchVariables, deleteVariable } = useVariableStore()
+  const { variables, fetchVariables, deleteVariable, reorderVariables } = useVariableStore()
   const [showForm, setShowForm] = useState(false)
   const [editingVar, setEditingVar] = useState<Variable | null>(null)
   const [revealedIds, setRevealedIds] = useState<Set<number>>(new Set())
   const [copiedId, setCopiedId] = useState<number | null>(null)
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [overIndex, setOverIndex] = useState<number | null>(null)
 
   useEffect(() => {
     fetchVariables()
@@ -48,6 +50,35 @@ export default function VariableList(): React.ReactNode {
     setTimeout(() => setCopiedId(null), 1500)
   }
 
+  const handleDragStart = (e: React.DragEvent, index: number): void => {
+    setDragIndex(index)
+    e.dataTransfer.effectAllowed = 'move'
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.style.opacity = '0.5'
+    }
+  }
+
+  const handleDragOver = (e: React.DragEvent, index: number): void => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setOverIndex(index)
+  }
+
+  const handleDragEnd = (e: React.DragEvent): void => {
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.style.opacity = '1'
+    }
+    if (dragIndex !== null && overIndex !== null && dragIndex !== overIndex) {
+      const reordered = [...variables]
+      const [moved] = reordered.splice(dragIndex, 1)
+      reordered.splice(overIndex, 0, moved)
+      const updates = reordered.map((item, i) => ({ id: item.id, sort_order: i }))
+      reorderVariables(updates)
+    }
+    setDragIndex(null)
+    setOverIndex(null)
+  }
+
   const renderValue = (v: Variable): React.ReactNode => {
     if (v.view_type === 'secret' && !revealedIds.has(v.id)) {
       return <span className="text-gray-400 tracking-wider">••••••••</span>
@@ -77,17 +108,29 @@ export default function VariableList(): React.ReactNode {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
+                <th className="w-8"></th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Name</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Value</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Description</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500 w-20">Type</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500 w-32">Actions</th>
+                <th className="text-right px-4 py-3 font-medium text-gray-500 w-24">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {variables.map((v) => (
-                <tr key={v.id} className="border-b border-gray-100 hover:bg-gray-50 group">
-                  <td className="px-4 py-3 font-mono font-medium text-gray-900">{v.key}</td>
+              {variables.map((v, index) => (
+                <tr
+                  key={v.id}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, index)}
+                  onDragOver={(e) => handleDragOver(e, index)}
+                  onDragEnd={handleDragEnd}
+                  onDragLeave={() => setOverIndex(null)}
+                  className={`border-b border-gray-100 hover:bg-gray-50 group cursor-grab active:cursor-grabbing ${
+                    overIndex === index ? 'border-t-2 border-t-blue-400' : ''
+                  }`}
+                >
+                  <td className="pl-3 text-gray-300 text-xs select-none">⠿</td>
+                  <td className="px-4 py-3 font-medium text-gray-900">{v.key}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <span

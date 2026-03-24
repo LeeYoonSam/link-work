@@ -9,6 +9,7 @@ interface VariableStore {
   createVariable: (input: VariableInput) => Promise<void>
   updateVariable: (id: number, input: Partial<VariableInput>) => Promise<void>
   deleteVariable: (id: number) => Promise<void>
+  reorderVariables: (items: { id: number; sort_order: number }[]) => Promise<void>
 }
 
 export const useVariableStore = create<VariableStore>((set, get) => ({
@@ -33,6 +34,11 @@ export const useVariableStore = create<VariableStore>((set, get) => ({
 
   deleteVariable: async (id) => {
     await window.api.variable.delete(id)
+    await get().fetchVariables()
+  },
+
+  reorderVariables: async (items) => {
+    await window.api.variable.reorder(items)
     await get().fetchVariables()
   }
 }))
