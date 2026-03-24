@@ -5,6 +5,7 @@ import { initDatabase } from './db/database'
 import { registerProjectIpc } from './ipc/project.ipc'
 import { registerTaskIpc } from './ipc/task.ipc'
 import { registerCalendarIpc } from './ipc/calendar.ipc'
+import { registerDocumentIpc } from './ipc/document.ipc'
 import { startNotificationService } from './services/notification'
 import { createTrayWidget } from './services/tray-widget'
 
@@ -49,6 +50,7 @@ app.whenReady().then(() => {
   registerProjectIpc()
   registerTaskIpc()
   registerCalendarIpc()
+  registerDocumentIpc()
   startNotificationService()
   createTrayWidget()
 

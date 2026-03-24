@@ -1,9 +1,20 @@
+import { useEffect, useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
+import { useDocumentStore } from '../../stores/documentStore'
 import { format } from 'date-fns'
 import TaskList from './TaskList'
+import DocumentForm from '../document/DocumentForm'
 
 export default function ProjectDetail(): React.ReactNode {
   const { currentProject, setProjectView, setEditingProject, deleteProject } = useProjectStore()
+  const { documents, fetchDocuments, openDocument, deleteDocument } = useDocumentStore()
+  const [showDocForm, setShowDocForm] = useState(false)
+
+  useEffect(() => {
+    if (currentProject) {
+      fetchDocuments(currentProject.id)
+    }
+  }, [currentProject?.id])
 
   if (!currentProject) {
     return <div className="text-gray-400">Project not found</div>
@@ -88,6 +99,58 @@ export default function ProjectDetail(): React.ReactNode {
       <div className="bg-white border border-gray-200 rounded-lg p-6">
         <TaskList projectId={currentProject.id} />
       </div>
+
+      <div className="bg-white border border-gray-200 rounded-lg p-6 mt-6">
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="text-sm font-semibold text-gray-700">Documents</h4>
+          <button
+            onClick={() => setShowDocForm(true)}
+            className="px-3 py-1.5 text-xs text-white bg-blue-600 rounded-md hover:bg-blue-700"
+          >
+            + Add
+          </button>
+        </div>
+        {documents.length === 0 ? (
+          <p className="text-sm text-gray-400">No documents linked to this project.</p>
+        ) : (
+          <div className="space-y-1">
+            {documents.map((doc) => (
+              <div
+                key={doc.id}
+                className="flex items-center justify-between py-2 px-2 hover:bg-gray-50 rounded group"
+              >
+                <div
+                  className="flex items-center gap-2 cursor-pointer min-w-0 flex-1"
+                  onClick={() => openDocument(doc.url, doc.type)}
+                >
+                  <span className="text-sm flex-shrink-0">
+                    {doc.type === 'link' ? '🔗' : '📁'}
+                  </span>
+                  <span className="text-sm text-gray-900 truncate">{doc.name}</span>
+                </div>
+                <button
+                  onClick={() => {
+                    if (confirm('Delete this document?')) deleteDocument(doc.id).then(() => fetchDocuments(currentProject.id))
+                  }}
+                  className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  🗑️
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {showDocForm && (
+        <DocumentForm
+          onClose={() => {
+            setShowDocForm(false)
+            fetchDocuments(currentProject.id)
+          }}
+          defaultProjectId={currentProject.id}
+        />
+      )}
     </div>
   )
 }

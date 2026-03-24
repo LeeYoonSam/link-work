@@ -94,3 +94,34 @@ export interface CalendarAPI {
   status: () => Promise<CalendarStatus>
   saveSettings: (clientId: string, clientSecret: string) => Promise<{ success: boolean }>
 }
+
+export interface Document {
+  id: number
+  name: string
+  url: string
+  type: 'link' | 'file'
+  description: string | null
+  project_id: number | null
+  project_name?: string
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface DocumentInput {
+  name: string
+  url: string
+  type: 'link' | 'file'
+  description?: string
+  project_id?: number | null
+  sort_order?: number
+}
+
+export interface DocumentAPI {
+  create: (input: DocumentInput) => Promise<{ id: number }>
+  list: (projectId?: number | null) => Promise<Document[]>
+  listAll: () => Promise<Document[]>
+  update: (id: number, input: Partial<DocumentInput>) => Promise<Document>
+  delete: (id: number) => Promise<{ success: boolean }>
+  open: (url: string, type: 'link' | 'file') => Promise<{ success: boolean }>
+}

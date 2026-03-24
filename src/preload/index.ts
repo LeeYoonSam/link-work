@@ -28,6 +28,15 @@ const api = {
     status: () => ipcRenderer.invoke('calendar:status'),
     saveSettings: (clientId: string, clientSecret: string) =>
       ipcRenderer.invoke('calendar:saveSettings', clientId, clientSecret)
+  },
+  document: {
+    create: (input: Record<string, unknown>) => ipcRenderer.invoke('document:create', input),
+    list: (projectId?: number | null) => ipcRenderer.invoke('document:list', projectId),
+    listAll: () => ipcRenderer.invoke('document:listAll'),
+    update: (id: number, input: Record<string, unknown>) =>
+      ipcRenderer.invoke('document:update', id, input),
+    delete: (id: number) => ipcRenderer.invoke('document:delete', id),
+    open: (url: string, type: string) => ipcRenderer.invoke('document:open', url, type)
   }
 }
 
