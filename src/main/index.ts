@@ -11,8 +11,10 @@ import { registerMemoIpc } from './ipc/memo.ipc'
 import { startNotificationService } from './services/notification'
 import { createTrayWidget } from './services/tray-widget'
 
+let mainWindow: BrowserWindow | null = null
+
 function createWindow(): void {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     show: false,
@@ -26,7 +28,11 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+    mainWindow?.show()
+  })
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -56,12 +62,17 @@ app.whenReady().then(() => {
   registerVariableIpc()
   registerMemoIpc()
   startNotificationService()
-  createTrayWidget()
+  createTrayWidget(() => createWindow())
 
   createWindow()
 
   app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (mainWindow === null || mainWindow.isDestroyed()) {
+      createWindow()
+    } else {
+      mainWindow.show()
+      mainWindow.focus()
+    }
   })
 })
 

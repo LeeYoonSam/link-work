@@ -106,8 +106,8 @@ function showPanel(): void {
   panelWindow.focus()
 }
 
-export function createTrayWidget(): void {
-  const iconPath = join(__dirname, '../../resources/icon.png')
+export function createTrayWidget(onOpenApp: () => void): void {
+  const iconPath = join(__dirname, '../../resources/tray-icon.png')
   let icon: Electron.NativeImage
 
   try {
@@ -140,6 +140,8 @@ export function createTrayWidget(): void {
     if (windows.length > 0) {
       windows[0].show()
       windows[0].focus()
+    } else {
+      onOpenApp()
     }
     panelWindow?.hide()
   })
