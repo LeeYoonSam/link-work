@@ -60,7 +60,7 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
     setTasks(updated)
   }, [project.id])
 
-  const progress = calculateProgress(project.dev_start_date, project.deploy_date)
+  const progress = calculateProgress(project.dev_start_date, project.dev_end_date)
   const level = getUrgencyLevel(progress)
   const config = urgencyConfig[level]
 

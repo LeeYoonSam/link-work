@@ -29,7 +29,7 @@ function getActiveProjects(): TrayData['projects'] {
 
   const today = new Date()
   return projects.map((p) => {
-    const total = differenceInCalendarDays(new Date(p.deploy_date), new Date(p.dev_start_date))
+    const total = differenceInCalendarDays(new Date(p.dev_end_date), new Date(p.dev_start_date))
     const elapsed = differenceInCalendarDays(today, new Date(p.dev_start_date))
     const progress = total > 0 ? Math.min(100, Math.max(0, Math.round((elapsed / total) * 100))) : 100
 
