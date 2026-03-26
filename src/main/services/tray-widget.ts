@@ -7,10 +7,11 @@ import { is } from '@electron-toolkit/utils'
 
 let tray: Tray | null = null
 let panelWindow: BrowserWindow | null = null
+let panelReady = false
 let updateInterval: ReturnType<typeof setInterval> | null = null
 
 interface TrayData {
-  projects: { name: string; devEndDate: string; deployDate: string; devDaysLeft: number; deployDaysLeft: number; progress: number }[]
+  projects: { name: string; devEndDate: string; deployDate: string; devDaysLeft: number; deployDaysLeft: number; progress: number; taskProgress: number; doneTasks: number; totalTasks: number }[]
   events: { summary: string; time: string; allDay: boolean }[]
 }
 
@@ -18,22 +19,35 @@ function getActiveProjects(): TrayData['projects'] {
   const db = getDatabase()
   const projects = db
     .prepare(
-      "SELECT name, dev_start_date, dev_end_date, deploy_date FROM projects WHERE status = 'active' ORDER BY deploy_date ASC"
+      "SELECT id, name, dev_start_date, dev_end_date, deploy_date FROM projects WHERE status = 'active' ORDER BY deploy_date ASC"
     )
-    .all() as { name: string; dev_start_date: string; dev_end_date: string; deploy_date: string }[]
+    .all() as { id: number; name: string; dev_start_date: string; dev_end_date: string; deploy_date: string }[]
+
+  const taskCountStmt = db.prepare(
+    "SELECT COUNT(*) as total, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done FROM tasks WHERE project_id = ?"
+  )
 
   const today = new Date()
   return projects.map((p) => {
     const total = differenceInCalendarDays(new Date(p.deploy_date), new Date(p.dev_start_date))
     const elapsed = differenceInCalendarDays(today, new Date(p.dev_start_date))
     const progress = total > 0 ? Math.min(100, Math.max(0, Math.round((elapsed / total) * 100))) : 100
+
+    const taskCount = taskCountStmt.get(p.id) as { total: number; done: number }
+    const totalTasks = taskCount.total ?? 0
+    const doneTasks = taskCount.done ?? 0
+    const taskProgress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0
+
     return {
       name: p.name,
       devEndDate: p.dev_end_date,
       deployDate: p.deploy_date,
       devDaysLeft: differenceInCalendarDays(new Date(p.dev_end_date), today),
       deployDaysLeft: differenceInCalendarDays(new Date(p.deploy_date), today),
-      progress
+      progress,
+      taskProgress,
+      doneTasks,
+      totalTasks
     }
   })
 }
@@ -72,6 +86,10 @@ function createPanelWindow(): BrowserWindow {
     }
   })
 
+  panel.once('ready-to-show', () => {
+    panelReady = true
+  })
+
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     panel.loadURL(`${process.env['ELECTRON_RENDERER_URL']}#tray-panel`)
   } else {
@@ -86,13 +104,33 @@ function createPanelWindow(): BrowserWindow {
 }
 
 function showPanel(): void {
-  if (!tray || !panelWindow) return
+  if (!tray || !panelWindow || !panelReady) return
 
   const trayBounds = tray.getBounds()
-  const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y })
-  const panelBounds = panelWindow.getBounds()
+  const panelWidth = 340
 
-  const x = Math.round(trayBounds.x + trayBounds.width / 2 - panelBounds.width / 2)
+  // Find the display where the main app window is, fallback to tray icon's display
+  const mainWindows = BrowserWindow.getAllWindows().filter((w) => w !== panelWindow)
+  let display: Electron.Display
+
+  if (mainWindows.length > 0 && !mainWindows[0].isDestroyed() && mainWindows[0].isVisible()) {
+    const mainBounds = mainWindows[0].getBounds()
+    display = screen.getDisplayNearestPoint({
+      x: mainBounds.x + Math.round(mainBounds.width / 2),
+      y: mainBounds.y + Math.round(mainBounds.height / 2)
+    })
+  } else {
+    display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y })
+  }
+
+  // If tray icon is on the same display, center under it; otherwise position at top-right of the app's display
+  const trayDisplay = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y })
+  let x: number
+  if (trayDisplay.id === display.id) {
+    x = Math.round(trayBounds.x + trayBounds.width / 2 - panelWidth / 2)
+  } else {
+    x = Math.round(display.workArea.x + display.workArea.width - panelWidth - 10)
+  }
   const y = display.workArea.y
 
   panelWindow.setPosition(x, y)
@@ -165,6 +203,7 @@ export function destroyTrayWidget(): void {
   if (panelWindow) {
     panelWindow.destroy()
     panelWindow = null
+    panelReady = false
   }
   if (tray) {
     tray.destroy()

@@ -68,6 +68,7 @@ export interface TaskAPI {
 export interface TrayAPI {
   getData: () => Promise<unknown>
   openApp: () => Promise<void>
+  onData: (callback: (data: unknown) => void) => () => void
 }
 
 export interface CalendarEvent {

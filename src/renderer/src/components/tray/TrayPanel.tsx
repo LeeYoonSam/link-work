@@ -7,6 +7,9 @@ interface TrayProject {
   devDaysLeft: number
   deployDaysLeft: number
   progress: number
+  taskProgress: number
+  doneTasks: number
+  totalTasks: number
 }
 
 interface TrayEvent {
@@ -45,8 +48,18 @@ export default function TrayPanel(): React.ReactNode {
   useEffect(() => {
     window.api.tray.getData().then((d) => {
       setData(d as TrayData)
+    }).catch(() => {
+      // getData failed - show empty state instead of infinite loading
+    }).finally(() => {
       setLoading(false)
     })
+
+    // Listen for pushed data updates from main process (e.g. when panel is shown)
+    const unsubscribe = window.api.tray.onData((d) => {
+      setData(d as TrayData)
+      setLoading(false)
+    })
+    return unsubscribe
   }, [])
 
   if (loading) {
@@ -121,6 +134,22 @@ export default function TrayPanel(): React.ReactNode {
                       Dev ~{project.devEndDate} / Deploy {project.deployDate}
                     </span>
                   </div>
+                  {project.totalTasks > 0 && (
+                    <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-gray-200">
+                      <span className="text-xs text-gray-500">
+                        Tasks: {project.doneTasks}/{project.totalTasks} done
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-16 bg-gray-200 rounded-full h-1">
+                          <div
+                            className="h-1 rounded-full bg-green-500 transition-all"
+                            style={{ width: `${project.taskProgress}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-gray-500">{project.taskProgress}%</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -163,6 +192,9 @@ export default function TrayPanel(): React.ReactNode {
             setLoading(true)
             window.api.tray.getData().then((d) => {
               setData(d as TrayData)
+            }).catch(() => {
+              // getData failed - keep previous data
+            }).finally(() => {
               setLoading(false)
             })
           }}
