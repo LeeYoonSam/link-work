@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMemoStore } from '../../stores/memoStore'
 import MemoCard from './MemoCard'
 import MemoForm from './MemoForm'
+import MemoViewer from './MemoViewer'
 import type { Memo } from '../../types'
 
 export default function MemoView(): React.ReactNode {
@@ -20,6 +21,7 @@ export default function MemoView(): React.ReactNode {
 
   const [showForm, setShowForm] = useState(false)
   const [editingMemo, setEditingMemo] = useState<Memo | null>(null)
+  const [viewingMemo, setViewingMemo] = useState<Memo | null>(null)
 
   useEffect(() => {
     fetchMemos()
@@ -27,6 +29,7 @@ export default function MemoView(): React.ReactNode {
   }, [])
 
   const handleEdit = (memo: Memo): void => {
+    setViewingMemo(null)
     setEditingMemo(memo)
     setShowForm(true)
   }
@@ -88,6 +91,7 @@ export default function MemoView(): React.ReactNode {
               key={memo.id}
               memo={memo}
               isArchived={showArchived}
+              onClick={setViewingMemo}
               onEdit={handleEdit}
               onArchive={archiveMemo}
               onRestore={restoreMemo}
@@ -99,6 +103,14 @@ export default function MemoView(): React.ReactNode {
       )}
 
       {showForm && <MemoForm onClose={handleCloseForm} editingMemo={editingMemo} />}
+
+      {viewingMemo && (
+        <MemoViewer
+          memo={viewingMemo}
+          onClose={() => setViewingMemo(null)}
+          onEdit={!showArchived ? handleEdit : undefined}
+        />
+      )}
     </div>
   )
 }

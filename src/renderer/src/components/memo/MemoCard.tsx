@@ -4,6 +4,7 @@ import type { Memo } from '../../types'
 interface MemoCardProps {
   memo: Memo
   isArchived?: boolean
+  onClick?: (memo: Memo) => void
   onEdit?: (memo: Memo) => void
   onArchive?: (id: number) => void
   onRestore?: (id: number) => void
@@ -14,6 +15,7 @@ interface MemoCardProps {
 export default function MemoCard({
   memo,
   isArchived,
+  onClick,
   onEdit,
   onArchive,
   onRestore,
@@ -22,16 +24,17 @@ export default function MemoCard({
 }: MemoCardProps): React.ReactNode {
   return (
     <div
-      className={`break-inside-avoid mb-4 bg-white border rounded-lg p-4 shadow-sm hover:shadow-md transition ${
+      className={`break-inside-avoid mb-4 bg-white border rounded-lg p-4 shadow-sm hover:shadow-md transition ${onClick ? 'cursor-pointer' : ''} ${
         isArchived ? 'opacity-60 border-gray-200' : memo.is_important ? 'border-yellow-300 bg-yellow-50/30' : 'border-gray-200'
       }`}
+      onClick={() => onClick?.(memo)}
     >
       <div className="whitespace-pre-wrap text-sm text-gray-800 mb-3">{memo.content}</div>
       <div className="flex items-center justify-between">
         <span className="text-xs text-gray-400">
           {format(new Date(memo.created_at), 'yyyy-MM-dd HH:mm:ss')}
         </span>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           {isArchived ? (
             <>
               <button
