@@ -86,6 +86,8 @@ function createPanelWindow(): BrowserWindow {
     }
   })
 
+  panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+
   panel.once('ready-to-show', () => {
     panelReady = true
   })
@@ -108,29 +110,9 @@ function showPanel(): void {
 
   const trayBounds = tray.getBounds()
   const panelWidth = 340
+  const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y })
 
-  // Find the display where the main app window is, fallback to tray icon's display
-  const mainWindows = BrowserWindow.getAllWindows().filter((w) => w !== panelWindow)
-  let display: Electron.Display
-
-  if (mainWindows.length > 0 && !mainWindows[0].isDestroyed() && mainWindows[0].isVisible()) {
-    const mainBounds = mainWindows[0].getBounds()
-    display = screen.getDisplayNearestPoint({
-      x: mainBounds.x + Math.round(mainBounds.width / 2),
-      y: mainBounds.y + Math.round(mainBounds.height / 2)
-    })
-  } else {
-    display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y })
-  }
-
-  // If tray icon is on the same display, center under it; otherwise position at top-right of the app's display
-  const trayDisplay = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y })
-  let x: number
-  if (trayDisplay.id === display.id) {
-    x = Math.round(trayBounds.x + trayBounds.width / 2 - panelWidth / 2)
-  } else {
-    x = Math.round(display.workArea.x + display.workArea.width - panelWidth - 10)
-  }
+  const x = Math.round(trayBounds.x + trayBounds.width / 2 - panelWidth / 2)
   const y = display.workArea.y
 
   panelWindow.setPosition(x, y)
