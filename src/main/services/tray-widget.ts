@@ -10,46 +10,85 @@ let panelWindow: BrowserWindow | null = null
 let panelReady = false
 let updateInterval: ReturnType<typeof setInterval> | null = null
 
+interface TrayProject {
+  name: string
+  status: string
+  devEndDate: string
+  deployDate: string
+  devDaysLeft: number
+  deployDaysLeft: number
+  progress: number
+  taskProgress: number
+  doneTasks: number
+  totalTasks: number
+}
+
 interface TrayData {
-  projects: { name: string; devEndDate: string; deployDate: string; devDaysLeft: number; deployDaysLeft: number; progress: number; taskProgress: number; doneTasks: number; totalTasks: number }[]
+  projects: TrayProject[]
   events: { summary: string; time: string; allDay: boolean }[]
 }
 
-function getActiveProjects(): TrayData['projects'] {
+/**
+ * 위젯 필터 정책: 대시보드와 동일하게 적용
+ * - scheduled, development, qa, deploy 상태만 표시
+ * - completed, cancelled 상태는 제외
+ * - 상태는 날짜 기반 자동 계산 (status_manual=0) 또는 수동 설정값 사용
+ *
+ * 정책 변경 시 Dashboard.tsx의 필터도 함께 수정할 것
+ */
+const VISIBLE_STATUSES = new Set(['scheduled', 'development', 'qa', 'deploy'])
+
+function calculateAutoStatus(project: { dev_start_date: string; qa_start_date: string; qa_end_date: string; deploy_date: string }): string {
+  const today = new Date().toISOString().split('T')[0]
+  if (today < project.dev_start_date) return 'scheduled'
+  if (today > project.deploy_date) return 'completed'
+  if (today === project.deploy_date) return 'deploy'
+  if (today >= project.qa_start_date && today <= project.qa_end_date) return 'qa'
+  return 'development'
+}
+
+function getActiveProjects(): TrayProject[] {
   const db = getDatabase()
   const projects = db
     .prepare(
-      "SELECT id, name, dev_start_date, dev_end_date, deploy_date FROM projects WHERE status = 'active' ORDER BY deploy_date ASC"
+      'SELECT id, name, dev_start_date, dev_end_date, qa_start_date, qa_end_date, deploy_date, status, status_manual FROM projects ORDER BY deploy_date ASC'
     )
-    .all() as { id: number; name: string; dev_start_date: string; dev_end_date: string; deploy_date: string }[]
+    .all() as { id: number; name: string; dev_start_date: string; dev_end_date: string; qa_start_date: string; qa_end_date: string; deploy_date: string; status: string; status_manual: number }[]
 
   const taskCountStmt = db.prepare(
     "SELECT COUNT(*) as total, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done FROM tasks WHERE project_id = ?"
   )
 
   const today = new Date()
-  return projects.map((p) => {
-    const total = differenceInCalendarDays(new Date(p.dev_end_date), new Date(p.dev_start_date))
-    const elapsed = differenceInCalendarDays(today, new Date(p.dev_start_date))
-    const progress = total > 0 ? Math.min(100, Math.max(0, Math.round((elapsed / total) * 100))) : 100
+  return projects
+    .map((p) => {
+      const status = p.status_manual === 0 ? calculateAutoStatus(p) : p.status
+      return { ...p, status }
+    })
+    .filter((p) => VISIBLE_STATUSES.has(p.status))
+    .map((p) => {
+      const total = differenceInCalendarDays(new Date(p.dev_end_date), new Date(p.dev_start_date))
+      const elapsed = differenceInCalendarDays(today, new Date(p.dev_start_date))
+      const progress = total > 0 ? Math.min(100, Math.max(0, Math.round((elapsed / total) * 100))) : 100
 
-    const taskCount = taskCountStmt.get(p.id) as { total: number; done: number }
-    const totalTasks = taskCount.total ?? 0
-    const doneTasks = taskCount.done ?? 0
-    const taskProgress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0
+      const taskCount = taskCountStmt.get(p.id) as { total: number; done: number }
+      const totalTasks = taskCount.total ?? 0
+      const doneTasks = taskCount.done ?? 0
+      const taskProgress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0
 
-    return {
-      name: p.name,
-      devEndDate: p.dev_end_date,
-      deployDate: p.deploy_date,
-      devDaysLeft: differenceInCalendarDays(new Date(p.dev_end_date), today),
-      deployDaysLeft: differenceInCalendarDays(new Date(p.deploy_date), today),
-      progress,
-      taskProgress,
-      doneTasks,
-      totalTasks
-    }
-  })
+      return {
+        name: p.name,
+        status: p.status,
+        devEndDate: p.dev_end_date,
+        deployDate: p.deploy_date,
+        devDaysLeft: differenceInCalendarDays(new Date(p.dev_end_date), today),
+        deployDaysLeft: differenceInCalendarDays(new Date(p.deploy_date), today),
+        progress,
+        taskProgress,
+        doneTasks,
+        totalTasks
+      }
+    })
 }
 
 async function getTrayData(): Promise<TrayData> {

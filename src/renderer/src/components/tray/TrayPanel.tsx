@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 interface TrayProject {
   name: string
+  status: string
   devEndDate: string
   deployDate: string
   devDaysLeft: number
@@ -10,6 +11,24 @@ interface TrayProject {
   taskProgress: number
   doneTasks: number
   totalTasks: number
+}
+
+const statusLabels: Record<string, string> = {
+  scheduled: 'Scheduled',
+  development: 'Development',
+  qa: 'QA',
+  deploy: 'Deploy',
+  completed: 'Completed',
+  cancelled: 'Cancelled'
+}
+
+const statusColors: Record<string, string> = {
+  scheduled: 'bg-slate-500',
+  development: 'bg-green-500',
+  qa: 'bg-orange-500',
+  deploy: 'bg-red-500',
+  completed: 'bg-blue-500',
+  cancelled: 'bg-gray-400'
 }
 
 interface TrayEvent {
@@ -99,41 +118,40 @@ export default function TrayPanel(): React.ReactNode {
                     <span className="text-sm font-medium text-gray-900 truncate mr-2">
                       {project.name}
                     </span>
-                    <div className="flex gap-2 shrink-0">
+                    <div className="flex gap-1.5 shrink-0 items-center">
                       <span
-                        className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                          project.devDaysLeft <= 3 ? 'bg-red-200 text-red-800' :
-                          project.devDaysLeft <= 7 ? 'bg-red-100 text-red-600' :
-                          'bg-rose-50 text-rose-500'
-                        }`}
-                        title="Dev End"
+                        className={`text-xs font-medium px-1.5 py-0.5 rounded-full text-white ${statusColors[project.status] || 'bg-gray-400'}`}
                       >
-                        Dev {getDdayText(project.devDaysLeft)}
+                        {statusLabels[project.status] || project.status}
                       </span>
-                      <span
-                        className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                          project.deployDaysLeft <= 3 ? 'bg-green-200 text-green-800' :
-                          project.deployDaysLeft <= 7 ? 'bg-green-100 text-green-600' :
-                          'bg-emerald-50 text-emerald-500'
-                        }`}
-                        title="Deploy"
-                      >
-                        Deploy {getDdayText(project.deployDaysLeft)}
+                      <span className={`text-xs font-bold ${getUrgencyColor(project.deployDaysLeft)}`}>
+                        D{getDdayText(project.deployDaysLeft).slice(1)}
                       </span>
                     </div>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-1.5">
-                    <div
-                      className={`h-1.5 rounded-full transition-all ${getBarColor(project.progress)}`}
-                      style={{ width: `${project.progress}%` }}
-                    />
-                  </div>
-                  <div className="flex justify-between mt-1">
-                    <span className="text-xs text-gray-400">{project.progress}%</span>
-                    <span className="text-xs text-gray-400">
-                      Dev ~{project.devEndDate} / Deploy {project.deployDate}
-                    </span>
-                  </div>
+                  {project.devDaysLeft >= 0 && (
+                    <>
+                      <div className="w-full bg-gray-200 rounded-full h-1.5">
+                        <div
+                          className={`h-1.5 rounded-full transition-all ${getBarColor(project.progress)}`}
+                          style={{ width: `${project.progress}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between mt-1">
+                        <span className="text-xs text-gray-400">{project.progress}%</span>
+                        <span className="text-xs text-gray-400">
+                          Dev ~{project.devEndDate} / Deploy {project.deployDate}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                  {project.devDaysLeft < 0 && (
+                    <div className="mt-0.5">
+                      <span className="text-xs text-gray-400">
+                        Deploy {project.deployDate}
+                      </span>
+                    </div>
+                  )}
                   {project.totalTasks > 0 && (
                     <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-gray-200">
                       <span className="text-xs text-gray-500">
