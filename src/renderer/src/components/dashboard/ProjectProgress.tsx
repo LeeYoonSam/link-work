@@ -60,9 +60,29 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
     setTasks(updated)
   }, [project.id])
 
+  const today = new Date().toISOString().split('T')[0]
+  const isDevOver = today > project.dev_end_date
+
   const progress = calculateProgress(project.dev_start_date, project.dev_end_date)
   const level = getUrgencyLevel(progress)
   const config = urgencyConfig[level]
+
+  const statusLabels: Record<string, string> = {
+    scheduled: 'Scheduled',
+    development: 'Development',
+    qa: 'QA',
+    deploy: 'Deploy',
+    completed: 'Completed',
+    cancelled: 'Cancelled'
+  }
+  const statusColors: Record<string, string> = {
+    scheduled: 'bg-slate-500',
+    development: 'bg-green-500',
+    qa: 'bg-orange-500',
+    deploy: 'bg-red-500',
+    completed: 'bg-blue-500',
+    cancelled: 'bg-gray-400'
+  }
 
   const doneTasks = tasks.filter((t) => t.status === 'done').length
   const totalTasks = tasks.length
@@ -96,21 +116,25 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
             </div>
           </div>
           <div className="text-right">
-            <span className={`text-2xl font-bold ${config.text}`}>{progress}%</span>
+            {!isDevOver && (
+              <span className={`text-2xl font-bold ${config.text}`}>{progress}%</span>
+            )}
             <span
-              className={`block text-xs font-medium px-2 py-0.5 rounded-full mt-1 ${config.bar} text-white`}
+              className={`block text-xs font-medium px-2 py-0.5 rounded-full mt-1 ${statusColors[project.status] || 'bg-gray-400'} text-white`}
             >
-              {config.label}
+              {statusLabels[project.status] || project.status}
             </span>
           </div>
         </div>
 
-        <div className="w-full bg-gray-200 rounded-full h-2.5 mb-3">
-          <div
-            className={`h-2.5 rounded-full transition-all duration-500 ${config.bar}`}
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+        {!isDevOver && (
+          <div className="w-full bg-gray-200 rounded-full h-2.5 mb-3">
+            <div
+              className={`h-2.5 rounded-full transition-all duration-500 ${config.bar}`}
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        )}
 
         {totalTasks > 0 ? (
           <div className="flex items-center justify-between">

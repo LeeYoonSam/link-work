@@ -27,7 +27,10 @@ export default function ProjectDetail(): React.ReactNode {
   }
 
   const statusColors: Record<string, string> = {
-    active: 'bg-green-100 text-green-800',
+    scheduled: 'bg-slate-100 text-slate-700',
+    development: 'bg-green-100 text-green-800',
+    qa: 'bg-orange-100 text-orange-800',
+    deploy: 'bg-red-100 text-red-800',
     completed: 'bg-blue-100 text-blue-800',
     cancelled: 'bg-gray-100 text-gray-600'
   }
@@ -52,11 +55,16 @@ export default function ProjectDetail(): React.ReactNode {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <span
-              className={`px-2 py-0.5 text-xs rounded-full font-medium ${statusColors[currentProject.status]}`}
-            >
-              {currentProject.status}
-            </span>
+            <div className="flex items-center gap-1">
+              <span
+                className={`px-2 py-0.5 text-xs rounded-full font-medium ${statusColors[currentProject.status]}`}
+              >
+                {currentProject.status}
+              </span>
+              {currentProject.status_manual === 1 && (
+                <span className="text-xs text-amber-500" title="수동 설정됨">✎</span>
+              )}
+            </div>
             <button
               onClick={() => setEditingProject(currentProject)}
               className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
@@ -92,6 +100,9 @@ export default function ProjectDetail(): React.ReactNode {
             <div className="font-medium">
               {format(new Date(currentProject.deploy_date), 'yyyy-MM-dd')}
             </div>
+            {currentProject.deploy_version && (
+              <div className="text-xs text-gray-500 mt-1">v{currentProject.deploy_version}</div>
+            )}
           </div>
         </div>
       </div>

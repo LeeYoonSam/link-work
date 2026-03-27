@@ -7,7 +7,9 @@ export interface Project {
   qa_start_date: string
   qa_end_date: string
   deploy_date: string
-  status: 'active' | 'completed' | 'cancelled'
+  deploy_version: string | null
+  status: 'scheduled' | 'development' | 'qa' | 'deploy' | 'completed' | 'cancelled'
+  status_manual: number
   created_at: string
   updated_at: string
 }
@@ -31,7 +33,9 @@ export interface ProjectInput {
   qa_start_date?: string
   qa_end_date?: string
   deploy_date?: string
+  deploy_version?: string
   status?: string
+  status_manual?: number
 }
 
 export interface TaskInput {
@@ -56,6 +60,7 @@ export interface ProjectAPI {
   update: (id: number, input: Partial<ProjectInput>) => Promise<Project>
   delete: (id: number) => Promise<{ success: boolean }>
   calculateDates: (devEndDate: string) => Promise<CalculatedDates>
+  lastDates: () => Promise<{ devStartDate: string; devEndDate: string } | null>
 }
 
 export interface TaskAPI {

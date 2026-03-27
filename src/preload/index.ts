@@ -8,7 +8,8 @@ const api = {
     get: (id: number) => ipcRenderer.invoke('project:get', id),
     update: (id: number, input: Record<string, unknown>) => ipcRenderer.invoke('project:update', id, input),
     delete: (id: number) => ipcRenderer.invoke('project:delete', id),
-    calculateDates: (devEndDate: string) => ipcRenderer.invoke('project:calculateDates', devEndDate)
+    calculateDates: (devEndDate: string) => ipcRenderer.invoke('project:calculateDates', devEndDate),
+    lastDates: () => ipcRenderer.invoke('project:lastDates')
   },
   task: {
     create: (input: Record<string, unknown>) => ipcRenderer.invoke('task:create', input),

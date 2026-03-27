@@ -96,9 +96,18 @@ export function initDatabase(): void {
   `)
 
   // Migrations for existing databases
-  const columns = db.prepare("PRAGMA table_info(memos)").all() as { name: string }[]
-  const columnNames = columns.map((c) => c.name)
-  if (columns.length > 0 && !columnNames.includes('is_important')) {
+  const memoColumns = db.prepare("PRAGMA table_info(memos)").all() as { name: string }[]
+  const memoColumnNames = memoColumns.map((c) => c.name)
+  if (memoColumns.length > 0 && !memoColumnNames.includes('is_important')) {
     db.exec("ALTER TABLE memos ADD COLUMN is_important INTEGER NOT NULL DEFAULT 0")
+  }
+
+  const projectColumns = db.prepare("PRAGMA table_info(projects)").all() as { name: string }[]
+  const projectColumnNames = projectColumns.map((c) => c.name)
+  if (projectColumns.length > 0 && !projectColumnNames.includes('status_manual')) {
+    db.exec("ALTER TABLE projects ADD COLUMN status_manual INTEGER NOT NULL DEFAULT 0")
+  }
+  if (projectColumns.length > 0 && !projectColumnNames.includes('deploy_version')) {
+    db.exec("ALTER TABLE projects ADD COLUMN deploy_version TEXT")
   }
 }

@@ -12,7 +12,7 @@ export default function Dashboard(): React.ReactNode {
   const { importantMemos, fetchImportantMemos } = useMemoStore()
 
   useEffect(() => {
-    fetchProjects('active')
+    fetchProjects()
     fetchStatus()
     fetchImportantMemos()
   }, [])
@@ -55,7 +55,7 @@ export default function Dashboard(): React.ReactNode {
         ) : (
           <div className="grid gap-4">
             {projects
-              .filter((p) => p.status === 'active')
+              .filter((p) => ['scheduled', 'development', 'qa', 'deploy'].includes(p.status))
               .map((project) => (
                 <ProjectProgress key={project.id} project={project} />
               ))}

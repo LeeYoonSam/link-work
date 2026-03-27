@@ -12,7 +12,10 @@ export default function ProjectForm(): React.ReactNode {
     dev_end_date: '',
     qa_start_date: '',
     qa_end_date: '',
-    deploy_date: ''
+    deploy_date: '',
+    deploy_version: '',
+    status: 'scheduled',
+    status_manual: 0
   })
 
   useEffect(() => {
@@ -24,7 +27,24 @@ export default function ProjectForm(): React.ReactNode {
         dev_end_date: editingProject.dev_end_date,
         qa_start_date: editingProject.qa_start_date,
         qa_end_date: editingProject.qa_end_date,
-        deploy_date: editingProject.deploy_date
+        deploy_date: editingProject.deploy_date,
+        deploy_version: editingProject.deploy_version || '',
+        status: editingProject.status,
+        status_manual: editingProject.status_manual
+      })
+    } else {
+      window.api.project.lastDates().then(async (last) => {
+        if (last) {
+          const dates = await window.api.project.calculateDates(last.devEndDate)
+          setForm((prev) => ({
+            ...prev,
+            dev_start_date: last.devStartDate,
+            dev_end_date: last.devEndDate,
+            qa_start_date: dates.qaStart,
+            qa_end_date: dates.qaEnd,
+            deploy_date: dates.deployDate
+          }))
+        }
       })
     }
   }, [editingProject])
@@ -154,6 +174,49 @@ export default function ProjectForm(): React.ReactNode {
             />
           </div>
         </div>
+
+        <div>
+          <label className={labelClass}>
+            Deploy Version <span className="text-gray-400 text-xs">(optional)</span>
+          </label>
+          <input
+            type="text"
+            value={form.deploy_version}
+            onChange={(e) => setForm({ ...form, deploy_version: e.target.value })}
+            className={inputClass}
+            placeholder="e.g. 4.142.0"
+          />
+        </div>
+
+        {editingProject && (
+          <div>
+            <label className={labelClass}>Status</label>
+            <div className="flex items-center gap-3">
+              <select
+                value={form.status_manual ? form.status : 'auto'}
+                onChange={(e) => {
+                  if (e.target.value === 'auto') {
+                    setForm({ ...form, status_manual: 0 })
+                  } else {
+                    setForm({ ...form, status: e.target.value, status_manual: 1 })
+                  }
+                }}
+                className={inputClass}
+              >
+                <option value="auto">Auto (날짜 기반 자동)</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="development">Development</option>
+                <option value="qa">QA</option>
+                <option value="deploy">Deploy</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+              {form.status_manual === 1 && (
+                <span className="text-xs text-amber-600 whitespace-nowrap">수동 설정됨</span>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="pt-4 flex gap-3">
           <button

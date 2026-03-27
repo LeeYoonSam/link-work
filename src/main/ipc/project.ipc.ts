@@ -10,7 +10,40 @@ interface ProjectInput {
   qa_start_date?: string
   qa_end_date?: string
   deploy_date?: string
+  deploy_version?: string
   status?: string
+  status_manual?: number
+}
+
+interface ProjectRow {
+  id: number
+  name: string
+  description: string | null
+  dev_start_date: string
+  dev_end_date: string
+  qa_start_date: string
+  qa_end_date: string
+  deploy_date: string
+  status: string
+  status_manual: number
+  created_at: string
+  updated_at: string
+}
+
+function calculateAutoStatus(project: ProjectRow): string {
+  const today = new Date().toISOString().split('T')[0]
+  if (today < project.dev_start_date) return 'scheduled'
+  if (today > project.deploy_date) return 'completed'
+  if (today === project.deploy_date) return 'deploy'
+  if (today >= project.qa_start_date && today <= project.qa_end_date) return 'qa'
+  return 'development'
+}
+
+function applyAutoStatus(project: ProjectRow): ProjectRow {
+  if (project.status_manual === 0) {
+    return { ...project, status: calculateAutoStatus(project) }
+  }
+  return project
 }
 
 function calculateQaDates(devEndDate: string): { qaStart: string; qaEnd: string; deployDate: string } {
@@ -36,8 +69,8 @@ export function registerProjectIpc(): void {
   ipcMain.handle('project:create', (_event, input: ProjectInput) => {
     const defaults = calculateQaDates(input.dev_end_date)
     const stmt = db.prepare(`
-      INSERT INTO projects (name, description, dev_start_date, dev_end_date, qa_start_date, qa_end_date, deploy_date, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO projects (name, description, dev_start_date, dev_end_date, qa_start_date, qa_end_date, deploy_date, deploy_version, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     const result = stmt.run(
       input.name,
@@ -47,25 +80,36 @@ export function registerProjectIpc(): void {
       input.qa_start_date || defaults.qaStart,
       input.qa_end_date || defaults.qaEnd,
       input.deploy_date || defaults.deployDate,
-      input.status || 'active'
+      input.deploy_version || null,
+      input.status || 'scheduled'
     )
     return { id: result.lastInsertRowid }
   })
 
+  ipcMain.handle('project:lastDates', () => {
+    const row = db.prepare('SELECT dev_start_date, dev_end_date FROM projects ORDER BY created_at DESC LIMIT 1').get() as { dev_start_date: string; dev_end_date: string } | undefined
+    if (!row) return null
+    return { devStartDate: row.dev_start_date, devEndDate: row.dev_end_date }
+  })
+
   ipcMain.handle('project:list', (_event, status?: string) => {
+    const rows = db.prepare('SELECT * FROM projects ORDER BY created_at DESC').all() as ProjectRow[]
+    const projects = rows.map(applyAutoStatus)
     if (status) {
-      return db.prepare('SELECT * FROM projects WHERE status = ? ORDER BY created_at DESC').all(status)
+      return projects.filter((p) => p.status === status)
     }
-    return db.prepare('SELECT * FROM projects ORDER BY created_at DESC').all()
+    return projects
   })
 
   ipcMain.handle('project:get', (_event, id: number) => {
-    return db.prepare('SELECT * FROM projects WHERE id = ?').get(id)
+    const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined
+    if (!row) return null
+    return applyAutoStatus(row)
   })
 
   const ALLOWED_PROJECT_FIELDS = new Set([
     'name', 'description', 'dev_start_date', 'dev_end_date',
-    'qa_start_date', 'qa_end_date', 'deploy_date', 'status'
+    'qa_start_date', 'qa_end_date', 'deploy_date', 'deploy_version', 'status', 'status_manual'
   ])
 
   ipcMain.handle('project:update', (_event, id: number, input: Partial<ProjectInput>) => {
@@ -81,7 +125,8 @@ export function registerProjectIpc(): void {
     values.push(id)
 
     db.prepare(`UPDATE projects SET ${fields.join(', ')} WHERE id = ?`).run(...values)
-    return db.prepare('SELECT * FROM projects WHERE id = ?').get(id)
+    const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow
+    return applyAutoStatus(row)
   })
 
   ipcMain.handle('project:delete', (_event, id: number) => {

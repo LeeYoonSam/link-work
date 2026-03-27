@@ -4,13 +4,19 @@ import { format } from 'date-fns'
 import type { Project } from '../../types'
 
 const statusLabels: Record<string, string> = {
-  active: 'Active',
+  scheduled: 'Scheduled',
+  development: 'Development',
+  qa: 'QA',
+  deploy: 'Deploy',
   completed: 'Completed',
   cancelled: 'Cancelled'
 }
 
 const statusColors: Record<string, string> = {
-  active: 'bg-green-100 text-green-800',
+  scheduled: 'bg-slate-100 text-slate-700',
+  development: 'bg-green-100 text-green-800',
+  qa: 'bg-orange-100 text-orange-800',
+  deploy: 'bg-red-100 text-red-800',
   completed: 'bg-blue-100 text-blue-800',
   cancelled: 'bg-gray-100 text-gray-600'
 }
@@ -24,7 +30,14 @@ export default function ProjectList(): React.ReactNode {
     fetchProjects()
   }, [])
 
-  const filtered = filter === 'all' ? projects : projects.filter((p) => p.status === filter)
+  const today = new Date().toISOString().split('T')[0]
+  const sorted = [...projects].sort((a, b) => {
+    const aExpired = a.deploy_date < today ? 1 : 0
+    const bExpired = b.deploy_date < today ? 1 : 0
+    if (aExpired !== bExpired) return aExpired - bExpired
+    return b.created_at.localeCompare(a.created_at)
+  })
+  const filtered = filter === 'all' ? sorted : sorted.filter((p) => p.status === filter)
 
   const openDetail = (project: Project): void => {
     fetchProject(project.id)
@@ -35,7 +48,7 @@ export default function ProjectList(): React.ReactNode {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div className="flex gap-2">
-          {['all', 'active', 'completed', 'cancelled'].map((s) => (
+          {['all', 'scheduled', 'development', 'qa', 'deploy', 'completed', 'cancelled'].map((s) => (
             <button
               key={s}
               onClick={() => setFilter(s)}
