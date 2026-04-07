@@ -17,6 +17,7 @@ interface TrayProject {
   deployDate: string
   devDaysLeft: number
   deployDaysLeft: number
+  daysLeft: number
   progress: number
   taskProgress: number
   doneTasks: number
@@ -76,13 +77,37 @@ function getActiveProjects(): TrayProject[] {
       const doneTasks = taskCount.done ?? 0
       const taskProgress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0
 
+      const devDaysLeft = differenceInCalendarDays(new Date(p.dev_end_date), today)
+      const deployDaysLeft = differenceInCalendarDays(new Date(p.deploy_date), today)
+
+      // 상태별 마감일 기준 D-day 계산
+      let daysLeft: number
+      switch (p.status) {
+        case 'scheduled':
+          daysLeft = differenceInCalendarDays(new Date(p.dev_start_date), today)
+          break
+        case 'development':
+          daysLeft = devDaysLeft
+          break
+        case 'qa':
+          daysLeft = differenceInCalendarDays(new Date(p.qa_end_date), today)
+          break
+        case 'deploy':
+          daysLeft = deployDaysLeft
+          break
+        default:
+          daysLeft = deployDaysLeft
+          break
+      }
+
       return {
         name: p.name,
         status: p.status,
         devEndDate: p.dev_end_date,
         deployDate: p.deploy_date,
-        devDaysLeft: differenceInCalendarDays(new Date(p.dev_end_date), today),
-        deployDaysLeft: differenceInCalendarDays(new Date(p.deploy_date), today),
+        devDaysLeft,
+        deployDaysLeft,
+        daysLeft,
         progress,
         taskProgress,
         doneTasks,
@@ -208,7 +233,7 @@ export function createTrayWidget(onOpenApp: () => void): void {
   // Auto-refresh tooltip
   updateInterval = setInterval(async () => {
     const projects = getActiveProjects()
-    const urgent = projects.filter((p) => p.deployDaysLeft <= 3)
+    const urgent = projects.filter((p) => p.daysLeft <= 3)
     const tooltip = urgent.length > 0
       ? `LinkWork - ${urgent.length} urgent`
       : `LinkWork - ${projects.length} active`

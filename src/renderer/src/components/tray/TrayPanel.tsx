@@ -7,6 +7,7 @@ interface TrayProject {
   deployDate: string
   devDaysLeft: number
   deployDaysLeft: number
+  daysLeft: number
   progress: number
   taskProgress: number
   doneTasks: number
@@ -124,8 +125,8 @@ export default function TrayPanel(): React.ReactNode {
                       >
                         {statusLabels[project.status] || project.status}
                       </span>
-                      <span className={`text-xs font-bold ${getUrgencyColor(project.deployDaysLeft)}`}>
-                        D{getDdayText(project.deployDaysLeft).slice(1)}
+                      <span className={`text-xs font-bold ${getUrgencyColor(project.daysLeft)}`}>
+                        D{getDdayText(project.daysLeft).slice(1)}
                       </span>
                     </div>
                   </div>
