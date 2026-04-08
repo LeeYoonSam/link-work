@@ -93,6 +93,16 @@ export function initDatabase(): void {
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS activity_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type TEXT NOT NULL,
+      entity_id INTEGER,
+      entity_name TEXT,
+      action TEXT NOT NULL,
+      details TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
   `)
 
   // Migrations for existing databases
@@ -109,5 +119,26 @@ export function initDatabase(): void {
   }
   if (projectColumns.length > 0 && !projectColumnNames.includes('deploy_version')) {
     db.exec("ALTER TABLE projects ADD COLUMN deploy_version TEXT")
+  }
+
+  // Seed activity_log from existing data (one-time migration)
+  const activityCount = (db.prepare('SELECT COUNT(*) as count FROM activity_log').get() as { count: number }).count
+  if (activityCount === 0) {
+    db.exec(`
+      INSERT INTO activity_log (entity_type, entity_id, entity_name, action, created_at)
+      SELECT 'project', id, name, 'create', created_at FROM projects;
+
+      INSERT INTO activity_log (entity_type, entity_id, entity_name, action, created_at)
+      SELECT 'task', id, name, 'create', created_at FROM tasks;
+
+      INSERT INTO activity_log (entity_type, entity_id, entity_name, action, created_at)
+      SELECT 'document', id, name, 'create', created_at FROM documents;
+
+      INSERT INTO activity_log (entity_type, entity_id, entity_name, action, created_at)
+      SELECT 'variable', id, key, 'create', created_at FROM variables;
+
+      INSERT INTO activity_log (entity_type, entity_id, entity_name, action, created_at)
+      SELECT 'memo', id, SUBSTR(content, 1, 50), 'create', created_at FROM memos;
+    `)
   }
 }

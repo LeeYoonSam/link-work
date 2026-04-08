@@ -65,6 +65,15 @@ const api = {
     restore: (id: number) => ipcRenderer.invoke('memo:restore', id),
     toggleImportant: (id: number) => ipcRenderer.invoke('memo:toggleImportant', id),
     delete: (id: number) => ipcRenderer.invoke('memo:delete', id)
+  },
+  report: {
+    weeklyActivities: (weekStart: string, weekEnd: string) =>
+      ipcRenderer.invoke('report:weeklyActivities', weekStart, weekEnd),
+    weeklySummary: (weekStart: string, weekEnd: string) =>
+      ipcRenderer.invoke('report:weeklySummary', weekStart, weekEnd),
+    dailyStats: (weekStart: string, weekEnd: string) =>
+      ipcRenderer.invoke('report:dailyStats', weekStart, weekEnd),
+    weeklyTrend: (weeks: number) => ipcRenderer.invoke('report:weeklyTrend', weeks)
   }
 }
 

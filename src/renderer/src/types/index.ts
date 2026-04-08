@@ -188,3 +188,38 @@ export interface MemoAPI {
   toggleImportant: (id: number) => Promise<{ success: boolean; is_important: number }>
   delete: (id: number) => Promise<{ success: boolean }>
 }
+
+export interface ActivityLog {
+  id: number
+  entity_type: 'project' | 'task' | 'document' | 'variable' | 'memo'
+  entity_id: number | null
+  entity_name: string | null
+  action: 'create' | 'update' | 'delete' | 'archive' | 'restore'
+  details: string | null
+  created_at: string
+}
+
+export interface WeeklySummary {
+  entity_type: string
+  action: string
+  count: number
+}
+
+export interface DailyStat {
+  date: string
+  entity_type: string
+  count: number
+}
+
+export interface WeeklyTrend {
+  week: string
+  entity_type: string
+  count: number
+}
+
+export interface ReportAPI {
+  weeklyActivities: (weekStart: string, weekEnd: string) => Promise<ActivityLog[]>
+  weeklySummary: (weekStart: string, weekEnd: string) => Promise<WeeklySummary[]>
+  dailyStats: (weekStart: string, weekEnd: string) => Promise<DailyStat[]>
+  weeklyTrend: (weeks: number) => Promise<WeeklyTrend[]>
+}

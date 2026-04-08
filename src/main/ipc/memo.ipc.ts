@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db/database'
+import { logActivity } from '../utils/activity-logger'
 
 interface MemoInput {
   content: string
@@ -16,6 +17,7 @@ export function registerMemoIpc(): void {
       VALUES (?, ?, ?)
     `)
     const result = stmt.run(input.content, input.color || 'default', input.is_important ?? 0)
+    logActivity('memo', 'create', result.lastInsertRowid, input.content.slice(0, 50))
     return { id: result.lastInsertRowid }
   })
 
@@ -46,13 +48,16 @@ export function registerMemoIpc(): void {
     values.push(id)
 
     db.prepare(`UPDATE memos SET ${fields.join(', ')} WHERE id = ?`).run(...values)
-    return db.prepare('SELECT * FROM memos WHERE id = ?').get(id)
+    const row = db.prepare('SELECT * FROM memos WHERE id = ?').get(id) as { content: string }
+    logActivity('memo', 'update', id, row.content.slice(0, 50))
+    return row
   })
 
   ipcMain.handle('memo:archive', (_event, id: number) => {
     db.prepare("UPDATE memos SET is_archived = 1, updated_at = datetime('now') WHERE id = ?").run(
       id
     )
+    logActivity('memo', 'archive', id)
     return { success: true }
   })
 
@@ -60,6 +65,7 @@ export function registerMemoIpc(): void {
     db.prepare("UPDATE memos SET is_archived = 0, updated_at = datetime('now') WHERE id = ?").run(
       id
     )
+    logActivity('memo', 'restore', id)
     return { success: true }
   })
 
@@ -86,6 +92,7 @@ export function registerMemoIpc(): void {
 
   ipcMain.handle('memo:delete', (_event, id: number) => {
     db.prepare('DELETE FROM memos WHERE id = ?').run(id)
+    logActivity('memo', 'delete', id)
     return { success: true }
   })
 }

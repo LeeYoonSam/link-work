@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db/database'
 import { addBusinessDays } from 'date-fns'
+import { logActivity } from '../utils/activity-logger'
 
 interface ProjectInput {
   name: string
@@ -83,6 +84,7 @@ export function registerProjectIpc(): void {
       input.deploy_version || null,
       input.status || 'scheduled'
     )
+    logActivity('project', 'create', result.lastInsertRowid, input.name)
     return { id: result.lastInsertRowid }
   })
 
@@ -126,11 +128,14 @@ export function registerProjectIpc(): void {
 
     db.prepare(`UPDATE projects SET ${fields.join(', ')} WHERE id = ?`).run(...values)
     const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow
+    logActivity('project', 'update', id, row.name, Object.keys(input).join(', '))
     return applyAutoStatus(row)
   })
 
   ipcMain.handle('project:delete', (_event, id: number) => {
+    const row = db.prepare('SELECT name FROM projects WHERE id = ?').get(id) as { name: string } | undefined
     db.prepare('DELETE FROM projects WHERE id = ?').run(id)
+    logActivity('project', 'delete', id, row?.name)
     return { success: true }
   })
 

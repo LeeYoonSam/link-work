@@ -1,5 +1,6 @@
 import { ipcMain, shell } from 'electron'
 import { getDatabase } from '../db/database'
+import { logActivity } from '../utils/activity-logger'
 
 interface DocumentInput {
   name: string
@@ -26,6 +27,7 @@ export function registerDocumentIpc(): void {
       input.project_id ?? null,
       input.sort_order ?? 0
     )
+    logActivity('document', 'create', result.lastInsertRowid, input.name)
     return { id: result.lastInsertRowid }
   })
 
@@ -65,11 +67,15 @@ export function registerDocumentIpc(): void {
     values.push(id)
 
     db.prepare(`UPDATE documents SET ${fields.join(', ')} WHERE id = ?`).run(...values)
-    return db.prepare('SELECT * FROM documents WHERE id = ?').get(id)
+    const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as { name: string }
+    logActivity('document', 'update', id, row.name, Object.keys(input).join(', '))
+    return row
   })
 
   ipcMain.handle('document:delete', (_event, id: number) => {
+    const row = db.prepare('SELECT name FROM documents WHERE id = ?').get(id) as { name: string } | undefined
     db.prepare('DELETE FROM documents WHERE id = ?').run(id)
+    logActivity('document', 'delete', id, row?.name)
     return { success: true }
   })
 

@@ -8,6 +8,7 @@ import CalendarView from './components/calendar/CalendarView'
 import DocumentList from './components/document/DocumentList'
 import VariableList from './components/variable/VariableList'
 import MemoView from './components/memo/MemoView'
+import WeeklyReport from './components/report/WeeklyReport'
 import TrayPanel from './components/tray/TrayPanel'
 import { useProjectStore } from './stores/projectStore'
 
@@ -46,6 +47,8 @@ function App(): React.ReactNode {
         return <MemoView />
       case 'calendar':
         return <CalendarView />
+      case 'reports':
+        return <WeeklyReport />
       default:
         return <Dashboard />
     }

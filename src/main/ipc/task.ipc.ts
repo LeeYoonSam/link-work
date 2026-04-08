@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db/database'
+import { logActivity } from '../utils/activity-logger'
 
 interface TaskInput {
   project_id: number
@@ -30,6 +31,7 @@ export function registerTaskIpc(): void {
       input.status || 'pending',
       input.sort_order ?? maxOrder.next_order
     )
+    logActivity('task', 'create', result.lastInsertRowid, input.name)
     return { id: result.lastInsertRowid }
   })
 
@@ -51,11 +53,15 @@ export function registerTaskIpc(): void {
     values.push(id)
 
     db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`).run(...values)
-    return db.prepare('SELECT * FROM tasks WHERE id = ?').get(id)
+    const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as { name: string }
+    logActivity('task', 'update', id, row.name, Object.keys(input).join(', '))
+    return row
   })
 
   ipcMain.handle('task:delete', (_event, id: number) => {
+    const row = db.prepare('SELECT name FROM tasks WHERE id = ?').get(id) as { name: string } | undefined
     db.prepare('DELETE FROM tasks WHERE id = ?').run(id)
+    logActivity('task', 'delete', id, row?.name)
     return { success: true }
   })
 }

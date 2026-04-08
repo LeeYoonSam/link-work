@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db/database'
+import { logActivity } from '../utils/activity-logger'
 
 interface VariableInput {
   key: string
@@ -24,6 +25,7 @@ export function registerVariableIpc(): void {
       input.view_type || 'general',
       input.sort_order ?? 0
     )
+    logActivity('variable', 'create', result.lastInsertRowid, input.key)
     return { id: result.lastInsertRowid }
   })
 
@@ -48,7 +50,9 @@ export function registerVariableIpc(): void {
     values.push(id)
 
     db.prepare(`UPDATE variables SET ${fields.join(', ')} WHERE id = ?`).run(...values)
-    return db.prepare('SELECT * FROM variables WHERE id = ?').get(id)
+    const row = db.prepare('SELECT * FROM variables WHERE id = ?').get(id) as { key: string }
+    logActivity('variable', 'update', id, row.key, Object.keys(input).join(', '))
+    return row
   })
 
   ipcMain.handle('variable:reorder', (_event, items: { id: number; sort_order: number }[]) => {
@@ -63,7 +67,9 @@ export function registerVariableIpc(): void {
   })
 
   ipcMain.handle('variable:delete', (_event, id: number) => {
+    const row = db.prepare('SELECT key FROM variables WHERE id = ?').get(id) as { key: string } | undefined
     db.prepare('DELETE FROM variables WHERE id = ?').run(id)
+    logActivity('variable', 'delete', id, row?.key)
     return { success: true }
   })
 }

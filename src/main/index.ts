@@ -8,6 +8,7 @@ import { registerCalendarIpc } from './ipc/calendar.ipc'
 import { registerDocumentIpc } from './ipc/document.ipc'
 import { registerVariableIpc } from './ipc/variable.ipc'
 import { registerMemoIpc } from './ipc/memo.ipc'
+import { registerReportIpc } from './ipc/report.ipc'
 import { startNotificationService } from './services/notification'
 import { createTrayWidget } from './services/tray-widget'
 
@@ -63,6 +64,7 @@ app.whenReady().then(() => {
   registerDocumentIpc()
   registerVariableIpc()
   registerMemoIpc()
+  registerReportIpc()
   startNotificationService()
   createTrayWidget(() => createWindow())
 

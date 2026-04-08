@@ -1,9 +1,13 @@
 import { useProjectStore } from '../../stores/projectStore'
 
-const viewTitles = {
+const viewTitles: Record<string, string> = {
   dashboard: 'Dashboard',
   projects: 'Projects',
-  calendar: 'Calendar'
+  documents: 'Documents',
+  variables: 'Variables',
+  memos: 'Memos',
+  calendar: 'Calendar',
+  reports: 'Reports'
 }
 
 export default function Header(): React.ReactNode {
