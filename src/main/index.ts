@@ -9,6 +9,8 @@ import { registerDocumentIpc } from './ipc/document.ipc'
 import { registerVariableIpc } from './ipc/variable.ipc'
 import { registerMemoIpc } from './ipc/memo.ipc'
 import { registerReportIpc } from './ipc/report.ipc'
+import { registerTodoIpc } from './ipc/todo.ipc'
+import { registerTodoTagIpc } from './ipc/todo-tag.ipc'
 import { startNotificationService } from './services/notification'
 import { createTrayWidget } from './services/tray-widget'
 
@@ -65,6 +67,8 @@ app.whenReady().then(() => {
   registerVariableIpc()
   registerMemoIpc()
   registerReportIpc()
+  registerTodoIpc()
+  registerTodoTagIpc()
   startNotificationService()
   createTrayWidget(() => createWindow())
 

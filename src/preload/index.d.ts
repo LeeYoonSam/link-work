@@ -1,5 +1,5 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
-import type { ProjectAPI, TaskAPI, CalendarAPI, TrayAPI, DocumentAPI, VariableAPI, MemoAPI, ReportAPI } from '../renderer/src/types'
+import type { ProjectAPI, TaskAPI, CalendarAPI, TrayAPI, DocumentAPI, VariableAPI, MemoAPI, ReportAPI, TodoAPI, TodoTagAPI } from '../renderer/src/types'
 
 declare global {
   interface Window {
@@ -13,6 +13,8 @@ declare global {
       variable: VariableAPI
       memo: MemoAPI
       report: ReportAPI
+      todo: TodoAPI
+      todoTag: TodoTagAPI
     }
   }
 }

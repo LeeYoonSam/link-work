@@ -74,6 +74,26 @@ const api = {
     dailyStats: (weekStart: string, weekEnd: string) =>
       ipcRenderer.invoke('report:dailyStats', weekStart, weekEnd),
     weeklyTrend: (weeks: number) => ipcRenderer.invoke('report:weeklyTrend', weeks)
+  },
+  todo: {
+    create: (input: Record<string, unknown>) => ipcRenderer.invoke('todo:create', input),
+    list: (completed?: boolean) => ipcRenderer.invoke('todo:list', completed),
+    listByTag: (tagId: number, completed?: boolean) =>
+      ipcRenderer.invoke('todo:listByTag', tagId, completed),
+    update: (id: number, input: Record<string, unknown>) =>
+      ipcRenderer.invoke('todo:update', id, input),
+    complete: (id: number) => ipcRenderer.invoke('todo:complete', id),
+    restore: (id: number) => ipcRenderer.invoke('todo:restore', id),
+    delete: (id: number) => ipcRenderer.invoke('todo:delete', id),
+    history: (todoId: number) => ipcRenderer.invoke('todo:history', todoId),
+    listActive: () => ipcRenderer.invoke('todo:listActive')
+  },
+  todoTag: {
+    create: (input: Record<string, unknown>) => ipcRenderer.invoke('todoTag:create', input),
+    list: () => ipcRenderer.invoke('todoTag:list'),
+    update: (id: number, input: Record<string, unknown>) =>
+      ipcRenderer.invoke('todoTag:update', id, input),
+    delete: (id: number) => ipcRenderer.invoke('todoTag:delete', id)
   }
 }
 

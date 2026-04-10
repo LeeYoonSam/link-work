@@ -3,6 +3,7 @@ import { useProjectStore } from '../../stores/projectStore'
 const navItems = [
   { id: 'dashboard' as const, label: 'Dashboard', icon: '□' },
   { id: 'projects' as const, label: 'Projects', icon: '▤' },
+  { id: 'todos' as const, label: 'TODO', icon: '☑' },
   { id: 'documents' as const, label: 'Documents', icon: '◫' },
   { id: 'variables' as const, label: 'Variables', icon: '⚙' },
   { id: 'memos' as const, label: 'Memos', icon: '▪' },

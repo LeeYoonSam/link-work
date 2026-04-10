@@ -103,6 +103,43 @@ export function initDatabase(): void {
       details TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS todo_tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      color TEXT NOT NULL DEFAULT '#6B7280',
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS todos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      priority TEXT NOT NULL DEFAULT 'medium',
+      due_date TEXT,
+      due_reminder INTEGER NOT NULL DEFAULT 0,
+      is_completed INTEGER NOT NULL DEFAULT 0,
+      completed_at TEXT,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS todo_tag_map (
+      todo_id INTEGER NOT NULL,
+      tag_id INTEGER NOT NULL,
+      PRIMARY KEY (todo_id, tag_id),
+      FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE,
+      FOREIGN KEY (tag_id) REFERENCES todo_tags(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS todo_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      todo_id INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      snapshot TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
+    );
   `)
 
   // Migrations for existing databases

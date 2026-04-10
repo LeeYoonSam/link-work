@@ -223,3 +223,67 @@ export interface ReportAPI {
   dailyStats: (weekStart: string, weekEnd: string) => Promise<DailyStat[]>
   weeklyTrend: (weeks: number) => Promise<WeeklyTrend[]>
 }
+
+// TODO types
+export type TodoPriority = 'low' | 'medium' | 'high'
+
+export interface TodoTag {
+  id: number
+  name: string
+  color: string
+  created_at: string
+  updated_at: string
+}
+
+export interface Todo {
+  id: number
+  title: string
+  priority: TodoPriority
+  due_date: string | null
+  due_reminder: number
+  is_completed: number
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+  tags?: TodoTag[]
+}
+
+export interface TodoInput {
+  title: string
+  priority?: TodoPriority
+  due_date?: string | null
+  due_reminder?: number
+  tag_ids?: number[]
+}
+
+export interface TodoTagInput {
+  name: string
+  color?: string
+}
+
+export interface TodoHistory {
+  id: number
+  todo_id: number
+  action: 'complete' | 'restore' | 'create' | 'update' | 'delete'
+  snapshot: string
+  created_at: string
+}
+
+export interface TodoAPI {
+  create: (input: TodoInput) => Promise<{ id: number }>
+  list: (completed?: boolean) => Promise<Todo[]>
+  listByTag: (tagId: number, completed?: boolean) => Promise<Todo[]>
+  update: (id: number, input: Partial<TodoInput>) => Promise<Todo>
+  complete: (id: number) => Promise<{ success: boolean }>
+  restore: (id: number) => Promise<{ success: boolean }>
+  delete: (id: number) => Promise<{ success: boolean }>
+  history: (todoId: number) => Promise<TodoHistory[]>
+  listActive: () => Promise<Todo[]>
+}
+
+export interface TodoTagAPI {
+  create: (input: TodoTagInput) => Promise<{ id: number }>
+  list: () => Promise<TodoTag[]>
+  update: (id: number, input: Partial<TodoTagInput>) => Promise<TodoTag>
+  delete: (id: number) => Promise<{ success: boolean }>
+}
