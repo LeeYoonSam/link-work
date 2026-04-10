@@ -25,10 +25,13 @@ function getUrgencyLevel(progress: number): UrgencyLevel {
   return 'late'
 }
 
-const urgencyConfig: Record<UrgencyLevel, { bg: string; bar: string; text: string; label: string }> = {
-  early: { bg: 'bg-green-50', bar: 'bg-green-500', text: 'text-green-700', label: 'Early' },
-  mid: { bg: 'bg-blue-50', bar: 'bg-blue-500', text: 'text-blue-700', label: 'Mid' },
-  late: { bg: 'bg-red-50', bar: 'bg-red-500', text: 'text-red-700', label: 'Late' }
+const urgencyConfig: Record<
+  UrgencyLevel,
+  { bg: string; bgHex: string; bar: string; text: string; label: string }
+> = {
+  early: { bg: 'bg-green-50', bgHex: '#F0FDF4', bar: 'bg-green-500', text: 'text-green-700', label: 'Early' },
+  mid: { bg: 'bg-blue-50', bgHex: '#EFF6FF', bar: 'bg-blue-500', text: 'text-blue-700', label: 'Mid' },
+  late: { bg: 'bg-red-50', bgHex: '#FEF2F2', bar: 'bg-red-500', text: 'text-red-700', label: 'Late' }
 }
 
 const taskStatusConfig: Record<string, { dot: string; badge: string; label: string }> = {
@@ -92,6 +95,7 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
     if (!date) return '-'
     return format(new Date(date), 'MM/dd')
   }
+  void formatTaskDate
 
   return (
     <div className={`border rounded-lg ${config.bg} border-gray-200`}>
@@ -182,53 +186,76 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
           return ''
         }
 
+        const stickyBg = config.bgHex
+        const taskColWidth = 128
+        const statusColWidth = 80
+        const timelineWidth = Math.max(totalMinWidth, 200)
+        const innerWidth = taskColWidth + timelineWidth + statusColWidth
+
+        const dayNames = ['일', '월', '화', '수', '목', '금', '토']
+
         return (
-          <div className="border-t border-gray-200 px-4 py-3 overflow-x-auto">
-            <div style={{ minWidth: `${totalMinWidth + 208}px` }}>
+          <div className="border-t border-gray-200 overflow-x-auto">
+            <div
+              className="relative"
+              style={{ width: `${innerWidth}px`, minWidth: '100%' }}
+            >
               {/* Header: task name column + day columns + status */}
-              <div className="flex items-end gap-0 mb-1">
-                <div className="w-32 shrink-0 text-xs font-medium text-gray-500 pr-2">Task</div>
-                <div className="flex gap-0.5 flex-1">
+              <div className="flex items-end gap-0 mb-1 px-4 pt-3">
+                <div
+                  className="shrink-0 text-xs font-medium text-gray-500 pr-2 sticky left-0 z-20"
+                  style={{ width: `${taskColWidth}px`, backgroundColor: stickyBg }}
+                >
+                  Task
+                </div>
+                <div
+                  className="flex gap-0.5"
+                  style={{ width: `${timelineWidth}px` }}
+                >
                   {timelineDays.map((day, idx) => {
                     const isToday = isSameDay(day, today)
                     const marker = getDateMarkerType(day, project)
                     const dayBorder = getDayBorder(day, idx)
-                    const dayNames = ['일', '월', '화', '수', '목', '금', '토']
                     const tooltipDate = `${format(day, 'MM/dd')}(${dayNames[day.getDay()]})`
-                    const showDate = isToday ||
+                    const showDate =
+                      isToday ||
                       marker !== null ||
                       day.getDate() === 1 ||
                       idx === 0 ||
                       day.getDate() % 5 === 0
                     const isQaMarker = marker === 'qa' || marker === 'qa_start' || marker === 'qa_end'
-                    const markerColorClass = marker === 'deploy'
-                      ? 'font-bold text-red-600'
-                      : marker === 'dev_end'
-                        ? 'font-bold text-purple-600'
-                        : isQaMarker
-                          ? 'font-bold text-orange-500'
-                          : isToday
-                            ? 'font-bold text-blue-600 bg-blue-100 rounded'
-                            : 'text-gray-400'
+                    const markerColorClass =
+                      marker === 'deploy'
+                        ? 'font-bold text-red-600'
+                        : marker === 'dev_end'
+                          ? 'font-bold text-purple-600'
+                          : isQaMarker
+                            ? 'font-bold text-orange-500'
+                            : isToday
+                              ? 'font-bold text-blue-600 bg-blue-100 rounded'
+                              : 'text-gray-400'
                     return (
-                    <div
-                      key={day.toISOString()}
-                      className={`text-center text-xs leading-tight flex-1 ${markerColorClass} ${dayBorder}`}
-                      style={{ minWidth: `${minCellWidth}px` }}
-                      title={tooltipDate}
-                    >
-                      {isToday
-                        ? format(day, 'd')
-                        : showDate
-                          ? (day.getDate() === 1 || idx === 0)
-                            ? format(day, 'M/d')
-                            : format(day, 'd')
-                          : ''}
-                    </div>
+                      <div
+                        key={day.toISOString()}
+                        className={`text-center text-xs leading-tight flex-1 ${markerColorClass} ${dayBorder}`}
+                        style={{ minWidth: `${minCellWidth}px` }}
+                        title={tooltipDate}
+                      >
+                        {isToday
+                          ? format(day, 'd')
+                          : showDate
+                            ? day.getDate() === 1 || idx === 0
+                              ? format(day, 'M/d')
+                              : format(day, 'd')
+                            : ''}
+                      </div>
                     )
                   })}
                 </div>
-                <div className="w-20 shrink-0 text-xs font-medium text-gray-500 text-center pl-2">
+                <div
+                  className="shrink-0 text-xs font-medium text-gray-500 text-center pl-2 sticky right-0 z-20"
+                  style={{ width: `${statusColWidth}px`, backgroundColor: stickyBg }}
+                >
                   Status
                 </div>
               </div>
@@ -240,14 +267,18 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
                 const taskEnd = task.end_date ? startOfDay(new Date(task.end_date)) : null
 
                 return (
-                  <div key={task.id} className="flex items-center gap-0 py-0.5">
+                  <div key={task.id} className="flex items-center gap-0 py-0.5 px-4">
                     <div
-                      className="w-32 shrink-0 text-xs text-gray-800 pr-2 truncate"
+                      className="shrink-0 text-xs text-gray-800 pr-2 truncate sticky left-0 z-10"
+                      style={{ width: `${taskColWidth}px`, backgroundColor: stickyBg }}
                       title={task.name}
                     >
                       {task.name}
                     </div>
-                    <div className="flex gap-0.5 flex-1">
+                    <div
+                      className="flex gap-0.5"
+                      style={{ width: `${timelineWidth}px` }}
+                    >
                       {timelineDays.map((day, idx) => {
                         const isInRange =
                           taskStart &&
@@ -259,7 +290,6 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
                         const isLast = taskEnd && isSameDay(day, taskEnd)
                         const dayBorder = getDayBorder(day, idx)
                         const marker = getDateMarkerType(day, project)
-                        const dayNames = ['일', '월', '화', '수', '목', '금', '토']
                         const tooltipDate = `${format(day, 'MM/dd')}(${dayNames[day.getDay()]})${isInRange ? ` - ${task.name}` : ''}`
 
                         const markerBg = getMarkerBg(marker)
@@ -286,7 +316,10 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
                         )
                       })}
                     </div>
-                    <div className="w-20 shrink-0 text-center pl-2">
+                    <div
+                      className="shrink-0 text-center pl-2 sticky right-0 z-10"
+                      style={{ width: `${statusColWidth}px`, backgroundColor: stickyBg }}
+                    >
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
@@ -303,22 +336,31 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
               })}
 
               {/* Today marker label */}
-              <div className="flex items-center gap-0 mt-2">
-                <div className="w-32 shrink-0" />
-                <div className="flex gap-0.5 flex-1">
+              <div className="flex items-center gap-0 mt-2 px-4 pb-3">
+                <div
+                  className="shrink-0 sticky left-0 z-10"
+                  style={{ width: `${taskColWidth}px`, backgroundColor: stickyBg }}
+                />
+                <div
+                  className="flex gap-0.5"
+                  style={{ width: `${timelineWidth}px` }}
+                >
                   {timelineDays.map((day, idx) => (
                     <div
                       key={day.toISOString()}
                       className={`text-center flex-1 ${getDayBorder(day, idx)}`}
                       style={{ minWidth: `${minCellWidth}px` }}
                     >
-                      {isSameDay(day, today) && (
+                      {isSameDay(day, today) ? (
                         <div className="text-xs text-blue-600 font-bold">▲</div>
-                      )}
+                      ) : null}
                     </div>
                   ))}
                 </div>
-                <div className="w-20 shrink-0" />
+                <div
+                  className="shrink-0 sticky right-0 z-10"
+                  style={{ width: `${statusColWidth}px`, backgroundColor: stickyBg }}
+                />
               </div>
             </div>
           </div>
