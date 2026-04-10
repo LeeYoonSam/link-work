@@ -98,7 +98,7 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
   void formatTaskDate
 
   return (
-    <div className={`border rounded-lg ${config.bg} border-gray-200`}>
+    <div className={`border rounded-lg ${config.bg} border-gray-200 min-w-0 overflow-hidden`}>
       <div
         className="p-4 cursor-pointer select-none"
         onClick={() => totalTasks > 0 && setExpanded(!expanded)}
@@ -186,140 +186,146 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
           return ''
         }
 
-        const stickyBg = config.bgHex
-        const taskColWidth = 128
-        const statusColWidth = 80
-        const timelineWidth = Math.max(totalMinWidth, 200)
-        const innerWidth = taskColWidth + timelineWidth + statusColWidth
-
+        const rowH = 'h-6'
         const dayNames = ['일', '월', '화', '수', '목', '금', '토']
 
         return (
-          <div className="border-t border-gray-200 overflow-x-auto">
-            <div
-              className="relative"
-              style={{ width: `${innerWidth}px`, minWidth: '100%' }}
-            >
-              {/* Header: task name column + day columns + status */}
-              <div className="flex items-end gap-0 mb-1 px-4 pt-3">
-                <div
-                  className="shrink-0 text-xs font-medium text-gray-500 pr-2 sticky left-0 z-20"
-                  style={{ width: `${taskColWidth}px`, backgroundColor: stickyBg }}
-                >
-                  Task
+          <div className="border-t border-gray-200 py-3">
+            <div className="flex">
+              {/* Left: Task names (fixed, no scroll) */}
+              <div className="w-32 shrink-0 pl-4 pr-2">
+                <div className={`${rowH} flex items-end mb-1`}>
+                  <span className="text-xs font-medium text-gray-500">Task</span>
                 </div>
-                <div
-                  className="flex gap-0.5"
-                  style={{ width: `${timelineWidth}px` }}
-                >
-                  {timelineDays.map((day, idx) => {
-                    const isToday = isSameDay(day, today)
-                    const marker = getDateMarkerType(day, project)
-                    const dayBorder = getDayBorder(day, idx)
-                    const tooltipDate = `${format(day, 'MM/dd')}(${dayNames[day.getDay()]})`
-                    const showDate =
-                      isToday ||
-                      marker !== null ||
-                      day.getDate() === 1 ||
-                      idx === 0 ||
-                      day.getDate() % 5 === 0
-                    const isQaMarker = marker === 'qa' || marker === 'qa_start' || marker === 'qa_end'
-                    const markerColorClass =
-                      marker === 'deploy'
-                        ? 'font-bold text-red-600'
-                        : marker === 'dev_end'
-                          ? 'font-bold text-purple-600'
-                          : isQaMarker
-                            ? 'font-bold text-orange-500'
-                            : isToday
-                              ? 'font-bold text-blue-600 bg-blue-100 rounded'
-                              : 'text-gray-400'
+                {tasks.map((task) => (
+                  <div
+                    key={task.id}
+                    className={`${rowH} flex items-center py-0.5`}
+                  >
+                    <span className="text-xs text-gray-800 truncate" title={task.name}>
+                      {task.name}
+                    </span>
+                  </div>
+                ))}
+                <div className={`${rowH} mt-2`} />
+              </div>
+
+              {/* Middle: Timeline (scrollable) */}
+              <div className="flex-1 min-w-0 overflow-x-auto">
+                <div style={{ minWidth: `${totalMinWidth}px` }}>
+                  {/* Date header */}
+                  <div className={`${rowH} flex items-end gap-0.5 mb-1`}>
+                    {timelineDays.map((day, idx) => {
+                      const isToday = isSameDay(day, today)
+                      const marker = getDateMarkerType(day, project)
+                      const dayBorder = getDayBorder(day, idx)
+                      const tooltipDate = `${format(day, 'MM/dd')}(${dayNames[day.getDay()]})`
+                      const showDate =
+                        isToday ||
+                        marker !== null ||
+                        day.getDate() === 1 ||
+                        idx === 0 ||
+                        day.getDate() % 5 === 0
+                      const isQaMarker = marker === 'qa' || marker === 'qa_start' || marker === 'qa_end'
+                      const markerColorClass =
+                        marker === 'deploy'
+                          ? 'font-bold text-red-600'
+                          : marker === 'dev_end'
+                            ? 'font-bold text-purple-600'
+                            : isQaMarker
+                              ? 'font-bold text-orange-500'
+                              : isToday
+                                ? 'font-bold text-blue-600 bg-blue-100 rounded'
+                                : 'text-gray-400'
+                      return (
+                        <div
+                          key={day.toISOString()}
+                          className={`text-center text-xs leading-tight flex-1 ${markerColorClass} ${dayBorder}`}
+                          style={{ minWidth: `${minCellWidth}px` }}
+                          title={tooltipDate}
+                        >
+                          {isToday
+                            ? format(day, 'd')
+                            : showDate
+                              ? day.getDate() === 1 || idx === 0
+                                ? format(day, 'M/d')
+                                : format(day, 'd')
+                              : ''}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Timeline cells */}
+                  {tasks.map((task) => {
+                    const taskStart = task.start_date ? startOfDay(new Date(task.start_date)) : null
+                    const taskEnd = task.end_date ? startOfDay(new Date(task.end_date)) : null
                     return (
-                      <div
-                        key={day.toISOString()}
-                        className={`text-center text-xs leading-tight flex-1 ${markerColorClass} ${dayBorder}`}
-                        style={{ minWidth: `${minCellWidth}px` }}
-                        title={tooltipDate}
-                      >
-                        {isToday
-                          ? format(day, 'd')
-                          : showDate
-                            ? day.getDate() === 1 || idx === 0
-                              ? format(day, 'M/d')
-                              : format(day, 'd')
-                            : ''}
+                      <div key={task.id} className={`${rowH} flex items-center gap-0.5 py-0.5`}>
+                        {timelineDays.map((day, idx) => {
+                          const isInRange =
+                            taskStart &&
+                            taskEnd &&
+                            isWithinInterval(day, { start: taskStart, end: taskEnd })
+                          const isToday = isSameDay(day, today)
+                          const isPast = isBefore(day, today)
+                          const isFirst = taskStart && isSameDay(day, taskStart)
+                          const isLast = taskEnd && isSameDay(day, taskEnd)
+                          const dayBorder = getDayBorder(day, idx)
+                          const marker = getDateMarkerType(day, project)
+                          const tooltipDate = `${format(day, 'MM/dd')}(${dayNames[day.getDay()]})${isInRange ? ` - ${task.name}` : ''}`
+
+                          const markerBg = getMarkerBg(marker)
+                          let cellClass = markerBg || 'bg-gray-100'
+                          if (isInRange) {
+                            if (task.status === 'done') {
+                              cellClass = 'bg-green-400'
+                            } else if (task.status === 'in_progress') {
+                              cellClass = isPast || isToday ? 'bg-yellow-400' : 'bg-yellow-200'
+                            } else {
+                              cellClass = 'bg-gray-300'
+                            }
+                          }
+                          const todayRing = isToday ? 'ring-2 ring-blue-500 ring-inset' : ''
+                          return (
+                            <div
+                              key={day.toISOString()}
+                              className={`h-5 flex-1 ${cellClass} ${todayRing} ${isFirst ? 'rounded-l' : ''} ${isLast ? 'rounded-r' : ''} ${dayBorder}`}
+                              style={{ minWidth: `${minCellWidth}px` }}
+                              title={tooltipDate}
+                            />
+                          )
+                        })}
                       </div>
                     )
                   })}
-                </div>
-                <div
-                  className="shrink-0 text-xs font-medium text-gray-500 text-center pl-2 sticky right-0 z-20"
-                  style={{ width: `${statusColWidth}px`, backgroundColor: stickyBg }}
-                >
-                  Status
+
+                  {/* Today marker */}
+                  <div className={`${rowH} flex items-center gap-0.5 mt-2`}>
+                    {timelineDays.map((day, idx) => (
+                      <div
+                        key={day.toISOString()}
+                        className={`text-center flex-1 ${getDayBorder(day, idx)}`}
+                        style={{ minWidth: `${minCellWidth}px` }}
+                      >
+                        {isSameDay(day, today) ? (
+                          <div className="text-xs text-blue-600 font-bold">▲</div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              {/* Task rows */}
-              {tasks.map((task) => {
-                const statusCfg = taskStatusConfig[task.status]
-                const taskStart = task.start_date ? startOfDay(new Date(task.start_date)) : null
-                const taskEnd = task.end_date ? startOfDay(new Date(task.end_date)) : null
-
-                return (
-                  <div key={task.id} className="flex items-center gap-0 py-0.5 px-4">
-                    <div
-                      className="shrink-0 text-xs text-gray-800 pr-2 truncate sticky left-0 z-10"
-                      style={{ width: `${taskColWidth}px`, backgroundColor: stickyBg }}
-                      title={task.name}
-                    >
-                      {task.name}
-                    </div>
-                    <div
-                      className="flex gap-0.5"
-                      style={{ width: `${timelineWidth}px` }}
-                    >
-                      {timelineDays.map((day, idx) => {
-                        const isInRange =
-                          taskStart &&
-                          taskEnd &&
-                          isWithinInterval(day, { start: taskStart, end: taskEnd })
-                        const isToday = isSameDay(day, today)
-                        const isPast = isBefore(day, today)
-                        const isFirst = taskStart && isSameDay(day, taskStart)
-                        const isLast = taskEnd && isSameDay(day, taskEnd)
-                        const dayBorder = getDayBorder(day, idx)
-                        const marker = getDateMarkerType(day, project)
-                        const tooltipDate = `${format(day, 'MM/dd')}(${dayNames[day.getDay()]})${isInRange ? ` - ${task.name}` : ''}`
-
-                        const markerBg = getMarkerBg(marker)
-                        let cellClass = markerBg || 'bg-gray-100'
-                        if (isInRange) {
-                          if (task.status === 'done') {
-                            cellClass = 'bg-green-400'
-                          } else if (task.status === 'in_progress') {
-                            cellClass = isPast || isToday ? 'bg-yellow-400' : 'bg-yellow-200'
-                          } else {
-                            cellClass = 'bg-gray-300'
-                          }
-                        }
-
-                        const todayRing = isToday ? 'ring-2 ring-blue-500 ring-inset' : ''
-
-                        return (
-                          <div
-                            key={day.toISOString()}
-                            className={`h-5 flex-1 ${cellClass} ${todayRing} ${isFirst ? 'rounded-l' : ''} ${isLast ? 'rounded-r' : ''} ${dayBorder}`}
-                            style={{ minWidth: `${minCellWidth}px` }}
-                            title={tooltipDate}
-                          />
-                        )
-                      })}
-                    </div>
-                    <div
-                      className="shrink-0 text-center pl-2 sticky right-0 z-10"
-                      style={{ width: `${statusColWidth}px`, backgroundColor: stickyBg }}
-                    >
+              {/* Right: Status (fixed, no scroll) */}
+              <div className="w-20 shrink-0 pl-2 pr-4">
+                <div className={`${rowH} flex items-end justify-center mb-1`}>
+                  <span className="text-xs font-medium text-gray-500">Status</span>
+                </div>
+                {tasks.map((task) => {
+                  const statusCfg = taskStatusConfig[task.status]
+                  return (
+                    <div key={task.id} className={`${rowH} flex items-center justify-center py-0.5`}>
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
@@ -331,36 +337,9 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
                         {statusCfg.label}
                       </button>
                     </div>
-                  </div>
-                )
-              })}
-
-              {/* Today marker label */}
-              <div className="flex items-center gap-0 mt-2 px-4 pb-3">
-                <div
-                  className="shrink-0 sticky left-0 z-10"
-                  style={{ width: `${taskColWidth}px`, backgroundColor: stickyBg }}
-                />
-                <div
-                  className="flex gap-0.5"
-                  style={{ width: `${timelineWidth}px` }}
-                >
-                  {timelineDays.map((day, idx) => (
-                    <div
-                      key={day.toISOString()}
-                      className={`text-center flex-1 ${getDayBorder(day, idx)}`}
-                      style={{ minWidth: `${minCellWidth}px` }}
-                    >
-                      {isSameDay(day, today) ? (
-                        <div className="text-xs text-blue-600 font-bold">▲</div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-                <div
-                  className="shrink-0 sticky right-0 z-10"
-                  style={{ width: `${statusColWidth}px`, backgroundColor: stickyBg }}
-                />
+                  )
+                })}
+                <div className={`${rowH} mt-2`} />
               </div>
             </div>
           </div>

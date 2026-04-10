@@ -152,7 +152,7 @@ export default function Dashboard(): React.ReactNode {
                 No active projects
               </div>
             ) : (
-              <div className="grid gap-4 min-w-0">
+              <div className="grid gap-4 min-w-0 [&>*]:min-w-0">
                 {activeProjects.map((project) => (
                   <ProjectProgress key={project.id} project={project} />
                 ))}
