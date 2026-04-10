@@ -24,9 +24,17 @@ interface TrayProject {
   totalTasks: number
 }
 
+interface TrayEvent {
+  summary: string
+  time: string
+  allDay: boolean
+  kind: 'event' | 'todo'
+  isCompleted: boolean
+}
+
 interface TrayData {
   projects: TrayProject[]
-  events: { summary: string; time: string; allDay: boolean }[]
+  events: TrayEvent[]
 }
 
 /**
@@ -116,14 +124,80 @@ function getActiveProjects(): TrayProject[] {
     })
 }
 
+function hasTime(dueDate: string): boolean {
+  return /\s\d{2}:\d{2}/.test(dueDate)
+}
+
+function getTodayTodoScheduleItems(): TrayEvent[] {
+  const db = getDatabase()
+  const today = format(new Date(), 'yyyy-MM-dd')
+
+  // TODOs with due_date today (with time) OR completed today
+  const rows = db
+    .prepare(`
+      SELECT id, title, due_date, is_completed, completed_at FROM todos
+      WHERE (due_date IS NOT NULL AND due_date LIKE ? || '%')
+         OR (is_completed = 1 AND completed_at IS NOT NULL AND completed_at LIKE ? || '%')
+    `)
+    .all(today, today) as {
+      id: number
+      title: string
+      due_date: string | null
+      is_completed: number
+      completed_at: string | null
+    }[]
+
+  const items: TrayEvent[] = []
+  const seen = new Set<number>()
+
+  for (const row of rows) {
+    if (seen.has(row.id)) continue
+    seen.add(row.id)
+
+    const isCompleted = row.is_completed === 1
+
+    // Determine time: prefer completed_at for completed todos, else due_date
+    let time: string | null = null
+    if (isCompleted && row.completed_at && row.completed_at.startsWith(today)) {
+      time = format(new Date(row.completed_at.replace(' ', 'T')), 'HH:mm')
+    } else if (row.due_date && hasTime(row.due_date) && row.due_date.startsWith(today)) {
+      time = format(new Date(row.due_date.replace(' ', 'T')), 'HH:mm')
+    }
+
+    if (!time) continue
+
+    items.push({
+      summary: row.title,
+      time,
+      allDay: false,
+      kind: 'todo',
+      isCompleted
+    })
+  }
+
+  return items
+}
+
 async function getTrayData(): Promise<TrayData> {
   const projects = getActiveProjects()
   const calEvents = await getTodayEvents()
-  const events = calEvents.map((e: CalendarEvent) => ({
+  const calItems: TrayEvent[] = calEvents.map((e: CalendarEvent) => ({
     summary: e.summary,
     time: e.allDay ? 'All Day' : format(new Date(e.start), 'HH:mm'),
-    allDay: e.allDay
+    allDay: e.allDay,
+    kind: 'event' as const,
+    isCompleted: false
   }))
+  const todoItems = getTodayTodoScheduleItems()
+
+  // Merge and sort: all-day first, then by time
+  const events = [...calItems, ...todoItems].sort((a, b) => {
+    if (a.allDay && !b.allDay) return -1
+    if (!a.allDay && b.allDay) return 1
+    if (a.allDay && b.allDay) return 0
+    return a.time.localeCompare(b.time)
+  })
+
   return { projects, events }
 }
 

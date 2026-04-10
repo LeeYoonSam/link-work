@@ -36,6 +36,8 @@ interface TrayEvent {
   summary: string
   time: string
   allDay: boolean
+  kind: 'event' | 'todo'
+  isCompleted: boolean
 }
 
 interface TrayData {
@@ -188,12 +190,33 @@ export default function TrayPanel(): React.ReactNode {
           ) : (
             <div className="space-y-1.5">
               {data.events.map((event, i) => (
-                <div key={i} className="flex items-center gap-2 py-1">
-                  <span className="text-xs font-medium text-gray-500 w-12 shrink-0 text-right">
+                <div key={i} className={`flex items-center gap-2 py-1 ${event.isCompleted ? 'opacity-60' : ''}`}>
+                  <span className={`text-xs font-medium w-12 shrink-0 text-right ${
+                    event.kind === 'todo' && event.isCompleted
+                      ? 'text-green-500'
+                      : event.kind === 'todo'
+                        ? 'text-green-600'
+                        : 'text-gray-500'
+                  }`}>
                     {event.time}
                   </span>
-                  <div className="w-0.5 h-4 bg-blue-400 rounded-full shrink-0" />
-                  <span className="text-xs text-gray-800 truncate">{event.summary}</span>
+                  <div className={`w-0.5 h-4 rounded-full shrink-0 ${
+                    event.kind === 'todo' ? 'bg-green-400' : 'bg-blue-400'
+                  }`} />
+                  <span className={`text-xs truncate ${
+                    event.isCompleted ? 'line-through text-gray-400' : 'text-gray-800'
+                  }`}>
+                    {event.summary}
+                  </span>
+                  {event.kind === 'todo' ? (
+                    <span className={`text-[9px] px-1 py-0.5 rounded-full shrink-0 ${
+                      event.isCompleted
+                        ? 'bg-green-500 text-white'
+                        : 'bg-green-50 text-green-600'
+                    }`}>
+                      {event.isCompleted ? '완료' : 'TODO'}
+                    </span>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -204,7 +227,7 @@ export default function TrayPanel(): React.ReactNode {
       {/* Footer */}
       <div className="border-t border-gray-100 px-4 py-2 bg-gray-50 flex justify-between items-center">
         <span className="text-xs text-gray-400">
-          {data.projects.length} projects / {data.events.length} events
+          {data.projects.length} projects / {data.events.length} schedules
         </span>
         <button
           onClick={() => {
