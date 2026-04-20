@@ -5,6 +5,7 @@ import { useMemoStore } from '../../stores/memoStore'
 import { useTodoStore } from '../../stores/todoStore'
 import ProjectProgress from './ProjectProgress'
 import TodaySchedule from './TodaySchedule'
+import MarkdownContent from '../memo/MarkdownContent'
 import { format } from 'date-fns'
 import type { Todo } from '../../types'
 
@@ -126,10 +127,11 @@ export default function Dashboard(): React.ReactNode {
             {importantMemos.map((memo) => (
               <div
                 key={memo.id}
-                className="bg-yellow-50 border border-yellow-200 rounded-lg p-4"
+                className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 overflow-hidden"
               >
-                <div className="whitespace-pre-wrap text-sm text-gray-800 line-clamp-4">
-                  {memo.content}
+                <div className="max-h-28 overflow-hidden relative">
+                  <MarkdownContent content={memo.content} compact />
+                  <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-yellow-50 to-transparent" />
                 </div>
                 <div className="text-xs text-gray-400 mt-2">
                   {format(new Date(memo.created_at), 'yyyy-MM-dd HH:mm:ss')}
