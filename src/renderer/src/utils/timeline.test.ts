@@ -105,6 +105,40 @@ describe('filterBusinessDays', () => {
   it('빈 배열을 넘기면 빈 배열을 반환한다', () => {
     expect(filterBusinessDays([])).toHaveLength(0)
   })
+
+  it('keepDates에 포함된 주말은 유지한다', () => {
+    // 2026-03-23 (Mon) ~ 2026-03-29 (Sun): 5 business days + 2 weekends
+    const days = eachDayOfInterval({
+      start: new Date(2026, 2, 23),
+      end: new Date(2026, 2, 29)
+    })
+    const keepDates = new Set(['2026-03-28', '2026-03-29']) // Sat, Sun
+    const result = filterBusinessDays(days, keepDates)
+    // 5 weekdays + 2 kept weekends = 7 days
+    expect(result).toHaveLength(7)
+  })
+
+  it('keepDates에 포함된 공휴일은 유지한다', () => {
+    // 2026-05-04 (Mon) ~ 2026-05-08 (Fri), 5/5 = 어린이날
+    const days = eachDayOfInterval({
+      start: new Date(2026, 4, 4),
+      end: new Date(2026, 4, 8)
+    })
+    const keepDates = new Set(['2026-05-05'])
+    const result = filterBusinessDays(days, keepDates)
+    // Mon, Tue(holiday kept), Wed, Thu, Fri = 5 days
+    expect(result).toHaveLength(5)
+    expect(result.some((d) => d.getDate() === 5)).toBe(true)
+  })
+
+  it('keepDates가 없으면 기존 동작을 유지한다', () => {
+    const days = eachDayOfInterval({
+      start: new Date(2026, 2, 23), // Mon
+      end: new Date(2026, 2, 29)    // Sun
+    })
+    const result = filterBusinessDays(days)
+    expect(result).toHaveLength(5)
+  })
 })
 
 describe('getDateMarkerType', () => {

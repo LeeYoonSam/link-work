@@ -20,8 +20,15 @@ export function isKoreanHoliday(date: Date): boolean {
   return KOREAN_HOLIDAYS.some(([m, d]) => m === month && d === day)
 }
 
-export function filterBusinessDays(days: Date[]): Date[] {
-  return days.filter((day) => !isWeekend(day) && !isKoreanHoliday(day))
+function toDateStr(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+export function filterBusinessDays(days: Date[], keepDates?: Set<string>): Date[] {
+  return days.filter((day) => {
+    if (keepDates && keepDates.has(toDateStr(day))) return true
+    return !isWeekend(day) && !isKoreanHoliday(day)
+  })
 }
 
 export type DateMarkerType = 'dev_end' | 'deploy' | 'qa_start' | 'qa_end' | 'qa' | null

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import type { Project, Task } from '../../types'
-import { differenceInCalendarDays, format, eachDayOfInterval, isSameDay, isWithinInterval, isBefore, startOfDay } from 'date-fns'
+import { differenceInCalendarDays, format, eachDayOfInterval, isSameDay, isWithinInterval, isBefore, startOfDay, min, max } from 'date-fns'
 import { filterBusinessDays, getDateMarkerType, isNewWeekStart } from '../../utils/timeline'
 
 type UrgencyLevel = 'early' | 'mid' | 'late'
@@ -161,10 +161,17 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
       </div>
 
       {expanded && totalTasks > 0 && (() => {
-        const projectStart = startOfDay(new Date(project.dev_start_date))
-        const projectEnd = startOfDay(new Date(project.deploy_date))
+        const taskDateStrs = tasks
+          .flatMap((t) => [t.start_date, t.end_date])
+          .filter((d): d is string => !!d)
+        const taskDateSet = new Set(taskDateStrs)
+        const taskDays = taskDateStrs.map((d) => startOfDay(new Date(d)))
+        const devStart = startOfDay(new Date(project.dev_start_date))
+        const deployEnd = startOfDay(new Date(project.deploy_date))
+        const projectStart = min([devStart, ...taskDays])
+        const projectEnd = max([deployEnd, ...taskDays])
         const allDays = eachDayOfInterval({ start: projectStart, end: projectEnd })
-        const timelineDays = filterBusinessDays(allDays)
+        const timelineDays = filterBusinessDays(allDays, taskDateSet)
         const today = startOfDay(new Date())
 
         const taskBarColor: Record<string, string> = {
@@ -220,12 +227,15 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
                       const marker = getDateMarkerType(day, project)
                       const dayBorder = getDayBorder(day, idx)
                       const tooltipDate = `${format(day, 'MM/dd')}(${dayNames[day.getDay()]})`
+                      const dayStr = format(day, 'yyyy-MM-dd')
+                      const isTaskBoundary = taskDateSet.has(dayStr)
                       const showDate =
                         isToday ||
                         marker !== null ||
                         day.getDate() === 1 ||
                         idx === 0 ||
-                        day.getDate() % 5 === 0
+                        day.getDate() % 5 === 0 ||
+                        isTaskBoundary
                       const isQaMarker = marker === 'qa' || marker === 'qa_start' || marker === 'qa_end'
                       const markerColorClass =
                         marker === 'deploy'
