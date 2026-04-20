@@ -1,10 +1,12 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useCalendarStore } from '../../stores/calendarStore'
 import CalendarSettings from './CalendarSettings'
+import { renderDescription } from './linkify'
 import { format, isAfter, isBefore } from 'date-fns'
 
 export default function CalendarView(): React.ReactNode {
   const { events, status, loading, fetchEvents, fetchStatus, refreshEvents } = useCalendarStore()
+  const [showSettings, setShowSettings] = useState(false)
 
   useEffect(() => {
     fetchStatus()
@@ -18,6 +20,10 @@ export default function CalendarView(): React.ReactNode {
 
   if (!status.hasCredentials || !status.connected) {
     return <CalendarSettings />
+  }
+
+  if (showSettings) {
+    return <CalendarSettings onBack={() => setShowSettings(false)} />
   }
 
   const now = new Date()
@@ -48,7 +54,7 @@ export default function CalendarView(): React.ReactNode {
             Refresh
           </button>
           <button
-            onClick={() => fetchStatus()}
+            onClick={() => setShowSettings(true)}
             className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
           >
             Settings
@@ -71,19 +77,19 @@ export default function CalendarView(): React.ReactNode {
                   : 'border-gray-200 bg-white'
               }`}
             >
-              <div className="flex items-start justify-between">
-                <div>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
                   <h4 className="font-medium text-gray-900">{event.summary}</h4>
                   {event.description && (
-                    <p className="text-sm text-gray-500 mt-1 line-clamp-2">
-                      {event.description}
+                    <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap break-words">
+                      {renderDescription(event.description)}
                     </p>
                   )}
                   {event.location && (
                     <p className="text-xs text-gray-400 mt-1">{event.location}</p>
                   )}
                 </div>
-                <div className="text-right">
+                <div className="text-right flex-shrink-0">
                   <span className="text-sm font-medium text-gray-700">
                     {getEventTimeDisplay(event)}
                   </span>

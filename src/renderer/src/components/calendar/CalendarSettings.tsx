@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useCalendarStore } from '../../stores/calendarStore'
 
-export default function CalendarSettings(): React.ReactNode {
+interface Props {
+  onBack?: () => void
+}
+
+export default function CalendarSettings({ onBack }: Props = {}): React.ReactNode {
   const { status, fetchStatus, connect, disconnect, saveSettings } = useCalendarStore()
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
@@ -42,7 +46,17 @@ export default function CalendarSettings(): React.ReactNode {
 
   return (
     <div className="max-w-lg">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">Google Calendar Settings</h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-gray-900">Google Calendar Settings</h3>
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+          >
+            ← Back
+          </button>
+        )}
+      </div>
 
       {status.connected ? (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
