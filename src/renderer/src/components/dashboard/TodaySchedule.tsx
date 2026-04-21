@@ -66,16 +66,45 @@ export default function TodaySchedule({ events, connected, todos = [] }: Props):
     })
     .filter((item): item is Extract<ScheduleItem, { kind: 'todo' }> => item !== null)
 
+  // Today view dedup 키
+  // - all-day: 동일 제목의 all-day 이벤트가 오늘을 덮으면 1개로 합침 (서로 다른 다중일 범위로 겹치는 경우까지 처리)
+  // - 시간 지정 이벤트: 제목+시작+종료가 같을 때만 중복 제거
+  const todayDedupKey = (e: CalendarEvent): string =>
+    e.allDay ? `ad|${e.summary}` : `t|${e.summary}|${e.start}|${e.end}`
+
+  const seenEventKeys = new Set<string>()
   const eventItems: ScheduleItem[] = connected
-    ? events.map((e) => ({
-        kind: 'event' as const,
-        id: `event-${e.id}`,
-        start: e.allDay ? null : new Date(e.start),
-        end: e.allDay ? null : new Date(e.end),
-        allDay: e.allDay,
-        title: e.summary,
-        location: e.location
-      }))
+    ? events
+        .filter((e) => {
+          if (!e.start) return false
+          const startDate = new Date(e.start)
+          if (e.allDay) {
+            const endDate = e.end ? new Date(e.end) : startDate
+            if (
+              !(
+                isSameDay(startDate, today) ||
+                (isBefore(startDate, today) && isAfter(endDate, today))
+              )
+            ) {
+              return false
+            }
+          } else if (!isSameDay(startDate, today)) {
+            return false
+          }
+          const key = todayDedupKey(e)
+          if (seenEventKeys.has(key)) return false
+          seenEventKeys.add(key)
+          return true
+        })
+        .map((e) => ({
+          kind: 'event' as const,
+          id: `event-${e.id}`,
+          start: e.allDay ? null : new Date(e.start),
+          end: e.allDay ? null : new Date(e.end),
+          allDay: e.allDay,
+          title: e.summary,
+          location: e.location
+        }))
     : []
 
   const allItems = [...eventItems, ...todoItems].sort((a, b) => {

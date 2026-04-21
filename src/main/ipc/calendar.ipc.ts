@@ -6,7 +6,7 @@ import {
   hasCredentials,
   saveSettings
 } from '../services/google-auth'
-import { getTodayEvents, clearCache } from '../services/google-calendar'
+import { getWeekEvents, clearCache } from '../services/google-calendar'
 
 export function registerCalendarIpc(): void {
   ipcMain.handle('calendar:auth', async () => {
@@ -20,7 +20,7 @@ export function registerCalendarIpc(): void {
 
   ipcMain.handle('calendar:events', async () => {
     try {
-      const events = await getTodayEvents()
+      const events = await getWeekEvents()
       return events
     } catch (error) {
       console.error('Failed to get events:', error)
@@ -30,7 +30,7 @@ export function registerCalendarIpc(): void {
 
   ipcMain.handle('calendar:refresh', async () => {
     try {
-      const events = await getTodayEvents(true)
+      const events = await getWeekEvents(true)
       return events
     } catch (error) {
       return []
