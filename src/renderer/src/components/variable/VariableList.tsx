@@ -135,13 +135,14 @@ export default function VariableList(): React.ReactNode {
                     <div className="flex items-center gap-2">
                       <span
                         onClick={() => handleCopy(v.id, v.value)}
-                        className="cursor-pointer hover:text-blue-600 transition-colors"
+                        className="relative cursor-pointer hover:text-blue-600 transition-colors"
                         title="Click to copy"
                       >
-                        {copiedId === v.id ? (
-                          <span className="text-green-600 text-xs font-medium">Copied!</span>
-                        ) : (
-                          renderValue(v)
+                        {renderValue(v)}
+                        {copiedId === v.id && (
+                          <span className="absolute -top-6 left-0 z-10 px-2 py-0.5 text-xs font-medium text-white bg-green-600 rounded shadow-sm pointer-events-none whitespace-nowrap">
+                            Copied!
+                          </span>
                         )}
                       </span>
                       {v.view_type === 'secret' && (
