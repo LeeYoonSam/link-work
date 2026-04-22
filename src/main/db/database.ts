@@ -120,6 +120,7 @@ export function initDatabase(): void {
       due_reminder INTEGER NOT NULL DEFAULT 0,
       is_completed INTEGER NOT NULL DEFAULT 0,
       completed_at TEXT,
+      notes TEXT,
       created_at TEXT DEFAULT (datetime('now', 'localtime')),
       updated_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
@@ -147,6 +148,12 @@ export function initDatabase(): void {
   const memoColumnNames = memoColumns.map((c) => c.name)
   if (memoColumns.length > 0 && !memoColumnNames.includes('is_important')) {
     db.exec("ALTER TABLE memos ADD COLUMN is_important INTEGER NOT NULL DEFAULT 0")
+  }
+
+  const todoColumns = db.prepare("PRAGMA table_info(todos)").all() as { name: string }[]
+  const todoColumnNames = todoColumns.map((c) => c.name)
+  if (todoColumns.length > 0 && !todoColumnNames.includes('notes')) {
+    db.exec("ALTER TABLE todos ADD COLUMN notes TEXT")
   }
 
   const projectColumns = db.prepare("PRAGMA table_info(projects)").all() as { name: string }[]

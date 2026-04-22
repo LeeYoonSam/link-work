@@ -39,6 +39,7 @@ export default function TodoForm({ todo, onClose }: TodoFormProps): React.ReactN
   const [dueDate, setDueDate] = useState(parsed.date)
   const [alarmEnabled, setAlarmEnabled] = useState(Boolean(parsed.time) || todo?.due_reminder === 1)
   const [dueTime, setDueTime] = useState(parsed.time || getCurrentTime())
+  const [notes, setNotes] = useState(todo?.notes ?? '')
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>(
     todo?.tags?.map((t: TodoTag) => t.id) || []
   )
@@ -60,11 +61,13 @@ export default function TodoForm({ todo, onClose }: TodoFormProps): React.ReactN
       combinedDue = `${getCurrentDate()} ${dueTime || getCurrentTime()}`
     }
 
+    const trimmedNotes = notes.trim()
     const input = {
       title: title.trim(),
       priority,
       due_date: combinedDue,
       due_reminder: alarmEnabled ? 1 : 0,
+      notes: trimmedNotes ? trimmedNotes : null,
       tag_ids: selectedTagIds
     }
 
@@ -180,6 +183,21 @@ export default function TodoForm({ todo, onClose }: TodoFormProps): React.ReactN
                   ) : null}
                 </div>
               ) : null}
+            </div>
+
+            {/* 메모 / 링크 (선택) */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                메모 / 링크 <span className="text-gray-400">(선택, 마크다운 지원)</span>
+              </label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={4}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y font-mono"
+                placeholder={'예) 회의록 링크: https://example.com\n- 체크리스트 항목\n- [참고 문서](https://docs.example.com)'}
+              />
+              <p className="text-xs text-gray-400 mt-1">URL을 입력하면 자동으로 클릭 가능한 링크가 됩니다.</p>
             </div>
 
             {tags.length > 0 ? (

@@ -243,6 +243,7 @@ export interface Todo {
   due_reminder: number
   is_completed: number
   completed_at: string | null
+  notes: string | null
   created_at: string
   updated_at: string
   tags?: TodoTag[]
@@ -253,6 +254,7 @@ export interface TodoInput {
   priority?: TodoPriority
   due_date?: string | null
   due_reminder?: number
+  notes?: string | null
   tag_ids?: number[]
 }
 

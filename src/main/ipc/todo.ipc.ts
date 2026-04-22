@@ -7,6 +7,7 @@ interface TodoInput {
   priority?: string
   due_date?: string | null
   due_reminder?: number
+  notes?: string | null
   tag_ids?: number[]
 }
 
@@ -18,6 +19,7 @@ interface TodoRow {
   due_reminder: number
   is_completed: number
   completed_at: string | null
+  notes: string | null
   created_at: string
   updated_at: string
 }
@@ -71,14 +73,15 @@ export function registerTodoIpc(): void {
 
   ipcMain.handle('todo:create', (_event, input: TodoInput) => {
     const stmt = db.prepare(`
-      INSERT INTO todos (title, priority, due_date, due_reminder)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO todos (title, priority, due_date, due_reminder, notes)
+      VALUES (?, ?, ?, ?, ?)
     `)
     const result = stmt.run(
       input.title,
       input.priority || 'medium',
       input.due_date || null,
-      input.due_reminder ?? 0
+      input.due_reminder ?? 0,
+      input.notes ?? null
     )
     const todoId = result.lastInsertRowid
     if (input.tag_ids && input.tag_ids.length > 0) {
@@ -136,6 +139,10 @@ export function registerTodoIpc(): void {
     if (input.due_reminder !== undefined) {
       fields.push('due_reminder = ?')
       values.push(input.due_reminder)
+    }
+    if (input.notes !== undefined) {
+      fields.push('notes = ?')
+      values.push(input.notes)
     }
     fields.push("updated_at = datetime('now', 'localtime')")
     values.push(id)
