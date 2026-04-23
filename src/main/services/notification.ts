@@ -5,6 +5,12 @@ import { differenceInMinutes } from 'date-fns'
 
 const sentNotifications = new Set<string>()
 let intervalId: ReturnType<typeof setInterval> | null = null
+let currentDayKey = ''
+
+function todayKey(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+}
 
 function makeEventKey(eventId: string, minutesBefore: number): string {
   return `event:${eventId}:${minutesBefore}`
@@ -121,11 +127,18 @@ async function checkUpcomingTodos(): Promise<void> {
 }
 
 async function runChecks(): Promise<void> {
+  // sentNotifications가 무한 증가하지 않도록 자정 경계에서 정리
+  const key = todayKey()
+  if (key !== currentDayKey) {
+    sentNotifications.clear()
+    currentDayKey = key
+  }
   await Promise.all([checkUpcomingEvents(), checkUpcomingTodos()])
 }
 
 export function startNotificationService(): void {
   if (intervalId) return
+  currentDayKey = todayKey()
   runChecks()
   intervalId = setInterval(runChecks, 60 * 1000)
 }

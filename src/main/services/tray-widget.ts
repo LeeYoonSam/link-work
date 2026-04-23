@@ -320,7 +320,7 @@ export function createTrayWidget(onOpenApp: () => void): void {
       ? `LinkWork - ${urgent.length} urgent`
       : `LinkWork - ${projects.length} active`
     tray?.setToolTip(tooltip)
-  }, 2 * 60 * 1000)
+  }, 5 * 60 * 1000)
 }
 
 export function destroyTrayWidget(): void {
@@ -328,6 +328,9 @@ export function destroyTrayWidget(): void {
     clearInterval(updateInterval)
     updateInterval = null
   }
+  // 앱 종료/재생성 시 이중 등록 방지
+  ipcMain.removeHandler('tray:getData')
+  ipcMain.removeHandler('tray:openApp')
   if (panelWindow) {
     panelWindow.destroy()
     panelWindow = null

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import type { Project, Task } from '../../types'
 import { differenceInCalendarDays, format, eachDayOfInterval, isSameDay, isWithinInterval, isBefore, startOfDay, min, max } from 'date-fns'
 import { filterBusinessDays, getDateMarkerType, isNewWeekStart } from '../../utils/timeline'
@@ -51,15 +51,22 @@ const taskStatusConfig: Record<string, { dot: string; badge: string; label: stri
 
 interface Props {
   project: Project
+  initialTasks?: Task[]
 }
 
-export default function ProjectProgress({ project }: Props): React.ReactNode {
-  const [tasks, setTasks] = useState<Task[]>([])
+export default function ProjectProgress({ project, initialTasks }: Props): React.ReactNode {
+  const [tasks, setTasks] = useState<Task[]>(initialTasks ?? [])
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
+    // 부모(Dashboard)가 배치 로드 결과를 내려주면 그대로 사용.
+    // 카드 단독 렌더 경로(다른 곳에서 사용)와의 호환을 위해 fallback fetch 유지.
+    if (initialTasks) {
+      setTasks(initialTasks)
+      return
+    }
     window.api.task.list(project.id).then(setTasks)
-  }, [project.id])
+  }, [project.id, initialTasks])
 
   const cycleStatus = useCallback(async (task: Task) => {
     const nextStatus: Record<string, string> = {
@@ -99,6 +106,22 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
   const doneTasks = tasks.filter((t) => t.status === 'done').length
   const totalTasks = tasks.length
   const taskProgress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0
+
+  // expanded 분기 내에서 매 렌더마다 재계산되던 타임라인 파생값을 tasks/프로젝트 경계 기준으로 메모
+  const timeline = useMemo(() => {
+    const taskDateStrs = tasks
+      .flatMap((t) => [t.start_date, t.end_date])
+      .filter((d): d is string => !!d)
+    const taskDateSet = new Set(taskDateStrs)
+    const taskDays = taskDateStrs.map((d) => startOfDay(new Date(d)))
+    const devStart = startOfDay(new Date(project.dev_start_date))
+    const deployEnd = startOfDay(new Date(project.deploy_date))
+    const projectStart = min([devStart, ...taskDays])
+    const projectEnd = max([deployEnd, ...taskDays])
+    const allDays = eachDayOfInterval({ start: projectStart, end: projectEnd })
+    const timelineDays = filterBusinessDays(allDays, taskDateSet)
+    return { taskDateSet, timelineDays }
+  }, [tasks, project.dev_start_date, project.deploy_date])
 
   const formatTaskDate = (date: string | null): string => {
     if (!date) return '-'
@@ -170,17 +193,7 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
       </div>
 
       {expanded && totalTasks > 0 && (() => {
-        const taskDateStrs = tasks
-          .flatMap((t) => [t.start_date, t.end_date])
-          .filter((d): d is string => !!d)
-        const taskDateSet = new Set(taskDateStrs)
-        const taskDays = taskDateStrs.map((d) => startOfDay(new Date(d)))
-        const devStart = startOfDay(new Date(project.dev_start_date))
-        const deployEnd = startOfDay(new Date(project.deploy_date))
-        const projectStart = min([devStart, ...taskDays])
-        const projectEnd = max([deployEnd, ...taskDays])
-        const allDays = eachDayOfInterval({ start: projectStart, end: projectEnd })
-        const timelineDays = filterBusinessDays(allDays, taskDateSet)
+        const { taskDateSet, timelineDays } = timeline
         const today = startOfDay(new Date())
 
         const taskBarColor: Record<string, string> = {

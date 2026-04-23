@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { initDatabase } from './db/database'
+import { initDatabase, closeDatabase } from './db/database'
 import { registerProjectIpc } from './ipc/project.ipc'
 import { registerTaskIpc } from './ipc/task.ipc'
 import { registerCalendarIpc } from './ipc/calendar.ipc'
@@ -11,8 +11,8 @@ import { registerMemoIpc } from './ipc/memo.ipc'
 import { registerReportIpc } from './ipc/report.ipc'
 import { registerTodoIpc } from './ipc/todo.ipc'
 import { registerTodoTagIpc } from './ipc/todo-tag.ipc'
-import { startNotificationService } from './services/notification'
-import { createTrayWidget } from './services/tray-widget'
+import { startNotificationService, stopNotificationService } from './services/notification'
+import { createTrayWidget, destroyTrayWidget } from './services/tray-widget'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -59,6 +59,21 @@ function createWindow(): void {
   }
 }
 
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+    } else {
+      createWindow()
+    }
+  })
+}
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.linkwork.app')
 
@@ -89,6 +104,17 @@ app.whenReady().then(() => {
       mainWindow.focus()
     }
   })
+})
+
+app.on('before-quit', () => {
+  // 타이머/트레이 먼저 정지 (in-flight async 콜백이 DB에 접근하는 race 회피)
+  stopNotificationService()
+  destroyTrayWidget()
+})
+
+app.on('will-quit', () => {
+  // 모든 window/timer가 정리된 뒤 DB 닫기 (WAL 잔존 방지)
+  closeDatabase()
 })
 
 app.on('window-all-closed', () => {

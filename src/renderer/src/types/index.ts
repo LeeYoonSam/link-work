@@ -66,6 +66,7 @@ export interface ProjectAPI {
 export interface TaskAPI {
   create: (input: TaskInput) => Promise<{ id: number }>
   list: (projectId: number) => Promise<Task[]>
+  listByProjectIds: (projectIds: number[]) => Promise<Record<number, Task[]>>
   update: (id: number, input: Partial<TaskInput>) => Promise<Task>
   delete: (id: number) => Promise<{ success: boolean }>
 }

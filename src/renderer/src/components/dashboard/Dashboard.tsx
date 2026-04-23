@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
 import { useCalendarStore } from '../../stores/calendarStore'
 import { useMemoStore } from '../../stores/memoStore'
@@ -7,7 +7,7 @@ import ProjectProgress from './ProjectProgress'
 import TodaySchedule from './TodaySchedule'
 import MarkdownContent from '../memo/MarkdownContent'
 import { format } from 'date-fns'
-import type { Todo } from '../../types'
+import type { Task, Todo } from '../../types'
 
 function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
   const { completeTodo, restoreTodo } = useTodoStore()
@@ -98,6 +98,7 @@ export default function Dashboard(): React.ReactNode {
   const [showPending, setShowPending] = useState(true)
   const [showCompleted, setShowCompleted] = useState(true)
   const [todoPanelOpen, setTodoPanelOpen] = useState(true)
+  const [tasksByProject, setTasksByProject] = useState<Record<number, Task[]>>({})
 
   useEffect(() => {
     fetchProjects()
@@ -114,16 +115,40 @@ export default function Dashboard(): React.ReactNode {
 
   const pendingTodos = activeTodos.filter((t) => t.is_completed === 0)
   const todayCompletedTodos = activeTodos.filter((t) => t.is_completed === 1)
-  const statusPriority: Record<string, number> = {
-    development: 0,
-    qa: 1,
-    deploy: 2,
-    scheduled: 3
-  }
-  const activeProjects = projects
-    .filter((p) => ['scheduled', 'development', 'qa', 'deploy'].includes(p.status))
-    .slice()
-    .sort((a, b) => (statusPriority[a.status] ?? 99) - (statusPriority[b.status] ?? 99))
+  const activeProjects = useMemo(() => {
+    const statusPriority: Record<string, number> = {
+      development: 0,
+      qa: 1,
+      deploy: 2,
+      scheduled: 3
+    }
+    return projects
+      .filter((p) => ['scheduled', 'development', 'qa', 'deploy'].includes(p.status))
+      .slice()
+      .sort((a, b) => (statusPriority[a.status] ?? 99) - (statusPriority[b.status] ?? 99))
+  }, [projects])
+
+  // 프로젝트 id 집합이 실제로 바뀔 때만 배치 로드가 재실행되도록 문자열 키로 안정화
+  const activeProjectIdsKey = useMemo(
+    () => activeProjects.map((p) => p.id).join(','),
+    [activeProjects]
+  )
+
+  // Active 프로젝트의 태스크를 1회 IPC로 일괄 로드 (N+1 방지)
+  useEffect(() => {
+    const ids = activeProjectIdsKey ? activeProjectIdsKey.split(',').map(Number) : []
+    if (ids.length === 0) {
+      setTasksByProject({})
+      return
+    }
+    let cancelled = false
+    window.api.task.listByProjectIds(ids).then((grouped) => {
+      if (!cancelled) setTasksByProject(grouped)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeProjectIdsKey])
 
   return (
     <div className="flex flex-col min-h-full">
@@ -163,7 +188,11 @@ export default function Dashboard(): React.ReactNode {
             ) : (
               <div className="grid gap-4 min-w-0 [&>*]:min-w-0">
                 {activeProjects.map((project) => (
-                  <ProjectProgress key={project.id} project={project} />
+                  <ProjectProgress
+                    key={project.id}
+                    project={project}
+                    initialTasks={tasksByProject[project.id]}
+                  />
                 ))}
               </div>
             )}

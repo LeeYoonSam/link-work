@@ -39,6 +39,25 @@ export function registerTaskIpc(): void {
     return db.prepare('SELECT * FROM tasks WHERE project_id = ? ORDER BY sort_order ASC').all(projectId)
   })
 
+  ipcMain.handle('task:listByProjectIds', (_event, projectIds: number[]) => {
+    const grouped: Record<number, unknown[]> = {}
+    if (!Array.isArray(projectIds) || projectIds.length === 0) return grouped
+
+    const placeholders = projectIds.map(() => '?').join(',')
+    const rows = db
+      .prepare(
+        `SELECT * FROM tasks WHERE project_id IN (${placeholders}) ORDER BY project_id ASC, sort_order ASC`
+      )
+      .all(...projectIds) as { project_id: number }[]
+
+    for (const id of projectIds) grouped[id] = []
+    for (const row of rows) {
+      if (!grouped[row.project_id]) grouped[row.project_id] = []
+      grouped[row.project_id].push(row)
+    }
+    return grouped
+  })
+
   const ALLOWED_TASK_FIELDS = new Set(['name', 'start_date', 'end_date', 'status', 'sort_order'])
 
   ipcMain.handle('task:update', (_event, id: number, input: Partial<TaskInput>) => {
@@ -50,6 +69,12 @@ export function registerTaskIpc(): void {
       fields.push(`${key} = ?`)
       values.push(value)
     }
+
+    // 허용된 필드가 하나도 없으면 SET 절이 비어 SQL syntax error가 나므로 조기 반환
+    if (fields.length === 0) {
+      return db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as { name: string }
+    }
+
     values.push(id)
 
     db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`).run(...values)

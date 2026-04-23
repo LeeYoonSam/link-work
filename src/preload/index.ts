@@ -14,6 +14,8 @@ const api = {
   task: {
     create: (input: Record<string, unknown>) => ipcRenderer.invoke('task:create', input),
     list: (projectId: number) => ipcRenderer.invoke('task:list', projectId),
+    listByProjectIds: (projectIds: number[]) =>
+      ipcRenderer.invoke('task:listByProjectIds', projectIds),
     update: (id: number, input: Record<string, unknown>) => ipcRenderer.invoke('task:update', id, input),
     delete: (id: number) => ipcRenderer.invoke('task:delete', id)
   },
