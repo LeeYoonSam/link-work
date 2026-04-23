@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCalendarStore } from '../../stores/calendarStore'
 import CalendarSettings from './CalendarSettings'
 import { renderDescription } from './linkify'
@@ -17,6 +17,8 @@ const WORK_DAYS = 5
 export default function CalendarView(): React.ReactNode {
   const { events, status, loading, fetchEvents, fetchStatus, refreshEvents } = useCalendarStore()
   const [showSettings, setShowSettings] = useState(false)
+  const todayRef = useRef<HTMLDivElement>(null)
+  const didScrollToTodayRef = useRef(false)
 
   useEffect(() => {
     fetchStatus()
@@ -27,6 +29,14 @@ export default function CalendarView(): React.ReactNode {
       fetchEvents()
     }
   }, [status.connected])
+
+  useEffect(() => {
+    if (loading || didScrollToTodayRef.current) return
+    if (todayRef.current) {
+      todayRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      didScrollToTodayRef.current = true
+    }
+  }, [loading])
 
   const now = new Date()
   const weekStart = useMemo(() => startOfWeek(now, { weekStartsOn: 1 }), [])
@@ -114,6 +124,7 @@ export default function CalendarView(): React.ReactNode {
             return (
               <div
                 key={key}
+                ref={isToday ? todayRef : undefined}
                 className={`rounded-lg transition-all ${
                   isToday
                     ? 'border-2 border-blue-500 bg-blue-50 ring-4 ring-blue-100 shadow-md'
