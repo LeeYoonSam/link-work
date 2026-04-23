@@ -32,6 +32,15 @@ const statusColors: Record<string, string> = {
   cancelled: 'bg-gray-400'
 }
 
+const statusCardBg: Record<string, string> = {
+  scheduled: 'bg-slate-50',
+  development: 'bg-green-50',
+  qa: 'bg-orange-50',
+  deploy: 'bg-red-50',
+  completed: 'bg-blue-50',
+  cancelled: 'bg-gray-50'
+}
+
 interface TrayEvent {
   summary: string
   time: string
@@ -116,7 +125,7 @@ export default function TrayPanel(): React.ReactNode {
           ) : (
             <div className="space-y-2.5">
               {data.projects.map((project, i) => (
-                <div key={i} className="bg-gray-50 rounded-lg p-2.5">
+                <div key={i} className={`rounded-lg p-2.5 ${statusCardBg[project.status] || 'bg-gray-50'}`}>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-sm font-medium text-gray-900 truncate mr-2">
                       {project.name}

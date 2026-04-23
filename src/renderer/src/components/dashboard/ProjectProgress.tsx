@@ -27,11 +27,20 @@ function getUrgencyLevel(progress: number): UrgencyLevel {
 
 const urgencyConfig: Record<
   UrgencyLevel,
-  { bg: string; bgHex: string; bar: string; text: string; label: string }
+  { bar: string; text: string; label: string }
 > = {
-  early: { bg: 'bg-green-50', bgHex: '#F0FDF4', bar: 'bg-green-500', text: 'text-green-700', label: 'Early' },
-  mid: { bg: 'bg-blue-50', bgHex: '#EFF6FF', bar: 'bg-blue-500', text: 'text-blue-700', label: 'Mid' },
-  late: { bg: 'bg-red-50', bgHex: '#FEF2F2', bar: 'bg-red-500', text: 'text-red-700', label: 'Late' }
+  early: { bar: 'bg-green-500', text: 'text-green-700', label: 'Early' },
+  mid: { bar: 'bg-blue-500', text: 'text-blue-700', label: 'Mid' },
+  late: { bar: 'bg-red-500', text: 'text-red-700', label: 'Late' }
+}
+
+const statusCardBg: Record<string, string> = {
+  scheduled: 'bg-slate-50 border-slate-200',
+  development: 'bg-green-50 border-green-200',
+  qa: 'bg-orange-50 border-orange-200',
+  deploy: 'bg-red-50 border-red-200',
+  completed: 'bg-blue-50 border-blue-200',
+  cancelled: 'bg-gray-50 border-gray-200'
 }
 
 const taskStatusConfig: Record<string, { dot: string; badge: string; label: string }> = {
@@ -98,7 +107,7 @@ export default function ProjectProgress({ project }: Props): React.ReactNode {
   void formatTaskDate
 
   return (
-    <div className={`border rounded-lg ${config.bg} border-gray-200 min-w-0 overflow-hidden`}>
+    <div className={`border rounded-lg ${statusCardBg[project.status] || 'bg-gray-50 border-gray-200'} min-w-0 overflow-hidden`}>
       <div
         className="p-4 cursor-pointer select-none"
         onClick={() => totalTasks > 0 && setExpanded(!expanded)}
