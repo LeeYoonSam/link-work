@@ -47,6 +47,13 @@ interface TrayData {
  */
 const VISIBLE_STATUSES = new Set(['scheduled', 'development', 'qa', 'deploy'])
 
+const STATUS_PRIORITY: Record<string, number> = {
+  development: 0,
+  qa: 1,
+  deploy: 2,
+  scheduled: 3
+}
+
 function calculateAutoStatus(project: { dev_start_date: string; qa_start_date: string; qa_end_date: string; deploy_date: string }): string {
   const today = new Date().toISOString().split('T')[0]
   if (today < project.dev_start_date) return 'scheduled'
@@ -122,6 +129,7 @@ function getActiveProjects(): TrayProject[] {
         totalTasks
       }
     })
+    .sort((a, b) => (STATUS_PRIORITY[a.status] ?? 99) - (STATUS_PRIORITY[b.status] ?? 99))
 }
 
 function hasTime(dueDate: string): boolean {

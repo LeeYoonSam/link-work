@@ -114,9 +114,16 @@ export default function Dashboard(): React.ReactNode {
 
   const pendingTodos = activeTodos.filter((t) => t.is_completed === 0)
   const todayCompletedTodos = activeTodos.filter((t) => t.is_completed === 1)
-  const activeProjects = projects.filter((p) =>
-    ['scheduled', 'development', 'qa', 'deploy'].includes(p.status)
-  )
+  const statusPriority: Record<string, number> = {
+    development: 0,
+    qa: 1,
+    deploy: 2,
+    scheduled: 3
+  }
+  const activeProjects = projects
+    .filter((p) => ['scheduled', 'development', 'qa', 'deploy'].includes(p.status))
+    .slice()
+    .sort((a, b) => (statusPriority[a.status] ?? 99) - (statusPriority[b.status] ?? 99))
 
   return (
     <div className="flex flex-col min-h-full">
