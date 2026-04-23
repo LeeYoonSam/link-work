@@ -131,7 +131,11 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
                     Edit
                   </button>
                   <button
-                    onClick={() => deleteTask(task.id, projectId)}
+                    onClick={() => {
+                      if (confirm(`"${task.name}" 작업을 삭제하시겠습니까?`)) {
+                        deleteTask(task.id, projectId)
+                      }
+                    }}
                     className="text-xs text-red-400 hover:text-red-600"
                   >
                     Delete
@@ -151,7 +155,7 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
           placeholder="New task name"
           className={`flex-1 ${inputClass}`}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
               e.preventDefault()
               handleAddTask()
             }
