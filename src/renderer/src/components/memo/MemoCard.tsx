@@ -155,10 +155,10 @@ export default function MemoCard({
               </button>
               <button
                 onClick={() => onArchive?.(memo.id)}
-                className="p-1 text-gray-400 hover:text-yellow-600 rounded"
+                className="p-1 text-gray-400 hover:text-red-500 rounded"
                 title="Archive"
               >
-                📥
+                🗑️
               </button>
             </>
           )}
