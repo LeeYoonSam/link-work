@@ -1,6 +1,14 @@
 import { getDatabase } from '../db/database'
 
-export type EntityType = 'project' | 'task' | 'document' | 'variable' | 'memo' | 'todo' | 'todo_tag'
+export type EntityType =
+  | 'project'
+  | 'task'
+  | 'document'
+  | 'variable'
+  | 'memo'
+  | 'memo_category'
+  | 'todo'
+  | 'todo_tag'
 export type ActionType = 'create' | 'update' | 'delete' | 'archive' | 'restore' | 'complete'
 
 export function logActivity(

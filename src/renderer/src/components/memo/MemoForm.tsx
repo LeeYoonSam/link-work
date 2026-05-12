@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMemoStore } from '../../stores/memoStore'
 import type { Memo } from '../../types'
 import MarkdownContent from './MarkdownContent'
@@ -11,18 +11,25 @@ interface MemoFormProps {
 type Mode = 'write' | 'preview'
 
 export default function MemoForm({ onClose, editingMemo }: MemoFormProps): React.ReactNode {
-  const { createMemo, updateMemo } = useMemoStore()
+  const { createMemo, updateMemo, categories, fetchCategories } = useMemoStore()
   const [content, setContent] = useState(editingMemo?.content || '')
+  const [categoryId, setCategoryId] = useState<number | null>(editingMemo?.category_id ?? null)
   const [mode, setMode] = useState<Mode>('write')
+
+  useEffect(() => {
+    if (categories.length === 0) {
+      fetchCategories()
+    }
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault()
     if (!content.trim()) return
 
     if (editingMemo) {
-      await updateMemo(editingMemo.id, { content: content.trim() })
+      await updateMemo(editingMemo.id, { content: content.trim(), category_id: categoryId })
     } else {
-      await createMemo({ content: content.trim() })
+      await createMemo({ content: content.trim(), category_id: categoryId })
     }
     onClose()
   }
@@ -66,6 +73,25 @@ export default function MemoForm({ onClose, editingMemo }: MemoFormProps): React
           </div>
         </div>
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="px-6 pb-2">
+            <label className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="font-medium">카테고리</span>
+              <select
+                value={categoryId ?? ''}
+                onChange={(e) =>
+                  setCategoryId(e.target.value === '' ? null : Number(e.target.value))
+                }
+                className="flex-1 max-w-xs px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">미분류</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           <div className="px-6 flex-1 min-h-0 flex flex-col">
             {mode === 'write' ? (
               <textarea

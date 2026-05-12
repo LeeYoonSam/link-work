@@ -6,6 +6,7 @@ interface MemoInput {
   content: string
   color?: string
   is_important?: number
+  category_id?: number | null
 }
 
 export function registerMemoIpc(): void {
@@ -13,10 +14,15 @@ export function registerMemoIpc(): void {
 
   ipcMain.handle('memo:create', (_event, input: MemoInput) => {
     const stmt = db.prepare(`
-      INSERT INTO memos (content, color, is_important)
-      VALUES (?, ?, ?)
+      INSERT INTO memos (content, color, is_important, category_id)
+      VALUES (?, ?, ?, ?)
     `)
-    const result = stmt.run(input.content, input.color || 'default', input.is_important ?? 0)
+    const result = stmt.run(
+      input.content,
+      input.color || 'default',
+      input.is_important ?? 0,
+      input.category_id ?? null
+    )
     logActivity('memo', 'create', result.lastInsertRowid, input.content.slice(0, 50))
     return { id: result.lastInsertRowid }
   })
@@ -43,6 +49,10 @@ export function registerMemoIpc(): void {
     if (input.is_important !== undefined) {
       fields.push('is_important = ?')
       values.push(input.is_important)
+    }
+    if (input.category_id !== undefined) {
+      fields.push('category_id = ?')
+      values.push(input.category_id)
     }
     fields.push("updated_at = datetime('now')")
     values.push(id)

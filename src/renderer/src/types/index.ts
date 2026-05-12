@@ -169,6 +169,7 @@ export interface Memo {
   is_archived: number
   is_important: number
   color: string
+  category_id: number | null
   created_at: string
   updated_at: string
 }
@@ -177,6 +178,7 @@ export interface MemoInput {
   content: string
   color?: string
   is_important?: number
+  category_id?: number | null
 }
 
 export interface MemoAPI {
@@ -187,6 +189,28 @@ export interface MemoAPI {
   archive: (id: number) => Promise<{ success: boolean }>
   restore: (id: number) => Promise<{ success: boolean }>
   toggleImportant: (id: number) => Promise<{ success: boolean; is_important: number }>
+  delete: (id: number) => Promise<{ success: boolean }>
+}
+
+export interface MemoCategory {
+  id: number
+  name: string
+  color: string
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface MemoCategoryInput {
+  name: string
+  color?: string
+  sort_order?: number
+}
+
+export interface MemoCategoryAPI {
+  create: (input: MemoCategoryInput) => Promise<{ id: number }>
+  list: () => Promise<MemoCategory[]>
+  update: (id: number, input: Partial<MemoCategoryInput>) => Promise<MemoCategory>
   delete: (id: number) => Promise<{ success: boolean }>
 }
 

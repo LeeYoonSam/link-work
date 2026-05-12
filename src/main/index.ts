@@ -8,6 +8,7 @@ import { registerCalendarIpc } from './ipc/calendar.ipc'
 import { registerDocumentIpc } from './ipc/document.ipc'
 import { registerVariableIpc } from './ipc/variable.ipc'
 import { registerMemoIpc } from './ipc/memo.ipc'
+import { registerMemoCategoryIpc } from './ipc/memo-category.ipc'
 import { registerReportIpc } from './ipc/report.ipc'
 import { registerTodoIpc } from './ipc/todo.ipc'
 import { registerTodoTagIpc } from './ipc/todo-tag.ipc'
@@ -88,6 +89,7 @@ app.whenReady().then(() => {
   registerDocumentIpc()
   registerVariableIpc()
   registerMemoIpc()
+  registerMemoCategoryIpc()
   registerReportIpc()
   registerTodoIpc()
   registerTodoTagIpc()

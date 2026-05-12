@@ -68,6 +68,13 @@ const api = {
     toggleImportant: (id: number) => ipcRenderer.invoke('memo:toggleImportant', id),
     delete: (id: number) => ipcRenderer.invoke('memo:delete', id)
   },
+  memoCategory: {
+    create: (input: Record<string, unknown>) => ipcRenderer.invoke('memoCategory:create', input),
+    list: () => ipcRenderer.invoke('memoCategory:list'),
+    update: (id: number, input: Record<string, unknown>) =>
+      ipcRenderer.invoke('memoCategory:update', id, input),
+    delete: (id: number) => ipcRenderer.invoke('memoCategory:delete', id)
+  },
   report: {
     weeklyActivities: (weekStart: string, weekEnd: string) =>
       ipcRenderer.invoke('report:weeklyActivities', weekStart, weekEnd),

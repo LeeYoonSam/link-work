@@ -91,14 +91,25 @@ export function initDatabase(): void {
       updated_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS memo_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      color TEXT NOT NULL DEFAULT '#6B7280',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS memos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       content TEXT NOT NULL,
       is_archived INTEGER NOT NULL DEFAULT 0,
       is_important INTEGER NOT NULL DEFAULT 0,
       color TEXT DEFAULT 'default',
+      category_id INTEGER,
       created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (category_id) REFERENCES memo_categories(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS activity_log (
@@ -155,6 +166,11 @@ export function initDatabase(): void {
   const memoColumnNames = memoColumns.map((c) => c.name)
   if (memoColumns.length > 0 && !memoColumnNames.includes('is_important')) {
     db.exec("ALTER TABLE memos ADD COLUMN is_important INTEGER NOT NULL DEFAULT 0")
+  }
+  if (memoColumns.length > 0 && !memoColumnNames.includes('category_id')) {
+    // SQLite limitation: ALTER TABLE ADD COLUMN cannot add an FK to an existing column,
+    // but the column can still be used as a logical FK; new DBs get the constraint via CREATE.
+    db.exec("ALTER TABLE memos ADD COLUMN category_id INTEGER")
   }
 
   const todoColumns = db.prepare("PRAGMA table_info(todos)").all() as { name: string }[]

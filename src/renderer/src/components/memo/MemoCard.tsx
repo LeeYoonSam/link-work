@@ -1,10 +1,11 @@
 import { format } from 'date-fns'
 import { useMemo } from 'react'
-import type { Memo } from '../../types'
+import type { Memo, MemoCategory } from '../../types'
 import MarkdownContent from './MarkdownContent'
 
 interface MemoCardProps {
   memo: Memo
+  category?: MemoCategory | null
   isArchived?: boolean
   onClick?: (memo: Memo) => void
   onEdit?: (memo: Memo) => void
@@ -57,6 +58,7 @@ function parseMemo(content: string): ParsedMemo {
 
 export default function MemoCard({
   memo,
+  category,
   isArchived,
   onClick,
   onEdit,
@@ -81,11 +83,21 @@ export default function MemoCard({
       }`}
       onClick={() => onClick?.(memo)}
     >
-      <div className="px-4 pt-3 pb-2 border-b border-gray-100 flex items-start gap-2">
-        {isImportant ? <span className="text-yellow-500 flex-shrink-0 mt-0.5">★</span> : null}
-        <h3 className="text-sm font-semibold text-gray-900 line-clamp-2 flex-1 min-w-0">
-          {title}
-        </h3>
+      <div className="px-4 pt-3 pb-2 border-b border-gray-100 flex flex-col gap-1">
+        <div className="flex items-start gap-2">
+          {isImportant ? <span className="text-yellow-500 flex-shrink-0 mt-0.5">★</span> : null}
+          <h3 className="text-sm font-semibold text-gray-900 line-clamp-2 flex-1 min-w-0">
+            {title}
+          </h3>
+        </div>
+        {category ? (
+          <span
+            className="inline-flex items-center gap-1 self-start px-1.5 py-0.5 rounded text-[10px] font-medium text-white"
+            style={{ backgroundColor: category.color }}
+          >
+            {category.name}
+          </span>
+        ) : null}
       </div>
 
       {preview.trim() !== '' ? (
