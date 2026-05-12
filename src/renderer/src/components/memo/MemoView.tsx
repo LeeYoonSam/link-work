@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMemoStore } from '../../stores/memoStore'
 import MemoCard from './MemoCard'
 import MemoForm from './MemoForm'
@@ -10,7 +10,9 @@ export default function MemoView(): React.ReactNode {
     memos,
     archivedMemos,
     showArchived,
+    sortOrder,
     setShowArchived,
+    setSortOrder,
     fetchMemos,
     fetchArchivedMemos,
     archiveMemo,
@@ -39,7 +41,15 @@ export default function MemoView(): React.ReactNode {
     setEditingMemo(null)
   }
 
-  const currentMemos = showArchived ? archivedMemos : memos
+  const currentMemos = useMemo(() => {
+    const list = showArchived ? archivedMemos : memos
+    const sorted = [...list].sort((a, b) => {
+      const aTime = new Date(a.created_at).getTime()
+      const bTime = new Date(b.created_at).getTime()
+      return sortOrder === 'newest' ? bTime - aTime : aTime - bTime
+    })
+    return sorted
+  }, [showArchived, memos, archivedMemos, sortOrder])
 
   return (
     <div>
@@ -62,6 +72,30 @@ export default function MemoView(): React.ReactNode {
               }`}
             >
               History ({archivedMemos.length})
+            </button>
+          </div>
+          <div className="flex bg-gray-100 rounded-md p-0.5">
+            <button
+              onClick={() => setSortOrder('newest')}
+              className={`px-3 py-1.5 text-xs rounded font-medium transition-colors ${
+                sortOrder === 'newest'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+              title="최신순 정렬"
+            >
+              최신순
+            </button>
+            <button
+              onClick={() => setSortOrder('oldest')}
+              className={`px-3 py-1.5 text-xs rounded font-medium transition-colors ${
+                sortOrder === 'oldest'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+              title="오래된순 정렬"
+            >
+              오래된순
             </button>
           </div>
           {!showArchived && (

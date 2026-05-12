@@ -1,14 +1,18 @@
 import { create } from 'zustand'
 import type { Memo, MemoInput } from '../types'
 
+export type MemoSortOrder = 'newest' | 'oldest'
+
 interface MemoStore {
   memos: Memo[]
   archivedMemos: Memo[]
   importantMemos: Memo[]
   loading: boolean
   showArchived: boolean
+  sortOrder: MemoSortOrder
 
   setShowArchived: (show: boolean) => void
+  setSortOrder: (order: MemoSortOrder) => void
   fetchMemos: () => Promise<void>
   fetchArchivedMemos: () => Promise<void>
   fetchImportantMemos: () => Promise<void>
@@ -26,8 +30,10 @@ export const useMemoStore = create<MemoStore>((set, get) => ({
   importantMemos: [],
   loading: false,
   showArchived: false,
+  sortOrder: 'newest',
 
   setShowArchived: (show) => set({ showArchived: show }),
+  setSortOrder: (order) => set({ sortOrder: order }),
 
   fetchMemos: async () => {
     set({ loading: true })
