@@ -70,7 +70,7 @@ export default function MemoCard({
 
   return (
     <div
-      className={`break-inside-avoid mb-4 bg-white border rounded-lg shadow-sm hover:shadow-md transition flex flex-col overflow-hidden ${
+      className={`h-72 bg-white border rounded-lg shadow-sm hover:shadow-md transition flex flex-col overflow-hidden ${
         onClick ? 'cursor-pointer' : ''
       } ${
         isArchived

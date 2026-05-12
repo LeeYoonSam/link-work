@@ -85,7 +85,7 @@ export default function MemoView(): React.ReactNode {
           </p>
         </div>
       ) : (
-        <div className="columns-1 sm:columns-2 md:columns-3 lg:columns-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {currentMemos.map((memo) => (
             <MemoCard
               key={memo.id}
