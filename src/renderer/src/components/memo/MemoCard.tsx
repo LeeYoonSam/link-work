@@ -83,7 +83,7 @@ export default function MemoCard({
       }`}
       onClick={() => onClick?.(memo)}
     >
-      <div className="px-4 pt-3 pb-2 border-b border-gray-100 flex flex-col gap-1">
+      <div className="px-4 pt-3 pb-2 border-b border-gray-100 flex flex-col gap-1 flex-shrink-0">
         <div className="flex items-start gap-2">
           {isImportant ? <span className="text-yellow-500 flex-shrink-0 mt-0.5">★</span> : null}
           <h3 className="text-sm font-semibold text-gray-900 line-clamp-2 flex-1 min-w-0">
@@ -101,21 +101,23 @@ export default function MemoCard({
       </div>
 
       {preview.trim() !== '' ? (
-        <div className="px-4 py-3 relative">
-          <div className="max-h-[9.5rem] overflow-hidden">
+        <div className="px-4 py-3 relative flex-1 min-h-0 overflow-hidden">
+          <div className="h-full overflow-hidden">
             <MarkdownContent content={preview} compact />
           </div>
           {hasMore ? (
             <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-white to-transparent" />
           ) : null}
         </div>
-      ) : null}
+      ) : (
+        <div className="flex-1 min-h-0" />
+      )}
 
-      <div className="px-4 py-2 flex items-center justify-between border-t border-gray-100 bg-gray-50/50 mt-auto">
-        <span className="text-xs text-gray-400">
+      <div className="px-4 py-2 flex items-center justify-between gap-2 border-t border-gray-100 bg-gray-50/50 flex-shrink-0">
+        <span className="text-xs text-gray-400 whitespace-nowrap truncate">
           {format(new Date(memo.created_at), 'yyyy-MM-dd HH:mm')}
         </span>
-        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
           {isArchived ? (
             <>
               <button
