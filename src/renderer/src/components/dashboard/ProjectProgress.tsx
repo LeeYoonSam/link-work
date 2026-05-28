@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import type { Project, Task } from '../../types'
 import { differenceInCalendarDays, format, eachDayOfInterval, isSameDay, isWithinInterval, isBefore, startOfDay, min, max } from 'date-fns'
 import { filterBusinessDays, getDateMarkerType, isNewWeekStart } from '../../utils/timeline'
@@ -57,6 +57,7 @@ interface Props {
 export default function ProjectProgress({ project, initialTasks }: Props): React.ReactNode {
   const [tasks, setTasks] = useState<Task[]>(initialTasks ?? [])
   const [expanded, setExpanded] = useState(false)
+  const timelineScrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     // 부모(Dashboard)가 배치 로드 결과를 내려주면 그대로 사용.
@@ -122,6 +123,26 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
     const timelineDays = filterBusinessDays(allDays, taskDateSet)
     return { taskDateSet, timelineDays }
   }, [tasks, project.dev_start_date, project.deploy_date])
+
+  // expanded 토글/타임라인 변경 시 오늘 날짜를 스크롤 영역 가운데로 정렬.
+  // 콘텐츠가 컨테이너보다 작아 스크롤이 없으면 clamp되어 그대로 둠.
+  useEffect(() => {
+    if (!expanded) return
+    const container = timelineScrollRef.current
+    if (!container) return
+    const days = timeline.timelineDays
+    if (days.length === 0) return
+    const todayDate = startOfDay(new Date())
+    const idx = days.findIndex((d) => isSameDay(d, todayDate))
+    if (idx < 0) return
+    const total = container.scrollWidth
+    const visible = container.clientWidth
+    if (total <= visible) return
+    const cellWidth = total / days.length
+    const todayCenter = cellWidth * (idx + 0.5)
+    const target = todayCenter - visible / 2
+    container.scrollLeft = Math.max(0, Math.min(total - visible, target))
+  }, [expanded, timeline])
 
   const formatTaskDate = (date: string | null): string => {
     if (!date) return '-'
@@ -240,7 +261,7 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
               </div>
 
               {/* Middle: Timeline (scrollable) */}
-              <div className="flex-1 min-w-0 overflow-x-auto">
+              <div ref={timelineScrollRef} className="flex-1 min-w-0 overflow-x-auto">
                 <div style={{ minWidth: `${totalMinWidth}px` }}>
                   {/* Date header */}
                   <div className={`${rowH} flex items-end gap-0.5 mb-1`}>
