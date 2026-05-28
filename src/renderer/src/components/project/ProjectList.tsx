@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
 import { format } from 'date-fns'
 import type { Project } from '../../types'
+import MarkdownContent from '../memo/MarkdownContent'
 
 const statusLabels: Record<string, string> = {
   scheduled: 'Scheduled',
@@ -89,7 +90,13 @@ export default function ProjectList(): React.ReactNode {
                 <div>
                   <h3 className="font-semibold text-gray-900">{project.name}</h3>
                   {project.description && (
-                    <p className="text-sm text-gray-500 mt-1">{project.description}</p>
+                    <div className="mt-1 text-gray-500 line-clamp-2 [&_*:not(a)]:!text-sm [&_*:not(a)]:!text-gray-500 [&_a]:!text-blue-600 [&_a]:!underline">
+                      <MarkdownContent
+                        content={project.description}
+                        compact
+                        preserveNewlines
+                      />
+                    </div>
                   )}
                 </div>
                 <span

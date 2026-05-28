@@ -6,14 +6,21 @@ interface MarkdownContentProps {
   content: string
   className?: string
   compact?: boolean
+  // 입력의 단일 줄바꿈을 시각적 줄바꿈으로 보존 (markdown 하드 브레이크로 변환).
+  // 자유서술 본문(프로젝트 설명 등)에서 사용자가 친 Enter를 그대로 보여줄 때 사용.
+  preserveNewlines?: boolean
 }
 
 function MarkdownContentImpl({
   content,
   className = '',
-  compact = false
+  compact = false,
+  preserveNewlines = false
 }: MarkdownContentProps): React.ReactNode {
   const gap = compact ? 'space-y-1.5' : 'space-y-3'
+  const rendered = preserveNewlines
+    ? content.replace(/(?<!\n)\n(?!\n)/g, '  \n')
+    : content
   return (
     <div className={`markdown-body ${gap} text-sm text-gray-800 leading-relaxed ${className}`}>
       <ReactMarkdown
@@ -110,7 +117,7 @@ function MarkdownContentImpl({
           )
         }}
       >
-        {content}
+        {rendered}
       </ReactMarkdown>
     </div>
   )

@@ -4,6 +4,7 @@ import { useDocumentStore } from '../../stores/documentStore'
 import { format } from 'date-fns'
 import TaskList from './TaskList'
 import DocumentForm from '../document/DocumentForm'
+import MarkdownContent from '../memo/MarkdownContent'
 
 export default function ProjectDetail(): React.ReactNode {
   const { currentProject, setProjectView, setEditingProject, deleteProject } = useProjectStore()
@@ -51,7 +52,13 @@ export default function ProjectDetail(): React.ReactNode {
           <div>
             <h3 className="text-xl font-bold text-gray-900">{currentProject.name}</h3>
             {currentProject.description && (
-              <p className="text-gray-500 mt-1">{currentProject.description}</p>
+              <div className="mt-2 text-gray-700">
+                <MarkdownContent
+                  content={currentProject.description}
+                  compact
+                  preserveNewlines
+                />
+              </div>
             )}
           </div>
           <div className="flex items-center gap-2">
