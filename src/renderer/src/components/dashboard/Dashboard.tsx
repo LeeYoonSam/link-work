@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
 import { useCalendarStore } from '../../stores/calendarStore'
 import { useMemoStore } from '../../stores/memoStore'
@@ -99,13 +99,30 @@ export default function Dashboard(): React.ReactNode {
   const [showCompleted, setShowCompleted] = useState(true)
   const [todoPanelOpen, setTodoPanelOpen] = useState(true)
   const [tasksByProject, setTasksByProject] = useState<Record<number, Task[]>>({})
+  const [todosFetched, setTodosFetched] = useState(false)
+  const userToggledPanelRef = useRef(false)
+
+  const toggleTodoPanel = (): void => {
+    userToggledPanelRef.current = true
+    setTodoPanelOpen((v) => !v)
+  }
+  const expandTodoPanel = (): void => {
+    userToggledPanelRef.current = true
+    setTodoPanelOpen(true)
+  }
 
   useEffect(() => {
     fetchProjects()
     fetchStatus()
     fetchImportantMemos()
-    fetchActiveTodos()
+    fetchActiveTodos().then(() => setTodosFetched(true))
   }, [])
+
+  // 최초 데이터 로드 후 TODO가 없으면 자동 접기. 사용자가 직접 토글한 뒤로는 건드리지 않음.
+  useEffect(() => {
+    if (!todosFetched || userToggledPanelRef.current) return
+    if (activeTodos.length === 0) setTodoPanelOpen(false)
+  }, [todosFetched, activeTodos.length])
 
   useEffect(() => {
     if (status.connected) {
@@ -227,11 +244,34 @@ export default function Dashboard(): React.ReactNode {
               }
             >
               <button
-                onClick={() => setTodoPanelOpen(!todoPanelOpen)}
-                className="text-gray-500 hover:text-gray-900 transition-colors text-lg flex-shrink-0"
+                onClick={toggleTodoPanel}
+                className="text-gray-500 hover:text-gray-900 transition-colors flex-shrink-0 p-1 rounded hover:bg-gray-100"
                 title={todoPanelOpen ? 'TODO 영역 접기' : 'TODO 영역 펼치기'}
+                aria-label={todoPanelOpen ? 'TODO 영역 접기' : 'TODO 영역 펼치기'}
               >
-                {todoPanelOpen ? '→' : '←'}
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  {todoPanelOpen ? (
+                    <>
+                      <polyline points="13 17 18 12 13 7" />
+                      <polyline points="6 17 11 12 6 7" />
+                    </>
+                  ) : (
+                    <>
+                      <polyline points="11 17 6 12 11 7" />
+                      <polyline points="18 17 13 12 18 7" />
+                    </>
+                  )}
+                </svg>
               </button>
               {todoPanelOpen ? (
                 <h3 className="text-lg font-semibold text-gray-900 whitespace-nowrap">
@@ -239,7 +279,7 @@ export default function Dashboard(): React.ReactNode {
                 </h3>
               ) : (
                 <button
-                  onClick={() => setTodoPanelOpen(true)}
+                  onClick={expandTodoPanel}
                   className="text-xl leading-none hover:scale-110 transition-transform"
                   title="TODO 영역 펼치기"
                 >
