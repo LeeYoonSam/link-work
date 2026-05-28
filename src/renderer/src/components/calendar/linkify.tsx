@@ -19,6 +19,16 @@ function decodeHtmlEntities(input: string): string {
     .replace(/&nbsp;/g, ' ')
 }
 
+// Google Calendar description은 <br>, <u>, <b>, <i> 등 인라인 HTML이 섞여 옴.
+// <br>은 줄바꿈으로, 나머지 태그는 제거하고 엔티티는 디코딩.
+function normalizeChunk(input: string): string {
+  return decodeHtmlEntities(
+    input
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/?(?:u|b|i|strong|em|span|font)\b[^>]*>/gi, '')
+  )
+}
+
 function splitTextWithUrls(text: string): LinkPart[] {
   const out: LinkPart[] = []
   let lastIdx = 0
@@ -58,14 +68,14 @@ export function parseDescriptionParts(description: string): LinkPart[] {
   let cursor = 0
   for (const seg of segments) {
     if (seg.start > cursor) {
-      const chunk = decodeHtmlEntities(description.slice(cursor, seg.start))
+      const chunk = normalizeChunk(description.slice(cursor, seg.start))
       parts.push(...splitTextWithUrls(chunk))
     }
     parts.push({ type: 'link', content: seg.text, href: seg.href })
     cursor = seg.end
   }
   if (cursor < description.length) {
-    const chunk = decodeHtmlEntities(description.slice(cursor))
+    const chunk = normalizeChunk(description.slice(cursor))
     parts.push(...splitTextWithUrls(chunk))
   }
 

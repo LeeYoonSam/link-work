@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useCalendarStore } from '../../stores/calendarStore'
+import { useCalendarStore, type CalendarEvent } from '../../stores/calendarStore'
 import CalendarSettings from './CalendarSettings'
 import { renderDescription } from './linkify'
 import {
@@ -13,6 +13,66 @@ import {
 
 const DAY_LABELS = ['월', '화', '수', '목', '금']
 const WORK_DAYS = 5
+
+function EventCard({
+  event,
+  current,
+  timeText
+}: {
+  event: CalendarEvent
+  current: boolean
+  timeText: string
+}): React.ReactNode {
+  const [expanded, setExpanded] = useState(false)
+  const hasDescription = Boolean(event.description)
+
+  return (
+    <article
+      className={`rounded-md border px-3 py-2 ${
+        current ? 'border-blue-300 bg-blue-50/60' : 'border-gray-200 bg-white'
+      }`}
+    >
+      <header className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <h4 className="font-medium text-gray-900 text-sm truncate" title={event.summary}>
+            {event.summary}
+          </h4>
+          {current && (
+            <span className="text-[10px] font-semibold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded shrink-0">
+              NOW
+            </span>
+          )}
+        </div>
+        <span className="text-xs font-medium text-gray-600 shrink-0 tabular-nums">
+          {timeText}
+        </span>
+      </header>
+      {hasDescription && (
+        <div
+          className={`text-xs text-gray-600 mt-1 whitespace-pre-wrap break-words leading-relaxed ${
+            expanded ? '' : 'line-clamp-2'
+          }`}
+        >
+          {renderDescription(event.description!)}
+        </div>
+      )}
+      {hasDescription && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="text-[11px] text-blue-600 hover:text-blue-700 mt-1"
+        >
+          {expanded ? '접기' : '더 보기'}
+        </button>
+      )}
+      {event.location && (
+        <p className="text-[11px] text-gray-400 mt-1 truncate" title={event.location}>
+          {event.location}
+        </p>
+      )}
+    </article>
+  )
+}
 
 export default function CalendarView(): React.ReactNode {
   const { events, status, loading, fetchEvents, fetchStatus, refreshEvents } = useCalendarStore()
@@ -125,95 +185,49 @@ export default function CalendarView(): React.ReactNode {
               <div
                 key={key}
                 ref={isToday ? todayRef : undefined}
-                className={`rounded-lg transition-all ${
-                  isToday
-                    ? 'border-2 border-blue-500 bg-blue-50 ring-4 ring-blue-100 shadow-md'
-                    : 'border border-gray-200 bg-white'
+                className={`rounded-lg border bg-white ${
+                  isToday ? 'border-blue-400' : 'border-gray-200'
                 }`}
               >
                 <div
-                  className={`flex items-center justify-between px-4 border-b ${
-                    isToday ? 'py-3 border-blue-200 bg-blue-100/50' : 'py-2 border-gray-100'
+                  className={`flex items-center justify-between px-4 py-2 border-b ${
+                    isToday ? 'border-blue-200 bg-blue-50/60' : 'border-gray-100'
                   }`}
                 >
-                  <div className="flex items-center gap-2">
-                    {isToday && (
-                      <span
-                        className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse"
-                        aria-hidden
-                      />
-                    )}
+                  <div className="flex items-baseline gap-2">
                     <span
-                      className={`font-semibold ${
-                        isToday ? 'text-base text-blue-800' : 'text-sm text-gray-700'
+                      className={`text-sm font-semibold ${
+                        isToday ? 'text-blue-700' : 'text-gray-700'
                       }`}
                     >
-                      {DAY_LABELS[idx]}
-                    </span>
-                    <span
-                      className={
-                        isToday ? 'text-base font-semibold text-blue-700' : 'text-sm text-gray-500'
-                      }
-                    >
-                      {format(day, 'MM-dd')}
+                      {DAY_LABELS[idx]} {format(day, 'MM-dd')}
                     </span>
                     {isToday && (
-                      <span className="text-xs font-semibold text-white bg-blue-600 px-2 py-0.5 rounded-full shadow-sm">
+                      <span className="text-[11px] font-medium text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded">
                         오늘
                       </span>
                     )}
                   </div>
-                  <span
-                    className={`text-xs ${
-                      isToday ? 'text-blue-700 font-medium' : 'text-gray-400'
-                    }`}
-                  >
-                    {dayEvents.length}개 일정
+                  <span className="text-xs text-gray-400">
+                    {dayEvents.length === 0 ? '일정 없음' : `${dayEvents.length}개 일정`}
                   </span>
                 </div>
 
-                <div className="p-3">
-                  {dayEvents.length === 0 ? (
-                    <p className="text-xs text-gray-400 text-center py-3">일정 없음</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {dayEvents.map((event) => (
-                        <div
-                          key={event.id}
-                          className={`border rounded-md p-3 transition-colors ${
-                            isCurrentEvent(event)
-                              ? 'border-blue-400 bg-blue-50'
-                              : 'border-gray-200 bg-white'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex-1 min-w-0">
-                              <h4 className="font-medium text-gray-900 text-sm">
-                                {event.summary}
-                              </h4>
-                              {event.description && (
-                                <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap break-words">
-                                  {renderDescription(event.description)}
-                                </p>
-                              )}
-                              {event.location && (
-                                <p className="text-xs text-gray-400 mt-1">{event.location}</p>
-                              )}
-                            </div>
-                            <div className="text-right flex-shrink-0">
-                              <span className="text-xs font-medium text-gray-700">
-                                {getEventTimeDisplay(event)}
-                              </span>
-                              {isCurrentEvent(event) && (
-                                <span className="block text-[10px] text-blue-600 mt-1">Now</span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {dayEvents.length > 0 && (
+                  <div
+                    className="p-3 grid gap-2"
+                    style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}
+                  >
+                    {dayEvents.map((event) => (
+                      <EventCard
+                        key={event.id}
+                        event={event}
+                        current={isCurrentEvent(event)}
+                        timeText={getEventTimeDisplay(event)}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             )
           })}
