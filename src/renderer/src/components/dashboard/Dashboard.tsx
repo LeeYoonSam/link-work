@@ -118,11 +118,13 @@ export default function Dashboard(): React.ReactNode {
     fetchActiveTodos().then(() => setTodosFetched(true))
   }, [])
 
-  // 최초 데이터 로드 후 TODO가 없으면 자동 접기. 사용자가 직접 토글한 뒤로는 건드리지 않음.
+  // 최초 데이터 로드 후 미완료 TODO가 있을 때만 펼치고, 그 외(전부 완료/작업 없음)에는 접는다.
+  // 사용자가 직접 토글한 뒤로는 건드리지 않음.
+  const pendingTodoCount = activeTodos.filter((t) => t.is_completed === 0).length
   useEffect(() => {
     if (!todosFetched || userToggledPanelRef.current) return
-    if (activeTodos.length === 0) setTodoPanelOpen(false)
-  }, [todosFetched, activeTodos.length])
+    setTodoPanelOpen(pendingTodoCount > 0)
+  }, [todosFetched, pendingTodoCount])
 
   useEffect(() => {
     if (status.connected) {
