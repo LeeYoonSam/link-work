@@ -6,3 +6,7 @@ dist
 *.db-wal
 *.db-shm
 .omc/
+
+# Claude Code - 로컬 전용/런타임 파일 (공유 설정은 .claude/settings.json 사용)
+.claude/settings.local.json
+.claude/*.lock
