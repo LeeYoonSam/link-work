@@ -92,6 +92,8 @@ const api = {
     update: (id: number, input: Record<string, unknown>) =>
       ipcRenderer.invoke('todo:update', id, input),
     complete: (id: number) => ipcRenderer.invoke('todo:complete', id),
+    setCompletedAt: (id: number, completedAt: string) =>
+      ipcRenderer.invoke('todo:setCompletedAt', id, completedAt),
     restore: (id: number) => ipcRenderer.invoke('todo:restore', id),
     delete: (id: number) => ipcRenderer.invoke('todo:delete', id),
     history: (todoId: number) => ipcRenderer.invoke('todo:history', todoId),

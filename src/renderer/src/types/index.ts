@@ -302,6 +302,7 @@ export interface TodoAPI {
   listByTag: (tagId: number, completed?: boolean) => Promise<Todo[]>
   update: (id: number, input: Partial<TodoInput>) => Promise<Todo>
   complete: (id: number) => Promise<{ success: boolean }>
+  setCompletedAt: (id: number, completedAt: string) => Promise<{ success: boolean }>
   restore: (id: number) => Promise<{ success: boolean }>
   delete: (id: number) => Promise<{ success: boolean }>
   history: (todoId: number) => Promise<TodoHistory[]>

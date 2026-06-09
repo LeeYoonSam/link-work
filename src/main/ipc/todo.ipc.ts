@@ -175,6 +175,18 @@ export function registerTodoIpc(): void {
     return { success: true }
   })
 
+  // Adjust the completion date of an already-completed todo.
+  // completedAt must be a local-time string 'YYYY-MM-DD HH:MM:SS' to stay
+  // consistent with datetime('now', 'localtime') used elsewhere.
+  ipcMain.handle('todo:setCompletedAt', (_event, id: number, completedAt: string) => {
+    db.prepare(
+      "UPDATE todos SET completed_at = ?, updated_at = datetime('now', 'localtime') WHERE id = ? AND is_completed = 1"
+    ).run(completedAt, id)
+    saveHistory(db, id, 'update')
+    logActivity('todo', 'update', id)
+    return { success: true }
+  })
+
   ipcMain.handle('todo:delete', (_event, id: number) => {
     saveHistory(db, id, 'delete')
     db.prepare('DELETE FROM todos WHERE id = ?').run(id)

@@ -23,6 +23,7 @@ interface TodoStore {
   createTodo: (input: TodoInput) => Promise<void>
   updateTodo: (id: number, input: Partial<TodoInput>) => Promise<void>
   completeTodo: (id: number) => Promise<void>
+  setCompletedAt: (id: number, completedAt: string) => Promise<void>
   restoreTodo: (id: number) => Promise<void>
   deleteTodo: (id: number) => Promise<void>
   getTodoHistory: (todoId: number) => Promise<TodoHistory[]>
@@ -87,6 +88,12 @@ export const useTodoStore = create<TodoStore>((set, get) => ({
   completeTodo: async (id) => {
     await window.api.todo.complete(id)
     await get().fetchTodos()
+    await get().fetchCompletedTodos()
+    await get().fetchActiveTodos()
+  },
+
+  setCompletedAt: async (id, completedAt) => {
+    await window.api.todo.setCompletedAt(id, completedAt)
     await get().fetchCompletedTodos()
     await get().fetchActiveTodos()
   },

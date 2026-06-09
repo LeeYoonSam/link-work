@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { format } from 'date-fns'
+import { format, subDays } from 'date-fns'
 import { useTodoStore } from '../../stores/todoStore'
 import MarkdownContent from '../memo/MarkdownContent'
 import type { Todo } from '../../types'
@@ -15,7 +15,7 @@ const priorityConfig = {
 }
 
 export default function TodoItem({ todo }: TodoItemProps): React.ReactNode {
-  const { completeTodo, restoreTodo, deleteTodo, setEditingTodo } = useTodoStore()
+  const { completeTodo, restoreTodo, deleteTodo, setEditingTodo, setCompletedAt } = useTodoStore()
   const priority = priorityConfig[todo.priority]
   const isCompleted = todo.is_completed === 1
 
@@ -26,6 +26,30 @@ export default function TodoItem({ todo }: TodoItemProps): React.ReactNode {
   const hasTags = todo.tags && todo.tags.length > 0
   const hasNotes = Boolean(todo.notes && todo.notes.trim().length > 0)
   const [showNotes, setShowNotes] = useState(false)
+
+  const [isEditingDate, setIsEditingDate] = useState(false)
+  const [draftDate, setDraftDate] = useState('')
+
+  const openDateEditor = (): void => {
+    if (!todo.completed_at) return
+    setDraftDate(format(new Date(todo.completed_at), "yyyy-MM-dd'T'HH:mm"))
+    setIsEditingDate(true)
+  }
+
+  const saveDate = (date: Date): void => {
+    setCompletedAt(todo.id, format(date, 'yyyy-MM-dd HH:mm:ss'))
+    setIsEditingDate(false)
+  }
+
+  const handleSaveDraft = (): void => {
+    if (!draftDate) return
+    saveDate(new Date(draftDate))
+  }
+
+  const handleYesterday = (): void => {
+    if (!todo.completed_at) return
+    saveDate(subDays(new Date(todo.completed_at), 1))
+  }
 
   return (
     <div
@@ -106,9 +130,53 @@ export default function TodoItem({ todo }: TodoItemProps): React.ReactNode {
               </span>
             ) : null}
             {isCompleted && todo.completed_at ? (
-              <span className="text-xs text-gray-400">
-                완료: {format(new Date(todo.completed_at), 'yyyy-MM-dd HH:mm')}
-              </span>
+              isEditingDate ? (
+                <span className="inline-flex items-center gap-1">
+                  <input
+                    type="datetime-local"
+                    value={draftDate}
+                    autoFocus
+                    onChange={(e) => setDraftDate(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveDraft()
+                      if (e.key === 'Escape') setIsEditingDate(false)
+                    }}
+                    className="text-xs border border-gray-300 rounded px-1 py-0.5 text-gray-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleYesterday}
+                    className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
+                    title="하루 전으로"
+                  >
+                    어제
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveDraft}
+                    className="text-xs px-1.5 py-0.5 rounded bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+                  >
+                    저장
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingDate(false)}
+                    className="text-xs px-1 text-gray-400 hover:text-gray-600 transition-colors"
+                    title="취소"
+                  >
+                    ✕
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={openDateEditor}
+                  className="text-xs text-gray-400 hover:text-blue-500 hover:underline transition-colors"
+                  title="완료 날짜 수정"
+                >
+                  완료: {format(new Date(todo.completed_at), 'yyyy-MM-dd HH:mm')}
+                </button>
+              )
             ) : null}
           </div>
         </div>
