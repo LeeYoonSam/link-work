@@ -12,6 +12,8 @@ import { registerMemoCategoryIpc } from './ipc/memo-category.ipc'
 import { registerReportIpc } from './ipc/report.ipc'
 import { registerTodoIpc } from './ipc/todo.ipc'
 import { registerTodoTagIpc } from './ipc/todo-tag.ipc'
+import { registerAiIpc } from './ipc/ai.ipc'
+import { cancelAllAiQueries } from './services/ai-agent'
 import { startNotificationService, stopNotificationService } from './services/notification'
 import { createTrayWidget, destroyTrayWidget } from './services/tray-widget'
 
@@ -93,6 +95,7 @@ app.whenReady().then(() => {
   registerReportIpc()
   registerTodoIpc()
   registerTodoTagIpc()
+  registerAiIpc()
   startNotificationService()
   createTrayWidget(() => createWindow())
 
@@ -112,6 +115,7 @@ app.on('before-quit', () => {
   // 타이머/트레이 먼저 정지 (in-flight async 콜백이 DB에 접근하는 race 회피)
   stopNotificationService()
   destroyTrayWidget()
+  cancelAllAiQueries()
 })
 
 app.on('will-quit', () => {

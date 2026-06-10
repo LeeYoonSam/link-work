@@ -105,6 +105,22 @@ const api = {
     update: (id: number, input: Record<string, unknown>) =>
       ipcRenderer.invoke('todoTag:update', id, input),
     delete: (id: number) => ipcRenderer.invoke('todoTag:delete', id)
+  },
+  ai: {
+    chatList: () => ipcRenderer.invoke('ai:chatList'),
+    chatCreate: () => ipcRenderer.invoke('ai:chatCreate'),
+    chatDelete: (id: number) => ipcRenderer.invoke('ai:chatDelete', id),
+    chatRename: (id: number, title: string) => ipcRenderer.invoke('ai:chatRename', id, title),
+    messages: (chatId: number) => ipcRenderer.invoke('ai:messages', chatId),
+    send: (chatId: number, text: string) => ipcRenderer.invoke('ai:send', chatId, text),
+    cancel: (chatId: number) => ipcRenderer.invoke('ai:cancel', chatId),
+    progress: (chatId: number) => ipcRenderer.invoke('ai:progress', chatId),
+    status: () => ipcRenderer.invoke('ai:status'),
+    onStream: (callback: (event: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => callback(data)
+      ipcRenderer.on('ai:stream', handler)
+      return () => ipcRenderer.removeListener('ai:stream', handler)
+    }
   }
 }
 

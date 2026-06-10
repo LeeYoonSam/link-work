@@ -3,6 +3,7 @@ import { app } from 'electron'
 import { join } from 'path'
 
 let db: Database.Database | null = null
+let aiReadOnlyDb: Database.Database | null = null
 
 export function getDatabase(): Database.Database {
   if (!db) {
@@ -11,7 +12,24 @@ export function getDatabase(): Database.Database {
   return db
 }
 
+/**
+ * AI 도구 전용 읽기 전용 커넥션 (가드레일).
+ * SQLite 레벨에서 모든 쓰기를 차단하므로, AI 도구에 실수로 쓰기 SQL이
+ * 추가되더라도 데이터가 변경/삭제될 수 없다.
+ */
+export function getAiReadOnlyDatabase(): Database.Database {
+  if (!aiReadOnlyDb) {
+    const dbPath = join(app.getPath('userData'), 'linkwork.db')
+    aiReadOnlyDb = new Database(dbPath, { readonly: true })
+  }
+  return aiReadOnlyDb
+}
+
 export function closeDatabase(): void {
+  if (aiReadOnlyDb) {
+    aiReadOnlyDb.close()
+    aiReadOnlyDb = null
+  }
   if (db) {
     db.close()
     db = null
@@ -158,6 +176,35 @@ export function initDatabase(): void {
       snapshot TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_chats (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL DEFAULT '새 대화',
+      session_id TEXT,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      meta TEXT,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (chat_id) REFERENCES ai_chats(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id INTEGER,
+      event TEXT NOT NULL,
+      tool_name TEXT,
+      input TEXT,
+      detail TEXT,
+      duration_ms INTEGER,
+      created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
   `)
 

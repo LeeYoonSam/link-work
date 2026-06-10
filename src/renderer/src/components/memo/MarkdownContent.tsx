@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
 interface MarkdownContentProps {
@@ -9,13 +9,16 @@ interface MarkdownContentProps {
   // 입력의 단일 줄바꿈을 시각적 줄바꿈으로 보존 (markdown 하드 브레이크로 변환).
   // 자유서술 본문(프로젝트 설명 등)에서 사용자가 친 Enter를 그대로 보여줄 때 사용.
   preserveNewlines?: boolean
+  // linkwork:// 스킴 링크 클릭 시 앱 내 네비게이션을 수행할 핸들러 (AI 대화 등)
+  onInternalLink?: (href: string) => void
 }
 
 function MarkdownContentImpl({
   content,
   className = '',
   compact = false,
-  preserveNewlines = false
+  preserveNewlines = false,
+  onInternalLink
 }: MarkdownContentProps): React.ReactNode {
   const gap = compact ? 'space-y-1.5' : 'space-y-3'
   const rendered = preserveNewlines
@@ -25,6 +28,11 @@ function MarkdownContentImpl({
     <div className={`markdown-body ${gap} text-sm text-gray-800 leading-relaxed ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        // react-markdown은 기본적으로 http(s) 외 프로토콜 href를 제거하므로
+        // 앱 내 네비게이션용 linkwork:// 링크는 예외로 보존한다
+        urlTransform={(url) =>
+          url.startsWith('linkwork://') ? url : defaultUrlTransform(url)
+        }
         components={{
           h1: ({ children }) => (
             <h1 className="text-base font-bold text-gray-900 mt-2 mb-1">{children}</h1>
@@ -46,17 +54,34 @@ function MarkdownContentImpl({
             <ol className="list-decimal pl-5 space-y-0.5 text-sm text-gray-800">{children}</ol>
           ),
           li: ({ children }) => <li className="text-sm text-gray-800">{children}</li>,
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              className="text-blue-600 hover:underline"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            if (href?.startsWith('linkwork://') && onInternalLink) {
+              return (
+                <a
+                  href={href}
+                  className="text-blue-600 hover:underline font-medium"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onInternalLink(href)
+                  }}
+                >
+                  {children}
+                </a>
+              )
+            }
+            return (
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                className="text-blue-600 hover:underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {children}
+              </a>
+            )
+          },
           code: ({ className: codeClass, children }) => {
             const isBlock = /language-/.test(codeClass || '')
             if (isBlock) {

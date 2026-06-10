@@ -119,6 +119,33 @@ export async function getWeekEvents(forceRefresh = false): Promise<CalendarEvent
   }
 }
 
+/**
+ * 임의 기간의 일정 조회 (AI 어시스턴트용).
+ * 캘린더 미연동 시 null을 반환해 호출자가 미연동/빈 일정을 구분할 수 있게 한다.
+ */
+export async function getEventsInRange(
+  timeMin: Date,
+  timeMax: Date
+): Promise<CalendarEvent[] | null> {
+  const auth = getAuthenticatedClient()
+  if (!auth) return null
+
+  const calendar = google.calendar({ version: 'v3', auth })
+  try {
+    const response = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: timeMin.toISOString(),
+      timeMax: timeMax.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime'
+    })
+    return dedupEvents((response.data.items || []).map(mapEvent))
+  } catch (error) {
+    console.error('Failed to fetch calendar events:', error)
+    return []
+  }
+}
+
 export function clearCache(): void {
   cachedTodayEvents = []
   lastTodayFetchTime = 0

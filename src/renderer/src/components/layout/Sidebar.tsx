@@ -8,7 +8,8 @@ const navItems = [
   { id: 'variables' as const, label: 'Variables', icon: '⚙' },
   { id: 'memos' as const, label: 'Memos', icon: '▣' },
   { id: 'calendar' as const, label: 'Calendar', icon: '▦' },
-  { id: 'reports' as const, label: 'Reports', icon: '▥' }
+  { id: 'reports' as const, label: 'Reports', icon: '▥' },
+  { id: 'ai' as const, label: 'AI 대화', icon: '✦' }
 ]
 
 export default function Sidebar(): React.ReactNode {

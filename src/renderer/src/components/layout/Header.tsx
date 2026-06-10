@@ -7,7 +7,8 @@ const viewTitles: Record<string, string> = {
   variables: 'Variables',
   memos: 'Memos',
   calendar: 'Calendar',
-  reports: 'Reports'
+  reports: 'Reports',
+  ai: 'AI 대화'
 }
 
 export default function Header(): React.ReactNode {

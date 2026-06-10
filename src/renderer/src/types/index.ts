@@ -315,3 +315,57 @@ export interface TodoTagAPI {
   update: (id: number, input: Partial<TodoTagInput>) => Promise<TodoTag>
   delete: (id: number) => Promise<{ success: boolean }>
 }
+
+// AI Chat types
+export interface AiChat {
+  id: number
+  title: string
+  session_id: string | null
+  created_at: string
+  updated_at: string
+  message_count?: number
+  last_message?: string | null
+}
+
+export type AiMessageRole = 'user' | 'assistant'
+
+export interface AiMessage {
+  id: number
+  chat_id: number
+  role: AiMessageRole
+  content: string
+  meta: string | null
+  created_at: string
+}
+
+export type AiStreamEvent =
+  | { chatId: number; event: 'start' }
+  | { chatId: number; event: 'text'; delta: string }
+  | { chatId: number; event: 'tool'; name: string; label: string }
+  | { chatId: number; event: 'done'; message?: AiMessage; cancelled?: boolean }
+  | { chatId: number; event: 'error'; error: string }
+
+export interface AiStatus {
+  available: boolean
+  error?: string
+  warning?: string
+}
+
+export interface AiProgress {
+  running: boolean
+  text: string
+  toolLabel: string | null
+}
+
+export interface AiAPI {
+  chatList: () => Promise<AiChat[]>
+  chatCreate: () => Promise<{ id: number }>
+  chatDelete: (id: number) => Promise<{ success: boolean }>
+  chatRename: (id: number, title: string) => Promise<{ success: boolean }>
+  messages: (chatId: number) => Promise<AiMessage[]>
+  send: (chatId: number, text: string) => Promise<{ started: boolean; error?: string }>
+  cancel: (chatId: number) => Promise<{ success: boolean }>
+  progress: (chatId: number) => Promise<AiProgress>
+  status: () => Promise<AiStatus>
+  onStream: (callback: (event: AiStreamEvent) => void) => () => void
+}
