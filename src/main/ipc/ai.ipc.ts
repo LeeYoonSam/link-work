@@ -9,7 +9,10 @@ import {
   isAiQueryRunning,
   canStartAiQuery,
   getAiProgress,
-  findClaudeExecutable
+  findClaudeExecutable,
+  resolveAiApproval,
+  isAiWriteEnabled,
+  setAiWriteEnabled
 } from '../services/ai-agent'
 
 // 가드레일: 메시지 길이 상한 (과도한 입력으로 인한 토큰/리소스 낭비 방지)
@@ -99,6 +102,21 @@ export function registerAiIpc(): void {
 
   ipcMain.handle('ai:cancel', (_event, chatId: number) => {
     return { success: cancelAiQuery(chatId) }
+  })
+
+  // 쓰기 도구 승인 카드의 승인/거절 응답 (가드레일: HITL)
+  ipcMain.handle('ai:approve', (_event, requestId: string, approved: boolean) => {
+    if (typeof requestId !== 'string') return { success: false }
+    return { success: resolveAiApproval(requestId, approved === true) }
+  })
+
+  ipcMain.handle('ai:getWriteEnabled', () => {
+    return { enabled: isAiWriteEnabled() }
+  })
+
+  ipcMain.handle('ai:setWriteEnabled', (_event, enabled: boolean) => {
+    setAiWriteEnabled(enabled === true)
+    return { enabled: isAiWriteEnabled() }
   })
 
   ipcMain.handle('ai:progress', (_event, chatId: number) => {

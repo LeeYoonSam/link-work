@@ -338,10 +338,20 @@ export interface AiMessage {
   created_at: string
 }
 
+// 쓰기 도구 실행 전 사용자 승인 요청 (HITL)
+export interface AiApprovalRequest {
+  requestId: string
+  name: string
+  label: string
+  input: Record<string, unknown>
+}
+
 export type AiStreamEvent =
   | { chatId: number; event: 'start' }
   | { chatId: number; event: 'text'; delta: string }
   | { chatId: number; event: 'tool'; name: string; label: string }
+  | { chatId: number; event: 'approval'; request: AiApprovalRequest }
+  | { chatId: number; event: 'approval_resolved'; requestId: string; approved: boolean }
   | { chatId: number; event: 'done'; message?: AiMessage; cancelled?: boolean }
   | { chatId: number; event: 'error'; error: string }
 
@@ -355,6 +365,7 @@ export interface AiProgress {
   running: boolean
   text: string
   toolLabel: string | null
+  pendingApproval: AiApprovalRequest | null
 }
 
 export interface AiAPI {
@@ -367,5 +378,9 @@ export interface AiAPI {
   cancel: (chatId: number) => Promise<{ success: boolean }>
   progress: (chatId: number) => Promise<AiProgress>
   status: () => Promise<AiStatus>
+  approve: (requestId: string, approved: boolean) => Promise<{ success: boolean }>
+  getWriteEnabled: () => Promise<{ enabled: boolean }>
+  setWriteEnabled: (enabled: boolean) => Promise<{ enabled: boolean }>
   onStream: (callback: (event: AiStreamEvent) => void) => () => void
+  onDataChanged: (callback: (data: { entity: string }) => void) => () => void
 }

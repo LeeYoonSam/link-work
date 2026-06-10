@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk'
 import { getAiReadOnlyDatabase } from '../db/database'
 import { getEventsInRange } from './google-calendar'
+import { buildWriteTools } from './ai-write-tools'
 
 // LinkWork 데이터 검색 도구.
 //
@@ -323,6 +324,10 @@ const getActivityLog = tool(
     }
   )
 
+  // 쓰기 도구는 서버에 항상 등록하되, 실행 게이트(opt-in + 사용자 승인)는
+  // ai-agent.ts의 canUseTool에서 강제한다 — docs/AI_GUARDRAILS.md 7절
+  const writeTools = await buildWriteTools()
+
   return createSdkMcpServer({
     name: 'linkwork',
     version: '1.0.0',
@@ -334,7 +339,8 @@ const getActivityLog = tool(
       listDocuments,
       listVariables,
       getActivityLog,
-      getCalendarEvents
+      getCalendarEvents,
+      ...writeTools
     ]
   })
 }

@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
+import { saveTodoHistory, saveTodoTags } from '../utils/todo-helpers'
 
 interface TodoInput {
   title: string
@@ -51,22 +52,8 @@ function attachTags(db: ReturnType<typeof getDatabase>, todos: TodoRow[]): (Todo
   return todos.map((todo) => ({ ...todo, tags: tagMap.get(todo.id) || [] }))
 }
 
-function saveTags(db: ReturnType<typeof getDatabase>, todoId: number | bigint, tagIds: number[]): void {
-  db.prepare('DELETE FROM todo_tag_map WHERE todo_id = ?').run(todoId)
-  const insert = db.prepare('INSERT OR IGNORE INTO todo_tag_map (todo_id, tag_id) VALUES (?, ?)')
-  for (const tagId of tagIds) {
-    insert.run(todoId, tagId)
-  }
-}
-
-function saveHistory(db: ReturnType<typeof getDatabase>, todoId: number | bigint, action: string): void {
-  const todo = db.prepare('SELECT * FROM todos WHERE id = ?').get(todoId)
-  if (!todo) return
-  const tagIds = (db.prepare('SELECT tag_id FROM todo_tag_map WHERE todo_id = ?').all(todoId) as { tag_id: number }[])
-    .map((r) => r.tag_id)
-  const snapshot = JSON.stringify({ ...todo, tag_ids: tagIds })
-  db.prepare('INSERT INTO todo_history (todo_id, action, snapshot) VALUES (?, ?, ?)').run(todoId, action, snapshot)
-}
+const saveTags = saveTodoTags
+const saveHistory = saveTodoHistory
 
 export function registerTodoIpc(): void {
   const db = getDatabase()

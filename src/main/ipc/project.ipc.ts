@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db/database'
-import { addBusinessDays } from 'date-fns'
 import { logActivity } from '../utils/activity-logger'
+import { calculateQaDates } from '../utils/project-dates'
 
 interface ProjectInput {
   name: string
@@ -45,23 +45,6 @@ function applyAutoStatus(project: ProjectRow): ProjectRow {
     return { ...project, status: calculateAutoStatus(project) }
   }
   return project
-}
-
-function calculateQaDates(devEndDate: string): { qaStart: string; qaEnd: string; deployDate: string } {
-  const devEnd = new Date(devEndDate)
-  const qaStart = new Date(devEnd)
-  qaStart.setDate(qaStart.getDate() + 1)
-
-  const qaEnd = addBusinessDays(qaStart, 2)
-
-  const deployDate = new Date(qaEnd)
-  deployDate.setDate(deployDate.getDate() + 1)
-
-  return {
-    qaStart: qaStart.toISOString().split('T')[0],
-    qaEnd: qaEnd.toISOString().split('T')[0],
-    deployDate: deployDate.toISOString().split('T')[0]
-  }
 }
 
 export function registerProjectIpc(): void {

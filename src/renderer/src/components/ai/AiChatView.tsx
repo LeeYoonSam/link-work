@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAiChatStore } from '../../stores/aiChatStore'
 import { useProjectStore } from '../../stores/projectStore'
+import { useTodoStore } from '../../stores/todoStore'
+import { useMemoStore } from '../../stores/memoStore'
+import { useVariableStore } from '../../stores/variableStore'
 import MarkdownContent from '../memo/MarkdownContent'
-import type { AiChat, AiMessage, AiStatus, AiStreamEvent } from '../../types'
+import type { AiApprovalRequest, AiChat, AiMessage, AiStatus, AiStreamEvent } from '../../types'
 
 const EXAMPLE_PROMPTS = [
   '현재 진행중인 프로젝트 알려줘',
@@ -46,7 +49,27 @@ export default function AiChatView(): React.ReactNode {
     const unsubscribe = window.api.ai.onStream((event) =>
       handleStreamEvent(event as AiStreamEvent)
     )
-    return unsubscribe
+    // AI 쓰기 도구가 데이터를 생성하면 열려 있는 화면(store)을 갱신한다
+    const unsubscribeData = window.api.ai.onDataChanged(({ entity }) => {
+      if (entity === 'project') {
+        void useProjectStore.getState().fetchProjects()
+      } else if (entity === 'todo') {
+        const todoStore = useTodoStore.getState()
+        void todoStore.fetchTodos()
+        void todoStore.fetchActiveTodos()
+        void todoStore.fetchTags()
+      } else if (entity === 'memo') {
+        const memoStore = useMemoStore.getState()
+        void memoStore.fetchMemos()
+        void memoStore.fetchCategories()
+      } else if (entity === 'variable') {
+        void useVariableStore.getState().fetchVariables()
+      }
+    })
+    return () => {
+      unsubscribe()
+      unsubscribeData()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -147,6 +170,9 @@ export default function AiChatView(): React.ReactNode {
             <h3 className="text-lg font-semibold text-gray-800 mb-1">LinkWork AI</h3>
             <p className="text-sm text-gray-500 mb-6">
               프로젝트, TODO, 메모, 문서 등 LinkWork의 데이터를 검색하고 정리해 드립니다.
+              <br />
+              채팅방에서 &ldquo;데이터 작성&rdquo;을 켜면 승인을 거쳐 프로젝트·TODO·메모·변수를
+              만들어 드릴 수도 있습니다.
             </p>
             <div className="grid grid-cols-2 gap-2 w-full max-w-xl">
               {EXAMPLE_PROMPTS.map((prompt) => (
@@ -263,21 +289,34 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
     toolStatus,
     isStreaming,
     error,
+    pendingApproval,
     sendMessage,
     cancelStream,
+    respondApproval,
     renameChat
   } = useAiChatStore()
   const { setView, setProjectView, fetchProject } = useProjectStore()
   const [input, setInput] = useState('')
   const [editingTitle, setEditingTitle] = useState<string | null>(null)
+  const [writeEnabled, setWriteEnabled] = useState<boolean | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const chat = chats.find((c) => c.id === currentChatId)
 
   useEffect(() => {
+    window.api.ai.getWriteEnabled().then((r) => setWriteEnabled(r.enabled))
+  }, [])
+
+  const toggleWrite = async (): Promise<void> => {
+    if (writeEnabled === null) return
+    const result = await window.api.ai.setWriteEnabled(!writeEnabled)
+    setWriteEnabled(result.enabled)
+  }
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, streamingText, toolStatus])
+  }, [messages, streamingText, toolStatus, pendingApproval])
 
   // linkwork:// 링크 → 앱 내 네비게이션/문서 열기
   const handleInternalLink = async (href: string): Promise<void> => {
@@ -352,6 +391,26 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
             {chat?.title ?? '대화'}
           </h3>
         )}
+        {writeEnabled !== null && (
+          <button
+            onClick={() => void toggleWrite()}
+            className="shrink-0 flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900 transition-colors"
+            title="켜면 AI가 승인을 받아 프로젝트/TODO/메모/변수를 생성할 수 있습니다 (생성만 가능, 수정/삭제 불가)"
+          >
+            <span
+              className={`relative w-7 h-4 rounded-full transition-colors ${
+                writeEnabled ? 'bg-gray-900' : 'bg-gray-300'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${
+                  writeEnabled ? 'left-3.5' : 'left-0.5'
+                }`}
+              />
+            </span>
+            데이터 작성 {writeEnabled ? '허용' : '꺼짐'}
+          </button>
+        )}
       </div>
 
       {/* 메시지 영역 */}
@@ -381,6 +440,13 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
               <p className="mt-1 text-xs text-gray-400 px-1">{toolStatus} 중…</p>
             )}
           </div>
+        )}
+
+        {pendingApproval && (
+          <ApprovalCard
+            request={pendingApproval}
+            onRespond={(approved) => void respondApproval(pendingApproval.requestId, approved)}
+          />
         )}
 
         {error && (
@@ -432,6 +498,43 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
         </div>
       </div>
     </>
+  )
+}
+
+// 쓰기 도구 실행 전 사용자 승인 카드 (HITL — docs/AI_GUARDRAILS.md 7.2절)
+function ApprovalCard({
+  request,
+  onRespond
+}: {
+  request: AiApprovalRequest
+  onRespond: (approved: boolean) => void
+}): React.ReactNode {
+  return (
+    <div className="max-w-[85%] border border-amber-300 bg-amber-50 rounded-lg px-4 py-3">
+      <p className="text-sm font-semibold text-gray-900">
+        AI가 <span className="text-amber-700">{request.label}</span> 승인을 요청했습니다
+      </p>
+      <p className="mt-0.5 text-xs text-gray-500">
+        승인하면 아래 내용이 즉시 저장됩니다. 5분 안에 응답하지 않으면 자동으로 거절됩니다.
+      </p>
+      <pre className="mt-2 mb-3 bg-white border border-amber-200 rounded p-2.5 text-xs font-mono text-gray-700 whitespace-pre-wrap break-words max-h-60 overflow-y-auto">
+        {JSON.stringify(request.input, null, 2)}
+      </pre>
+      <div className="flex gap-2">
+        <button
+          onClick={() => onRespond(true)}
+          className="px-4 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 transition-colors"
+        >
+          승인
+        </button>
+        <button
+          onClick={() => onRespond(false)}
+          className="px-4 py-1.5 text-sm bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
+        >
+          거절
+        </button>
+      </div>
+    </div>
   )
 }
 

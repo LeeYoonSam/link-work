@@ -11,6 +11,11 @@ export type AiAuditEvent =
   | 'tool_call'
   | 'tool_error'
   | 'tool_denied'
+  | 'approval_request'
+  | 'write_approved'
+  | 'write_rejected'
+  | 'write_executed'
+  | 'write_toggle'
 
 interface AiAuditEntry {
   chatId?: number | null

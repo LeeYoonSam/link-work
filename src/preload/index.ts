@@ -116,10 +116,20 @@ const api = {
     cancel: (chatId: number) => ipcRenderer.invoke('ai:cancel', chatId),
     progress: (chatId: number) => ipcRenderer.invoke('ai:progress', chatId),
     status: () => ipcRenderer.invoke('ai:status'),
+    approve: (requestId: string, approved: boolean) =>
+      ipcRenderer.invoke('ai:approve', requestId, approved),
+    getWriteEnabled: () => ipcRenderer.invoke('ai:getWriteEnabled'),
+    setWriteEnabled: (enabled: boolean) => ipcRenderer.invoke('ai:setWriteEnabled', enabled),
     onStream: (callback: (event: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => callback(data)
       ipcRenderer.on('ai:stream', handler)
       return () => ipcRenderer.removeListener('ai:stream', handler)
+    },
+    onDataChanged: (callback: (data: { entity: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { entity: string }): void =>
+        callback(data)
+      ipcRenderer.on('ai:dataChanged', handler)
+      return () => ipcRenderer.removeListener('ai:dataChanged', handler)
     }
   }
 }

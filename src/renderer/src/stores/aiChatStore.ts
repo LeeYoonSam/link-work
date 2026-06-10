@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AiChat, AiMessage, AiStreamEvent } from '../types'
+import type { AiApprovalRequest, AiChat, AiMessage, AiStreamEvent } from '../types'
 
 interface AiChatStore {
   chats: AiChat[]
@@ -9,6 +9,7 @@ interface AiChatStore {
   toolStatus: string | null
   isStreaming: boolean
   error: string | null
+  pendingApproval: AiApprovalRequest | null
 
   fetchChats: () => Promise<void>
   createChat: () => Promise<number>
@@ -18,6 +19,7 @@ interface AiChatStore {
   closeChat: () => void
   sendMessage: (text: string) => Promise<void>
   cancelStream: () => Promise<void>
+  respondApproval: (requestId: string, approved: boolean) => Promise<void>
   handleStreamEvent: (event: AiStreamEvent) => void
 }
 
@@ -29,6 +31,7 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
   toolStatus: null,
   isStreaming: false,
   error: null,
+  pendingApproval: null,
 
   fetchChats: async () => {
     const chats = await window.api.ai.chatList()
@@ -45,7 +48,7 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
   deleteChat: async (id) => {
     await window.api.ai.chatDelete(id)
     if (get().currentChatId === id) {
-      set({ currentChatId: null, messages: [], streamingText: '', toolStatus: null, isStreaming: false, error: null })
+      set({ currentChatId: null, messages: [], streamingText: '', toolStatus: null, isStreaming: false, error: null, pendingApproval: null })
     }
     await get().fetchChats()
   },
@@ -65,6 +68,7 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
       isStreaming: progress.running,
       streamingText: progress.running ? progress.text : '',
       toolStatus: progress.running ? progress.toolLabel : null,
+      pendingApproval: progress.running ? (progress.pendingApproval ?? null) : null,
       error: null
     })
     if (progress.running) {
@@ -72,13 +76,13 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
       const recheck = await window.api.ai.progress(id)
       if (!recheck.running && get().currentChatId === id && get().isStreaming) {
         const fresh = await window.api.ai.messages(id)
-        set({ messages: fresh, isStreaming: false, streamingText: '', toolStatus: null })
+        set({ messages: fresh, isStreaming: false, streamingText: '', toolStatus: null, pendingApproval: null })
       }
     }
   },
 
   closeChat: () => {
-    set({ currentChatId: null, messages: [], streamingText: '', toolStatus: null, error: null })
+    set({ currentChatId: null, messages: [], streamingText: '', toolStatus: null, error: null, pendingApproval: null })
   },
 
   sendMessage: async (text) => {
@@ -118,6 +122,12 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
     await window.api.ai.cancel(chatId)
   },
 
+  respondApproval: async (requestId, approved) => {
+    // main이 approval_resolved 이벤트로도 정리하지만, 클릭 즉시 카드를 닫는다
+    set((s) => (s.pendingApproval?.requestId === requestId ? { pendingApproval: null } : s))
+    await window.api.ai.approve(requestId, approved)
+  },
+
   handleStreamEvent: (event) => {
     const { currentChatId } = get()
     // 보고 있지 않은 채팅의 이벤트: 리스트만 갱신
@@ -136,17 +146,26 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
       case 'tool':
         set({ toolStatus: event.label })
         break
+      case 'approval':
+        set({ pendingApproval: event.request, toolStatus: null })
+        break
+      case 'approval_resolved':
+        set((s) =>
+          s.pendingApproval?.requestId === event.requestId ? { pendingApproval: null } : s
+        )
+        break
       case 'done':
         set((s) => ({
           isStreaming: false,
           streamingText: '',
           toolStatus: null,
+          pendingApproval: null,
           messages: event.message ? [...s.messages, event.message] : s.messages
         }))
         void get().fetchChats()
         break
       case 'error':
-        set({ isStreaming: false, streamingText: '', toolStatus: null, error: event.error })
+        set({ isStreaming: false, streamingText: '', toolStatus: null, pendingApproval: null, error: event.error })
         break
     }
   }
