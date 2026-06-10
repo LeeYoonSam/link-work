@@ -10,7 +10,8 @@ import { format } from 'date-fns'
 import type { Task, Todo } from '../../types'
 
 function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
-  const { completeTodo, restoreTodo } = useTodoStore()
+  const { completeTodo, restoreTodo, setSelectedTodoId, setFilterTagId } = useTodoStore()
+  const { setView } = useProjectStore()
   const isCompleted = todo.is_completed === 1
 
   const priorityDot =
@@ -24,9 +25,27 @@ function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
     todo.due_date && !isCompleted && new Date(todo.due_date) < new Date()
   )
 
+  // 행 클릭 시 TODO 메뉴로 전환하고 해당 항목을 선택해 강조한다.
+  // 필터 태그가 걸려 있으면 선택 항목이 가려질 수 있어 함께 초기화한다.
+  const handleSelect = (): void => {
+    setFilterTagId(null)
+    setSelectedTodoId(todo.id)
+    setView('todos')
+  }
+
   return (
     <div
-      className={`flex items-center gap-2 p-2.5 rounded-lg border ${
+      onClick={handleSelect}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          handleSelect()
+        }
+      }}
+      title="TODO 메뉴에서 보기"
+      className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors hover:border-blue-300 hover:bg-blue-50/40 ${
         isCompleted
           ? 'bg-gray-50 border-gray-200'
           : isOverdue
@@ -35,7 +54,11 @@ function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
       }`}
     >
       <button
-        onClick={() => (isCompleted ? restoreTodo(todo.id) : completeTodo(todo.id))}
+        onClick={(e) => {
+          e.stopPropagation()
+          if (isCompleted) restoreTodo(todo.id)
+          else completeTodo(todo.id)
+        }}
         className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
           isCompleted
             ? 'bg-green-500 border-green-500 text-white'

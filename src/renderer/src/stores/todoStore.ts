@@ -11,11 +11,13 @@ interface TodoStore {
   filterTagId: number | null
   editingTodo: Todo | null
   showTagManager: boolean
+  selectedTodoId: number | null
 
   setShowCompleted: (show: boolean) => void
   setFilterTagId: (tagId: number | null) => void
   setEditingTodo: (todo: Todo | null) => void
   setShowTagManager: (show: boolean) => void
+  setSelectedTodoId: (id: number | null) => void
 
   fetchTodos: () => Promise<void>
   fetchCompletedTodos: () => Promise<void>
@@ -44,11 +46,13 @@ export const useTodoStore = create<TodoStore>((set, get) => ({
   filterTagId: null,
   editingTodo: null,
   showTagManager: false,
+  selectedTodoId: null,
 
   setShowCompleted: (show) => set({ showCompleted: show }),
   setFilterTagId: (tagId) => set({ filterTagId: tagId }),
   setEditingTodo: (todo) => set({ editingTodo: todo }),
   setShowTagManager: (show) => set({ showTagManager: show }),
+  setSelectedTodoId: (id) => set({ selectedTodoId: id }),
 
   fetchTodos: async () => {
     set({ loading: true })

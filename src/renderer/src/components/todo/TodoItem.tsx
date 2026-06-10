@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { format, subDays } from 'date-fns'
 import { useTodoStore } from '../../stores/todoStore'
 import MarkdownContent from '../memo/MarkdownContent'
@@ -6,6 +6,7 @@ import type { Todo } from '../../types'
 
 interface TodoItemProps {
   todo: Todo
+  highlighted?: boolean
 }
 
 const priorityConfig = {
@@ -14,10 +15,18 @@ const priorityConfig = {
   low: { label: '낮음', bg: 'bg-gray-50', text: 'text-gray-500', dot: 'bg-gray-400' }
 }
 
-export default function TodoItem({ todo }: TodoItemProps): React.ReactNode {
+export default function TodoItem({ todo, highlighted = false }: TodoItemProps): React.ReactNode {
   const { completeTodo, restoreTodo, deleteTodo, setEditingTodo, setCompletedAt } = useTodoStore()
   const priority = priorityConfig[todo.priority]
   const isCompleted = todo.is_completed === 1
+
+  // 대시보드에서 선택해 들어온 항목은 화면 중앙으로 스크롤한다.
+  const rootRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (highlighted) {
+      rootRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [highlighted])
 
   const isOverdue = Boolean(
     todo.due_date && !isCompleted && new Date(todo.due_date) < new Date()
@@ -26,6 +35,15 @@ export default function TodoItem({ todo }: TodoItemProps): React.ReactNode {
   const hasTags = todo.tags && todo.tags.length > 0
   const hasNotes = Boolean(todo.notes && todo.notes.trim().length > 0)
   const [showNotes, setShowNotes] = useState(false)
+
+  // 박스 클릭 시 메모가 있으면 펼치고 접는다.
+  // 단, 내부의 버튼/링크/입력 등 인터랙티브 요소 클릭은 토글에서 제외한다.
+  const handleBoxClick = (e: React.MouseEvent): void => {
+    if (!hasNotes) return
+    const target = e.target as HTMLElement
+    if (target.closest('button, a, input, textarea, select')) return
+    setShowNotes((v) => !v)
+  }
 
   const [isEditingDate, setIsEditingDate] = useState(false)
   const [draftDate, setDraftDate] = useState('')
@@ -53,12 +71,18 @@ export default function TodoItem({ todo }: TodoItemProps): React.ReactNode {
 
   return (
     <div
-      className={`group rounded-lg border transition-colors ${
-        isCompleted
-          ? 'bg-gray-50 border-gray-200'
-          : isOverdue
-            ? 'bg-red-50/50 border-red-200'
-            : 'bg-white border-gray-200 hover:border-gray-300'
+      ref={rootRef}
+      onClick={handleBoxClick}
+      className={`group rounded-lg border-2 transition-colors ${
+        hasNotes ? 'cursor-pointer' : ''
+      } ${
+        highlighted
+          ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-300 shadow-sm'
+          : isCompleted
+            ? 'bg-gray-50 border-gray-200'
+            : isOverdue
+              ? 'bg-red-50/50 border-red-200'
+              : 'bg-white border-gray-200 hover:border-gray-300'
       }`}
     >
       <div className="flex items-start gap-3 p-3">
@@ -223,7 +247,7 @@ export default function TodoItem({ todo }: TodoItemProps): React.ReactNode {
       </div>
 
       {hasNotes && showNotes ? (
-        <div className="px-3 pb-3 pl-11">
+        <div className="px-3 pb-3 pl-11" onClick={(e) => e.stopPropagation()}>
           <div className="rounded-md bg-amber-50/40 border border-amber-100 px-3 py-2">
             <MarkdownContent content={todo.notes as string} compact />
           </div>

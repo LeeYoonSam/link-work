@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { format, isToday, isYesterday } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import { useTodoStore } from '../../stores/todoStore'
@@ -65,10 +65,12 @@ export default function TodoView(): React.ReactNode {
     filterTagId,
     editingTodo,
     showTagManager,
+    selectedTodoId,
     setShowCompleted,
     setFilterTagId,
     setEditingTodo,
     setShowTagManager,
+    setSelectedTodoId,
     fetchTodos,
     fetchCompletedTodos,
     fetchTags
@@ -87,6 +89,40 @@ export default function TodoView(): React.ReactNode {
     fetchTodos()
     fetchCompletedTodos()
   }, [filterTagId])
+
+  // 대시보드에서 선택해 들어온 직후 사용자가 클릭/키 입력 등 다른 액션을 하면
+  // 강조를 해제한다. 전환을 유발한 클릭이 곧바로 트리거되지 않도록 다음 틱에 등록.
+  // (StrictMode에서 마운트 직후 cleanup이 한 번 도는 문제를 피하기 위해
+  //  언마운트 기반 해제 대신 사용자 인터랙션 기반으로만 해제한다.)
+  useEffect(() => {
+    if (selectedTodoId == null) return
+    const clear = (): void => setSelectedTodoId(null)
+    const timer = window.setTimeout(() => {
+      window.addEventListener('pointerdown', clear, { once: true })
+      window.addEventListener('keydown', clear, { once: true })
+    }, 0)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('pointerdown', clear)
+      window.removeEventListener('keydown', clear)
+    }
+  }, [selectedTodoId, setSelectedTodoId])
+
+  // 대시보드에서 선택해 들어온 항목이 완료/진행중 어느 쪽에 있는지 보고
+  // 알맞은 탭으로 한 번만 전환한다(이후 사용자의 탭 조작은 존중).
+  const handledSelectionRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (selectedTodoId == null) {
+      handledSelectionRef.current = null
+      return
+    }
+    if (handledSelectionRef.current === selectedTodoId) return
+    const inCompleted = completedTodos.some((t) => t.id === selectedTodoId)
+    const inActive = todos.some((t) => t.id === selectedTodoId)
+    if (!inCompleted && !inActive) return // 데이터 로드 전이면 대기
+    handledSelectionRef.current = selectedTodoId
+    setShowCompleted(inCompleted && !inActive)
+  }, [selectedTodoId, todos, completedTodos, setShowCompleted])
 
   const filteredTodos = useMemo(
     () => todos.filter((t) => matchesSearch(t, search)),
@@ -220,7 +256,9 @@ export default function TodoView(): React.ReactNode {
               </div>
             </div>
           ) : (
-            filteredTodos.map((todo) => <TodoItem key={todo.id} todo={todo} />)
+            filteredTodos.map((todo) => (
+              <TodoItem key={todo.id} todo={todo} highlighted={todo.id === selectedTodoId} />
+            ))
           )}
         </div>
       ) : (
@@ -247,7 +285,7 @@ export default function TodoView(): React.ReactNode {
                 </div>
                 <div className="space-y-2">
                   {group.items.map((todo) => (
-                    <TodoItem key={todo.id} todo={todo} />
+                    <TodoItem key={todo.id} todo={todo} highlighted={todo.id === selectedTodoId} />
                   ))}
                 </div>
               </div>
