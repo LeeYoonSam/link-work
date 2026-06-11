@@ -20,7 +20,8 @@ const ACTION_LABELS: Record<string, string> = {
   update: 'Updated',
   delete: 'Deleted',
   archive: 'Archived',
-  restore: 'Restored'
+  restore: 'Restored',
+  complete: 'Completed'
 }
 
 const ENTITY_COLORS: Record<string, string> = {
@@ -28,7 +29,8 @@ const ENTITY_COLORS: Record<string, string> = {
   task: '#f59e0b',
   document: '#10b981',
   variable: '#8b5cf6',
-  memo: '#ec4899'
+  memo: '#ec4899',
+  todo: '#0ea5e9'
 }
 
 const ACTION_COLORS: Record<string, string> = {
@@ -36,7 +38,8 @@ const ACTION_COLORS: Record<string, string> = {
   update: '#3b82f6',
   delete: '#ef4444',
   archive: '#f59e0b',
-  restore: '#8b5cf6'
+  restore: '#8b5cf6',
+  complete: '#14b8a6'
 }
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
