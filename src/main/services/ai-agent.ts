@@ -5,7 +5,11 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { getDatabase } from '../db/database'
 import { getLinkworkMcpServer, LINKWORK_TOOL_NAMES } from './ai-tools'
-import { LINKWORK_WRITE_TOOL_NAMES } from './ai-write-tools'
+import {
+  getUpdatePreview,
+  LINKWORK_WRITE_TOOL_NAMES,
+  sanitizeWriteInputForAudit
+} from './ai-write-tools'
 import { logAiAudit } from './ai-audit'
 
 // Agent SDK는 ESM 전용 — CJS 번들에서 require 불가하므로 동적 import로 lazy 로드
@@ -58,12 +62,14 @@ interface ActiveQuery {
 
 const activeQueries = new Map<number, ActiveQuery>()
 
-// 쓰기 도구 승인 요청 — renderer에 미리보기 카드로 표시된다
+// 쓰기 도구 승인 요청 — renderer에 미리보기 카드로 표시된다.
+// current는 수정(update) 도구의 "변경 전 현재 값" (생성 도구는 null)
 export interface AiApprovalRequestPayload {
   requestId: string
   name: string
   label: string
   input: unknown
+  current: Record<string, unknown> | null
 }
 
 export interface AiProgress {
@@ -123,7 +129,9 @@ const TOOL_LABELS: Record<string, string> = {
   list_projects: '프로젝트 목록 조회',
   get_project: '프로젝트 상세 조회',
   list_todos: 'TODO 조회',
+  get_todo: 'TODO 상세 조회',
   search_memos: '메모 검색',
+  get_memo: '메모 상세 조회',
   list_documents: '문서 조회',
   list_variables: '변수 조회',
   get_activity_log: '활동 로그 조회',
@@ -131,7 +139,12 @@ const TOOL_LABELS: Record<string, string> = {
   create_project: '프로젝트 생성',
   create_todo: 'TODO 생성',
   create_memo: '메모 생성',
-  create_variable: '변수 생성'
+  create_variable: '변수 생성',
+  update_project: '프로젝트 수정',
+  update_task: '태스크 수정',
+  update_todo: 'TODO 수정',
+  update_memo: '메모 수정',
+  update_variable: '변수 수정'
 }
 
 // 패키징된 GUI 앱은 셸 PATH를 물려받지 못하므로 시스템에 설치된
@@ -185,17 +198,21 @@ LinkWork는 개인 업무 관리 데스크톱 앱으로, 다음 데이터를 관
 ${
   writeEnabled
     ? `## 데이터 작성 규칙 (쓰기 도구 활성)
-create_project / create_todo / create_memo / create_variable 도구로 데이터를 **생성**할 수 있습니다.
+- 생성: create_project / create_todo / create_memo / create_variable
+- 수정: update_project / update_task / update_todo / update_memo / update_variable
+위 도구로 데이터를 **생성·수정**할 수 있습니다.
 1. 모든 쓰기 도구는 실행 전 사용자에게 승인 카드가 표시되며, 승인해야만 실행됩니다.
 2. 사용자가 거절하면 같은 내용으로 다시 시도하지 말고, 무엇을 바꿀지 물어보세요.
-3. 생성 전에 조회 도구로 맥락을 먼저 확인하세요 (중복 방지, 기존 태그/카테고리/변수 key 확인 등).
-4. 사용자가 형식을 지정하지 않으면 데이터 성격에 맞게 정리해서 작성하세요 (메모는 마크다운 구조화, TODO 제목은 간결한 행동 단위, 프로젝트는 WBS 세부 작업 분해).
-5. 수정/삭제는 지원하지 않습니다 — 요청 시 해당 메뉴에서 직접 작업하도록 안내하세요.
-6. 생성 후에는 linkwork:// 링크로 만들어진 항목을 안내하세요.`
+3. 쓰기 전에 조회 도구로 맥락을 먼저 확인하세요. 특히 수정은 반드시 조회 도구로 대상 id와 현재 값을 확인한 뒤, **변경할 필드만** 전달하세요.
+4. 메모 content와 TODO notes는 **전체 교체**됩니다. 부분 수정 시 반드시 get_memo / get_todo로 전문을 조회한 뒤, 수정 사항을 반영한 전체 내용을 전달하세요 (목록 도구의 잘린 내용을 그대로 쓰면 데이터가 유실됩니다).
+5. 여러 항목을 바꿀 때는 항목마다 도구를 한 번씩 호출하세요 (한 호출 = 한 항목). 호출마다 승인을 받습니다.
+6. 사용자가 형식을 지정하지 않으면 데이터 성격에 맞게 정리해서 작성하세요 (메모는 마크다운 구조화, TODO 제목은 간결한 행동 단위, 프로젝트는 WBS 세부 작업 분해).
+7. 삭제는 지원하지 않습니다 — 요청 시 해당 메뉴에서 직접 작업하도록 안내하세요. (메모 보관 처리, TODO 완료/복원은 update 도구로 가능합니다)
+8. 생성/수정 후에는 linkwork:// 링크로 해당 항목을 안내하세요.`
     : `## 데이터 작성 안내
-현재 AI 데이터 작성 기능이 꺼져 있어 당신은 읽기 전용입니다. 사용자가 데이터 추가를 요청하면,
-AI 대화 화면 상단의 "데이터 작성 허용" 토글을 켜면 AI가 직접 생성할 수 있다고 안내하거나 해당 메뉴에서 직접 작업하도록 안내하세요.
-수정/삭제는 항상 해당 메뉴에서만 가능합니다.`
+현재 AI 데이터 작성 기능이 꺼져 있어 당신은 읽기 전용입니다. 사용자가 데이터 추가/수정을 요청하면,
+AI 대화 화면 상단의 "데이터 작성 허용" 토글을 켜면 AI가 승인을 받아 직접 생성·수정할 수 있다고 안내하거나 해당 메뉴에서 직접 작업하도록 안내하세요.
+삭제는 항상 해당 메뉴에서만 가능합니다.`
 }
 
 ## 제한 및 보안 규칙
@@ -282,7 +299,9 @@ export async function runAiQuery(
   // 타임아웃/쿼리 중단 시 자동 거절 — canUseTool이 무한 대기하지 않도록.
   const requestApproval = (shortName: string, label: string, input: unknown): Promise<boolean> => {
     const requestId = `${chatId}-${++approvalSeq}`
-    logAiAudit({ chatId, event: 'approval_request', toolName: shortName, input })
+    // 감사 로그에는 secret 변수 값이 평문으로 남지 않도록 마스킹한 입력을 기록한다(§5)
+    const auditInput = sanitizeWriteInputForAudit(shortName, input)
+    logAiAudit({ chatId, event: 'approval_request', toolName: shortName, input: auditInput })
     return new Promise<boolean>((resolve) => {
       const finish = (approved: boolean, reason?: string): void => {
         if (!pendingApprovals.has(requestId)) return
@@ -292,7 +311,7 @@ export async function runAiQuery(
         entry.pendingApproval = null
         send({ chatId, event: 'approval_resolved', requestId, approved })
         if (approved) {
-          logAiAudit({ chatId, event: 'write_approved', toolName: shortName, input })
+          logAiAudit({ chatId, event: 'write_approved', toolName: shortName, input: auditInput })
         } else {
           logAiAudit({
             chatId,
@@ -307,7 +326,14 @@ export async function runAiQuery(
       const onAbort = (): void => finish(false, '쿼리 중단')
       abort.signal.addEventListener('abort', onAbort)
       pendingApprovals.set(requestId, (approved) => finish(approved))
-      const request: AiApprovalRequestPayload = { requestId, name: shortName, label, input }
+      const request: AiApprovalRequestPayload = {
+        requestId,
+        name: shortName,
+        label,
+        input,
+        // 수정 도구는 변경 전 현재 값을 카드에 함께 표시 (조회 실패 시 null)
+        current: getUpdatePreview(shortName, input)
+      }
       entry.pendingApproval = request
       entry.toolLabel = null
       send({ chatId, event: 'approval', request })
@@ -356,7 +382,7 @@ export async function runAiQuery(
                 chatId,
                 event: 'tool_denied',
                 toolName,
-                input,
+                input: sanitizeWriteInputForAudit(toolName.replace('mcp__linkwork__', ''), input),
                 detail: 'AI 쓰기 비활성 상태에서 쓰기 도구 시도'
               })
               return {
@@ -414,7 +440,12 @@ export async function runAiQuery(
             const label = TOOL_LABELS[shortName] ?? shortName
             entry.toolLabel = label
             toolUseNames.set(block.id, shortName)
-            logAiAudit({ chatId, event: 'tool_call', toolName: shortName, input: block.input })
+            logAiAudit({
+              chatId,
+              event: 'tool_call',
+              toolName: shortName,
+              input: sanitizeWriteInputForAudit(shortName, block.input)
+            })
             send({ chatId, event: 'tool', name: shortName, label })
           }
         }

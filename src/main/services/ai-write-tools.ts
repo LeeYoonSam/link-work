@@ -1,30 +1,103 @@
 import { z } from 'zod'
 import { BrowserWindow } from 'electron'
+import type Database from 'better-sqlite3'
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk'
-import { getDatabase } from '../db/database'
+import { getAiReadOnlyDatabase, getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
-import { calculateQaDates } from '../utils/project-dates'
-import { saveTodoHistory, saveTodoTags } from '../utils/todo-helpers'
+import { MEMO_WITH_CATEGORY_SELECT, setMemoArchived } from '../utils/memo-helpers'
+import { applyProjectAutoStatus, calculateQaDates, type ProjectStatusFields } from '../utils/project-dates'
+import {
+  saveTodoHistory,
+  saveTodoTags,
+  setTodoCompletion,
+  TODO_TAGS_SUBQUERY
+} from '../utils/todo-helpers'
 import { logAiAudit } from './ai-audit'
 
-// LinkWork 데이터 생성(쓰기) 도구.
+// LinkWork 데이터 생성·수정(쓰기) 도구.
 //
 // [가드레일] — docs/AI_GUARDRAILS.md 7절
 // 1. 이 모듈은 AI 도구 중 유일하게 쓰기 커넥션(getDatabase)을 사용한다.
 //    실행 전 반드시 사용자 승인(HITL)을 거친다 — ai-agent.ts의 canUseTool에서 강제.
-// 2. 생성(create)만 지원한다. update/delete 도구는 만들지 않는다.
-// 3. 도구 호출 1회 = 논리적 1건 생성. 포맷은 zod 스키마가 호출 레벨에서 강제한다.
+// 2. 생성(create)·수정(update)만 지원한다. delete 도구는 만들지 않는다
+//    (메모 보관/TODO 완료 같은 가역적 상태 변경은 update로 허용).
+// 3. 도구 호출 1회 = 논리적 1건 변경. 포맷은 zod 스키마가 호출 레벨에서 강제한다.
+//    수정은 전달된 필드만 부분 업데이트하며, 대상 id가 없으면 오류를 반환한다.
 // 4. 실행 결과는 ai_audit_log에 write_executed로 기록한다.
 
 export const LINKWORK_WRITE_TOOL_NAMES = [
   'create_project',
   'create_todo',
   'create_memo',
-  'create_variable'
+  'create_variable',
+  'update_project',
+  'update_task',
+  'update_todo',
+  'update_memo',
+  'update_variable'
 ].map((name) => `mcp__linkwork__${name}`)
 
 const dateField = (desc: string): z.ZodString =>
   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD 형식').describe(desc)
+
+// TODO 마감일은 알람 시각을 포함할 수 있다: 'YYYY-MM-DD' 또는 'YYYY-MM-DD HH:mm'.
+// 시각이 포함되면 알람(due_reminder)이 켜진 것으로 간주한다 (UI의 TodoForm과 동일한 규약).
+// 초(:ss)는 레거시 데이터를 그대로 되돌려 쓸 수 있도록 선택적으로 허용한다.
+const todoDueField = (desc: string): z.ZodString =>
+  z
+    .string()
+    .regex(
+      /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$/,
+      "YYYY-MM-DD 또는 'YYYY-MM-DD HH:mm' 형식"
+    )
+    .describe(desc)
+
+// due_date에 'HH:mm' 시각이 포함되어 있는지 — 알람 활성 여부 판별 (notification.ts와 동일 규약)
+function dueDateHasTime(due: string | null): boolean {
+  return due !== null && / \d{2}:\d{2}/.test(due)
+}
+
+// 잘림 표시 마커. 조회 도구가 본문을 자를 때 덧붙이며(ai-tools.ts truncate),
+// 쓰기 도구는 이 마커가 섞인 본문을 거부해 "잘린 내용 되쓰기"로 인한 데이터 유실을 막는다.
+export const TRUNCATION_MARKER = '…(생략)'
+
+// secret 변수 값 마스킹 문자열. 조회(list_variables)/승인 카드 미리보기/감사 로그가 공용 사용.
+export const SECRET_MASK = '(secret — 값 숨김)'
+
+// secret 타입 변수의 value를 마스킹한 사본을 반환한다(아니면 원본 그대로).
+export function maskSecretVariable<T extends { view_type: string }>(row: T): T {
+  return row.view_type === 'secret' ? { ...row, value: SECRET_MASK } : row
+}
+
+// 감사 로그(ai_audit_log)에 input을 기록하기 전, 변수 쓰기 도구의 secret value를 마스킹한다.
+// 조회 경로는 항상 마스킹하므로 감사 로그에만 평문이 남지 않도록 일관성을 맞춘다(§5).
+// shortName은 mcp 접두어를 뗀 도구 이름. 변수 외 도구/일반 변수는 입력을 그대로 둔다.
+export function sanitizeWriteInputForAudit(shortName: string, input: unknown): unknown {
+  if (input === null || typeof input !== 'object') return input
+  const args = input as Record<string, unknown>
+  if (shortName === 'create_variable') {
+    return args.view_type === 'secret' && typeof args.value === 'string'
+      ? { ...args, value: SECRET_MASK }
+      : input
+  }
+  if (shortName === 'update_variable') {
+    if (typeof args.value !== 'string') return input // 값 변경이 없으면 마스킹 불필요
+    let isSecret = args.view_type === 'secret'
+    if (!isSecret && args.view_type === undefined) {
+      // 입력에 view_type이 없으면 기존 변수의 타입으로 secret 여부를 판단(읽기 전용 조회)
+      try {
+        const row = getAiReadOnlyDatabase()
+          .prepare('SELECT view_type FROM variables WHERE id = ?')
+          .get(args.variable_id) as { view_type: string } | undefined
+        isSecret = row?.view_type === 'secret'
+      } catch {
+        isSecret = false
+      }
+    }
+    return isSecret ? { ...args, value: SECRET_MASK } : input
+  }
+  return input
+}
 
 function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] } {
   return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 1) }] }
@@ -41,6 +114,138 @@ function notifyDataChanged(entity: 'project' | 'todo' | 'memo' | 'variable'): vo
 
 function logWriteExecuted(toolName: string, detail: string): void {
   logAiAudit({ event: 'write_executed', toolName, detail })
+}
+
+// 전달된(undefined가 아닌) 필드만 SET 절로 변환한다. null은 "값 비우기"로 허용.
+function buildSetClause(
+  args: Record<string, unknown>,
+  columns: string[]
+): { set: string[]; values: unknown[]; keys: string[] } {
+  const set: string[] = []
+  const values: unknown[] = []
+  const keys: string[] = []
+  for (const col of columns) {
+    if (args[col] !== undefined) {
+      set.push(`${col} = ?`)
+      values.push(args[col])
+      keys.push(col)
+    }
+  }
+  return { set, values, keys }
+}
+
+// 태그 이름 목록 → 태그 id 변환. 기존 태그는 연결, 없는 태그는 생성 (create/update 공용)
+function resolveTodoTagIds(
+  db: Database.Database,
+  tagNames: string[]
+): { tagIds: number[]; createdTags: string[] } {
+  const tagIds: number[] = []
+  const createdTags: string[] = []
+  for (const name of tagNames) {
+    const existing = db.prepare('SELECT id FROM todo_tags WHERE name = ?').get(name) as
+      | { id: number }
+      | undefined
+    if (existing) {
+      tagIds.push(existing.id)
+    } else {
+      const tagResult = db
+        .prepare('INSERT INTO todo_tags (name, color) VALUES (?, ?)')
+        .run(name, '#6B7280')
+      tagIds.push(Number(tagResult.lastInsertRowid))
+      createdTags.push(name)
+      logActivity('todo_tag', 'create', tagResult.lastInsertRowid, name, 'AI 생성')
+    }
+  }
+  return { tagIds, createdTags }
+}
+
+// 카테고리 이름 → 카테고리 id 변환. 없으면 생성 (create/update 공용)
+function resolveMemoCategory(
+  db: Database.Database,
+  name: string
+): { categoryId: number; created: boolean } {
+  const existing = db.prepare('SELECT id FROM memo_categories WHERE name = ?').get(name) as
+    | { id: number }
+    | undefined
+  if (existing) return { categoryId: existing.id, created: false }
+  const maxRow = db
+    .prepare('SELECT COALESCE(MAX(sort_order), -1) AS max FROM memo_categories')
+    .get() as { max: number }
+  const categoryResult = db
+    .prepare('INSERT INTO memo_categories (name, color, sort_order) VALUES (?, ?, ?)')
+    .run(name, '#6B7280', maxRow.max + 1)
+  logActivity('memo_category', 'create', categoryResult.lastInsertRowid, name, 'AI 생성')
+  return { categoryId: Number(categoryResult.lastInsertRowid), created: true }
+}
+
+// 수정 도구 승인 카드에 "변경 전 현재 값"을 표시하기 위한 조회.
+// 승인 전 단계의 조회이므로 읽기 전용 커넥션을 사용한다 (가드레일 1절).
+// 조회 실패가 승인 흐름을 막지 않도록 항상 null 폴백.
+export function getUpdatePreview(
+  shortName: string,
+  input: unknown
+): Record<string, unknown> | null {
+  const args = (input ?? {}) as Record<string, unknown>
+  try {
+    const db = getAiReadOnlyDatabase()
+    switch (shortName) {
+      case 'update_project': {
+        const row = db
+          .prepare(
+            `SELECT id, name, description, dev_start_date, dev_end_date,
+                    qa_start_date, qa_end_date, deploy_date, deploy_version, status, status_manual
+             FROM projects WHERE id = ?`
+          )
+          .get(args.project_id) as Record<string, unknown> | undefined
+        if (!row) return null
+        // 메뉴/조회 도구와 동일하게 자동 상태를 적용해 카드의 '변경 전' 값이 앱 표시와 일치하게 한다
+        return applyProjectAutoStatus(row as Record<string, unknown> & ProjectStatusFields)
+      }
+      case 'update_task': {
+        const row = db
+          .prepare('SELECT id, project_id, name, start_date, end_date, status FROM tasks WHERE id = ?')
+          .get(args.task_id) as Record<string, unknown> | undefined
+        return row ?? null
+      }
+      case 'update_todo': {
+        const row = db
+          .prepare(
+            `SELECT t.id, t.title, t.priority, t.due_date, t.due_reminder, t.is_completed, t.notes,
+                    ${TODO_TAGS_SUBQUERY}
+             FROM todos t WHERE t.id = ?`
+          )
+          .get(args.todo_id) as ({ notes: string | null } & Record<string, unknown>) | undefined
+        if (!row) return null
+        const notes =
+          row.notes && row.notes.length > 300 ? row.notes.slice(0, 300) + TRUNCATION_MARKER : row.notes
+        return { ...row, notes }
+      }
+      case 'update_memo': {
+        const row = db
+          .prepare(
+            `${MEMO_WITH_CATEGORY_SELECT} WHERE m.id = ?`
+          )
+          .get(args.memo_id) as ({ content: string } & Record<string, unknown>) | undefined
+        if (!row) return null
+        const content =
+          row.content.length > 500 ? row.content.slice(0, 500) + TRUNCATION_MARKER : row.content
+        return { ...row, content }
+      }
+      case 'update_variable': {
+        const row = db
+          .prepare('SELECT id, key, value, description, view_type FROM variables WHERE id = ?')
+          .get(args.variable_id) as
+          | ({ view_type: string; value: string } & Record<string, unknown>)
+          | undefined
+        if (!row) return null
+        return maskSecretVariable(row)
+      }
+      default:
+        return null
+    }
+  } catch {
+    return null
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -122,11 +327,11 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
 
   const createTodo = tool(
     'create_todo',
-    '새 TODO를 생성한다. tags에 태그 이름을 전달하면 기존 태그는 연결하고 없는 태그는 새로 만든다. 실행 전 사용자 승인이 필요하다.',
+    '새 TODO를 생성한다. tags에 태그 이름을 전달하면 기존 태그는 연결하고 없는 태그는 새로 만든다. due_date에 시각(HH:mm)을 포함하면 마감 알람이 켜진다. 실행 전 사용자 승인이 필요하다.',
     {
       title: z.string().min(1).max(200).describe('TODO 제목'),
       priority: z.enum(['high', 'medium', 'low']).optional().describe('우선순위 (기본 medium)'),
-      due_date: dateField('마감일').optional(),
+      due_date: todoDueField("마감일 — 시각을 넣으면 알람 설정('YYYY-MM-DD HH:mm')").optional(),
       notes: z.string().max(2000).optional().describe('노트 (마크다운 가능)'),
       tags: z
         .array(z.string().min(1).max(30))
@@ -138,31 +343,19 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
       const db = getDatabase()
       const tagNames = args.tags ?? []
       const createdTags: string[] = []
+      const due = args.due_date ?? null
+      const reminder = dueDateHasTime(due) ? 1 : 0
       const insertTodo = db.transaction(() => {
         const result = db
           .prepare(
             `INSERT INTO todos (title, priority, due_date, due_reminder, notes)
-             VALUES (?, ?, ?, 0, ?)`
+             VALUES (?, ?, ?, ?, ?)`
           )
-          .run(args.title, args.priority ?? 'medium', args.due_date ?? null, args.notes ?? null)
+          .run(args.title, args.priority ?? 'medium', due, reminder, args.notes ?? null)
         const todoId = result.lastInsertRowid
-        const tagIds: number[] = []
-        for (const name of tagNames) {
-          const existing = db.prepare('SELECT id FROM todo_tags WHERE name = ?').get(name) as
-            | { id: number }
-            | undefined
-          if (existing) {
-            tagIds.push(existing.id)
-          } else {
-            const tagResult = db
-              .prepare('INSERT INTO todo_tags (name, color) VALUES (?, ?)')
-              .run(name, '#6B7280')
-            tagIds.push(Number(tagResult.lastInsertRowid))
-            createdTags.push(name)
-            logActivity('todo_tag', 'create', tagResult.lastInsertRowid, name, 'AI 생성')
-          }
-        }
-        if (tagIds.length > 0) saveTodoTags(db, todoId, tagIds)
+        const resolved = resolveTodoTagIds(db, tagNames)
+        createdTags.push(...resolved.createdTags)
+        if (resolved.tagIds.length > 0) saveTodoTags(db, todoId, resolved.tagIds)
         saveTodoHistory(db, todoId, 'create')
         logActivity('todo', 'create', todoId, args.title, 'AI 생성')
         return todoId
@@ -199,22 +392,9 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
       const insertMemo = db.transaction(() => {
         let categoryId: number | null = null
         if (args.category) {
-          const existing = db
-            .prepare('SELECT id FROM memo_categories WHERE name = ?')
-            .get(args.category) as { id: number } | undefined
-          if (existing) {
-            categoryId = existing.id
-          } else {
-            const maxRow = db
-              .prepare('SELECT COALESCE(MAX(sort_order), -1) AS max FROM memo_categories')
-              .get() as { max: number }
-            const categoryResult = db
-              .prepare('INSERT INTO memo_categories (name, color, sort_order) VALUES (?, ?, ?)')
-              .run(args.category, '#6B7280', maxRow.max + 1)
-            categoryId = Number(categoryResult.lastInsertRowid)
-            createdCategory = args.category
-            logActivity('memo_category', 'create', categoryResult.lastInsertRowid, args.category, 'AI 생성')
-          }
+          const resolved = resolveMemoCategory(db, args.category)
+          categoryId = resolved.categoryId
+          if (resolved.created) createdCategory = args.category
         }
         const result = db
           .prepare(
@@ -256,7 +436,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         | undefined
       if (existing) {
         return jsonResult({
-          error: `key '${args.key}' 변수가 이미 존재합니다(id=${existing.id}). 값 수정은 변수 메뉴(linkwork://view/variables)에서 직접 해야 합니다.`
+          error: `key '${args.key}' 변수가 이미 존재합니다(id=${existing.id}). 값을 바꾸려면 update_variable 도구로 수정하세요.`
         })
       }
       const result = db
@@ -277,5 +457,382 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
     }
   )
 
-  return [createProject, createTodo, createMemo, createVariable]
+  // ── 수정(update) 도구 — 전달된 필드만 부분 업데이트, 대상 미존재 시 오류 ──
+
+  const updateProject = tool(
+    'update_project',
+    '기존 프로젝트의 필드를 수정한다. project_id로 대상을 지정하고 변경할 필드만 전달한다 (전달하지 않은 필드는 유지). status를 지정하면 자동 상태 계산 대신 해당 상태로 고정된다. 실행 전 사용자 승인이 필요하다.',
+    {
+      project_id: z.number().int().positive().describe('수정할 프로젝트 id (조회 도구로 먼저 확인)'),
+      name: z.string().min(1).max(200).optional().describe('프로젝트 이름'),
+      description: z.string().max(2000).nullable().optional().describe('프로젝트 설명 (null이면 비움)'),
+      dev_start_date: dateField('개발 시작일').optional(),
+      dev_end_date: dateField('개발 종료일').optional(),
+      qa_start_date: dateField('QA 시작일').optional(),
+      qa_end_date: dateField('QA 종료일').optional(),
+      deploy_date: dateField('배포일').optional(),
+      deploy_version: z.string().max(50).nullable().optional().describe('배포 버전 (null이면 비움)'),
+      status: z
+        .enum(['scheduled', 'development', 'qa', 'deploy', 'completed', 'cancelled'])
+        .optional()
+        .describe('프로젝트 상태 — 지정 시 수동 상태로 고정됨')
+    },
+    async (args) => {
+      const db = getDatabase()
+      const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(args.project_id) as
+        | {
+            name: string
+            dev_start_date: string
+            dev_end_date: string
+            qa_start_date: string | null
+            qa_end_date: string | null
+            deploy_date: string | null
+          }
+        | undefined
+      if (!row) {
+        return jsonResult({
+          error: `프로젝트 id=${args.project_id}를 찾지 못했습니다. 조회 도구로 id를 확인하세요.`
+        })
+      }
+      // 전달값과 기존값을 병합한 뒤 전체 일정의 역전 여부를 검증한다(개발→QA→배포 순서).
+      // 둘 다 값이 있을 때만 비교하므로 null(미설정) QA/배포일은 통과시킨다.
+      const merged = {
+        devStart: args.dev_start_date ?? row.dev_start_date,
+        devEnd: args.dev_end_date ?? row.dev_end_date,
+        qaStart: args.qa_start_date ?? row.qa_start_date,
+        qaEnd: args.qa_end_date ?? row.qa_end_date,
+        deploy: args.deploy_date ?? row.deploy_date
+      }
+      const dateChecks: [string | null, string | null, string][] = [
+        [merged.devStart, merged.devEnd, '개발 시작일이 개발 종료일보다 늦습니다.'],
+        [merged.qaStart, merged.qaEnd, 'QA 시작일이 QA 종료일보다 늦습니다.'],
+        [merged.devEnd, merged.qaStart, '개발 종료일이 QA 시작일보다 늦습니다.'],
+        [merged.qaEnd, merged.deploy, 'QA 종료일이 배포일보다 늦습니다.']
+      ]
+      for (const [a, b, message] of dateChecks) {
+        if (a && b && a > b) return jsonResult({ error: message })
+      }
+      const { set, values, keys } = buildSetClause(args, [
+        'name',
+        'description',
+        'dev_start_date',
+        'dev_end_date',
+        'qa_start_date',
+        'qa_end_date',
+        'deploy_date',
+        'deploy_version',
+        'status'
+      ])
+      if (set.length === 0) return jsonResult({ error: '변경할 필드가 없습니다.' })
+      if (args.status !== undefined) set.push('status_manual = 1')
+      set.push("updated_at = datetime('now')")
+      db.prepare(`UPDATE projects SET ${set.join(', ')} WHERE id = ?`).run(...values, args.project_id)
+      logActivity('project', 'update', args.project_id, args.name ?? row.name, `AI 수정: ${keys.join(', ')}`)
+      logWriteExecuted('update_project', `id=${args.project_id}, fields=${keys.join(',')}`)
+      notifyDataChanged('project')
+      return jsonResult({
+        updated: true,
+        project_id: args.project_id,
+        updated_fields: keys,
+        link: `linkwork://project/${args.project_id}`
+      })
+    }
+  )
+
+  const updateTask = tool(
+    'update_task',
+    '프로젝트의 세부 작업(태스크)을 수정한다. task_id로 대상을 지정한다 (get_project가 태스크 id를 반환). 변경할 필드만 전달한다. 실행 전 사용자 승인이 필요하다.',
+    {
+      task_id: z.number().int().positive().describe('수정할 태스크 id'),
+      name: z.string().min(1).max(200).optional().describe('작업 이름'),
+      start_date: dateField('작업 시작일 (null이면 비움)').nullable().optional(),
+      end_date: dateField('작업 종료일 (null이면 비움)').nullable().optional(),
+      status: z.enum(['pending', 'in_progress', 'done']).optional().describe('작업 상태')
+    },
+    async (args) => {
+      const db = getDatabase()
+      const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(args.task_id) as
+        | { name: string; project_id: number }
+        | undefined
+      if (!row) {
+        return jsonResult({
+          error: `태스크 id=${args.task_id}를 찾지 못했습니다. get_project로 태스크 id를 확인하세요.`
+        })
+      }
+      const { set, values, keys } = buildSetClause(args, ['name', 'start_date', 'end_date', 'status'])
+      if (set.length === 0) return jsonResult({ error: '변경할 필드가 없습니다.' })
+      db.prepare(`UPDATE tasks SET ${set.join(', ')} WHERE id = ?`).run(...values, args.task_id)
+      logActivity('task', 'update', args.task_id, args.name ?? row.name, `AI 수정: ${keys.join(', ')}`)
+      logWriteExecuted('update_task', `id=${args.task_id}, fields=${keys.join(',')}`)
+      notifyDataChanged('project')
+      return jsonResult({
+        updated: true,
+        task_id: args.task_id,
+        project_id: row.project_id,
+        updated_fields: keys,
+        link: `linkwork://project/${row.project_id}`
+      })
+    }
+  )
+
+  const updateTodo = tool(
+    'update_todo',
+    "기존 TODO를 수정한다. todo_id로 대상을 지정하고 변경할 필드만 전달한다. notes는 전체 교체되므로 부분 수정 시 get_todo로 기존 내용을 확인해 수정된 전체 내용을 전달할 것. completed로 완료 처리/완료 취소가 가능하다. 마감일을 옮길 때 기존에 알람이 설정돼 있었다면(get_todo의 due_reminder=1) 시각을 유지하려면 'YYYY-MM-DD HH:mm'으로 전달해야 한다 — 날짜만 전달하면 알람이 해제된다. 실행 전 사용자 승인이 필요하다.",
+    {
+      todo_id: z.number().int().positive().describe('수정할 TODO id (조회 도구로 먼저 확인)'),
+      title: z.string().min(1).max(200).optional().describe('TODO 제목'),
+      priority: z.enum(['high', 'medium', 'low']).optional().describe('우선순위'),
+      due_date: todoDueField(
+        "마감일 (null이면 비움). 시각을 포함하면('YYYY-MM-DD HH:mm') 알람 설정, 날짜만이면 알람 해제"
+      )
+        .nullable()
+        .optional(),
+      notes: z
+        .string()
+        .max(2000)
+        .nullable()
+        .optional()
+        .describe('노트 (마크다운) — 전체 교체됨. null이면 비움'),
+      completed: z.boolean().optional().describe('true면 완료 처리, false면 완료 취소(복원)'),
+      tags: z
+        .array(z.string().min(1).max(30))
+        .max(5)
+        .optional()
+        .describe('태그 이름 목록 — 기존 태그를 전부 이 목록으로 교체. 빈 배열이면 태그 모두 해제')
+    },
+    async (args) => {
+      const db = getDatabase()
+      const row = db.prepare('SELECT * FROM todos WHERE id = ?').get(args.todo_id) as
+        | { title: string; is_completed: number }
+        | undefined
+      if (!row) {
+        return jsonResult({
+          error: `TODO id=${args.todo_id}를 찾지 못했습니다. 조회 도구로 id를 확인하세요.`
+        })
+      }
+      if (args.notes != null && args.notes.includes(TRUNCATION_MARKER)) {
+        return jsonResult({
+          error: `노트에 잘림 표시("${TRUNCATION_MARKER}")가 포함되어 있습니다. list_todos의 잘린 노트를 그대로 되쓰면 내용이 유실됩니다. get_todo로 전문을 조회한 뒤 수정된 전체 노트를 전달하세요.`
+        })
+      }
+      const createdTags: string[] = []
+      const applyUpdate = db.transaction((): string[] | null => {
+        // 실제 완료 상태 전이 여부 — 활동 로그/이력 action을 정확히 기록하기 위해 추적
+        let completionChange: 'complete' | 'restore' | null = null
+        if (args.completed === true && !row.is_completed) completionChange = 'complete'
+        else if (args.completed === false && row.is_completed) completionChange = 'restore'
+
+        const { set, values, keys } = buildSetClause(args, ['title', 'priority', 'due_date', 'notes'])
+        // due_date에 시각이 있으면 알람 on, 날짜만/비움이면 off — UI(TodoForm) 규약과 동기화
+        if (args.due_date !== undefined) {
+          set.push('due_reminder = ?')
+          values.push(dueDateHasTime(args.due_date ?? null) ? 1 : 0)
+        }
+        if (set.length > 0) {
+          set.push("updated_at = datetime('now', 'localtime')")
+          db.prepare(`UPDATE todos SET ${set.join(', ')} WHERE id = ?`).run(...values, args.todo_id)
+        }
+        // 완료/복원 전이는 메뉴(todo:complete/restore)와 동일한 공용 헬퍼로 처리 — SQL 규약 단일화
+        if (completionChange) {
+          setTodoCompletion(db, args.todo_id, completionChange === 'complete')
+          keys.push('completed')
+        }
+        if (args.tags !== undefined) {
+          const resolved = resolveTodoTagIds(db, args.tags)
+          saveTodoTags(db, args.todo_id, resolved.tagIds)
+          createdTags.push(...resolved.createdTags)
+          keys.push('tags')
+        }
+        if (keys.length === 0) return null
+        // 전이가 있으면 활동 로그·이력에 complete/restore로 기록 — 주간 리포트 집계가 메뉴와 일치
+        const action = completionChange ?? 'update'
+        saveTodoHistory(db, args.todo_id, action)
+        logActivity('todo', action, args.todo_id, args.title ?? row.title, `AI 수정: ${keys.join(', ')}`)
+        return keys
+      })
+      const keys = applyUpdate()
+      if (!keys) {
+        return jsonResult({ error: '변경 사항이 없습니다 (필드 미전달 또는 이미 해당 상태).' })
+      }
+      logWriteExecuted('update_todo', `id=${args.todo_id}, fields=${keys.join(',')}`)
+      notifyDataChanged('todo')
+      return jsonResult({
+        updated: true,
+        todo_id: args.todo_id,
+        updated_fields: keys,
+        new_tags: createdTags,
+        link: 'linkwork://view/todos'
+      })
+    }
+  )
+
+  const updateMemo = tool(
+    'update_memo',
+    '기존 메모를 수정한다. memo_id로 대상을 지정하고 변경할 필드만 전달한다. content는 전체 교체되므로 부분 수정 시 반드시 get_memo로 전체 내용을 확인해 수정된 전체 내용을 전달할 것. is_archived로 보관/보관 해제가 가능하다. 실행 전 사용자 승인이 필요하다.',
+    {
+      memo_id: z.number().int().positive().describe('수정할 메모 id (조회 도구로 먼저 확인)'),
+      content: z
+        .string()
+        .min(1)
+        .max(10000)
+        .optional()
+        .describe('메모 내용 (마크다운) — 전체 교체됨'),
+      is_important: z.boolean().optional().describe('중요 표시 여부'),
+      is_archived: z.boolean().optional().describe('true면 보관(아카이브), false면 보관 해제'),
+      category: z
+        .string()
+        .min(1)
+        .max(50)
+        .nullable()
+        .optional()
+        .describe('카테고리 이름 — 기존 카테고리는 연결, 없으면 생성. null이면 카테고리 해제')
+    },
+    async (args) => {
+      const db = getDatabase()
+      const row = db.prepare('SELECT * FROM memos WHERE id = ?').get(args.memo_id) as
+        | { content: string; is_archived: number }
+        | undefined
+      if (!row) {
+        return jsonResult({
+          error: `메모 id=${args.memo_id}를 찾지 못했습니다. 조회 도구로 id를 확인하세요.`
+        })
+      }
+      if (args.content !== undefined && args.content.includes(TRUNCATION_MARKER)) {
+        return jsonResult({
+          error: `내용에 잘림 표시("${TRUNCATION_MARKER}")가 포함되어 있습니다. search_memos의 잘린 내용을 그대로 되쓰면 뒷부분이 유실됩니다. get_memo로 전문을 조회한 뒤 수정된 전체 내용을 전달하세요.`
+        })
+      }
+      let createdCategory: string | null = null
+      const applyUpdate = db.transaction((): string[] | null => {
+        // 실제 보관 전이 추적 — 활동 로그 action을 정확히 기록(주간 리포트 집계가 메뉴와 일치)
+        let archiveChange: 'archive' | 'restore' | null = null
+        if (args.is_archived === true && !row.is_archived) archiveChange = 'archive'
+        else if (args.is_archived === false && row.is_archived) archiveChange = 'restore'
+
+        const set: string[] = []
+        const values: unknown[] = []
+        const keys: string[] = []
+        if (args.content !== undefined) {
+          set.push('content = ?')
+          values.push(args.content)
+          keys.push('content')
+        }
+        if (args.is_important !== undefined) {
+          set.push('is_important = ?')
+          values.push(args.is_important ? 1 : 0)
+          keys.push('is_important')
+        }
+        if (args.category !== undefined) {
+          if (args.category === null) {
+            set.push('category_id = NULL')
+          } else {
+            const resolved = resolveMemoCategory(db, args.category)
+            set.push('category_id = ?')
+            values.push(resolved.categoryId)
+            if (resolved.created) createdCategory = args.category
+          }
+          keys.push('category')
+        }
+        if (set.length > 0) {
+          set.push("updated_at = datetime('now')")
+          db.prepare(`UPDATE memos SET ${set.join(', ')} WHERE id = ?`).run(...values, args.memo_id)
+        }
+        // 보관/해제 전이는 메뉴(memo:archive/restore)와 동일한 공용 헬퍼로 처리 — SQL 규약 단일화
+        if (args.is_archived !== undefined) {
+          setMemoArchived(db, args.memo_id, args.is_archived)
+          keys.push('is_archived')
+        }
+        if (keys.length === 0) return null
+        logActivity(
+          'memo',
+          archiveChange ?? 'update',
+          args.memo_id,
+          (args.content ?? row.content).slice(0, 50),
+          `AI 수정: ${keys.join(', ')}`
+        )
+        return keys
+      })
+      const keys = applyUpdate()
+      if (!keys) return jsonResult({ error: '변경할 필드가 없습니다.' })
+      logWriteExecuted('update_memo', `id=${args.memo_id}, fields=${keys.join(',')}`)
+      notifyDataChanged('memo')
+      return jsonResult({
+        updated: true,
+        memo_id: args.memo_id,
+        updated_fields: keys,
+        new_category: createdCategory,
+        link: 'linkwork://view/memos'
+      })
+    }
+  )
+
+  const updateVariable = tool(
+    'update_variable',
+    '기존 변수(key-value)를 수정한다. variable_id로 대상을 지정하고 변경할 필드만 전달한다. key를 바꾸는 경우 다른 변수와 중복되면 오류를 반환한다. 실행 전 사용자 승인이 필요하다.',
+    {
+      variable_id: z.number().int().positive().describe('수정할 변수 id (list_variables로 먼저 확인)'),
+      key: z.string().min(1).max(100).optional().describe('변수 key'),
+      value: z.string().min(1).max(2000).optional().describe('변수 값'),
+      description: z.string().max(500).nullable().optional().describe('변수 설명 (null이면 비움)'),
+      view_type: z
+        .enum(['general', 'secret'])
+        .optional()
+        .describe('표시 방식 — secret이면 값이 마스킹됨')
+    },
+    async (args) => {
+      const db = getDatabase()
+      const row = db.prepare('SELECT * FROM variables WHERE id = ?').get(args.variable_id) as
+        | { key: string; view_type: string }
+        | undefined
+      if (!row) {
+        return jsonResult({
+          error: `변수 id=${args.variable_id}를 찾지 못했습니다. list_variables로 id를 확인하세요.`
+        })
+      }
+      // secret → general 전환 차단: 마스킹된 값이 list_variables로 평문 노출되는 것을 막는다
+      // (AI_GUARDRAILS §5). 표시 방식 해제는 사용자가 변수 메뉴에서 직접 하도록 안내한다.
+      if (row.view_type === 'secret' && args.view_type === 'general') {
+        return jsonResult({
+          error:
+            'secret 변수를 general로 바꾸면 값이 마스킹 없이 노출됩니다. 표시 방식 변경은 변수 메뉴(linkwork://view/variables)에서 직접 해야 합니다.'
+        })
+      }
+      if (args.key !== undefined && args.key !== row.key) {
+        const duplicate = db
+          .prepare('SELECT id FROM variables WHERE key = ? AND id != ?')
+          .get(args.key, args.variable_id) as { id: number } | undefined
+        if (duplicate) {
+          return jsonResult({
+            error: `key '${args.key}'는 이미 다른 변수(id=${duplicate.id})가 사용 중입니다.`
+          })
+        }
+      }
+      const { set, values, keys } = buildSetClause(args, ['key', 'value', 'description', 'view_type'])
+      if (set.length === 0) return jsonResult({ error: '변경할 필드가 없습니다.' })
+      set.push("updated_at = datetime('now')")
+      db.prepare(`UPDATE variables SET ${set.join(', ')} WHERE id = ?`).run(...values, args.variable_id)
+      logActivity('variable', 'update', args.variable_id, args.key ?? row.key, `AI 수정: ${keys.join(', ')}`)
+      logWriteExecuted('update_variable', `id=${args.variable_id}, fields=${keys.join(',')}`)
+      notifyDataChanged('variable')
+      return jsonResult({
+        updated: true,
+        variable_id: args.variable_id,
+        key: args.key ?? row.key,
+        updated_fields: keys,
+        link: 'linkwork://view/variables'
+      })
+    }
+  )
+
+  return [
+    createProject,
+    createTodo,
+    createMemo,
+    createVariable,
+    updateProject,
+    updateTask,
+    updateTodo,
+    updateMemo,
+    updateVariable
+  ]
 }

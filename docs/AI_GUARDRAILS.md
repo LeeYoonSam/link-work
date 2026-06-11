@@ -11,7 +11,8 @@ LinkWork "AI 대화" 기능의 데이터 보호·보안·추적 기준. 코드�
   실수로 쓰기 SQL이 추가되어도 `SQLITE_READONLY` 오류만 발생하고 데이터는 보호된다.
 - AI 도구에서 `getDatabase()`(읽기-쓰기 커넥션)를 직접 사용하는 것을 금지한다.
   (예외: 감사 로그 — `ai-audit.ts`, 사용자 승인을 거친 쓰기 도구 — `ai-write-tools.ts`, 7절)
-- 시스템 프롬프트에도 "읽기 전용, 수정/삭제 요청 시 해당 메뉴로 안내"를 명시한다.
+- 시스템 프롬프트에도 "삭제 요청 시 해당 메뉴로 안내"를 명시한다
+  (쓰기 비활성 시에는 읽기 전용 안내).
 
 ## 2. 도구 화이트리스트 — 이중 차단
 
@@ -68,7 +69,15 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
 
 ## 5. 정보 노출 최소화
 
-- `view_type = 'secret'` 변수 값은 항상 마스킹 후 반환 (`list_variables`)
+- `view_type = 'secret'` 변수 값은 **모든 경로에서 마스킹**한다. 단일 마스킹 헬퍼
+  (`maskSecretVariable` / `SECRET_MASK`)를 공용으로 사용해 드리프트를 막는다:
+  - 조회: `list_variables`
+  - 승인 카드 미리보기: `getUpdatePreview('update_variable')`
+  - 감사 로그: secret 변수의 `value`는 `sanitizeWriteInputForAudit`로 마스킹 후 기록
+    (`ai_audit_log`에 평문 secret이 남지 않음 — create/update_variable 공통)
+  - `update_variable`은 secret→general 전환을 거부해 마스킹 우회를 차단 (7.1)
+- 프로젝트 상태는 `applyProjectAutoStatus`(공용)로 계산해 메뉴·조회 도구·승인 카드가
+  동일한 값을 보이게 한다 (저장된 raw status가 아니라 표시 상태 기준)
 - WebSearch/WebFetch 차단 → 조회한 데이터를 외부로 전송할 경로 없음
 - `settingSources: []` — 사용자 전역 Claude 설정/훅이 앱 쿼리에 개입하지 못하게 격리
 
@@ -80,7 +89,7 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
 - 도구가 위험한 행동을 할 수 없는 구조(읽기 전용 + 화이트리스트)라서
   인젝션이 성공해도 피해 범위는 "잘못된 답변 표시"로 한정됨
 
-## 7. 쓰기 도구 (생성 전용 — 구현됨)
+## 7. 쓰기 도구 (생성·수정 — 구현됨)
 
 데이터 추가/수정/삭제 도구는 아래 기준을 **모두** 충족해야 한다:
 
@@ -93,10 +102,12 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
 5. **기본 비활성**: 쓰기 도구는 설정에서 명시적으로 켜야 활성화 (opt-in 플래그)
 6. 이 문서에 도구별 위험도와 승인 흐름을 먼저 추가한 뒤 구현
 
-### 7.1 현재 구현 — 생성(create) 도구 4종
+### 7.1 현재 구현 — 생성(create) 4종 + 수정(update) 5종
 
-`src/main/services/ai-write-tools.ts`. **생성만 지원**하며 update/delete 도구는 없다
-(수정/삭제 요청 시 해당 메뉴로 안내). 포맷은 zod 스키마가 도구 호출 레벨에서 강제한다.
+`src/main/services/ai-write-tools.ts`. **생성과 수정만 지원**하며 delete 도구는 없다
+(삭제 요청 시 해당 메뉴로 안내. 단 메모 보관/TODO 완료 같은 **가역적 상태 변경**은
+update 도구로 허용 — 아래 쓰기 도구 기준 2번 "삭제는 소프트 삭제만"과 일치). 포맷은
+zod 스키마가 도구 호출 레벨에서 강제한다.
 
 | 도구 | 변경 내용 | 위험도 | 비고 |
 |---|---|---|---|
@@ -104,6 +115,25 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
 | `create_todo` | todos 1건 (+ 미존재 태그 생성, 최대 5개) | 낮 | `todo_history` 스냅샷 기록 |
 | `create_memo` | memos 1건 (+ 미존재 카테고리 생성) | 낮 | |
 | `create_variable` | variables 1건 | 중 | 동일 key 존재 시 거부(중복/덮어쓰기 방지). secret 생성 가능하나 조회는 항상 마스킹 |
+| `update_project` | projects 1건 부분 수정 | 중 | status 지정 시 `status_manual=1`로 고정. 병합 후 개발→QA→배포 날짜 역전 검증(dev/qa 쌍 + 단계 간 순서) |
+| `update_task` | tasks 1건 부분 수정 | 낮 | status: pending/in_progress/done |
+| `update_todo` | todos 1건 부분 수정 (+ 태그 전체 교체, 완료/복원) | 낮 | `todo_history` 스냅샷(실제 완료 전이 시에만 complete/restore). notes 전체 교체. due_date 시각 포함 시 알람(due_reminder) 동기화 |
+| `update_memo` | memos 1건 부분 수정 (+ 카테고리 변경/해제, 보관/해제) | 중 | content는 전체 교체 — 수정 전 `get_memo`로 전문 확인 필수 |
+| `update_variable` | variables 1건 부분 수정 | 중 | key 변경 시 중복 검사. **secret→general 전환은 거부**(마스킹 우회 방지, §5). secret 값 수정 가능하나 승인 카드의 현재 값은 마스킹 |
+
+수정 도구 공통 규칙:
+
+- 대상 id가 존재하지 않으면 오류 반환 (잘못된 id로의 갱신 방지)
+- **전달된 필드만** 부분 업데이트 — 전달하지 않은 필드는 절대 변경하지 않는다
+- 도구 호출 1회 = 1건 수정 (여러 건 수정 시 건마다 별도 승인)
+- content/notes 같은 본문 필드는 전체 교체이므로, 목록 도구의 truncate된 내용을
+  그대로 되돌려 써서 데이터가 유실되지 않도록 전문 조회 도구
+  `get_memo`/`get_todo`(읽기 전용)를 함께 제공하고 시스템 프롬프트로 사용을 강제한다.
+  추가로 본문에 잘림 마커(`…(생략)`)가 섞여 있으면 도구가 **기계적으로 거부**해
+  프롬프트 미준수 시에도 잘린 내용 되쓰기를 막는다 (`TRUNCATION_MARKER`)
+- TODO 마감 알람: `due_date`에 시각(`HH:mm`)이 있으면 알람 on, 날짜만이면 off로
+  `due_reminder`를 동기화한다. 마감일만 바꿀 때 알람을 유지하려면 시각을 포함해야 하며,
+  `get_todo`가 `due_reminder`를 반환해 현재 알람 상태를 확인할 수 있다
 
 ### 7.2 승인 흐름 (HITL)
 
@@ -117,6 +147,9 @@ AI가 쓰기 도구 호출
      5분 무응답/쿼리 중단 → 자동 거부
 ```
 
+- 수정(update) 도구의 승인 카드에는 **변경 전 현재 값**을 함께 표시한다
+  (`getUpdatePreview` — 읽기 전용 커넥션으로 조회, secret 변수 값은 마스킹).
+  사용자가 무엇이 어떻게 바뀌는지 비교한 뒤 승인할 수 있게 하기 위함
 - opt-in 플래그: `app_settings.ai_write_enabled` (기본 꺼짐). AI 대화 화면 토글로 제어,
   변경 자체도 감사 로그에 기록 (`write_toggle`)
 - 쓰기 실행은 `getDatabase()` 쓰기 커넥션을 사용하는 유일한 AI 도구 경로이며,

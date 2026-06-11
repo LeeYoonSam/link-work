@@ -1,8 +1,11 @@
 import { z } from 'zod'
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk'
 import { getAiReadOnlyDatabase } from '../db/database'
+import { MEMO_WITH_CATEGORY_SELECT } from '../utils/memo-helpers'
+import { applyProjectAutoStatus, type ProjectStatusFields } from '../utils/project-dates'
+import { TODO_TAGS_SUBQUERY } from '../utils/todo-helpers'
 import { getEventsInRange } from './google-calendar'
-import { buildWriteTools } from './ai-write-tools'
+import { buildWriteTools, maskSecretVariable, TRUNCATION_MARKER } from './ai-write-tools'
 
 // LinkWork 데이터 검색 도구.
 //
@@ -23,7 +26,9 @@ export const LINKWORK_TOOL_NAMES = [
   'list_projects',
   'get_project',
   'list_todos',
+  'get_todo',
   'search_memos',
+  'get_memo',
   'list_documents',
   'list_variables',
   'get_activity_log',
@@ -43,7 +48,7 @@ function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] 
 
 function truncate(text: string | null, max: number): string | null {
   if (text === null) return null
-  return text.length > max ? text.slice(0, max) + '…(생략)' : text
+  return text.length > max ? text.slice(0, max) + TRUNCATION_MARKER : text
 }
 
 async function buildServer(): Promise<McpSdkServerConfigWithInstance> {
@@ -63,32 +68,27 @@ async function buildServer(): Promise<McpSdkServerConfigWithInstance> {
   },
   async (args) => {
     const db = getAiReadOnlyDatabase()
-    const conditions: string[] = []
-    const params: unknown[] = []
-    if (args.status) {
-      conditions.push('p.status = ?')
-      params.push(args.status)
-    }
-    if (args.search) {
-      conditions.push('p.name LIKE ?')
-      params.push(`%${args.search}%`)
-    }
-    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-    const rows = db
-      .prepare(
-        `SELECT p.id, p.name, p.description, p.status,
-                p.dev_start_date, p.dev_end_date, p.qa_start_date, p.qa_end_date,
-                p.deploy_date, p.deploy_version,
-                COUNT(t.id) AS task_count,
-                SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) AS done_task_count
-         FROM projects p
-         LEFT JOIN tasks t ON t.project_id = p.id
-         ${where}
-         GROUP BY p.id
-         ORDER BY p.dev_start_date DESC`
-      )
-      .all(...params)
-    return jsonResult(rows)
+    // 상태는 자동 계산값(applyProjectAutoStatus)으로 표시되므로, 저장된 status로 SQL 필터하면
+    // 메뉴와 결과가 달라진다. 검색만 SQL에서 거르고 상태 필터는 계산 후 JS에서 적용한다.
+    const where = args.search ? 'WHERE p.name LIKE ?' : ''
+    const params = args.search ? [`%${args.search}%`] : []
+    const rows = (
+      db
+        .prepare(
+          `SELECT p.id, p.name, p.description, p.status, p.status_manual,
+                  p.dev_start_date, p.dev_end_date, p.qa_start_date, p.qa_end_date,
+                  p.deploy_date, p.deploy_version,
+                  COUNT(t.id) AS task_count,
+                  SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) AS done_task_count
+           FROM projects p
+           LEFT JOIN tasks t ON t.project_id = p.id
+           ${where}
+           GROUP BY p.id
+           ORDER BY p.dev_start_date DESC`
+        )
+        .all(...params) as ProjectStatusFields[]
+    ).map(applyProjectAutoStatus)
+    return jsonResult(args.status ? rows.filter((p) => p.status === args.status) : rows)
   }
 )
 
@@ -114,7 +114,11 @@ const getProject = tool(
     const documents = db
       .prepare('SELECT id, name, url, type, description FROM documents WHERE project_id = ? ORDER BY sort_order, id')
       .all(p.id)
-    return jsonResult({ project, tasks, documents })
+    return jsonResult({
+      project: applyProjectAutoStatus(project as ProjectStatusFields & Record<string, unknown>),
+      tasks,
+      documents
+    })
   }
 )
 
@@ -148,7 +152,7 @@ const listTodos = tool(
     const rows = db
       .prepare(
         `SELECT t.id, t.title, t.priority, t.due_date, t.is_completed, t.completed_at, t.notes, t.created_at,
-                (SELECT GROUP_CONCAT(g.name, ', ') FROM todo_tag_map m JOIN todo_tags g ON g.id = m.tag_id WHERE m.todo_id = t.id) AS tags
+                ${TODO_TAGS_SUBQUERY}
          FROM todos t
          ${where}
          ORDER BY t.is_completed ASC,
@@ -158,6 +162,29 @@ const listTodos = tool(
       )
       .all(...params) as { notes: string | null }[]
     return jsonResult(rows.map((r) => ({ ...r, notes: truncate(r.notes, 300) })))
+  }
+)
+
+// list_todos는 notes를 300자로 자르므로, TODO 수정(update_todo) 전 전문 확인용으로 사용.
+// due_reminder/시각 포함 due_date를 함께 반환해 알람을 보존한 채 수정할 수 있게 한다.
+const getTodo = tool(
+  'get_todo',
+  'TODO 하나의 상세 정보를 조회한다. 노트(notes) 전문, 태그, 알람 설정(due_reminder)을 포함한다. TODO를 수정하기 전에 현재 값을 확인할 때 사용한다. due_date에 시각(HH:mm)이 있고 due_reminder=1이면 알람이 설정된 것이다.',
+  {
+    todo_id: z.number().int().positive().describe('TODO id (list_todos로 확인)')
+  },
+  async (args) => {
+    const db = getAiReadOnlyDatabase()
+    const row = db
+      .prepare(
+        `SELECT t.id, t.title, t.priority, t.due_date, t.due_reminder, t.is_completed, t.completed_at,
+                t.notes, t.created_at, t.updated_at,
+                ${TODO_TAGS_SUBQUERY}
+         FROM todos t WHERE t.id = ?`
+      )
+      .get(args.todo_id)
+    if (!row) return jsonResult({ error: `TODO id=${args.todo_id}를 찾지 못했습니다.` })
+    return jsonResult(row)
   }
 )
 
@@ -187,16 +214,33 @@ const searchMemos = tool(
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
     const rows = db
       .prepare(
-        `SELECT m.id, m.content, m.is_important, m.is_archived, m.created_at, m.updated_at,
-                c.name AS category
-         FROM memos m
-         LEFT JOIN memo_categories c ON c.id = m.category_id
+        `${MEMO_WITH_CATEGORY_SELECT}
          ${where}
          ORDER BY m.updated_at DESC
          LIMIT 100`
       )
       .all(...params) as { content: string }[]
     return jsonResult(rows.map((r) => ({ ...r, content: truncate(r.content, 1000) })))
+  }
+)
+
+// search_memos는 content를 1000자로 자르므로, 메모 수정(update_memo) 전 전문 확인용으로 사용
+const getMemo = tool(
+  'get_memo',
+  '메모 하나의 전체 내용을 조회한다. search_memos는 내용을 1000자로 자르므로, 메모를 수정하기 전에는 반드시 이 도구로 전문을 확인한다.',
+  {
+    memo_id: z.number().int().positive().describe('메모 id (search_memos로 확인)')
+  },
+  async (args) => {
+    const db = getAiReadOnlyDatabase()
+    const row = db
+      .prepare(
+        `${MEMO_WITH_CATEGORY_SELECT}
+         WHERE m.id = ?`
+      )
+      .get(args.memo_id)
+    if (!row) return jsonResult({ error: `메모 id=${args.memo_id}를 찾지 못했습니다.` })
+    return jsonResult(row)
   }
 )
 
@@ -252,9 +296,7 @@ const listVariables = tool(
     const rows = db
       .prepare(`SELECT id, key, value, description, view_type FROM variables ${where} ORDER BY sort_order, id`)
       .all(...params) as { value: string; view_type: string }[]
-    return jsonResult(
-      rows.map((r) => (r.view_type === 'secret' ? { ...r, value: '(secret — 값 숨김)' } : r))
-    )
+    return jsonResult(rows.map(maskSecretVariable))
   }
 )
 
@@ -335,7 +377,9 @@ const getActivityLog = tool(
       listProjects,
       getProject,
       listTodos,
+      getTodo,
       searchMemos,
+      getMemo,
       listDocuments,
       listVariables,
       getActivityLog,

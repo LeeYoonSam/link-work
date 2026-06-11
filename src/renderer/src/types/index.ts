@@ -339,11 +339,13 @@ export interface AiMessage {
 }
 
 // 쓰기 도구 실행 전 사용자 승인 요청 (HITL)
+// current: 수정(update) 도구의 변경 전 현재 값 (생성 도구는 null)
 export interface AiApprovalRequest {
   requestId: string
   name: string
   label: string
   input: Record<string, unknown>
+  current?: Record<string, unknown> | null
 }
 
 export type AiStreamEvent =

@@ -52,7 +52,13 @@ export default function AiChatView(): React.ReactNode {
     // AI 쓰기 도구가 데이터를 생성하면 열려 있는 화면(store)을 갱신한다
     const unsubscribeData = window.api.ai.onDataChanged(({ entity }) => {
       if (entity === 'project') {
-        void useProjectStore.getState().fetchProjects()
+        const projectStore = useProjectStore.getState()
+        void projectStore.fetchProjects()
+        // 상세 화면이 "실제로 열려 있을 때만" 상세 재조회 (태스크 수정 반영).
+        // currentProject는 목록으로 나가도 유지되므로 projectView로 추가 게이트한다.
+        if (projectStore.projectView === 'detail' && projectStore.currentProject) {
+          void projectStore.fetchProject(projectStore.currentProject.id)
+        }
       } else if (entity === 'todo') {
         const todoStore = useTodoStore.getState()
         void todoStore.fetchTodos()
@@ -172,7 +178,7 @@ export default function AiChatView(): React.ReactNode {
               프로젝트, TODO, 메모, 문서 등 LinkWork의 데이터를 검색하고 정리해 드립니다.
               <br />
               채팅방에서 &ldquo;데이터 작성&rdquo;을 켜면 승인을 거쳐 프로젝트·TODO·메모·변수를
-              만들어 드릴 수도 있습니다.
+              만들거나 수정해 드릴 수도 있습니다.
             </p>
             <div className="grid grid-cols-2 gap-2 w-full max-w-xl">
               {EXAMPLE_PROMPTS.map((prompt) => (
@@ -395,7 +401,7 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
           <button
             onClick={() => void toggleWrite()}
             className="shrink-0 flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900 transition-colors"
-            title="켜면 AI가 승인을 받아 프로젝트/TODO/메모/변수를 생성할 수 있습니다 (생성만 가능, 수정/삭제 불가)"
+            title="켜면 AI가 승인을 받아 프로젝트/TODO/메모/변수를 생성·수정할 수 있습니다 (삭제 불가)"
           >
             <span
               className={`relative w-7 h-4 rounded-full transition-colors ${
@@ -517,6 +523,15 @@ function ApprovalCard({
       <p className="mt-0.5 text-xs text-gray-500">
         승인하면 아래 내용이 즉시 저장됩니다. 5분 안에 응답하지 않으면 자동으로 거절됩니다.
       </p>
+      {request.current && (
+        <>
+          <p className="mt-2 text-[11px] font-medium text-gray-500">변경 전 (요청 시점 값)</p>
+          <pre className="mt-1 bg-gray-100 border border-gray-200 rounded p-2.5 text-xs font-mono text-gray-500 whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
+            {JSON.stringify(request.current, null, 2)}
+          </pre>
+          <p className="mt-2 text-[11px] font-medium text-amber-700">변경 내용</p>
+        </>
+      )}
       <pre className="mt-2 mb-3 bg-white border border-amber-200 rounded p-2.5 text-xs font-mono text-gray-700 whitespace-pre-wrap break-words max-h-60 overflow-y-auto">
         {JSON.stringify(request.input, null, 2)}
       </pre>
