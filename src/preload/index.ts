@@ -118,8 +118,8 @@ const api = {
     status: () => ipcRenderer.invoke('ai:status'),
     approve: (requestId: string, approved: boolean) =>
       ipcRenderer.invoke('ai:approve', requestId, approved),
-    getWriteEnabled: () => ipcRenderer.invoke('ai:getWriteEnabled'),
-    setWriteEnabled: (enabled: boolean) => ipcRenderer.invoke('ai:setWriteEnabled', enabled),
+    setChatWriteMode: (chatId: number, mode: string) =>
+      ipcRenderer.invoke('ai:setChatWriteMode', chatId, mode),
     onStream: (callback: (event: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => callback(data)
       ipcRenderer.on('ai:stream', handler)

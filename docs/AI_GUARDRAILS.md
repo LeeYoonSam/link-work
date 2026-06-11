@@ -39,10 +39,10 @@ LinkWork "AI 대화" 기능의 데이터 보호·보안·추적 기준. 코드�
 | `tool_error` | 도구 실행 실패 | tool_name, 오류 내용 |
 | `tool_denied` | 화이트리스트 외 도구 시도 / 쓰기 비활성 중 쓰기 시도 | tool_name, input — **보안 이벤트** |
 | `approval_request` | 쓰기 도구 승인 요청 표시 | tool_name, input(전문) |
-| `write_approved` | 사용자가 쓰기 승인 | tool_name, input(전문) |
+| `write_approved` | 사용자가 쓰기 승인 / auto 모드 자동 승인 | tool_name, input(전문), detail(자동 승인 시 변경 전 스냅샷) |
 | `write_rejected` | 사용자가 쓰기 거절 (타임아웃/중단 포함) | tool_name, detail(사유) |
 | `write_executed` | 쓰기 실행 완료 | tool_name, detail(생성된 id 등) |
-| `write_toggle` | 쓰기 opt-in 설정 변경 | detail(on/off) |
+| `write_toggle` | 채팅 쓰기 모드 변경 | chat_id, detail(write_mode=readonly/ask/auto) |
 | `query_done` | 정상 완료 | duration_ms, 응답 길이 |
 | `query_error` | 실패 | 오류 메시지 |
 | `query_cancelled` | 사용자 중단 | duration_ms |
@@ -94,12 +94,16 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
 데이터 추가/수정/삭제 도구는 아래 기준을 **모두** 충족해야 한다:
 
 1. **명시적 사용자 승인(HITL)**: 도구가 즉시 실행하지 않고 변경 내용 미리보기를
-   renderer에 보여준 뒤, 사용자가 승인 버튼을 눌러야 실행
+   renderer에 보여준 뒤, 사용자가 승인 버튼을 눌러야 실행.
+   예외는 사용자가 채팅별로 명시적으로 켠 자동 승인 모드뿐이다 (7.3절) —
+   이 경우에도 변수 도구는 항상 승인을 거친다
 2. **삭제는 소프트 삭제만**: 물리 DELETE 금지. `is_archived` 플래그 또는 휴지통 테이블 사용
 3. **일괄 변경 금지**: 도구 호출 1회당 논리적 1건만 변경 (bulk delete/update 도구 금지)
 4. **전용 쓰기 경로**: 읽기 전용 커넥션이 아닌 별도 모듈로 분리하고,
    입력 전문을 감사 로그(`input`)에 기록
-5. **기본 비활성**: 쓰기 도구는 설정에서 명시적으로 켜야 활성화 (opt-in 플래그)
+5. **채팅별 모드 게이트**: 쓰기 동작 방식은 채팅 단위로 제어한다
+   (`ai_chats.write_mode`, 7.3절). 자동 승인은 채팅별 opt-in(기본 아님)이며,
+   기본 모드(ask)에서는 모든 쓰기가 건별 승인을 거친다
 6. 이 문서에 도구별 위험도와 승인 흐름을 먼저 추가한 뒤 구현
 
 ### 7.1 현재 구현 — 생성(create) 4종 + 수정(update) 5종
@@ -139,21 +143,44 @@ zod 스키마가 도구 호출 레벨에서 강제한다.
 
 ```
 AI가 쓰기 도구 호출
-  → canUseTool 인터셉트 (쓰기 도구는 allowedTools에 없음 — 자동 승인 불가)
-  → opt-in 꺼짐이면 즉시 거부 (audit: tool_denied)
-  → renderer에 'approval' 이벤트 (입력 전문 미리보기 카드)
-  → 사용자 [승인] → 실행 (audit: write_approved → tool_call → write_executed)
-     사용자 [거절] → 거부, AI에게 "재시도 금지" 메시지 (audit: write_rejected)
-     5분 무응답/쿼리 중단 → 자동 거부
+  → canUseTool 인터셉트 (쓰기 도구는 allowedTools에 없음 — SDK 자동 승인 불가)
+  → 채팅 write_mode 재조회 (호출 시점 기준 — 모드 전환 즉시 반영)
+  → readonly: 즉시 거부 (audit: tool_denied)
+  → auto + 변수 외 도구: 자동 승인 (audit: write_approved, 변경 전 스냅샷 기록) → 실행
+  → ask / 변수 도구: renderer에 'approval' 이벤트 (입력 전문 미리보기 카드)
+     → 사용자 [승인] → 실행 (audit: write_approved → tool_call → write_executed)
+        사용자 [이 채팅에서 항상 승인] → 채팅을 auto로 전환 + 승인 (이후 호출은 자동)
+        사용자 [거절] → 거부, AI에게 "재시도 금지" 메시지 (audit: write_rejected)
+        5분 무응답/쿼리 중단 → 자동 거부
 ```
 
 - 수정(update) 도구의 승인 카드에는 **변경 전 현재 값**을 함께 표시한다
   (`getUpdatePreview` — 읽기 전용 커넥션으로 조회, secret 변수 값은 마스킹).
   사용자가 무엇이 어떻게 바뀌는지 비교한 뒤 승인할 수 있게 하기 위함
-- opt-in 플래그: `app_settings.ai_write_enabled` (기본 꺼짐). AI 대화 화면 토글로 제어,
-  변경 자체도 감사 로그에 기록 (`write_toggle`)
 - 쓰기 실행은 `getDatabase()` 쓰기 커넥션을 사용하는 유일한 AI 도구 경로이며,
   `ai-write-tools.ts` 밖에서는 금지 원칙(1절) 유지
+
+### 7.3 채팅별 쓰기 모드 (`ai_chats.write_mode`)
+
+전역 opt-in 토글(`app_settings.ai_write_enabled`)을 대체한다. 채팅마다 독립적으로
+설정하며, 변경은 감사 로그(`write_toggle`)에 기록된다.
+
+| 모드 | 동작 | 비고 |
+|---|---|---|
+| `readonly` | 쓰기 도구 시도 자체를 거부 | 조회 전용 채팅 (audit: tool_denied) |
+| `ask` (기본) | 쓰기 호출마다 승인 카드 | 승인이 게이트 — 사전 토글 없이도 안전 |
+| `auto` | 승인 카드 없이 즉시 실행 | 채팅별 opt-in. **변수 도구는 예외** — 항상 승인 |
+
+`auto` 모드 설계 근거와 안전장치:
+
+- 승인 카드의 "이 채팅에서 항상 승인" 버튼 또는 헤더 세그먼트로만 진입 (기본값 아님)
+- `create_variable`/`update_variable`(`ALWAYS_CONFIRM_WRITE_TOOLS`)은 secret 값을
+  다룰 수 있어 auto 모드에서도 항상 승인 카드를 거친다
+- 자동 승인 시 수정 도구는 **변경 전 스냅샷**을 `write_approved`의 detail에 기록해
+  잘못된 변경의 수동 복구 근거를 남긴다 (특히 update_memo는 본문 전체 교체라 중요)
+- 프롬프트 인젝션으로 쓰기가 시도되는 경우에 대비해 "쓰기는 사용자가 대화에서 직접
+  요청한 경우에만"(6절) 규칙은 모든 모드에서 유지된다
+- 모드는 `canUseTool` 호출 시점마다 DB에서 재조회 — 진행 중인 쿼리에도 즉시 적용
 
 ## 8. 비용 가드레일 (과금 차단)
 

@@ -11,9 +11,11 @@ import {
   getAiProgress,
   findClaudeExecutable,
   resolveAiApproval,
-  isAiWriteEnabled,
-  setAiWriteEnabled
+  setChatWriteMode,
+  type AiWriteMode
 } from '../services/ai-agent'
+
+const AI_WRITE_MODES: AiWriteMode[] = ['readonly', 'ask', 'auto']
 
 // 가드레일: 메시지 길이 상한 (과도한 입력으로 인한 토큰/리소스 낭비 방지)
 const MAX_MESSAGE_LENGTH = 4000
@@ -110,13 +112,12 @@ export function registerAiIpc(): void {
     return { success: resolveAiApproval(requestId, approved === true) }
   })
 
-  ipcMain.handle('ai:getWriteEnabled', () => {
-    return { enabled: isAiWriteEnabled() }
-  })
-
-  ipcMain.handle('ai:setWriteEnabled', (_event, enabled: boolean) => {
-    setAiWriteEnabled(enabled === true)
-    return { enabled: isAiWriteEnabled() }
+  // 채팅별 데이터 작성 모드 변경 (조회는 ai:chatList의 write_mode 컬럼으로)
+  ipcMain.handle('ai:setChatWriteMode', (_event, chatId: number, mode: AiWriteMode) => {
+    if (typeof chatId !== 'number' || !AI_WRITE_MODES.includes(mode)) {
+      return { success: false }
+    }
+    return { success: setChatWriteMode(chatId, mode) }
   })
 
   ipcMain.handle('ai:progress', (_event, chatId: number) => {

@@ -90,23 +90,31 @@ export function getAiProgress(chatId: number): AiProgress {
   }
 }
 
-// ── 쓰기 기능 opt-in 설정 (docs/AI_GUARDRAILS.md 7절: 기본 비활성) ──
+// ── 채팅별 쓰기 모드 (docs/AI_GUARDRAILS.md 7절) ──
+//
+// readonly: 쓰기 도구 차단 (조회 전용 채팅)
+// ask     : 쓰기 도구 호출마다 승인 카드 (기본값 — 승인이 게이트 역할)
+// auto    : 자동 승인 (변수 도구 제외 — secret 보호를 위해 항상 승인)
 
-export function isAiWriteEnabled(): boolean {
-  const row = getDatabase()
-    .prepare("SELECT value FROM app_settings WHERE key = 'ai_write_enabled'")
-    .get() as { value: string } | undefined
-  return row?.value === '1'
+export type AiWriteMode = 'readonly' | 'ask' | 'auto'
+
+// auto 모드에서도 항상 승인 카드를 거치는 도구 (secret 변수 보호 — 가드레일 §5/§7)
+const ALWAYS_CONFIRM_WRITE_TOOLS = ['create_variable', 'update_variable']
+
+export function getChatWriteMode(chatId: number): AiWriteMode {
+  const row = getDatabase().prepare('SELECT write_mode FROM ai_chats WHERE id = ?').get(chatId) as
+    | { write_mode: string }
+    | undefined
+  return row?.write_mode === 'readonly' || row?.write_mode === 'auto' ? row.write_mode : 'ask'
 }
 
-export function setAiWriteEnabled(enabled: boolean): void {
-  getDatabase()
-    .prepare(
-      `INSERT INTO app_settings (key, value, updated_at) VALUES ('ai_write_enabled', ?, datetime('now'))
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-    )
-    .run(enabled ? '1' : '0')
-  logAiAudit({ event: 'write_toggle', detail: enabled ? 'on' : 'off' })
+export function setChatWriteMode(chatId: number, mode: AiWriteMode): boolean {
+  const result = getDatabase()
+    .prepare('UPDATE ai_chats SET write_mode = ? WHERE id = ?')
+    .run(mode, chatId)
+  if (result.changes === 0) return false
+  logAiAudit({ chatId, event: 'write_toggle', detail: `write_mode=${mode}` })
+  return true
 }
 
 // ── 쓰기 도구 HITL 승인 (docs/AI_GUARDRAILS.md 7.2절) ──
@@ -160,7 +168,7 @@ export function findClaudeExecutable(): string | undefined {
   return candidates.find((p) => existsSync(p))
 }
 
-function buildSystemPrompt(writeEnabled: boolean): string {
+function buildSystemPrompt(writeMode: AiWriteMode): string {
   const now = new Date()
   const days = ['일', '월', '화', '수', '목', '금', '토']
   const yyyy = now.getFullYear()
@@ -196,22 +204,26 @@ LinkWork는 개인 업무 관리 데스크톱 앱으로, 다음 데이터를 관
 링크의 id는 반드시 도구가 반환한 실제 id를 사용하세요. id를 모르면 링크를 만들지 마세요.
 
 ${
-  writeEnabled
-    ? `## 데이터 작성 규칙 (쓰기 도구 활성)
+  writeMode !== 'readonly'
+    ? `## 데이터 작성 규칙 (쓰기 도구 활성${writeMode === 'auto' ? ' — 자동 승인 모드' : ''})
 - 생성: create_project / create_todo / create_memo / create_variable
 - 수정: update_project / update_task / update_todo / update_memo / update_variable
 위 도구로 데이터를 **생성·수정**할 수 있습니다.
-1. 모든 쓰기 도구는 실행 전 사용자에게 승인 카드가 표시되며, 승인해야만 실행됩니다.
+1. ${
+        writeMode === 'auto'
+          ? '이 채팅은 자동 승인 모드입니다 — 쓰기 도구가 승인 카드 없이 즉시 실행되므로 더욱 신중해야 합니다. 단, 변수(create_variable/update_variable)는 항상 사용자 승인 카드가 표시됩니다.'
+          : '모든 쓰기 도구는 실행 전 사용자에게 승인 카드가 표시되며, 승인해야만 실행됩니다.'
+      }
 2. 사용자가 거절하면 같은 내용으로 다시 시도하지 말고, 무엇을 바꿀지 물어보세요.
 3. 쓰기 전에 조회 도구로 맥락을 먼저 확인하세요. 특히 수정은 반드시 조회 도구로 대상 id와 현재 값을 확인한 뒤, **변경할 필드만** 전달하세요.
 4. 메모 content와 TODO notes는 **전체 교체**됩니다. 부분 수정 시 반드시 get_memo / get_todo로 전문을 조회한 뒤, 수정 사항을 반영한 전체 내용을 전달하세요 (목록 도구의 잘린 내용을 그대로 쓰면 데이터가 유실됩니다).
-5. 여러 항목을 바꿀 때는 항목마다 도구를 한 번씩 호출하세요 (한 호출 = 한 항목). 호출마다 승인을 받습니다.
+5. 여러 항목을 바꿀 때는 항목마다 도구를 한 번씩 호출하세요 (한 호출 = 한 항목).${writeMode === 'ask' ? ' 호출마다 승인을 받습니다.' : ''}
 6. 사용자가 형식을 지정하지 않으면 데이터 성격에 맞게 정리해서 작성하세요 (메모는 마크다운 구조화, TODO 제목은 간결한 행동 단위, 프로젝트는 WBS 세부 작업 분해).
 7. 삭제는 지원하지 않습니다 — 요청 시 해당 메뉴에서 직접 작업하도록 안내하세요. (메모 보관 처리, TODO 완료/복원은 update 도구로 가능합니다)
 8. 생성/수정 후에는 linkwork:// 링크로 해당 항목을 안내하세요.`
     : `## 데이터 작성 안내
-현재 AI 데이터 작성 기능이 꺼져 있어 당신은 읽기 전용입니다. 사용자가 데이터 추가/수정을 요청하면,
-AI 대화 화면 상단의 "데이터 작성 허용" 토글을 켜면 AI가 승인을 받아 직접 생성·수정할 수 있다고 안내하거나 해당 메뉴에서 직접 작업하도록 안내하세요.
+이 채팅은 읽기 전용 모드라 당신은 데이터를 생성·수정할 수 없습니다. 사용자가 데이터 추가/수정을 요청하면,
+채팅 상단의 데이터 작성 모드를 "승인 후 쓰기"나 "자동 쓰기"로 바꾸면 AI가 직접 생성·수정할 수 있다고 안내하거나 해당 메뉴에서 직접 작업하도록 안내하세요.
 삭제는 항상 해당 메뉴에서만 가능합니다.`
 }
 
@@ -292,8 +304,9 @@ export async function runAiQuery(
     }
   }
 
-  // 쓰기 기능 활성 여부는 쿼리 시작 시점 기준 (시스템 프롬프트/도구 게이트 공통)
-  const writeEnabled = isAiWriteEnabled()
+  // 시스템 프롬프트는 쿼리 시작 시점의 모드 기준. 도구 게이트(canUseTool)는
+  // 호출 시점마다 재조회해 "이 채팅에서 항상 승인" 등 모드 전환을 즉시 반영한다.
+  const writeMode = getChatWriteMode(chatId)
 
   // 쓰기 도구 HITL: renderer에 승인 카드를 띄우고 사용자의 응답을 기다린다.
   // 타임아웃/쿼리 중단 시 자동 거절 — canUseTool이 무한 대기하지 않도록.
@@ -359,7 +372,7 @@ export async function runAiQuery(
       prompt,
       options: {
         abortController: abort,
-        systemPrompt: buildSystemPrompt(writeEnabled),
+        systemPrompt: buildSystemPrompt(writeMode),
         model: AI_MODEL,
         maxTurns: MAX_TURNS,
         resume: resumeId,
@@ -367,7 +380,8 @@ export async function runAiQuery(
         allowedTools: LINKWORK_TOOL_NAMES,
         disallowedTools: ['Bash', 'Write', 'Edit', 'NotebookEdit', 'WebSearch', 'WebFetch', 'Task'],
         permissionMode: 'default',
-        // 가드레일: 조회 도구는 자동 허용, 쓰기 도구는 opt-in + 사용자 승인(HITL),
+        // 가드레일: 조회 도구는 자동 허용, 쓰기 도구는 채팅별 모드 게이트
+        // (readonly 거부 / ask 승인 카드 / auto 자동 승인 — 변수 도구 제외),
         // 그 외 모든 도구는 명시적으로 거부하고 시도 자체를 감사 로그에 남긴다.
         canUseTool: async (toolName, input) => {
           if (
@@ -377,21 +391,38 @@ export async function runAiQuery(
             return { behavior: 'allow' as const, updatedInput: input }
           }
           if (LINKWORK_WRITE_TOOL_NAMES.includes(toolName)) {
-            if (!writeEnabled || !isAiWriteEnabled()) {
+            const shortName = toolName.replace('mcp__linkwork__', '')
+            // 모드는 호출 시점마다 재조회 — 승인 카드의 "이 채팅에서 항상 승인"으로
+            // auto 전환된 경우 다음 호출부터 즉시 자동 승인된다.
+            const mode = getChatWriteMode(chatId)
+            if (mode === 'readonly') {
               logAiAudit({
                 chatId,
                 event: 'tool_denied',
                 toolName,
-                input: sanitizeWriteInputForAudit(toolName.replace('mcp__linkwork__', ''), input),
-                detail: 'AI 쓰기 비활성 상태에서 쓰기 도구 시도'
+                input: sanitizeWriteInputForAudit(shortName, input),
+                detail: '읽기 전용 채팅에서 쓰기 도구 시도'
               })
               return {
                 behavior: 'deny' as const,
                 message:
-                  'AI 데이터 작성 기능이 꺼져 있습니다. AI 대화 화면 상단의 "데이터 작성 허용" 토글을 켠 뒤 다시 요청하도록 사용자에게 안내하세요.'
+                  '이 채팅은 읽기 전용 모드입니다. 채팅 상단의 데이터 작성 모드를 "승인 후 쓰기"나 "자동 쓰기"로 바꾼 뒤 다시 요청하도록 사용자에게 안내하세요.'
               }
             }
-            const shortName = toolName.replace('mcp__linkwork__', '')
+            if (mode === 'auto' && !ALWAYS_CONFIRM_WRITE_TOOLS.includes(shortName)) {
+              // 자동 승인 — 수정 도구는 변경 전 스냅샷을 감사 로그에 남겨 복구 근거를 확보
+              const current = getUpdatePreview(shortName, input)
+              logAiAudit({
+                chatId,
+                event: 'write_approved',
+                toolName: shortName,
+                input: sanitizeWriteInputForAudit(shortName, input),
+                detail: current
+                  ? `자동 승인(auto 모드) — 변경 전: ${JSON.stringify(current)}`
+                  : '자동 승인(auto 모드)'
+              })
+              return { behavior: 'allow' as const, updatedInput: input }
+            }
             const label = TOOL_LABELS[shortName] ?? shortName
             const approved = await requestApproval(shortName, label, input)
             if (approved) {

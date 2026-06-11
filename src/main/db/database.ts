@@ -182,6 +182,7 @@ export function initDatabase(): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL DEFAULT '새 대화',
       session_id TEXT,
+      write_mode TEXT NOT NULL DEFAULT 'ask',
       created_at TEXT DEFAULT (datetime('now', 'localtime')),
       updated_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
@@ -224,6 +225,12 @@ export function initDatabase(): void {
   const todoColumnNames = todoColumns.map((c) => c.name)
   if (todoColumns.length > 0 && !todoColumnNames.includes('notes')) {
     db.exec("ALTER TABLE todos ADD COLUMN notes TEXT")
+  }
+
+  // AI 채팅별 쓰기 모드: readonly(읽기 전용) | ask(승인 후 쓰기, 기본) | auto(자동 쓰기)
+  const aiChatColumns = db.prepare("PRAGMA table_info(ai_chats)").all() as { name: string }[]
+  if (aiChatColumns.length > 0 && !aiChatColumns.map((c) => c.name).includes('write_mode')) {
+    db.exec("ALTER TABLE ai_chats ADD COLUMN write_mode TEXT NOT NULL DEFAULT 'ask'")
   }
 
   const projectColumns = db.prepare("PRAGMA table_info(projects)").all() as { name: string }[]

@@ -5,8 +5,25 @@ import { useTodoStore } from '../../stores/todoStore'
 import { useMemoStore } from '../../stores/memoStore'
 import { useVariableStore } from '../../stores/variableStore'
 import MarkdownContent from '../memo/MarkdownContent'
-import type { AiApprovalRequest, AiChat, AiMessage, AiStatus, AiStreamEvent } from '../../types'
+import type {
+  AiApprovalRequest,
+  AiChat,
+  AiMessage,
+  AiStatus,
+  AiStreamEvent,
+  AiWriteMode
+} from '../../types'
 import { AlertTriangleIcon, Card, XIcon, button } from '../ui'
+
+// 채팅별 데이터 작성 모드 선택지 (헤더 세그먼트 컨트롤)
+const WRITE_MODES: { value: AiWriteMode; label: string; title: string }[] = [
+  { value: 'readonly', label: '읽기 전용', title: 'AI가 데이터를 조회만 합니다' },
+  { value: 'ask', label: '승인 후 쓰기', title: 'AI가 생성·수정 전 항목마다 승인을 요청합니다' },
+  { value: 'auto', label: '자동 쓰기', title: 'AI가 승인 없이 즉시 생성·수정합니다 (변수는 항상 승인)' }
+]
+
+// auto 모드에서도 항상 승인 카드를 거치는 도구 (main의 ALWAYS_CONFIRM_WRITE_TOOLS와 동일)
+const ALWAYS_CONFIRM_TOOLS = ['create_variable', 'update_variable']
 
 const EXAMPLE_PROMPTS = [
   '현재 진행중인 프로젝트 알려줘',
@@ -178,8 +195,8 @@ export default function AiChatView(): React.ReactNode {
             <p className="text-sm text-gray-500 mb-6">
               프로젝트, TODO, 메모, 문서 등 LinkWork의 데이터를 검색하고 정리해 드립니다.
               <br />
-              채팅방에서 &ldquo;데이터 작성&rdquo;을 켜면 승인을 거쳐 프로젝트·TODO·메모·변수를
-              만들거나 수정해 드릴 수도 있습니다.
+              승인을 거쳐 프로젝트·TODO·메모·변수를 만들거나 수정해 드릴 수도 있습니다.
+              (작성 방식은 채팅 상단에서 채팅별로 선택)
             </p>
             <div className="grid grid-cols-2 gap-2 w-full max-w-xl">
               {EXAMPLE_PROMPTS.map((prompt) => (
@@ -300,26 +317,17 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
     sendMessage,
     cancelStream,
     respondApproval,
-    renameChat
+    renameChat,
+    setWriteMode
   } = useAiChatStore()
   const { setView, setProjectView, fetchProject } = useProjectStore()
   const [input, setInput] = useState('')
   const [editingTitle, setEditingTitle] = useState<string | null>(null)
-  const [writeEnabled, setWriteEnabled] = useState<boolean | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const chat = chats.find((c) => c.id === currentChatId)
-
-  useEffect(() => {
-    window.api.ai.getWriteEnabled().then((r) => setWriteEnabled(r.enabled))
-  }, [])
-
-  const toggleWrite = async (): Promise<void> => {
-    if (writeEnabled === null) return
-    const result = await window.api.ai.setWriteEnabled(!writeEnabled)
-    setWriteEnabled(result.enabled)
-  }
+  const writeMode: AiWriteMode = chat?.write_mode ?? 'ask'
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -398,25 +406,28 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
             {chat?.title ?? '대화'}
           </h3>
         )}
-        {writeEnabled !== null && (
-          <button
-            onClick={() => void toggleWrite()}
-            className="shrink-0 flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900 transition-colors"
-            title="켜면 AI가 승인을 받아 프로젝트/TODO/메모/변수를 생성·수정할 수 있습니다 (삭제 불가)"
+        {chat && (
+          <div
+            className="shrink-0 flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5"
+            title="이 채팅에서 AI의 데이터 작성 방식 (삭제는 항상 불가)"
           >
-            <span
-              className={`relative w-7 h-4 rounded-full transition-colors ${
-                writeEnabled ? 'bg-gray-900' : 'bg-gray-300'
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${
-                  writeEnabled ? 'left-3.5' : 'left-0.5'
+            {WRITE_MODES.map((m) => (
+              <button
+                key={m.value}
+                onClick={() => void setWriteMode(chat.id, m.value)}
+                title={m.title}
+                className={`px-2 py-1 text-[11px] font-medium rounded-md transition-colors ${
+                  writeMode === m.value
+                    ? m.value === 'auto'
+                      ? 'bg-amber-100 text-amber-800 shadow-sm'
+                      : 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
                 }`}
-              />
-            </span>
-            데이터 작성 {writeEnabled ? '허용' : '꺼짐'}
-          </button>
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
         )}
       </div>
 
@@ -452,7 +463,12 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
         {pendingApproval && (
           <ApprovalCard
             request={pendingApproval}
-            onRespond={(approved) => void respondApproval(pendingApproval.requestId, approved)}
+            allowAlways={
+              writeMode === 'ask' && !ALWAYS_CONFIRM_TOOLS.includes(pendingApproval.name)
+            }
+            onRespond={(approved, always) =>
+              void respondApproval(pendingApproval.requestId, approved, always)
+            }
           />
         )}
 
@@ -509,12 +525,15 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
 }
 
 // 쓰기 도구 실행 전 사용자 승인 카드 (HITL — docs/AI_GUARDRAILS.md 7.2절)
+// allowAlways: "이 채팅에서 항상 승인" 노출 여부 (변수 도구는 항상 승인이 필요해 제외)
 function ApprovalCard({
   request,
+  allowAlways,
   onRespond
 }: {
   request: AiApprovalRequest
-  onRespond: (approved: boolean) => void
+  allowAlways: boolean
+  onRespond: (approved: boolean, always?: boolean) => void
 }): React.ReactNode {
   return (
     <div className="max-w-[85%] border border-amber-300 bg-amber-50 rounded-lg px-4 py-3">
@@ -543,6 +562,15 @@ function ApprovalCard({
         >
           승인
         </button>
+        {allowAlways && (
+          <button
+            onClick={() => onRespond(true, true)}
+            title="이 채팅을 자동 쓰기 모드로 바꾸고 승인합니다. 이후 이 채팅에서는 승인 없이 즉시 실행됩니다 (변수 제외)"
+            className="px-4 py-1.5 text-sm rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200 transition-colors"
+          >
+            이 채팅에서 항상 승인
+          </button>
+        )}
         <button
           onClick={() => onRespond(false)}
           className={`px-4 py-1.5 text-sm rounded-lg ${button.subtle} border border-gray-300`}

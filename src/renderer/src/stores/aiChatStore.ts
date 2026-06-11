@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AiApprovalRequest, AiChat, AiMessage, AiStreamEvent } from '../types'
+import type { AiApprovalRequest, AiChat, AiMessage, AiStreamEvent, AiWriteMode } from '../types'
 
 interface AiChatStore {
   chats: AiChat[]
@@ -19,7 +19,8 @@ interface AiChatStore {
   closeChat: () => void
   sendMessage: (text: string) => Promise<void>
   cancelStream: () => Promise<void>
-  respondApproval: (requestId: string, approved: boolean) => Promise<void>
+  setWriteMode: (chatId: number, mode: AiWriteMode) => Promise<void>
+  respondApproval: (requestId: string, approved: boolean, alwaysForChat?: boolean) => Promise<void>
   handleStreamEvent: (event: AiStreamEvent) => void
 }
 
@@ -122,9 +123,23 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
     await window.api.ai.cancel(chatId)
   },
 
-  respondApproval: async (requestId, approved) => {
+  setWriteMode: async (chatId, mode) => {
+    const result = await window.api.ai.setChatWriteMode(chatId, mode)
+    if (result.success) {
+      set((s) => ({
+        chats: s.chats.map((c) => (c.id === chatId ? { ...c, write_mode: mode } : c))
+      }))
+    }
+  },
+
+  respondApproval: async (requestId, approved, alwaysForChat = false) => {
     // main이 approval_resolved 이벤트로도 정리하지만, 클릭 즉시 카드를 닫는다
     set((s) => (s.pendingApproval?.requestId === requestId ? { pendingApproval: null } : s))
+    // "이 채팅에서 항상 승인": 모드를 먼저 auto로 바꿔야 이후 호출이 자동 승인된다
+    if (approved && alwaysForChat) {
+      const chatId = get().currentChatId
+      if (chatId) await get().setWriteMode(chatId, 'auto')
+    }
     await window.api.ai.approve(requestId, approved)
   },
 

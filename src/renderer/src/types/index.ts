@@ -317,10 +317,15 @@ export interface TodoTagAPI {
 }
 
 // AI Chat types
+
+// 채팅별 데이터 작성 모드: 읽기 전용 | 승인 후 쓰기(기본) | 자동 쓰기
+export type AiWriteMode = 'readonly' | 'ask' | 'auto'
+
 export interface AiChat {
   id: number
   title: string
   session_id: string | null
+  write_mode: AiWriteMode
   created_at: string
   updated_at: string
   message_count?: number
@@ -381,8 +386,7 @@ export interface AiAPI {
   progress: (chatId: number) => Promise<AiProgress>
   status: () => Promise<AiStatus>
   approve: (requestId: string, approved: boolean) => Promise<{ success: boolean }>
-  getWriteEnabled: () => Promise<{ enabled: boolean }>
-  setWriteEnabled: (enabled: boolean) => Promise<{ enabled: boolean }>
+  setChatWriteMode: (chatId: number, mode: AiWriteMode) => Promise<{ success: boolean }>
   onStream: (callback: (event: AiStreamEvent) => void) => () => void
   onDataChanged: (callback: (data: { entity: string }) => void) => () => void
 }
