@@ -143,6 +143,14 @@ export function AlertTriangleIcon(p: IconProps): React.ReactNode {
   )
 }
 
+export function ChevronDownIcon(p: IconProps): React.ReactNode {
+  return (
+    <Svg {...p}>
+      <path d="m6 9 6 6 6-6" />
+    </Svg>
+  )
+}
+
 export function InboxIcon(p: IconProps): React.ReactNode {
   return (
     <Svg {...p}>

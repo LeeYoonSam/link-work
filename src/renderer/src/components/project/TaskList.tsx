@@ -1,7 +1,16 @@
 import { useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
 import type { Task } from '../../types'
-import { SectionTitle, StatusDot, IconButton, PencilIcon, TrashIcon, taskStatus, button } from '../ui'
+import {
+  SectionTitle,
+  StatusDot,
+  IconButton,
+  PencilIcon,
+  TrashIcon,
+  ChevronDownIcon,
+  taskStatus,
+  button
+} from '../ui'
 
 // 같은 날짜면 한 번만, 기간이면 MM-dd 범위로 압축해 표시
 function formatTaskRange(start: string | null, end: string | null): string | null {
@@ -117,17 +126,26 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
                       {formatTaskRange(task.start_date, task.end_date)}
                     </span>
                   )}
-                  <select
-                    value={task.status}
-                    onChange={(e) => handleStatusChange(task, e.target.value)}
-                    className={`text-xs px-2 py-1 rounded-full border-0 cursor-pointer ${taskStatus[task.status].badge}`}
+                  {/* 네이티브 select 화살표를 숨기고 커스텀 셰브론으로 겹침 방지 */}
+                  <span
+                    className={`relative inline-flex items-center rounded-full ${taskStatus[task.status].badge}`}
                   >
-                    {Object.entries(taskStatus).map(([value, { label }]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
+                    <select
+                      value={task.status}
+                      onChange={(e) => handleStatusChange(task, e.target.value)}
+                      className="appearance-none bg-transparent text-xs font-medium pl-2.5 pr-6 py-1 cursor-pointer focus:outline-none"
+                    >
+                      {Object.entries(taskStatus).map(([value, { label }]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDownIcon
+                      size={12}
+                      className="absolute right-2 pointer-events-none"
+                    />
+                  </span>
                   <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
                     <IconButton title="수정" onClick={() => setEditingTask({ ...task })}>
                       <PencilIcon size={14} />
