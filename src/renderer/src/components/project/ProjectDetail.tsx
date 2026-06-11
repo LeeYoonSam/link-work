@@ -2,14 +2,26 @@ import { useEffect, useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { format } from 'date-fns'
+import type { Task } from '../../types'
 import TaskList from './TaskList'
+import ScheduleTimeline from './ScheduleTimeline'
 import DocumentForm from '../document/DocumentForm'
 import MarkdownContent from '../memo/MarkdownContent'
 
 export default function ProjectDetail(): React.ReactNode {
-  const { currentProject, setProjectView, setEditingProject, deleteProject } = useProjectStore()
+  const { currentProject, setProjectView, setEditingProject, deleteProject, tasks, updateTask } =
+    useProjectStore()
   const { documents, fetchDocuments, openDocument, deleteDocument } = useDocumentStore()
   const [showDocForm, setShowDocForm] = useState(false)
+
+  const cycleStatus = async (task: Task): Promise<void> => {
+    const nextStatus: Record<string, string> = {
+      pending: 'in_progress',
+      in_progress: 'done',
+      done: 'pending'
+    }
+    await updateTask(task.id, { status: nextStatus[task.status] })
+  }
 
   useEffect(() => {
     if (currentProject) {
@@ -113,6 +125,18 @@ export default function ProjectDetail(): React.ReactNode {
           </div>
         </div>
       </div>
+
+      {tasks.length > 0 && (
+        <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+          <h4 className="text-sm font-semibold text-gray-700 mb-4">Schedule</h4>
+          <ScheduleTimeline
+            project={currentProject}
+            tasks={tasks}
+            onCycleStatus={cycleStatus}
+            variant="full"
+          />
+        </div>
+      )}
 
       <div className="bg-white border border-gray-200 rounded-lg p-6">
         <TaskList projectId={currentProject.id} />
