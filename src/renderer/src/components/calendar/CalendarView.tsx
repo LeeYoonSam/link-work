@@ -10,12 +10,13 @@ import {
   isSameDay,
   startOfWeek
 } from 'date-fns'
-import { SectionTitle, EmptyState, button } from '../ui'
+import { Badge, SectionTitle, EmptyState, button } from '../ui'
 
 const DAY_LABELS = ['월', '화', '수', '목', '금']
 const WORK_DAYS = 5
 
-function EventCard({
+// 시간 지정 일정: 시간 컬럼 + 컬러 바 + 내용의 타임라인 행
+function EventRow({
   event,
   current,
   timeText
@@ -28,49 +29,52 @@ function EventCard({
   const hasDescription = Boolean(event.description)
 
   return (
-    <article
-      className={`rounded-md border px-3 py-2 ${
-        current ? 'border-blue-300 bg-blue-50/60' : 'border-gray-200 bg-white'
-      }`}
-    >
-      <header className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-1.5 min-w-0">
+    <article className={`flex gap-3 px-4 py-2.5 ${current ? 'bg-blue-50/60' : ''}`}>
+      <span
+        className={`w-24 shrink-0 text-xs tabular-nums pt-0.5 text-right ${
+          current ? 'text-blue-600 font-semibold' : 'text-gray-500'
+        }`}
+      >
+        {timeText}
+      </span>
+      <div
+        className={`w-0.5 self-stretch rounded-full ${current ? 'bg-blue-500' : 'bg-gray-200'}`}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
           <h4 className="font-medium text-gray-900 text-sm truncate" title={event.summary}>
             {event.summary}
           </h4>
           {current && (
-            <span className="text-[10px] font-semibold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded shrink-0">
+            <Badge color="bg-blue-100 text-blue-600" size="xs">
               NOW
-            </span>
+            </Badge>
           )}
         </div>
-        <span className="text-xs font-medium text-gray-600 shrink-0 tabular-nums">
-          {timeText}
-        </span>
-      </header>
-      {hasDescription && (
-        <div
-          className={`text-xs text-gray-600 mt-1 whitespace-pre-wrap break-words leading-relaxed ${
-            expanded ? '' : 'line-clamp-2'
-          }`}
-        >
-          {renderDescription(event.description!)}
-        </div>
-      )}
-      {hasDescription && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="text-[11px] text-blue-600 hover:text-blue-700 mt-1"
-        >
-          {expanded ? '접기' : '더 보기'}
-        </button>
-      )}
-      {event.location && (
-        <p className="text-[11px] text-gray-400 mt-1 truncate" title={event.location}>
-          {event.location}
-        </p>
-      )}
+        {hasDescription && (
+          <div
+            className={`text-xs text-gray-600 mt-1 whitespace-pre-wrap break-words leading-relaxed ${
+              expanded ? '' : 'line-clamp-2'
+            }`}
+          >
+            {renderDescription(event.description!)}
+          </div>
+        )}
+        {hasDescription && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="text-[11px] text-blue-600 hover:text-blue-700 mt-1"
+          >
+            {expanded ? '접기' : '더 보기'}
+          </button>
+        )}
+        {event.location && (
+          <p className="text-[11px] text-gray-400 mt-1 truncate" title={event.location}>
+            {event.location}
+          </p>
+        )}
+      </div>
     </article>
   )
 }
@@ -181,46 +185,55 @@ export default function CalendarView(): React.ReactNode {
             const key = format(day, 'yyyy-MM-dd')
             const dayEvents = eventsByDay[key] || []
             const isToday = isSameDay(day, now)
+            const allDayEvents = dayEvents.filter((e) => e.allDay)
+            const timedEvents = dayEvents.filter((e) => !e.allDay)
 
             return (
               <div
                 key={key}
                 ref={isToday ? todayRef : undefined}
-                className={`rounded-lg border bg-white ${
-                  isToday ? 'border-blue-400' : 'border-gray-200'
+                className={`rounded-lg border bg-white overflow-hidden ${
+                  isToday ? 'border-blue-300 ring-1 ring-blue-200' : 'border-gray-200'
                 }`}
               >
                 <div
-                  className={`flex items-center justify-between px-4 py-2 border-b ${
-                    isToday ? 'border-blue-200 bg-blue-50/60' : 'border-gray-100'
+                  className={`flex items-center gap-2 px-4 py-2.5 ${
+                    timedEvents.length > 0 ? 'border-b border-gray-100' : ''
                   }`}
                 >
-                  <div className="flex items-baseline gap-2">
-                    <span
-                      className={`text-sm font-semibold ${
-                        isToday ? 'text-blue-700' : 'text-gray-700'
-                      }`}
-                    >
-                      {DAY_LABELS[idx]} {format(day, 'MM-dd')}
-                    </span>
-                    {isToday && (
-                      <span className="text-[11px] font-medium text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded">
-                        오늘
+                  <span
+                    className={`text-sm font-semibold ${
+                      isToday ? 'text-blue-700' : 'text-gray-700'
+                    }`}
+                  >
+                    {DAY_LABELS[idx]} {format(day, 'MM-dd')}
+                  </span>
+                  {isToday && (
+                    <Badge color="bg-blue-100 text-blue-700" size="xs">
+                      오늘
+                    </Badge>
+                  )}
+                  {/* 종일 일정은 별도 카드 대신 헤더의 컴팩트 칩으로 */}
+                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                    {allDayEvents.map((e) => (
+                      <span
+                        key={e.id}
+                        className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-[11px] font-medium truncate max-w-[160px]"
+                        title={`${e.summary} · All Day`}
+                      >
+                        {e.summary}
                       </span>
-                    )}
+                    ))}
                   </div>
-                  <span className="text-xs text-gray-400">
+                  <span className="ml-auto shrink-0 text-xs text-gray-400">
                     {dayEvents.length === 0 ? '일정 없음' : `${dayEvents.length}개 일정`}
                   </span>
                 </div>
 
-                {dayEvents.length > 0 && (
-                  <div
-                    className="p-3 grid gap-2"
-                    style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}
-                  >
-                    {dayEvents.map((event) => (
-                      <EventCard
+                {timedEvents.length > 0 && (
+                  <div className="divide-y divide-gray-50">
+                    {timedEvents.map((event) => (
+                      <EventRow
                         key={event.id}
                         event={event}
                         current={isCurrentEvent(event)}

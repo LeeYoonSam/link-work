@@ -6,7 +6,7 @@ import TodoItem from './TodoItem'
 import TodoForm from './TodoForm'
 import TagManager from './TagManager'
 import type { Todo } from '../../types'
-import { Badge, EmptyState, button } from '../ui'
+import { Badge, EmptyState, SearchIcon, XIcon, InboxIcon, button } from '../ui'
 
 function matchesSearch(todo: Todo, query: string): boolean {
   if (!query) return true
@@ -147,45 +147,42 @@ export default function TodoView(): React.ReactNode {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-gray-900">TODO</h2>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowTagManager(true)}
-            className={`px-3 py-2 text-sm ${button.subtle}`}
-          >
-            태그 관리
-          </button>
-          <button
-            onClick={() => setShowForm(true)}
-            className={`px-4 py-2 text-sm font-medium ${button.primary}`}
-          >
-            + 새 TODO
-          </button>
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <SearchIcon
+            size={15}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+          />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="제목, 메모, 태그 검색..."
+            className="w-full pl-9 pr-8 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-colors"
+          />
+          {isSearching && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              title="검색어 지우기"
+            >
+              <XIcon size={14} />
+            </button>
+          )}
         </div>
-      </div>
-
-      <div className="relative">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">
-          🔍
-        </span>
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="제목, 메모, 태그 검색..."
-          className="w-full pl-9 pr-8 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-colors"
-        />
-        {isSearching && (
-          <button
-            type="button"
-            onClick={() => setSearch('')}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm"
-            title="검색어 지우기"
-          >
-            ✕
-          </button>
-        )}
+        <button
+          onClick={() => setShowTagManager(true)}
+          className={`px-3 py-2 text-sm ${button.subtle}`}
+        >
+          태그 관리
+        </button>
+        <button
+          onClick={() => setShowForm(true)}
+          className={`px-4 py-2 text-sm font-medium ${button.primary}`}
+        >
+          + 새 TODO
+        </button>
       </div>
 
       {tags.length > 0 && (
@@ -251,7 +248,9 @@ export default function TodoView(): React.ReactNode {
         <div className="space-y-2">
           {filteredTodos.length === 0 ? (
             <EmptyState>
-              <div className="text-3xl mb-2">{isSearching ? '🔍' : '☐'}</div>
+              <div className="flex justify-center mb-3 text-gray-300">
+                {isSearching ? <SearchIcon size={28} /> : <InboxIcon size={28} />}
+              </div>
               <div className="text-sm">
                 {isSearching ? '검색 결과가 없습니다' : 'TODO가 없습니다'}
               </div>
@@ -266,7 +265,9 @@ export default function TodoView(): React.ReactNode {
         <div className="space-y-5">
           {completedGroups.length === 0 ? (
             <EmptyState>
-              <div className="text-3xl mb-2">{isSearching ? '🔍' : '📋'}</div>
+              <div className="flex justify-center mb-3 text-gray-300">
+                {isSearching ? <SearchIcon size={28} /> : <InboxIcon size={28} />}
+              </div>
               <div className="text-sm">
                 {isSearching ? '검색 결과가 없습니다' : '완료된 TODO가 없습니다'}
               </div>

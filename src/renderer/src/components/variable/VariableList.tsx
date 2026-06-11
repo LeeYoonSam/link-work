@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useVariableStore } from '../../stores/variableStore'
 import VariableForm from './VariableForm'
 import type { Variable } from '../../types'
-import { Badge, Card, EmptyState, button } from '../ui'
+import { Badge, Card, EmptyState, IconButton, PencilIcon, TrashIcon, button } from '../ui'
 
 export default function VariableList(): React.ReactNode {
   const { variables, fetchVariables, deleteVariable, reorderVariables } = useVariableStore()
@@ -170,21 +170,20 @@ export default function VariableList(): React.ReactNode {
                     </Badge>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-1">
-                      <button
-                        onClick={() => handleEdit(v)}
-                        className="p-1.5 text-gray-400 hover:text-gray-600 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                    <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <IconButton
                         title="Edit"
+                        onClick={() => handleEdit(v)}
                       >
-                        ✏️
-                      </button>
-                      <button
-                        onClick={() => handleDelete(v.id)}
-                        className="p-1.5 text-gray-400 hover:text-red-600 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                        <PencilIcon size={14} />
+                      </IconButton>
+                      <IconButton
+                        tone="danger"
                         title="Delete"
+                        onClick={() => handleDelete(v.id)}
                       >
-                        🗑️
-                      </button>
+                        <TrashIcon size={14} />
+                      </IconButton>
                     </div>
                   </td>
                 </tr>

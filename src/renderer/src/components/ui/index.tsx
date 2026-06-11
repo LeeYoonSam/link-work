@@ -3,6 +3,41 @@ import type { ReactNode, MouseEventHandler } from 'react'
 import { typo, surface } from './tokens'
 
 export * from './tokens'
+export * from './icons'
+
+// 아이콘 전용 버튼 — hover 시에만 색이 드러나는 조용한 액션
+export function IconButton({
+  children,
+  title,
+  onClick,
+  tone = 'default',
+  active = false
+}: {
+  children: ReactNode
+  title?: string
+  onClick?: MouseEventHandler
+  tone?: 'default' | 'danger' | 'primary' | 'star'
+  active?: boolean
+}): React.ReactNode {
+  const tones: Record<string, string> = {
+    default: 'text-gray-400 hover:text-gray-600 hover:bg-gray-100',
+    danger: 'text-gray-400 hover:text-red-500 hover:bg-red-50',
+    primary: 'text-gray-400 hover:text-blue-600 hover:bg-blue-50',
+    star: active
+      ? 'text-amber-400 hover:text-amber-500 hover:bg-amber-50'
+      : 'text-gray-300 hover:text-amber-400 hover:bg-amber-50'
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`p-1 rounded-md transition-colors ${tones[tone]}`}
+    >
+      {children}
+    </button>
+  )
+}
 
 // 파스텔 필 뱃지. color에 tokens의 badge 클래스를 그대로 전달한다.
 export function Badge({

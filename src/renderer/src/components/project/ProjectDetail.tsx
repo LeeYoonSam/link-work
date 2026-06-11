@@ -7,7 +7,7 @@ import TaskList from './TaskList'
 import ScheduleTimeline from './ScheduleTimeline'
 import DocumentForm from '../document/DocumentForm'
 import MarkdownContent from '../memo/MarkdownContent'
-import { Badge, Card, SectionTitle, projectStatus, button } from '../ui'
+import { Badge, Card, FolderIcon, IconButton, LinkIcon, SectionTitle, TrashIcon, projectStatus, button } from '../ui'
 
 export default function ProjectDetail(): React.ReactNode {
   const { currentProject, setProjectView, setEditingProject, deleteProject, tasks, updateTask } =
@@ -152,19 +152,20 @@ export default function ProjectDetail(): React.ReactNode {
                   className="flex items-center gap-2 cursor-pointer min-w-0 flex-1"
                   onClick={() => openDocument(doc.url, doc.type)}
                 >
-                  <span className="text-sm flex-shrink-0">
-                    {doc.type === 'link' ? '🔗' : '📁'}
-                  </span>
+                  {doc.type === 'link' ? <LinkIcon size={15} className="text-blue-400 flex-shrink-0" /> : <FolderIcon size={15} className="text-amber-400 flex-shrink-0" />}
                   <span className="text-sm text-gray-900 truncate">{doc.name}</span>
                 </div>
-                <button
-                  onClick={() => {
-                    if (confirm('Delete this document?')) deleteDocument(doc.id).then(() => fetchDocuments(currentProject.id))
-                  }}
-                  className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  🗑️
-                </button>
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                  <IconButton
+                    tone="danger"
+                    title="삭제"
+                    onClick={() => {
+                      if (confirm('Delete this document?')) deleteDocument(doc.id).then(() => fetchDocuments(currentProject.id))
+                    }}
+                  >
+                    <TrashIcon size={14} />
+                  </IconButton>
+                </div>
               </div>
             ))}
           </div>

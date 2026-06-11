@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { format } from 'date-fns'
 import type { Memo } from '../../types'
 import MarkdownContent from './MarkdownContent'
+import { StarIcon, XIcon } from '../ui'
 
 interface MemoViewerProps {
   memo: Memo
@@ -36,7 +37,7 @@ export default function MemoViewer({ memo, onClose, onEdit }: MemoViewerProps): 
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <div className="flex items-center gap-2 min-w-0">
-            {isImportant ? <span className="text-yellow-500 flex-shrink-0">★</span> : null}
+            {isImportant ? <StarIcon size={16} filled className="text-amber-400 flex-shrink-0" /> : null}
             <span className="text-xs text-gray-500">
               {format(new Date(memo.created_at), 'yyyy-MM-dd HH:mm:ss')}
             </span>
@@ -60,7 +61,7 @@ export default function MemoViewer({ memo, onClose, onEdit }: MemoViewerProps): 
               className="p-1 text-gray-400 hover:text-gray-600 rounded"
               aria-label="Close"
             >
-              ✕
+              <XIcon size={16} />
             </button>
           </div>
         </div>

@@ -3,6 +3,7 @@ import { useProjectStore } from '../../stores/projectStore'
 const viewTitles: Record<string, string> = {
   dashboard: 'Dashboard',
   projects: 'Projects',
+  todos: 'TODO',
   documents: 'Documents',
   variables: 'Variables',
   memos: 'Memos',

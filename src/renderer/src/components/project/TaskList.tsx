@@ -1,7 +1,16 @@
 import { useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
 import type { Task } from '../../types'
-import { SectionTitle, taskStatus, button } from '../ui'
+import { SectionTitle, StatusDot, IconButton, PencilIcon, TrashIcon, taskStatus, button } from '../ui'
+
+// 같은 날짜면 한 번만, 기간이면 MM-dd 범위로 압축해 표시
+function formatTaskRange(start: string | null, end: string | null): string | null {
+  if (!start && !end) return null
+  const s = start ?? end!
+  const e = end ?? start!
+  if (s === e) return s
+  return `${s.slice(5)} ~ ${e.slice(5)}`
+}
 
 interface TaskListProps {
   projectId: number
@@ -51,11 +60,11 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
       {tasks.length === 0 ? (
         <p className="text-sm text-gray-400 mb-3">No tasks yet</p>
       ) : (
-        <div className="space-y-2 mb-4">
+        <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 overflow-hidden mb-4">
           {tasks.map((task) => (
             <div
               key={task.id}
-              className="flex items-center gap-2 bg-white border border-gray-200 rounded-md px-3 py-2"
+              className="group flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 transition-colors"
             >
               {editingTask?.id === task.id ? (
                 <>
@@ -96,16 +105,22 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
                 </>
               ) : (
                 <>
-                  <span className="flex-1 text-sm text-gray-800">{task.name}</span>
-                  {task.start_date && (
-                    <span className="text-xs text-gray-400">
-                      {task.start_date} ~ {task.end_date || ''}
+                  <StatusDot color={taskStatus[task.status].dot} />
+                  <span className="flex-1 text-sm text-gray-800 truncate" title={task.name}>
+                    {task.name}
+                  </span>
+                  {formatTaskRange(task.start_date, task.end_date) && (
+                    <span
+                      className="text-xs text-gray-400 tabular-nums"
+                      title={`${task.start_date ?? ''} ~ ${task.end_date ?? ''}`}
+                    >
+                      {formatTaskRange(task.start_date, task.end_date)}
                     </span>
                   )}
                   <select
                     value={task.status}
                     onChange={(e) => handleStatusChange(task, e.target.value)}
-                    className={`text-xs px-2 py-1 rounded-full border-0 ${taskStatus[task.status].badge}`}
+                    className={`text-xs px-2 py-1 rounded-full border-0 cursor-pointer ${taskStatus[task.status].badge}`}
                   >
                     {Object.entries(taskStatus).map(([value, { label }]) => (
                       <option key={value} value={value}>
@@ -113,22 +128,22 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
                       </option>
                     ))}
                   </select>
-                  <button
-                    onClick={() => setEditingTask({ ...task })}
-                    className="text-xs text-gray-400 hover:text-gray-600"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (confirm(`"${task.name}" 작업을 삭제하시겠습니까?`)) {
-                        deleteTask(task.id, projectId)
-                      }
-                    }}
-                    className="text-xs text-red-400 hover:text-red-600"
-                  >
-                    Delete
-                  </button>
+                  <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <IconButton title="수정" onClick={() => setEditingTask({ ...task })}>
+                      <PencilIcon size={14} />
+                    </IconButton>
+                    <IconButton
+                      tone="danger"
+                      title="삭제"
+                      onClick={() => {
+                        if (confirm(`"${task.name}" 작업을 삭제하시겠습니까?`)) {
+                          deleteTask(task.id, projectId)
+                        }
+                      }}
+                    >
+                      <TrashIcon size={14} />
+                    </IconButton>
+                  </div>
                 </>
               )}
             </div>
@@ -167,7 +182,7 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
         />
         <button
           onClick={handleAddTask}
-          className={`px-3 py-1.5 text-sm ${button.dark}`}
+          className={`px-3 py-1.5 text-sm ${button.primary}`}
         >
           Add
         </button>

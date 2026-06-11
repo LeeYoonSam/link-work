@@ -8,7 +8,7 @@ import TodaySchedule from './TodaySchedule'
 import MarkdownContent from '../memo/MarkdownContent'
 import { format } from 'date-fns'
 import type { Task, Todo } from '../../types'
-import { Card, EmptyState, SectionTitle, todoPriority } from '../ui'
+import { Card, EmptyState, SectionTitle, StarIcon, todoPriority } from '../ui'
 
 function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
   const { completeTodo, restoreTodo, setSelectedTodoId, setFilterTagId } = useTodoStore()
@@ -192,7 +192,7 @@ export default function Dashboard(): React.ReactNode {
     <div className="flex flex-col min-h-full">
       {importantMemos.length > 0 ? (
         <div className="mb-6 flex-shrink-0">
-          <SectionTitle variant="page" className="mb-4">★ Important Memos</SectionTitle>
+          <SectionTitle variant="page" className="mb-4"><span className="inline-flex items-center gap-1.5"><StarIcon size={16} filled className="text-amber-400" />Important Memos</span></SectionTitle>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {importantMemos.map((memo) => (
               <div

@@ -3,7 +3,17 @@ import { format, subDays } from 'date-fns'
 import { useTodoStore } from '../../stores/todoStore'
 import MarkdownContent from '../memo/MarkdownContent'
 import type { Todo } from '../../types'
-import { Badge, todoPriority } from '../ui'
+import {
+  IconButton,
+  PencilIcon,
+  TrashIcon,
+  UndoIcon,
+  BellIcon,
+  AlertTriangleIcon,
+  FileTextIcon,
+  XIcon,
+  todoPriority
+} from '../ui'
 
 interface TodoItemProps {
   todo: Todo
@@ -68,7 +78,7 @@ export default function TodoItem({ todo, highlighted = false }: TodoItemProps): 
     <div
       ref={rootRef}
       onClick={handleBoxClick}
-      className={`group rounded-lg border-2 transition-colors ${
+      className={`group rounded-lg border transition-colors ${
         hasNotes ? 'cursor-pointer' : ''
       } ${
         highlighted
@@ -99,13 +109,16 @@ export default function TodoItem({ todo, highlighted = false }: TodoItemProps): 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span
+              className={`w-2 h-2 rounded-full flex-shrink-0 ${priority.dot}`}
+              title={priority.label}
+            />
+            <span
               className={`text-sm ${
                 isCompleted ? 'line-through text-gray-400' : 'text-gray-900'
               }`}
             >
               {todo.title}
             </span>
-            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${priority.dot}`} title={priority.label} />
             {hasNotes ? (
               <button
                 type="button"
@@ -119,7 +132,7 @@ export default function TodoItem({ todo, highlighted = false }: TodoItemProps): 
                 aria-label={showNotes ? '메모 접기' : '메모 펼치기'}
                 aria-expanded={showNotes}
               >
-                <span>📝</span>
+                <FileTextIcon size={12} />
                 <span>{showNotes ? '접기' : '메모'}</span>
               </button>
             ) : null}
@@ -139,13 +152,15 @@ export default function TodoItem({ todo, highlighted = false }: TodoItemProps): 
               : null}
             {todo.due_date ? (
               <span
-                className={`text-xs ${
+                className={`inline-flex items-center gap-1 text-xs ${
                   isOverdue ? 'text-red-500 font-medium' : 'text-gray-400'
                 }`}
               >
-                {isOverdue ? '⚠ ' : ''}
+                {isOverdue ? <AlertTriangleIcon size={12} /> : null}
                 {format(new Date(todo.due_date), 'yyyy-MM-dd HH:mm')}
-                {todo.due_reminder === 1 ? ' 🔔' : ''}
+                {todo.due_reminder === 1 ? (
+                  <BellIcon size={12} className="text-amber-400" />
+                ) : null}
               </span>
             ) : null}
             {isCompleted && todo.completed_at ? (
@@ -183,7 +198,7 @@ export default function TodoItem({ todo, highlighted = false }: TodoItemProps): 
                     className="text-xs px-1 text-gray-400 hover:text-gray-600 transition-colors"
                     title="취소"
                   >
-                    ✕
+                    <XIcon size={12} />
                   </button>
                 </span>
               ) : (
@@ -201,42 +216,34 @@ export default function TodoItem({ todo, highlighted = false }: TodoItemProps): 
         </div>
 
         {!isCompleted ? (
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              onClick={() => setEditingTodo(todo)}
-              className="p-1 text-gray-400 hover:text-blue-500 transition-colors"
-              title="수정"
-            >
-              ✏️
-            </button>
-            <button
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            <IconButton title="수정" onClick={() => setEditingTodo(todo)}>
+              <PencilIcon size={14} />
+            </IconButton>
+            <IconButton
+              tone="danger"
+              title="삭제"
               onClick={() => {
                 if (confirm('이 TODO를 삭제하시겠습니까?')) deleteTodo(todo.id)
               }}
-              className="p-1 text-gray-400 hover:text-red-500 transition-colors"
-              title="삭제"
             >
-              🗑️
-            </button>
+              <TrashIcon size={14} />
+            </IconButton>
           </div>
         ) : (
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              onClick={() => restoreTodo(todo.id)}
-              className="p-1 text-gray-400 hover:text-green-500 transition-colors"
-              title="복구"
-            >
-              ↩️
-            </button>
-            <button
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            <IconButton tone="primary" title="복구" onClick={() => restoreTodo(todo.id)}>
+              <UndoIcon size={14} />
+            </IconButton>
+            <IconButton
+              tone="danger"
+              title="삭제"
               onClick={() => {
                 if (confirm('이 TODO를 영구 삭제하시겠습니까?')) deleteTodo(todo.id)
               }}
-              className="p-1 text-gray-400 hover:text-red-500 transition-colors"
-              title="삭제"
             >
-              🗑️
-            </button>
+              <TrashIcon size={14} />
+            </IconButton>
           </div>
         )}
       </div>

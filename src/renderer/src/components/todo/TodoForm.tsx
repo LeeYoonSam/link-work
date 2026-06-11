@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTodoStore } from '../../stores/todoStore'
 import type { Todo, TodoTag } from '../../types'
-import { SectionTitle, button } from '../ui'
+import { BellIcon, SectionTitle, button } from '../ui'
 
 interface TodoFormProps {
   todo?: Todo | null
@@ -162,7 +162,7 @@ export default function TodoForm({ todo, onClose }: TodoFormProps): React.ReactN
                   className="w-4 h-4 rounded border-gray-300"
                 />
                 <span className="flex items-center gap-1">
-                  <span>🔔</span>
+                  <BellIcon size={14} className="text-amber-400" />
                   <span>알림 설정</span>
                 </span>
               </label>

@@ -6,7 +6,7 @@ import { useMemoStore } from '../../stores/memoStore'
 import { useVariableStore } from '../../stores/variableStore'
 import MarkdownContent from '../memo/MarkdownContent'
 import type { AiApprovalRequest, AiChat, AiMessage, AiStatus, AiStreamEvent } from '../../types'
-import { Card, button } from '../ui'
+import { AlertTriangleIcon, Card, XIcon, button } from '../ui'
 
 const EXAMPLE_PROMPTS = [
   '현재 진행중인 프로젝트 알려줘',
@@ -209,7 +209,7 @@ function AiUnavailableNotice({
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8">
       <Card padding="md" className="max-w-md w-full text-center">
-        <div className="text-3xl mb-3">⚠</div>
+        <AlertTriangleIcon size={28} className="mx-auto text-amber-400 mb-3" />
         <h3 className="text-base font-semibold text-gray-900 mb-2">
           AI 대화를 사용할 수 없습니다
         </h3>
@@ -276,7 +276,7 @@ function ChatListItem({
             className="opacity-0 group-hover:opacity-100 px-1 text-gray-400 hover:text-red-500 transition-opacity"
             title="대화 삭제"
           >
-            ✕
+            <XIcon size={14} />
           </button>
         </div>
       </div>

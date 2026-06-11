@@ -2,6 +2,7 @@ import { format } from 'date-fns'
 import { useMemo } from 'react'
 import type { Memo, MemoCategory } from '../../types'
 import MarkdownContent from './MarkdownContent'
+import { IconButton, StarIcon, PencilIcon, TrashIcon, UndoIcon, ArchiveIcon } from '../ui'
 
 interface MemoCardProps {
   memo: Memo
@@ -84,8 +85,10 @@ export default function MemoCard({
       onClick={() => onClick?.(memo)}
     >
       <div className="px-4 pt-3 pb-2 border-b border-gray-100 flex flex-col gap-1 flex-shrink-0">
-        <div className="flex items-start gap-2">
-          {isImportant ? <span className="text-yellow-500 flex-shrink-0 mt-0.5">★</span> : null}
+        <div className="flex items-start gap-1.5">
+          {isImportant ? (
+            <StarIcon size={14} filled className="text-amber-400 flex-shrink-0 mt-0.5" />
+          ) : null}
           <h3 className="text-sm font-semibold text-gray-900 line-clamp-2 flex-1 min-w-0">
             {title}
           </h3>
@@ -120,48 +123,35 @@ export default function MemoCard({
         <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
           {isArchived ? (
             <>
-              <button
-                onClick={() => onRestore?.(memo.id)}
-                className="p-1 text-gray-400 hover:text-blue-600 rounded"
-                title="Restore"
-              >
-                ↩️
-              </button>
-              <button
+              <IconButton tone="primary" title="Restore" onClick={() => onRestore?.(memo.id)}>
+                <UndoIcon size={14} />
+              </IconButton>
+              <IconButton
+                tone="danger"
+                title="Delete permanently"
                 onClick={() => {
                   if (confirm('Permanently delete this memo?')) onDelete?.(memo.id)
                 }}
-                className="p-1 text-gray-400 hover:text-red-600 rounded"
-                title="Delete permanently"
               >
-                🗑️
-              </button>
+                <TrashIcon size={14} />
+              </IconButton>
             </>
           ) : (
             <>
-              <button
-                onClick={() => onToggleImportant?.(memo.id)}
-                className={`p-1 rounded ${
-                  isImportant ? 'text-yellow-500' : 'text-gray-400 hover:text-yellow-500'
-                }`}
+              <IconButton
+                tone="star"
+                active={isImportant}
                 title={isImportant ? 'Unmark important' : 'Mark important'}
+                onClick={() => onToggleImportant?.(memo.id)}
               >
-                {isImportant ? '★' : '☆'}
-              </button>
-              <button
-                onClick={() => onEdit?.(memo)}
-                className="p-1 text-gray-400 hover:text-gray-600 rounded"
-                title="Edit"
-              >
-                ✏️
-              </button>
-              <button
-                onClick={() => onArchive?.(memo.id)}
-                className="p-1 text-gray-400 hover:text-red-500 rounded"
-                title="Archive"
-              >
-                🗑️
-              </button>
+                <StarIcon size={14} filled={isImportant} />
+              </IconButton>
+              <IconButton title="Edit" onClick={() => onEdit?.(memo)}>
+                <PencilIcon size={14} />
+              </IconButton>
+              <IconButton tone="danger" title="Archive" onClick={() => onArchive?.(memo.id)}>
+                <ArchiveIcon size={14} />
+              </IconButton>
             </>
           )}
         </div>

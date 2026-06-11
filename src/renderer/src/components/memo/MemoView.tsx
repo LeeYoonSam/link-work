@@ -5,7 +5,7 @@ import MemoForm from './MemoForm'
 import MemoViewer from './MemoViewer'
 import CategoryManager from './CategoryManager'
 import type { Memo, MemoCategory } from '../../types'
-import { EmptyState, button } from '../ui'
+import { EmptyState, ArchiveIcon, FileTextIcon, button } from '../ui'
 
 const UNCATEGORIZED_KEY = '__uncategorized__'
 
@@ -105,7 +105,6 @@ export default function MemoView(): React.ReactNode {
   return (
     <div>
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <h2 className="text-lg font-bold text-gray-900">Memos</h2>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex bg-gray-100 rounded-md p-0.5">
             <button
@@ -174,6 +173,8 @@ export default function MemoView(): React.ReactNode {
               </option>
             ))}
           </select>
+        </div>
+        <div className="flex items-center gap-2">
           <button
             onClick={() => setShowCategoryManager(true)}
             className={`px-3 py-1.5 text-xs ${button.subtle}`}
@@ -194,7 +195,9 @@ export default function MemoView(): React.ReactNode {
 
       {isEmpty ? (
         <EmptyState>
-          <div className="text-4xl mb-3">{showArchived ? '📦' : '📝'}</div>
+          <div className="flex justify-center mb-3 text-gray-300">
+            {showArchived ? <ArchiveIcon size={32} /> : <FileTextIcon size={32} />}
+          </div>
           <p className="text-sm">
             {showArchived
               ? 'No archived memos.'

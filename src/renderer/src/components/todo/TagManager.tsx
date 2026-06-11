@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTodoStore } from '../../stores/todoStore'
 import type { TodoTag } from '../../types'
-import { EmptyState, SectionTitle, button } from '../ui'
+import { EmptyState, IconButton, PencilIcon, SectionTitle, TrashIcon, button } from '../ui'
 
 interface TagManagerProps {
   onClose: () => void
@@ -131,18 +131,19 @@ export default function TagManager({ onClose }: TagManagerProps): React.ReactNod
                         style={{ backgroundColor: tag.color }}
                       />
                       <span className="flex-1 text-sm text-gray-700">{tag.name}</span>
-                      <button
+                      <IconButton
+                        title="수정"
                         onClick={() => startEdit(tag)}
-                        className="text-gray-400 hover:text-blue-500 transition-colors text-sm"
                       >
-                        ✏️
-                      </button>
-                      <button
+                        <PencilIcon size={14} />
+                      </IconButton>
+                      <IconButton
+                        tone="danger"
+                        title="삭제"
                         onClick={() => handleDelete(tag)}
-                        className="text-gray-400 hover:text-red-500 transition-colors text-sm"
                       >
-                        🗑️
-                      </button>
+                        <TrashIcon size={14} />
+                      </IconButton>
                     </>
                   )}
                 </div>

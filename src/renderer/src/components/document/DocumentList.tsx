@@ -3,7 +3,7 @@ import { useDocumentStore } from '../../stores/documentStore'
 import { useProjectStore } from '../../stores/projectStore'
 import DocumentForm from './DocumentForm'
 import type { Document } from '../../types'
-import { Card, EmptyState, SectionTitle, button } from '../ui'
+import { Card, EmptyState, FolderIcon, IconButton, LinkIcon, PencilIcon, SectionTitle, TrashIcon, button } from '../ui'
 
 export default function DocumentList(): React.ReactNode {
   const { documents, fetchAllDocuments, deleteDocument, openDocument, reorderDocuments } =
@@ -122,7 +122,7 @@ export default function DocumentList(): React.ReactNode {
         onClick={() => openDocument(doc.url, doc.type)}
       >
         <span className="text-gray-300 text-xs select-none mr-1">⠿</span>
-        <span className="text-base flex-shrink-0">{doc.type === 'link' ? '🔗' : '📁'}</span>
+        {doc.type === 'link' ? <LinkIcon size={15} className="text-blue-400 flex-shrink-0" /> : <FolderIcon size={15} className="text-amber-400 flex-shrink-0" />}
         <div className="min-w-0">
           <div className="text-sm font-medium text-gray-900 truncate">{doc.name}</div>
           {doc.description && (
@@ -131,26 +131,25 @@ export default function DocumentList(): React.ReactNode {
         </div>
       </div>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button
+        <IconButton
+          title="Edit"
           onClick={(e) => {
             e.stopPropagation()
             handleEdit(doc)
           }}
-          className="p-1.5 text-gray-400 hover:text-gray-600 rounded"
-          title="Edit"
         >
-          ✏️
-        </button>
-        <button
+          <PencilIcon size={14} />
+        </IconButton>
+        <IconButton
+          tone="danger"
+          title="Delete"
           onClick={(e) => {
             e.stopPropagation()
             handleDelete(doc.id)
           }}
-          className="p-1.5 text-gray-400 hover:text-red-600 rounded"
-          title="Delete"
         >
-          🗑️
-        </button>
+          <TrashIcon size={14} />
+        </IconButton>
       </div>
     </div>
   )

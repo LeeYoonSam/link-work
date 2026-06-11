@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMemoStore } from '../../stores/memoStore'
 import type { MemoCategory } from '../../types'
-import { EmptyState, SectionTitle, button } from '../ui'
+import { EmptyState, IconButton, PencilIcon, SectionTitle, TrashIcon, button } from '../ui'
 
 interface CategoryManagerProps {
   onClose: () => void
@@ -154,20 +154,19 @@ export default function CategoryManager({ onClose }: CategoryManagerProps): Reac
                         style={{ backgroundColor: category.color }}
                       />
                       <span className="flex-1 text-sm text-gray-700 truncate">{category.name}</span>
-                      <button
-                        onClick={() => startEdit(category)}
-                        className="text-gray-400 hover:text-blue-500 transition-colors text-sm"
+                      <IconButton
                         title="수정"
+                        onClick={() => startEdit(category)}
                       >
-                        ✏️
-                      </button>
-                      <button
-                        onClick={() => handleDelete(category)}
-                        className="text-gray-400 hover:text-red-500 transition-colors text-sm"
+                        <PencilIcon size={14} />
+                      </IconButton>
+                      <IconButton
+                        tone="danger"
                         title="삭제"
+                        onClick={() => handleDelete(category)}
                       >
-                        🗑️
-                      </button>
+                        <TrashIcon size={14} />
+                      </IconButton>
                     </>
                   )}
                 </div>
