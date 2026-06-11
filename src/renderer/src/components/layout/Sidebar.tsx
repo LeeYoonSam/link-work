@@ -1,15 +1,16 @@
 import { useProjectStore } from '../../stores/projectStore'
+import MenuIcon, { MenuIconName } from '../icons/MenuIcon'
 
 const navItems = [
-  { id: 'dashboard' as const, label: 'Dashboard', icon: '□' },
-  { id: 'projects' as const, label: 'Projects', icon: '▤' },
-  { id: 'todos' as const, label: 'TODO', icon: '☑' },
-  { id: 'documents' as const, label: 'Documents', icon: '◫' },
-  { id: 'variables' as const, label: 'Variables', icon: '⚙' },
-  { id: 'memos' as const, label: 'Memos', icon: '▣' },
-  { id: 'calendar' as const, label: 'Calendar', icon: '▦' },
-  { id: 'reports' as const, label: 'Reports', icon: '▥' },
-  { id: 'ai' as const, label: 'AI 대화', icon: '✦' }
+  { id: 'dashboard' as const, label: 'Dashboard', icon: 'dashboard' as MenuIconName },
+  { id: 'projects' as const, label: 'Projects', icon: 'projects' as MenuIconName },
+  { id: 'todos' as const, label: 'TODO', icon: 'todos' as MenuIconName },
+  { id: 'documents' as const, label: 'Documents', icon: 'documents' as MenuIconName },
+  { id: 'variables' as const, label: 'Variables', icon: 'variables' as MenuIconName },
+  { id: 'memos' as const, label: 'Memos', icon: 'memos' as MenuIconName },
+  { id: 'calendar' as const, label: 'Calendar', icon: 'calendar' as MenuIconName },
+  { id: 'reports' as const, label: 'Reports', icon: 'reports' as MenuIconName },
+  { id: 'ai' as const, label: 'AI 대화', icon: 'ai' as MenuIconName }
 ]
 
 export default function Sidebar(): React.ReactNode {
@@ -34,7 +35,7 @@ export default function Sidebar(): React.ReactNode {
                 : 'text-gray-400 hover:bg-gray-800 hover:text-white'
             }`}
           >
-            <span className="text-lg">{item.icon}</span>
+            <MenuIcon name={item.icon} size={18} dimmed={view !== item.id} />
             {item.label}
           </button>
         ))}

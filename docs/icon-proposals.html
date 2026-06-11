@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>LinkWork 아이콘 리디자인 시안</title>
+<style>
+  :root { --cutout: #0f172a; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0b1020; color: #e2e8f0;
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", sans-serif;
+    line-height: 1.6; padding: 48px 24px 96px;
+  }
+  .container { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; }
+  h1 small { font-weight: 500; color: #64748b; font-size: 15px; display: block; margin-top: 4px; }
+  h2 { font-size: 20px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.3px; }
+  h3 { font-size: 15px; font-weight: 700; margin-bottom: 2px; }
+  section { margin-top: 56px; }
+  .sec-desc { color: #94a3b8; font-size: 13.5px; margin-bottom: 20px; }
+  .card {
+    background: #111831; border: 1px solid #1e2a4a; border-radius: 16px; padding: 24px;
+  }
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 10px;
+    border-radius: 99px; margin-bottom: 8px; letter-spacing: 0.3px;
+  }
+  /* ─── 현재 상태 ─── */
+  .current-glyphs { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+  .current-glyphs .g {
+    width: 52px; height: 52px; background: #111827; border: 1px solid #283548; border-radius: 10px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
+  }
+  .current-glyphs .g span { font-size: 19px; color: #9ca3af; line-height: 1.1; }
+  .current-glyphs .g em { font-style: normal; font-size: 8.5px; color: #64748b; }
+  .problems { list-style: none; margin-top: 10px; }
+  .problems li { font-size: 13px; color: #cbd5e1; padding-left: 22px; position: relative; margin-top: 6px; }
+  .problems li::before { content: "✕"; position: absolute; left: 2px; color: #f87171; font-weight: 700; }
+  /* ─── 앱 아이콘 ─── */
+  .app-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .app-card { background: #111831; border: 1px solid #1e2a4a; border-radius: 16px; padding: 20px; text-align: center; }
+  .app-card .big { width: 148px; height: 148px; margin: 8px auto 14px; filter: drop-shadow(0 10px 24px rgba(0,0,0,.45)); }
+  .app-card p { font-size: 12px; color: #94a3b8; text-align: left; margin-top: 10px; min-height: 72px; }
+  .size-row { display: flex; align-items: flex-end; justify-content: center; gap: 14px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed #233052; }
+  .size-row figure { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  .size-row figcaption { font-size: 10px; color: #64748b; }
+  .dock {
+    margin: 28px auto 0; width: fit-content; padding: 12px 20px; border-radius: 24px;
+    background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.07));
+    border: 1px solid rgba(255,255,255,.18); backdrop-filter: blur(8px);
+    display: flex; gap: 16px; align-items: center;
+  }
+  .dock svg, .dock .fake { width: 58px; height: 58px; border-radius: 14px; }
+  .dock .fake { opacity: .8; }
+  .dock-wrap { margin-top: 24px; padding: 36px 20px 28px; border-radius: 16px;
+    background: linear-gradient(160deg, #20355c, #3c2a55 60%, #1c2f4f); text-align: center; }
+  .dock-wrap p { font-size: 11px; color: rgba(255,255,255,.55); margin-top: 12px; }
+  /* ─── 메뉴 아이콘 스타일 ─── */
+  .style-block { margin-top: 20px; }
+  .icon-grid { display: grid; grid-template-columns: repeat(9, 1fr); gap: 10px; margin-top: 14px; }
+  .icon-cell {
+    background: #0d1426; border: 1px solid #1c2747; border-radius: 12px; padding: 14px 4px 10px;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+  }
+  .icon-cell svg { width: 26px; height: 26px; color: #cbd5e1; }
+  .icon-cell span { font-size: 10px; color: #64748b; }
+  .pros { display: flex; gap: 18px; margin-top: 12px; flex-wrap: wrap; }
+  .pros div { font-size: 12px; color: #94a3b8; }
+  .pros b { color: #e2e8f0; }
+  /* ─── 사이드바 비교 ─── */
+  .sidebars { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; }
+  .sb { flex: 0 0 196px; background: #111827; border-radius: 12px; overflow: hidden; border: 1px solid #1f2937; }
+  .sb-head { padding: 13px 16px; border-bottom: 1px solid #374151; font-weight: 800; font-size: 15px; color: #fff; }
+  .sb-label { text-align: center; font-size: 11.5px; color: #94a3b8; padding: 8px 0 10px; background: #0d1426; font-weight: 600; }
+  .sb-item { display: flex; align-items: center; gap: 11px; padding: 9px 16px; font-size: 12.5px; color: #9ca3af; }
+  .sb-item.active { background: #374151; color: #fff; }
+  .sb-item svg { width: 18px; height: 18px; flex-shrink: 0; }
+  .sb-item .uni { font-size: 17px; width: 18px; text-align: center; line-height: 1; }
+  .sb.toon .sb-item:not(.active) svg { filter: grayscale(.55) opacity(.62); }
+  /* ─── 크기 검증 ─── */
+  table.sizes { border-collapse: collapse; margin-top: 8px; }
+  table.sizes th, table.sizes td { padding: 10px 22px; text-align: center; border-bottom: 1px solid #1e2a4a; }
+  table.sizes th { font-size: 12px; color: #94a3b8; font-weight: 600; }
+  table.sizes td svg { vertical-align: middle; color: #cbd5e1; margin: 0 5px; }
+  /* ─── 추천 ─── */
+  .rec-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+  .rec-table th, .rec-table td { border: 1px solid #233052; padding: 10px 14px; text-align: left; vertical-align: top; }
+  .rec-table th { background: #16203d; font-size: 12px; }
+  .rec-table td:first-child { font-weight: 700; white-space: nowrap; }
+  .star { color: #fbbf24; }
+</style>
+</head>
+<body>
+
+<!-- ════════════════ SVG 심볼 정의 ════════════════ -->
+<svg width="0" height="0" style="position:absolute"><defs>
+
+<!-- ── A. LINE ── -->
+<symbol id="line-dashboard" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>
+  <rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></g></symbol>
+<symbol id="line-projects" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></g></symbol>
+<symbol id="line-todos" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M21 10.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12"/><path d="m9 11 3 3L22 4"/></g></symbol>
+<symbol id="line-documents" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h6"/><path d="M16 13H8"/><path d="M16 17H8"/></g></symbol>
+<symbol id="line-variables" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/>
+  <path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/></g></symbol>
+<symbol id="line-memos" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9l7-7V5a2 2 0 0 0-2-2Z"/><path d="M15 21v-5a2 2 0 0 1 2-2h5"/><path d="M8 9h8"/><path d="M8 13h5"/></g></symbol>
+<symbol id="line-calendar" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4"/><path d="M16 2v4"/><path d="M3 10h18"/></g></symbol>
+<symbol id="line-reports" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M8 17v-4"/><path d="M13 17v-7"/><path d="M18 17V7"/></g></symbol>
+<symbol id="line-ai" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>
+  <path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></g></symbol>
+
+<!-- ── B. SOLID ── -->
+<symbol id="solid-dashboard" viewBox="0 0 24 24"><g fill="currentColor">
+  <rect x="3" y="3" width="7.5" height="9.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="5.5" rx="2"/>
+  <rect x="13.5" y="11.5" width="7.5" height="9.5" rx="2"/><rect x="3" y="15.5" width="7.5" height="5.5" rx="2"/></g></symbol>
+<symbol id="solid-projects" viewBox="0 0 24 24">
+  <path fill="currentColor" d="M2 5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/></symbol>
+<symbol id="solid-todos" viewBox="0 0 24 24">
+  <rect x="3" y="3" width="18" height="18" rx="4.5" fill="currentColor"/>
+  <path d="m8.2 12.3 2.7 2.7 5.3-5.9" fill="none" stroke="var(--cutout)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="solid-documents" viewBox="0 0 24 24">
+  <path fill="currentColor" d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7l-5-5Z"/>
+  <g fill="none" stroke="var(--cutout)" stroke-width="2" stroke-linecap="round"><path d="M14 2.5V7h4.5"/><path d="M8 13h8"/><path d="M8 17h6"/></g></symbol>
+<symbol id="solid-variables" viewBox="0 0 24 24">
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 4h18"/><path d="M3 12h18"/><path d="M3 20h18"/></g>
+  <g fill="currentColor" stroke="var(--cutout)" stroke-width="1.8"><circle cx="14" cy="4" r="3.1"/><circle cx="8" cy="12" r="3.1"/><circle cx="16" cy="20" r="3.1"/></g></symbol>
+<symbol id="solid-memos" viewBox="0 0 24 24">
+  <path fill="currentColor" d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9l7-7V5a2 2 0 0 0-2-2Z"/>
+  <g fill="none" stroke="var(--cutout)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-5a2 2 0 0 1 2-2h5"/><path d="M8 9h8"/><path d="M8 13h5"/></g></symbol>
+<symbol id="solid-calendar" viewBox="0 0 24 24">
+  <rect x="3" y="4" width="18" height="18" rx="3" fill="currentColor"/>
+  <g stroke="var(--cutout)" stroke-width="2" stroke-linecap="round"><path d="M3.5 10h17"/></g>
+  <g stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 2v4"/><path d="M16 2v4"/></g>
+  <g fill="var(--cutout)"><circle cx="8" cy="14" r="1.3"/><circle cx="12" cy="14" r="1.3"/><circle cx="16" cy="14" r="1.3"/><circle cx="8" cy="18" r="1.3"/><circle cx="12" cy="18" r="1.3"/></g></symbol>
+<symbol id="solid-reports" viewBox="0 0 24 24">
+  <path d="M3 3v16a2 2 0 0 0 2 2h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  <g fill="currentColor"><rect x="7" y="12" width="3.4" height="5.5" rx="1.2"/><rect x="12" y="8.5" width="3.4" height="9" rx="1.2"/><rect x="17" y="5" width="3.4" height="12.5" rx="1.2"/></g></symbol>
+<symbol id="solid-ai" viewBox="0 0 24 24"><g fill="currentColor">
+  <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>
+  <path d="M20 1.8l.9 2.5 2.5.9-2.5.9-.9 2.5-.9-2.5-2.5-.9 2.5-.9Z"/><path d="M4.5 15.5l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7Z"/></g></symbol>
+
+<!-- ── C. DUOTONE ── -->
+<symbol id="duo-dashboard" viewBox="0 0 24 24"><g stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+  <rect x="3" y="3" width="7" height="9" rx="1.5" fill="currentColor" fill-opacity=".28"/><rect x="14" y="3" width="7" height="5" rx="1.5" fill="none"/>
+  <rect x="14" y="12" width="7" height="9" rx="1.5" fill="currentColor" fill-opacity=".28"/><rect x="3" y="16" width="7" height="5" rx="1.5" fill="none"/></g></symbol>
+<symbol id="duo-projects" viewBox="0 0 24 24">
+  <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+    fill="currentColor" fill-opacity=".28" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+<symbol id="duo-todos" viewBox="0 0 24 24">
+  <rect x="3" y="3" width="18" height="18" rx="3" fill="currentColor" fill-opacity=".28" stroke="currentColor" stroke-width="2"/>
+  <path d="m8.2 12.3 2.7 2.7 5.3-5.9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="duo-documents" viewBox="0 0 24 24">
+  <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" fill="currentColor" fill-opacity=".28" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2v5h6"/><path d="M16 13H8"/><path d="M16 17H8"/></g></symbol>
+<symbol id="duo-variables" viewBox="0 0 24 24">
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity=".45"><path d="M3 4h18"/><path d="M3 12h18"/><path d="M3 20h18"/></g>
+  <g fill="currentColor"><circle cx="14" cy="4" r="3"/><circle cx="8" cy="12" r="3"/><circle cx="16" cy="20" r="3"/></g></symbol>
+<symbol id="duo-memos" viewBox="0 0 24 24">
+  <path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9l7-7V5a2 2 0 0 0-2-2Z" fill="currentColor" fill-opacity=".28" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-5a2 2 0 0 1 2-2h5"/><path d="M8 9h8"/><path d="M8 13h5"/></g></symbol>
+<symbol id="duo-calendar" viewBox="0 0 24 24">
+  <path d="M3 10V7a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v3Z" fill="currentColor" fill-opacity=".4"/>
+  <rect x="3" y="4" width="18" height="18" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/>
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 2v4"/><path d="M16 2v4"/><path d="M3 10h18"/></g>
+  <g fill="currentColor"><circle cx="8.5" cy="14.5" r="1.4"/><circle cx="12.5" cy="18" r="1.4"/></g></symbol>
+<symbol id="duo-reports" viewBox="0 0 24 24">
+  <path d="M3 3v16a2 2 0 0 0 2 2h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  <g fill="currentColor" fill-opacity=".28" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+    <rect x="7" y="12.5" width="3.4" height="5" rx="1"/><rect x="12" y="9" width="3.4" height="8.5" rx="1"/><rect x="17" y="5.5" width="3.4" height="12" rx="1"/></g></symbol>
+<symbol id="duo-ai" viewBox="0 0 24 24">
+  <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"
+    fill="currentColor" fill-opacity=".28" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+  <g fill="currentColor"><path d="M20 1.8l.9 2.5 2.5.9-2.5.9-.9 2.5-.9-2.5-2.5-.9 2.5-.9Z"/><path d="M4.5 15.5l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7Z"/></g></symbol>
+
+<!-- ── D. WEBTOON ── -->
+<symbol id="toon-dashboard" viewBox="0 0 24 24"><g stroke="#1e2235" stroke-width="1.9" stroke-linejoin="round">
+  <rect x="2.5" y="2.5" width="8" height="10" rx="2" fill="#FFD43B"/><rect x="13.8" y="2.5" width="8" height="6" rx="2" fill="#4DABF7"/>
+  <rect x="13.8" y="11.8" width="8" height="9.7" rx="2" fill="#FF8787"/><rect x="2.5" y="15.8" width="8" height="5.7" rx="2" fill="#63E6BE"/></g>
+  <path d="M4.6 5.2l2.4-1" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></symbol>
+<symbol id="toon-projects" viewBox="0 0 24 24">
+  <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+    fill="#FFD43B" stroke="#1e2235" stroke-width="1.9" stroke-linejoin="round"/>
+  <path d="M4.6 9.5l3-1.2" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></symbol>
+<symbol id="toon-todos" viewBox="0 0 24 24">
+  <rect x="2.5" y="2.5" width="19" height="19" rx="4" fill="#63E6BE" stroke="#1e2235" stroke-width="1.9"/>
+  <path d="m8 12.4 2.8 2.8 5.6-6.2" fill="none" stroke="#1e2235" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M5 6.4l2.2-1.2" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></symbol>
+<symbol id="toon-documents" viewBox="0 0 24 24">
+  <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" fill="#F8F9FA" stroke="#1e2235" stroke-width="1.9" stroke-linejoin="round"/>
+  <path d="M14 2v5h6" fill="#CED4DA" stroke="#1e2235" stroke-width="1.9" stroke-linejoin="round"/>
+  <g stroke="#4DABF7" stroke-width="2" stroke-linecap="round"><path d="M15.5 13H8"/><path d="M13 17H8"/></g></symbol>
+<symbol id="toon-variables" viewBox="0 0 24 24">
+  <g stroke="#1e2235" stroke-width="2" stroke-linecap="round"><path d="M3 4.5h18"/><path d="M3 12h18"/><path d="M3 19.5h18"/></g>
+  <g stroke="#1e2235" stroke-width="1.8"><circle cx="14.5" cy="4.5" r="3" fill="#FFD43B"/><circle cx="8" cy="12" r="3" fill="#FF8787"/><circle cx="16" cy="19.5" r="3" fill="#4DABF7"/></g></symbol>
+<symbol id="toon-memos" viewBox="0 0 24 24">
+  <path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9l7-7V5a2 2 0 0 0-2-2Z" fill="#FFD43B" stroke="#1e2235" stroke-width="1.9" stroke-linejoin="round"/>
+  <path d="M14.6 21.4 22 14h-5a2 2 0 0 0-2 2Z" fill="#F59F00" stroke="#1e2235" stroke-width="1.9" stroke-linejoin="round"/>
+  <g stroke="#1e2235" stroke-width="1.8" stroke-linecap="round"><path d="M7.5 9h9"/><path d="M7.5 13h5.5"/></g></symbol>
+<symbol id="toon-calendar" viewBox="0 0 24 24">
+  <rect x="2.5" y="4" width="19" height="17.5" rx="3" fill="#F8F9FA" stroke="#1e2235" stroke-width="1.9"/>
+  <path d="M2.5 7a3 3 0 0 1 3-3h13a3 3 0 0 1 3 3v3h-19Z" fill="#FF8787" stroke="#1e2235" stroke-width="1.9"/>
+  <g stroke="#1e2235" stroke-width="2.2" stroke-linecap="round"><path d="M8 2v4"/><path d="M16 2v4"/></g>
+  <g fill="#1e2235"><circle cx="8" cy="14.5" r="1.4"/><circle cx="12" cy="14.5" r="1.4"/><circle cx="16" cy="14.5" r="1.4"/><circle cx="8" cy="18.2" r="1.4"/><circle cx="12" cy="18.2" r="1.4"/></g></symbol>
+<symbol id="toon-reports" viewBox="0 0 24 24">
+  <path d="M3 3v16a2 2 0 0 0 2 2h16" fill="none" stroke="#1e2235" stroke-width="2.2" stroke-linecap="round"/>
+  <g stroke="#1e2235" stroke-width="1.8" stroke-linejoin="round">
+    <rect x="6.8" y="12" width="3.6" height="6" rx="1.2" fill="#FFD43B"/><rect x="11.9" y="8.5" width="3.6" height="9.5" rx="1.2" fill="#63E6BE"/><rect x="17" y="5" width="3.6" height="13" rx="1.2" fill="#4DABF7"/></g></symbol>
+<symbol id="toon-ai" viewBox="0 0 24 24">
+  <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"
+    fill="#FFD43B" stroke="#1e2235" stroke-width="1.9" stroke-linejoin="round"/>
+  <path d="M19.5 2.2l1 2.3 2.3 1-2.3 1-1 2.3-1-2.3-2.3-1 2.3-1Z" fill="#FAA2C1" stroke="#1e2235" stroke-width="1.6" stroke-linejoin="round"/>
+  <circle cx="4.5" cy="18.5" r="1.3" fill="#4DABF7" stroke="#1e2235" stroke-width="1.4"/></symbol>
+
+<!-- ── 앱 아이콘 공용 ── -->
+<linearGradient id="gV1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366F1"/><stop offset="1" stop-color="#8B5CF6"/></linearGradient>
+<linearGradient id="gV1shine" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="gV2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#16213E"/><stop offset="1" stop-color="#0F172A"/></linearGradient>
+<linearGradient id="gNode" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#38BDF8"/><stop offset="1" stop-color="#818CF8"/></linearGradient>
+<linearGradient id="gV3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0EA5E9"/><stop offset="1" stop-color="#7C3AED"/></linearGradient>
+<filter id="blur30" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="28"/></filter>
+
+<symbol id="app-v1" viewBox="0 0 512 512">
+  <rect x="16" y="16" width="480" height="480" rx="110" fill="url(#gV1)"/>
+  <rect x="16" y="16" width="480" height="480" rx="110" fill="url(#gV1shine)"/>
+  <g transform="translate(256 256) scale(11) translate(-12 -12)" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+  </g>
+</symbol>
+
+<symbol id="app-v2" viewBox="0 0 512 512">
+  <rect x="16" y="16" width="480" height="480" rx="110" fill="url(#gV2)"/>
+  <g stroke="#334155" stroke-width="10" stroke-dasharray="2 22" stroke-linecap="round"><path d="M186 130h140"/></g>
+  <circle cx="356" cy="130" r="22" fill="none" stroke="#475569" stroke-width="10"/>
+  <path d="M156 168v178a36 36 0 0 0 36 36h130" fill="none" stroke="#94A3B8" stroke-width="22" stroke-linecap="round"/>
+  <circle cx="156" cy="130" r="42" fill="url(#gNode)"/>
+  <circle cx="156" cy="252" r="26" fill="#1E293B" stroke="#64748B" stroke-width="9"/>
+  <circle cx="356" cy="382" r="42" fill="url(#gNode)"/>
+  <circle cx="156" cy="130" r="15" fill="#0F172A"/>
+  <circle cx="356" cy="382" r="15" fill="#0F172A"/>
+</symbol>
+
+<symbol id="app-v3" viewBox="0 0 512 512">
+  <rect x="16" y="16" width="480" height="480" rx="110" fill="url(#gV3)"/>
+  <g clip-path="url(#v3clip)">
+    <circle cx="120" cy="100" r="120" fill="#fff" opacity=".16" filter="url(#blur30)"/>
+    <circle cx="420" cy="430" r="140" fill="#1D4ED8" opacity=".4" filter="url(#blur30)"/>
+  </g>
+  <clipPath id="v3clip"><rect x="16" y="16" width="480" height="480" rx="110"/></clipPath>
+  <rect x="106" y="106" width="300" height="300" rx="78" fill="#fff" fill-opacity=".16" stroke="#fff" stroke-opacity=".45" stroke-width="3.5"/>
+  <path d="M150 140q70-26 200-12" stroke="#fff" stroke-opacity=".5" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <g transform="translate(256 256) scale(8.6) translate(-12 -12)" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+  </g>
+</symbol>
+
+<symbol id="app-v4" viewBox="0 0 512 512">
+  <rect x="16" y="16" width="480" height="480" rx="110" fill="#FFE066"/>
+  <rect x="30" y="30" width="452" height="452" rx="98" fill="none" stroke="#1e2235" stroke-width="16"/>
+  <path d="M86 130q14-44 58-58" stroke="#fff" stroke-width="14" fill="none" stroke-linecap="round"/>
+  <g transform="translate(256 268) rotate(-38)">
+    <rect x="-158" y="-62" width="180" height="124" rx="62" fill="#FF8787" stroke="#1e2235" stroke-width="15"/>
+    <rect x="-118" y="-26" width="100" height="52" rx="26" fill="#FFE066" stroke="#1e2235" stroke-width="12"/>
+    <rect x="-22" y="-62" width="180" height="124" rx="62" fill="#4DABF7" stroke="#1e2235" stroke-width="15"/>
+    <rect x="18" y="-26" width="100" height="52" rx="26" fill="#FFE066" stroke="#1e2235" stroke-width="12"/>
+    <path d="M-128 -38q10-12 26-14" stroke="#fff" stroke-width="10" fill="none" stroke-linecap="round"/>
+    <path d="M8 -38q10-12 26-14" stroke="#fff" stroke-width="10" fill="none" stroke-linecap="round"/>
+  </g>
+  <path d="M395 105l8 20 20 8-20 8-8 20-8-20-20-8 20-8Z" fill="#fff" stroke="#1e2235" stroke-width="10" stroke-linejoin="round"/>
+  <g stroke="#1e2235" stroke-width="11" stroke-linecap="round"><path d="M96 388l34 14"/><path d="M88 424l46 19"/></g>
+</symbol>
+
+</defs></svg>
+
+<div class="container">
+  <h1>LinkWork 아이콘 리디자인 시안
+    <small>앱 아이콘 4종 + 메뉴 아이콘 4스타일 — 2026 아이콘 디자인 트렌드 리서치 기반</small>
+  </h1>
+
+  <!-- ════════ 현재 상태 ════════ -->
+  <section>
+    <h2>0. 현재 상태 진단</h2>
+    <p class="sec-desc">Sidebar.tsx의 메뉴 아이콘은 유니코드 문자(□ ▤ ☑ …)를 그대로 출력하고 있습니다.</p>
+    <div class="card">
+      <div class="current-glyphs" id="currentGlyphs"></div>
+      <ul class="problems">
+        <li>유니코드 글리프는 <b>폰트가 그리는 문자</b>라서 굵기·크기·베이스라인이 모두 제각각 (☑는 가늘고, ▣는 꽉 차 보임)</li>
+        <li>OS·폰트 환경에 따라 다르게 렌더링 — 일부 글리프는 이모지로 대체될 수도 있음</li>
+        <li>앱 아이콘(흰 배경 + L 마크)은 macOS 표준 squircle 규격이 아니어서 Dock에서 이질적</li>
+        <li>tray-icon이 32px 단일 해상도 → Retina에서 흐릿하게 보일 수 있음</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ════════ 앱 아이콘 ════════ -->
+  <section>
+    <h2>1. 앱 아이콘 시안 (4종)</h2>
+    <p class="sec-desc">모두 macOS 표준 squircle 비율(1024px 캔버스 기준 여백 포함)을 따릅니다. "LinkWork = 일을 잇는다"는 의미로 <b>체인 링크</b>와 <b>WBS 노드 연결</b>을 핵심 모티프로 사용했습니다.</p>
+    <div class="app-grid">
+      <div class="app-card">
+        <span class="badge" style="background:#312e81;color:#a5b4fc">V1 · 그라디언트 미니멀</span>
+        <svg class="big"><use href="#app-v1"/></svg>
+        <h3>Link Gradient</h3>
+        <p>인디고→바이올렛 그라디언트 위 흰색 체인 링크. 2026 트렌드 리서치에서 생산성 앱에 가장 권장되는 "미니멀 + 그라디언트" 조합. 어느 크기에서도 실루엣이 선명함.</p>
+        <div class="size-row">
+          <figure><svg width="64" height="64"><use href="#app-v1"/></svg><figcaption>64</figcaption></figure>
+          <figure><svg width="32" height="32"><use href="#app-v1"/></svg><figcaption>32</figcaption></figure>
+          <figure><svg width="16" height="16"><use href="#app-v1"/></svg><figcaption>16</figcaption></figure>
+        </div>
+      </div>
+      <div class="app-card">
+        <span class="badge" style="background:#0c4a6e;color:#7dd3fc">V2 · WBS 노드</span>
+        <svg class="big"><use href="#app-v2"/></svg>
+        <h3>Node Path</h3>
+        <p>기존 "L" 아이덴티티를 계승하되, L자를 WBS 작업 경로(노드+연결선)로 재해석. 다크 네이비 배경이라 다크모드 Dock에서 고급스러움. "프로젝트 관리 도구"라는 정체성이 가장 잘 드러남.</p>
+        <div class="size-row">
+          <figure><svg width="64" height="64"><use href="#app-v2"/></svg><figcaption>64</figcaption></figure>
+          <figure><svg width="32" height="32"><use href="#app-v2"/></svg><figcaption>32</figcaption></figure>
+          <figure><svg width="16" height="16"><use href="#app-v2"/></svg><figcaption>16</figcaption></figure>
+        </div>
+      </div>
+      <div class="app-card">
+        <span class="badge" style="background:#164e63;color:#67e8f9">V3 · 글래스모피즘</span>
+        <svg class="big"><use href="#app-v3"/></svg>
+        <h3>Glass Link</h3>
+        <p>macOS 26 스타일의 프로스트 글라스 레이어. 트렌디하고 프리미엄한 인상이지만, 16px 축소 시 유리 패널 디테일이 뭉개지는 약점이 있음 (아래 16px 비교 참고).</p>
+        <div class="size-row">
+          <figure><svg width="64" height="64"><use href="#app-v3"/></svg><figcaption>64</figcaption></figure>
+          <figure><svg width="32" height="32"><use href="#app-v3"/></svg><figcaption>32</figcaption></figure>
+          <figure><svg width="16" height="16"><use href="#app-v3"/></svg><figcaption>16</figcaption></figure>
+        </div>
+      </div>
+      <div class="app-card">
+        <span class="badge" style="background:#713f12;color:#fde047">V4 · 웹툰</span>
+        <svg class="big"><use href="#app-v4"/></svg>
+        <h3>Comic Chain</h3>
+        <p>굵은 잉크 아웃라인 + 플랫 컬러 + 만화식 하이라이트/효과선. 개성과 친근함은 최고지만 "업무 관리 도구"의 톤과는 거리가 있어, 개인용 앱으로 쓸 때 재미를 주는 선택지.</p>
+        <div class="size-row">
+          <figure><svg width="64" height="64"><use href="#app-v4"/></svg><figcaption>64</figcaption></figure>
+          <figure><svg width="32" height="32"><use href="#app-v4"/></svg><figcaption>32</figcaption></figure>
+          <figure><svg width="16" height="16"><use href="#app-v4"/></svg><figcaption>16</figcaption></figure>
+        </div>
+      </div>
+    </div>
+    <div class="dock-wrap">
+      <div class="dock">
+        <svg viewBox="0 0 512 512" class="fake"><rect x="16" y="16" width="480" height="480" rx="110" fill="#3b82f6" opacity=".35"/></svg>
+        <svg viewBox="0 0 512 512" class="fake"><rect x="16" y="16" width="480" height="480" rx="110" fill="#10b981" opacity=".35"/></svg>
+        <svg><use href="#app-v1"/></svg>
+        <svg><use href="#app-v2"/></svg>
+        <svg><use href="#app-v3"/></svg>
+        <svg><use href="#app-v4"/></svg>
+        <svg viewBox="0 0 512 512" class="fake"><rect x="16" y="16" width="480" height="480" rx="110" fill="#f59e0b" opacity=".35"/></svg>
+      </div>
+      <p>macOS Dock 시뮬레이션 — 다른 앱들 사이에서의 조화 확인용</p>
+    </div>
+  </section>
+
+  <!-- ════════ 메뉴 아이콘 ════════ -->
+  <section>
+    <h2>2. 메뉴 아이콘 스타일 (4종 × 9개 전체 세트)</h2>
+    <p class="sec-desc">모든 스타일이 <b>24×24 그리드, 동일 모티프</b>로 제작되어 크기·정렬 문제가 사라집니다. Variables는 ⚙(설정으로 오해됨) 대신 슬라이더 모티프로 교체했습니다.</p>
+    <div id="styleBlocks"></div>
+  </section>
+
+  <!-- ════════ 사이드바 적용 비교 ════════ -->
+  <section>
+    <h2>3. 실제 사이드바 적용 미리보기</h2>
+    <p class="sec-desc">현재 Sidebar.tsx와 동일한 레이아웃(bg-gray-900, Dashboard 활성 상태)에 각 스타일을 적용한 모습입니다.</p>
+    <div class="sidebars" id="sidebars"></div>
+  </section>
+
+  <!-- ════════ 크기 검증 ════════ -->
+  <section>
+    <h2>4. 크기 검증 (16 / 20 / 24px)</h2>
+    <p class="sec-desc">사이드바 아이콘은 보통 16~20px로 렌더링됩니다. 작은 크기에서도 형태가 유지되는지 확인하세요.</p>
+    <div class="card" style="overflow-x:auto">
+      <table class="sizes" id="sizeTable"></table>
+    </div>
+  </section>
+
+  <!-- ════════ 추천 ════════ -->
+  <section>
+    <h2>5. 종합 추천</h2>
+    <div class="card">
+      <table class="rec-table">
+        <tr><th>스타일</th><th>강점</th><th>약점</th><th>적합도</th></tr>
+        <tr><td>A. 라인</td><td>밀도 높은 사이드바·대시보드의 표준. 텍스트와 시각적 무게가 균형. Lucide 등 라이브러리로 손쉽게 확장</td><td>아주 작은 크기(14px 이하)에서 가독성 저하</td><td><span class="star">★★★★★</span> 기본 권장</td></tr>
+        <tr><td>B. 솔리드</td><td>작은 크기·다크모드에서 인식 속도 가장 빠름. 활성(선택) 상태 표현에 최적</td><td>9개가 모두 솔리드면 사이드바가 무거워 보임</td><td><span class="star">★★★★☆</span> 활성 상태 전용 추천</td></tr>
+        <tr><td>C. 듀오톤</td><td>차분하면서 표현력 있음. 브랜드 컬러를 면으로 은은하게 노출</td><td>16px 이하에서 면이 뭉개짐. 구현 복잡도 약간 상승</td><td><span class="star">★★★☆☆</span> 차별화 원할 때</td></tr>
+        <tr><td>D. 웹툰</td><td>개성·친근함 최고. 컬러로 메뉴 구분이 즉각적</td><td>업무 도구 톤과 거리. 비활성 상태 처리(채도 낮춤)가 필요</td><td><span class="star">★★★☆☆</span> 캐주얼 컨셉일 때</td></tr>
+      </table>
+      <p style="font-size:13px;color:#94a3b8;margin-top:16px">
+        💡 <b style="color:#e2e8f0">권장 조합:</b> 메뉴 아이콘은 <b style="color:#a5b4fc">A. 라인(기본) + B. 솔리드(활성 상태)</b> 하이브리드 — Apple·Linear·Slack이 쓰는 패턴으로,
+        선택된 메뉴가 즉각 구분됩니다. 앱 아이콘은 <b style="color:#a5b4fc">V1(무난+트렌디)</b> 또는 <b style="color:#a5b4fc">V2(정체성 계승)</b>를 권장합니다.
+        트레이 아이콘은 V1의 체인 글리프를 흑백 템플릿 이미지(16/32px @1x·@2x)로 추출하면 메뉴바 라이트/다크 모드에 자동 대응됩니다.
+      </p>
+    </div>
+  </section>
+</div>
+
+<script>
+const ITEMS = [
+  { key:'dashboard', label:'Dashboard', uni:'□' },
+  { key:'projects',  label:'Projects',  uni:'▤' },
+  { key:'todos',     label:'TODO',      uni:'☑' },
+  { key:'documents', label:'Documents', uni:'◫' },
+  { key:'variables', label:'Variables', uni:'⚙' },
+  { key:'memos',     label:'Memos',     uni:'▣' },
+  { key:'calendar',  label:'Calendar',  uni:'▦' },
+  { key:'reports',   label:'Reports',   uni:'▥' },
+  { key:'ai',        label:'AI 대화',   uni:'✦' },
+];
+const STYLES = [
+  { id:'line',  name:'A. 라인 (Line / Outline)', color:'#a5b4fc', badgeBg:'#312e81',
+    desc:'2px 스트로크, 라운드 캡 — Linear·Notion·GitHub 등 생산성 도구의 사실상 표준. 텍스트 옆에서 가장 차분하게 어울립니다.' },
+  { id:'solid', name:'B. 솔리드 (Solid Fill)', color:'#7dd3fc', badgeBg:'#0c4a6e',
+    desc:'면 위주 — 작은 크기에서 인식이 가장 빠르고 또렷합니다. 활성 메뉴 강조나 모바일 탭바에 유리합니다.' },
+  { id:'duo',   name:'C. 듀오톤 (Duotone)', color:'#67e8f9', badgeBg:'#164e63',
+    desc:'스트로크 + 28% 투명 면 — 한 가지 색만으로 두 단계 깊이를 만들어 은은하게 풍부해 보입니다.' },
+  { id:'toon',  name:'D. 웹툰 (Comic / Webtoon)', color:'#fde047', badgeBg:'#713f12',
+    desc:'굵은 잉크 아웃라인 + 플랫 컬러 + 흰 하이라이트 — 만화적 친근함. 컬러 자체가 메뉴 구분자가 됩니다.' },
+];
+
+// 현재 글리프
+document.getElementById('currentGlyphs').innerHTML = ITEMS.map(it =>
+  `<div class="g"><span>${it.uni}</span><em>${it.label}</em></div>`).join('');
+
+// 스타일 블록
+document.getElementById('styleBlocks').innerHTML = STYLES.map(s => `
+  <div class="card style-block">
+    <span class="badge" style="background:${s.badgeBg};color:${s.color}">${s.name}</span>
+    <p style="font-size:13px;color:#94a3b8">${s.desc}</p>
+    <div class="icon-grid">
+      ${ITEMS.map(it => `<div class="icon-cell"><svg><use href="#${s.id}-${it.key}"/></svg><span>${it.label}</span></div>`).join('')}
+    </div>
+  </div>`).join('');
+
+// 사이드바 비교
+const sbCol = (label, cls, renderIcon, hybrid=false) => `
+  <div class="sb ${cls}">
+    <div class="sb-label">${label}</div>
+    <div class="sb-head">LinkWork</div>
+    ${ITEMS.map((it,i) => `
+      <div class="sb-item ${i===0?'active':''}">
+        ${renderIcon(it, i===0, hybrid)}<span>${it.label}</span>
+      </div>`).join('')}
+  </div>`;
+document.getElementById('sidebars').innerHTML =
+  sbCol('현재 (유니코드)', '', it => `<span class="uni">${it.uni}</span>`) +
+  STYLES.map(s => sbCol(s.name, s.id==='toon'?'toon':'',
+    (it, active) => `<svg><use href="#${s.id}-${it.key}"/></svg>`)).join('') +
+  sbCol('★ 하이브리드 (라인+솔리드)', '',
+    (it, active) => `<svg><use href="#${active?'solid':'line'}-${it.key}"/></svg>`);
+
+// 크기 테이블
+const sizeIcons = ['todos','calendar','reports','ai'];
+document.getElementById('sizeTable').innerHTML =
+  `<tr><th></th>${STYLES.map(s=>`<th>${s.name.split('(')[0]}</th>`).join('')}</tr>` +
+  [24,20,16].map(px => `
+    <tr><th>${px}px</th>
+    ${STYLES.map(s=>`<td>${sizeIcons.map(k=>`<svg width="${px}" height="${px}"><use href="#${s.id}-${k}"/></svg>`).join('')}</td>`).join('')}
+    </tr>`).join('');
+</script>
+</body>
+</html>
