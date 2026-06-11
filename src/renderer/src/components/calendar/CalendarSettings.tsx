@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useCalendarStore } from '../../stores/calendarStore'
+import { Card, SectionTitle, button } from '../ui'
 
 interface Props {
   onBack?: () => void
@@ -47,11 +48,11 @@ export default function CalendarSettings({ onBack }: Props = {}): React.ReactNod
   return (
     <div className="max-w-lg">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Google Calendar Settings</h3>
+        <SectionTitle variant="page">Google Calendar Settings</SectionTitle>
         {onBack && (
           <button
             onClick={onBack}
-            className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+            className={`px-3 py-1.5 text-sm ${button.subtle}`}
           >
             ← Back
           </button>
@@ -67,7 +68,7 @@ export default function CalendarSettings({ onBack }: Props = {}): React.ReactNod
             </div>
             <button
               onClick={handleDisconnect}
-              className="px-3 py-1.5 text-sm bg-red-50 text-red-600 rounded-md hover:bg-red-100"
+              className={`px-3 py-1.5 text-sm ${button.danger}`}
             >
               Disconnect
             </button>
@@ -76,7 +77,7 @@ export default function CalendarSettings({ onBack }: Props = {}): React.ReactNod
       ) : (
         <>
           {!status.hasCredentials && (
-            <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6">
+            <Card padding="sm" className="mb-6">
               <h4 className="text-sm font-medium text-gray-700 mb-3">
                 Step 1: Enter Google OAuth2 Credentials
               </h4>
@@ -111,16 +112,16 @@ export default function CalendarSettings({ onBack }: Props = {}): React.ReactNod
                 </div>
                 <button
                   onClick={handleSaveCredentials}
-                  className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700"
+                  className={`px-4 py-2 text-sm ${button.primary}`}
                 >
                   Save Credentials
                 </button>
               </div>
-            </div>
+            </Card>
           )}
 
           {status.hasCredentials && (
-            <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6">
+            <Card padding="sm" className="mb-6">
               <h4 className="text-sm font-medium text-gray-700 mb-3">
                 {status.hasCredentials && !status.connected
                   ? 'Step 2: Connect Your Account'
@@ -132,11 +133,11 @@ export default function CalendarSettings({ onBack }: Props = {}): React.ReactNod
               <button
                 onClick={handleConnect}
                 disabled={connecting}
-                className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+                className={`px-4 py-2 text-sm ${button.primary} disabled:opacity-50`}
               >
                 {connecting ? 'Connecting...' : 'Connect Google Calendar'}
               </button>
-            </div>
+            </Card>
           )}
         </>
       )}

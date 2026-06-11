@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import type { Project, Task } from '../../types'
 import { differenceInCalendarDays, format } from 'date-fns'
 import ScheduleTimeline from '../project/ScheduleTimeline'
+import { Badge, ProgressBar, projectStatus, urgency } from '../ui'
 
 type UrgencyLevel = 'early' | 'mid' | 'late'
 
@@ -23,15 +24,6 @@ function getUrgencyLevel(progress: number): UrgencyLevel {
   if (progress <= 33) return 'early'
   if (progress <= 66) return 'mid'
   return 'late'
-}
-
-const urgencyConfig: Record<
-  UrgencyLevel,
-  { bar: string; text: string; label: string }
-> = {
-  early: { bar: 'bg-green-500', text: 'text-green-700', label: 'Early' },
-  mid: { bar: 'bg-blue-500', text: 'text-blue-700', label: 'Mid' },
-  late: { bar: 'bg-red-500', text: 'text-red-700', label: 'Late' }
 }
 
 const statusCardBg: Record<string, string> = {
@@ -78,24 +70,8 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
 
   const progress = calculateProgress(project.dev_start_date, project.dev_end_date)
   const level = getUrgencyLevel(progress)
-  const config = urgencyConfig[level]
-
-  const statusLabels: Record<string, string> = {
-    scheduled: 'Scheduled',
-    development: 'Development',
-    qa: 'QA',
-    deploy: 'Deploy',
-    completed: 'Completed',
-    cancelled: 'Cancelled'
-  }
-  const statusColors: Record<string, string> = {
-    scheduled: 'bg-slate-500',
-    development: 'bg-green-500',
-    qa: 'bg-orange-500',
-    deploy: 'bg-red-500',
-    completed: 'bg-blue-500',
-    cancelled: 'bg-gray-400'
-  }
+  const config = urgency[level]
+  const status = projectStatus[project.status] ?? projectStatus.cancelled
 
   const doneTasks = tasks.filter((t) => t.status === 'done').length
   const totalTasks = tasks.length
@@ -123,24 +99,17 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
               <span>Deploy: {format(new Date(project.deploy_date), 'MM/dd')}</span>
             </div>
           </div>
-          <div className="text-right">
+          <div className="flex flex-col items-end gap-1">
             {!isDevOver && (
               <span className={`text-2xl font-bold ${config.text}`}>{progress}%</span>
             )}
-            <span
-              className={`block text-xs font-medium px-2 py-0.5 rounded-full mt-1 ${statusColors[project.status] || 'bg-gray-400'} text-white`}
-            >
-              {statusLabels[project.status] || project.status}
-            </span>
+            <Badge color={status.badge}>{status.label}</Badge>
           </div>
         </div>
 
         {!isDevOver && (
-          <div className="w-full bg-gray-200 rounded-full h-2.5 mb-3">
-            <div
-              className={`h-2.5 rounded-full transition-all duration-500 ${config.bar}`}
-              style={{ width: `${progress}%` }}
-            />
+          <div className="mb-3">
+            <ProgressBar percent={progress} color={config.bar} height="h-2.5" />
           </div>
         )}
 
@@ -150,11 +119,8 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
               Tasks: {doneTasks}/{totalTasks} done
             </span>
             <div className="flex items-center gap-2">
-              <div className="w-24 bg-gray-200 rounded-full h-1.5">
-                <div
-                  className="h-1.5 rounded-full bg-green-500 transition-all duration-500"
-                  style={{ width: `${taskProgress}%` }}
-                />
+              <div className="w-24">
+                <ProgressBar percent={taskProgress} color="bg-green-500" height="h-1.5" />
               </div>
               <span className="text-xs text-gray-500">{taskProgress}%</span>
             </div>

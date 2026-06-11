@@ -2,37 +2,13 @@ import { useEffect, useMemo, useRef } from 'react'
 import { eachDayOfInterval, format, isSameDay, max, min, startOfDay } from 'date-fns'
 import type { Project, Task } from '../../types'
 import { filterBusinessDays, isKoreanHoliday, isNewWeekStart, isWeekend } from '../../utils/timeline'
+import { Badge, taskStatus, phase, typo } from '../ui'
 
 interface Props {
   project: Project
   tasks: Task[]
   onCycleStatus?: (task: Task) => void
   variant?: 'compact' | 'full'
-}
-
-const statusLabels: Record<string, string> = {
-  pending: 'Pending',
-  in_progress: 'In Progress',
-  done: 'Done'
-}
-
-const statusBadge: Record<string, string> = {
-  pending: 'bg-gray-100 text-gray-600',
-  in_progress: 'bg-yellow-100 text-yellow-700',
-  done: 'bg-green-100 text-green-700'
-}
-
-// Soft Status Pills: 파스텔 배경(100) + 톤 다운 보더(300), pending은 미착수 표시로 점선
-const barStyle: Record<string, string> = {
-  pending: 'bg-gray-100 border border-dashed border-gray-300',
-  in_progress: 'bg-yellow-100 border border-yellow-300',
-  done: 'bg-green-200/80 border border-green-300'
-}
-
-const dotStyle: Record<string, string> = {
-  pending: 'bg-white border-2 border-gray-300',
-  in_progress: 'bg-yellow-400 border border-yellow-500',
-  done: 'bg-green-500 border border-green-600'
 }
 
 const dayNames = ['일', '월', '화', '수', '목', '금', '토']
@@ -116,24 +92,18 @@ export default function ScheduleTimeline({
     <div>
       {isFull && (
         <div className="flex items-center gap-4 mb-3 text-[11px] text-gray-500">
+          {(['done', 'in_progress', 'pending'] as const).map((s) => (
+            <span key={s} className="flex items-center gap-1.5">
+              <span className={`w-2.5 h-2.5 rounded-full ${taskStatus[s].dot}`} />
+              {taskStatus[s].label}
+            </span>
+          ))}
           <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-green-500" />
-            Done
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
-            In Progress
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-white border-2 border-gray-300" />
-            Pending
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 bg-red-500 rotate-45 rounded-[1px]" />
+            <span className={`w-2 h-2 rotate-45 rounded-[1px] ${phase.deploy.marker}`} />
             Deploy
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-0.5 h-3 bg-blue-500 rounded-full" />
+            <span className={`w-0.5 h-3 rounded-full ${phase.today.line}`} />
             Today
           </span>
         </div>
@@ -143,9 +113,7 @@ export default function ScheduleTimeline({
         {/* Left: task names (fixed) */}
         <div className={`${nameColW} shrink-0 pr-2`}>
           <div className="h-9 flex items-end pb-0.5">
-            <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">
-              Task
-            </span>
+            <span className={typo.microLabel}>Task</span>
           </div>
           {tasks.map((task) => (
             <div key={task.id} className={`${rowH} flex items-center`}>
@@ -181,11 +149,11 @@ export default function ScheduleTimeline({
                 const offDay = isWeekend(day) || isKoreanHoliday(day)
                 const dayColor =
                   key === project.deploy_date
-                    ? 'text-red-600 font-bold'
+                    ? `${phase.deploy.text} font-bold`
                     : key === project.dev_end_date
-                      ? 'text-purple-600 font-semibold'
+                      ? `${phase.dev.text} font-semibold`
                       : key === project.qa_start_date || key === project.qa_end_date
-                        ? 'text-orange-500 font-semibold'
+                        ? `${phase.qa.text} font-semibold`
                         : offDay
                           ? 'text-gray-300'
                           : 'text-gray-400'
@@ -196,7 +164,9 @@ export default function ScheduleTimeline({
                     title={dayTooltip(day)}
                   >
                     {isToday ? (
-                      <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center">
+                      <span
+                        className={`w-4 h-4 rounded-full ${phase.today.accent} text-white text-[10px] font-bold flex items-center justify-center`}
+                      >
                         {format(day, 'd')}
                       </span>
                     ) : (
@@ -217,7 +187,7 @@ export default function ScheduleTimeline({
                     <div
                       key={dayKeys[idx]}
                       className={`${isNewWeekStart(day, idx) ? 'border-l border-gray-200/70' : ''} ${
-                        inQa ? 'bg-orange-50/80' : offDay ? 'bg-gray-100/60' : ''
+                        inQa ? phase.qa.tint : offDay ? 'bg-gray-100/60' : ''
                       }`}
                     />
                   )
@@ -226,7 +196,7 @@ export default function ScheduleTimeline({
 
               {todayIdx >= 0 && (
                 <div
-                  className="absolute inset-y-0 w-0.5 bg-blue-500/70 rounded-full pointer-events-none z-10"
+                  className={`absolute inset-y-0 w-0.5 ${phase.today.line} rounded-full pointer-events-none z-10`}
                   style={{ left: `calc(${(((todayIdx + 0.5) / n) * 100).toFixed(4)}% - 1px)` }}
                 />
               )}
@@ -245,9 +215,9 @@ export default function ScheduleTimeline({
                         <div
                           className="flex items-center justify-center"
                           style={{ gridColumn: `${sIdx + 1}`, gridRow: 1 }}
-                          title={`${task.name} · ${dayTooltip(days[sIdx])} · ${statusLabels[task.status]}`}
+                          title={`${task.name} · ${dayTooltip(days[sIdx])} · ${taskStatus[task.status].label}`}
                         >
-                          <span className={`${dotSize} rounded-full shadow-sm ${dotStyle[task.status]}`} />
+                          <span className={`${dotSize} rounded-full shadow-sm ${taskStatus[task.status].dot}`} />
                         </div>
                       )
                     } else {
@@ -257,9 +227,9 @@ export default function ScheduleTimeline({
                           : 0
                       content = (
                         <div
-                          className={`relative overflow-hidden mx-[1px] rounded-full ${barH} ${barStyle[task.status]}`}
+                          className={`relative overflow-hidden mx-[1px] rounded-full ${barH} ${taskStatus[task.status].bar}`}
                           style={{ gridColumn: `${sIdx + 1} / span ${eIdx - sIdx + 1}`, gridRow: 1 }}
-                          title={`${task.name} · ${format(new Date(startStr), 'MM/dd')} ~ ${format(new Date(endStr), 'MM/dd')} · ${statusLabels[task.status]}`}
+                          title={`${task.name} · ${format(new Date(startStr), 'MM/dd')} ~ ${format(new Date(endStr), 'MM/dd')} · ${taskStatus[task.status].label}`}
                         >
                           {elapsed > 0 && (
                             <div
@@ -284,7 +254,7 @@ export default function ScheduleTimeline({
               <div className="grid h-6 mt-1.5 items-center" style={gridTemplate}>
                 {devS >= 0 && devE >= devS && (
                   <div
-                    className="h-4 mx-[1px] rounded-full bg-purple-100/80 flex items-center justify-center text-[9px] font-semibold text-purple-600 overflow-hidden"
+                    className={`h-4 mx-[1px] rounded-full ${phase.dev.band} flex items-center justify-center text-[9px] font-semibold overflow-hidden`}
                     style={{ gridColumn: `${devS + 1} / span ${devE - devS + 1}`, gridRow: 1 }}
                     title={`Dev ${format(new Date(project.dev_start_date), 'MM/dd')} ~ ${format(new Date(project.dev_end_date), 'MM/dd')}`}
                   >
@@ -293,7 +263,7 @@ export default function ScheduleTimeline({
                 )}
                 {qaS >= 0 && qaE >= qaS && (
                   <div
-                    className="h-4 mx-[1px] rounded-full bg-orange-100 flex items-center justify-center text-[9px] font-semibold text-orange-600 overflow-hidden"
+                    className={`h-4 mx-[1px] rounded-full ${phase.qa.band} flex items-center justify-center text-[9px] font-semibold overflow-hidden`}
                     style={{ gridColumn: `${qaS + 1} / span ${qaE - qaS + 1}`, gridRow: 1 }}
                     title={`QA ${format(new Date(project.qa_start_date), 'MM/dd')} ~ ${format(new Date(project.qa_end_date), 'MM/dd')}`}
                   >
@@ -306,7 +276,7 @@ export default function ScheduleTimeline({
                     style={{ gridColumn: `${deployIdx + 1}`, gridRow: 1 }}
                     title={`Deploy ${format(new Date(project.deploy_date), 'MM/dd')}`}
                   >
-                    <span className="w-2.5 h-2.5 bg-red-500 rotate-45 rounded-[2px] shadow-sm" />
+                    <span className={`w-2.5 h-2.5 ${phase.deploy.marker} rotate-45 rounded-[2px] shadow-sm`} />
                   </div>
                 )}
               </div>
@@ -317,30 +287,25 @@ export default function ScheduleTimeline({
         {/* Right: status badges (fixed) */}
         <div className="w-[92px] shrink-0 pl-2">
           <div className="h-9 flex items-end justify-center pb-0.5">
-            <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">
-              Status
-            </span>
+            <span className={typo.microLabel}>Status</span>
           </div>
           {tasks.map((task) => (
             <div key={task.id} className={`${rowH} flex items-center justify-center`}>
-              {onCycleStatus ? (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onCycleStatus(task)
-                  }}
-                  className={`px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap cursor-pointer hover:opacity-70 transition-opacity ${statusBadge[task.status]}`}
-                  title="Click to change status"
-                >
-                  {statusLabels[task.status]}
-                </button>
-              ) : (
-                <span
-                  className={`px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap ${statusBadge[task.status]}`}
-                >
-                  {statusLabels[task.status]}
-                </span>
-              )}
+              <Badge
+                color={taskStatus[task.status].badge}
+                size="xs"
+                title={onCycleStatus ? 'Click to change status' : undefined}
+                onClick={
+                  onCycleStatus
+                    ? (e) => {
+                        e.stopPropagation()
+                        onCycleStatus(task)
+                      }
+                    : undefined
+                }
+              >
+                {taskStatus[task.status].label}
+              </Badge>
             </div>
           ))}
           <div className="h-6 mt-1.5" />

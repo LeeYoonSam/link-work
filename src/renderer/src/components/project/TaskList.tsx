@@ -1,21 +1,10 @@
 import { useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
 import type { Task } from '../../types'
+import { SectionTitle, taskStatus, button } from '../ui'
 
 interface TaskListProps {
   projectId: number
-}
-
-const statusColors: Record<string, string> = {
-  pending: 'bg-gray-100 text-gray-600',
-  in_progress: 'bg-yellow-100 text-yellow-800',
-  done: 'bg-green-100 text-green-800'
-}
-
-const statusLabels: Record<string, string> = {
-  pending: 'Pending',
-  in_progress: 'In Progress',
-  done: 'Done'
 }
 
 export default function TaskList({ projectId }: TaskListProps): React.ReactNode {
@@ -57,7 +46,7 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
 
   return (
     <div>
-      <h4 className="text-sm font-semibold text-gray-700 mb-3">Tasks</h4>
+      <SectionTitle className="mb-3">Tasks</SectionTitle>
 
       {tasks.length === 0 ? (
         <p className="text-sm text-gray-400 mb-3">No tasks yet</p>
@@ -116,9 +105,9 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
                   <select
                     value={task.status}
                     onChange={(e) => handleStatusChange(task, e.target.value)}
-                    className={`text-xs px-2 py-1 rounded-full border-0 ${statusColors[task.status]}`}
+                    className={`text-xs px-2 py-1 rounded-full border-0 ${taskStatus[task.status].badge}`}
                   >
-                    {Object.entries(statusLabels).map(([value, label]) => (
+                    {Object.entries(taskStatus).map(([value, { label }]) => (
                       <option key={value} value={value}>
                         {label}
                       </option>
@@ -178,7 +167,7 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
         />
         <button
           onClick={handleAddTask}
-          className="px-3 py-1.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors"
+          className={`px-3 py-1.5 text-sm ${button.dark}`}
         >
           Add
         </button>

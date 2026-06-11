@@ -3,21 +3,16 @@ import { format, subDays } from 'date-fns'
 import { useTodoStore } from '../../stores/todoStore'
 import MarkdownContent from '../memo/MarkdownContent'
 import type { Todo } from '../../types'
+import { Badge, todoPriority } from '../ui'
 
 interface TodoItemProps {
   todo: Todo
   highlighted?: boolean
 }
 
-const priorityConfig = {
-  high: { label: '높음', bg: 'bg-red-50', text: 'text-red-600', dot: 'bg-red-500' },
-  medium: { label: '중간', bg: 'bg-blue-50', text: 'text-blue-600', dot: 'bg-blue-500' },
-  low: { label: '낮음', bg: 'bg-gray-50', text: 'text-gray-500', dot: 'bg-gray-400' }
-}
-
 export default function TodoItem({ todo, highlighted = false }: TodoItemProps): React.ReactNode {
   const { completeTodo, restoreTodo, deleteTodo, setEditingTodo, setCompletedAt } = useTodoStore()
-  const priority = priorityConfig[todo.priority]
+  const priority = todoPriority[todo.priority]
   const isCompleted = todo.is_completed === 1
 
   // 대시보드에서 선택해 들어온 항목은 화면 중앙으로 스크롤한다.

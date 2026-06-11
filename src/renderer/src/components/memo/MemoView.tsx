@@ -5,6 +5,7 @@ import MemoForm from './MemoForm'
 import MemoViewer from './MemoViewer'
 import CategoryManager from './CategoryManager'
 import type { Memo, MemoCategory } from '../../types'
+import { EmptyState, button } from '../ui'
 
 const UNCATEGORIZED_KEY = '__uncategorized__'
 
@@ -175,7 +176,7 @@ export default function MemoView(): React.ReactNode {
           </select>
           <button
             onClick={() => setShowCategoryManager(true)}
-            className="px-3 py-1.5 text-xs text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+            className={`px-3 py-1.5 text-xs ${button.subtle}`}
             title="카테고리 관리"
           >
             카테고리 관리
@@ -183,7 +184,7 @@ export default function MemoView(): React.ReactNode {
           {!showArchived && (
             <button
               onClick={() => setShowForm(true)}
-              className="px-4 py-2 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700"
+              className={`px-4 py-2 text-sm ${button.primary}`}
             >
               + New Memo
             </button>
@@ -192,7 +193,7 @@ export default function MemoView(): React.ReactNode {
       </div>
 
       {isEmpty ? (
-        <div className="text-center py-12 text-gray-400">
+        <EmptyState>
           <div className="text-4xl mb-3">{showArchived ? '📦' : '📝'}</div>
           <p className="text-sm">
             {showArchived
@@ -201,7 +202,7 @@ export default function MemoView(): React.ReactNode {
                 ? 'No memos yet. Create your first memo.'
                 : '해당 카테고리에 메모가 없습니다.'}
           </p>
-        </div>
+        </EmptyState>
       ) : categoryFilter === 'all' ? (
         <div className="space-y-6">
           {groups.map((group) => (

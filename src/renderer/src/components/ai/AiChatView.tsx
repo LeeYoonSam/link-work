@@ -6,6 +6,7 @@ import { useMemoStore } from '../../stores/memoStore'
 import { useVariableStore } from '../../stores/variableStore'
 import MarkdownContent from '../memo/MarkdownContent'
 import type { AiApprovalRequest, AiChat, AiMessage, AiStatus, AiStreamEvent } from '../../types'
+import { Card, button } from '../ui'
 
 const EXAMPLE_PROMPTS = [
   '현재 진행중인 프로젝트 알려줘',
@@ -100,7 +101,7 @@ export default function AiChatView(): React.ReactNode {
           </button>
           <button
             onClick={() => createChat()}
-            className="w-7 h-7 flex items-center justify-center bg-gray-900 text-white rounded hover:bg-gray-700 transition-colors"
+            className={`w-7 h-7 flex items-center justify-center rounded transition-colors ${button.dark}`}
             title="새 채팅"
           >
             +
@@ -111,7 +112,7 @@ export default function AiChatView(): React.ReactNode {
           <div className="p-3 border-b border-gray-200 flex items-center gap-2">
             <button
               onClick={() => createChat()}
-              className="flex-1 px-3 py-2 bg-gray-900 text-white text-sm rounded-md hover:bg-gray-700 transition-colors"
+              className={`flex-1 px-3 py-2 text-sm ${button.dark}`}
             >
               + 새 채팅
             </button>
@@ -185,7 +186,7 @@ export default function AiChatView(): React.ReactNode {
                 <button
                   key={prompt}
                   onClick={() => handleExampleClick(prompt)}
-                  className="px-4 py-3 text-left text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 hover:border-gray-300 transition-colors"
+                  className={`px-4 py-3 text-left text-sm ${button.subtle} border border-gray-200 hover:border-gray-300`}
                 >
                   {prompt}
                 </button>
@@ -207,7 +208,7 @@ function AiUnavailableNotice({
 }): React.ReactNode {
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8">
-      <div className="max-w-md w-full bg-amber-50 border border-amber-200 rounded-xl p-6 text-center">
+      <Card padding="md" className="max-w-md w-full text-center">
         <div className="text-3xl mb-3">⚠</div>
         <h3 className="text-base font-semibold text-gray-900 mb-2">
           AI 대화를 사용할 수 없습니다
@@ -233,14 +234,14 @@ function AiUnavailableNotice({
         </ol>
         <button
           onClick={onRecheck}
-          className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 transition-colors"
+          className={`px-4 py-2 text-sm rounded-lg ${button.dark}`}
         >
           다시 확인
         </button>
         <p className="mt-4 text-xs text-gray-400">
           AI 대화 외 다른 기능(프로젝트/TODO/메모 등)은 정상적으로 사용할 수 있습니다.
         </p>
-      </div>
+      </Card>
     </div>
   )
 }
@@ -488,7 +489,7 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
           {isStreaming ? (
             <button
               onClick={() => cancelStream()}
-              className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors shrink-0"
+              className={`px-4 py-2 text-sm rounded-lg shrink-0 ${button.subtle}`}
             >
               중단
             </button>
@@ -496,7 +497,7 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
             <button
               onClick={handleSend}
               disabled={!input.trim() || disabled}
-              className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+              className={`px-4 py-2 text-sm rounded-lg shrink-0 ${button.dark} disabled:opacity-40 disabled:cursor-not-allowed`}
             >
               전송
             </button>
@@ -538,13 +539,13 @@ function ApprovalCard({
       <div className="flex gap-2">
         <button
           onClick={() => onRespond(true)}
-          className="px-4 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 transition-colors"
+          className={`px-4 py-1.5 text-sm rounded-lg ${button.dark}`}
         >
           승인
         </button>
         <button
           onClick={() => onRespond(false)}
-          className="px-4 py-1.5 text-sm bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
+          className={`px-4 py-1.5 text-sm rounded-lg ${button.subtle} border border-gray-300`}
         >
           거절
         </button>
@@ -563,7 +564,7 @@ function MessageBubble({
   if (message.role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[75%] bg-gray-900 text-white text-sm rounded-lg rounded-tr-none px-4 py-2.5 whitespace-pre-wrap break-words">
+        <div className={`max-w-[75%] text-white text-sm rounded-lg rounded-tr-none px-4 py-2.5 whitespace-pre-wrap break-words ${button.dark}`}>
           {message.content}
         </div>
       </div>

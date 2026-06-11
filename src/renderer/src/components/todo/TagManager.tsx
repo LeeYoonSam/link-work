@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTodoStore } from '../../stores/todoStore'
 import type { TodoTag } from '../../types'
+import { EmptyState, SectionTitle, button } from '../ui'
 
 interface TagManagerProps {
   onClose: () => void
@@ -48,7 +49,7 @@ export default function TagManager({ onClose }: TagManagerProps): React.ReactNod
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
         <div className="p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">태그 관리</h2>
+          <SectionTitle variant="page" className="mb-4">태그 관리</SectionTitle>
 
           <div className="mb-4">
             <div className="flex gap-2 mb-2">
@@ -63,7 +64,7 @@ export default function TagManager({ onClose }: TagManagerProps): React.ReactNod
               <button
                 onClick={handleCreate}
                 disabled={!newName.trim()}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 disabled:opacity-40 transition-colors"
+                className={`px-4 py-2 text-sm font-medium disabled:opacity-40 ${button.primary}`}
               >
                 추가
               </button>
@@ -84,7 +85,7 @@ export default function TagManager({ onClose }: TagManagerProps): React.ReactNod
 
           <div className="space-y-2 max-h-64 overflow-auto">
             {tags.length === 0 ? (
-              <div className="text-center text-gray-400 py-6 text-sm">태그가 없습니다</div>
+              <EmptyState compact>태그가 없습니다</EmptyState>
             ) : (
               tags.map((tag) => (
                 <div key={tag.id} className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50">
@@ -153,7 +154,7 @@ export default function TagManager({ onClose }: TagManagerProps): React.ReactNod
         <div className="flex justify-end px-6 py-4 border-t border-gray-100">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors"
+            className={`px-4 py-2 text-sm font-medium ${button.subtle}`}
           >
             닫기
           </button>

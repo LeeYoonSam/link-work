@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMemoStore } from '../../stores/memoStore'
 import type { Memo } from '../../types'
 import MarkdownContent from './MarkdownContent'
+import { SectionTitle, button } from '../ui'
 
 interface MemoFormProps {
   onClose: () => void
@@ -44,9 +45,9 @@ export default function MemoForm({ onClose, editingMemo }: MemoFormProps): React
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 pt-5 pb-3">
-          <h3 className="text-lg font-bold text-gray-900">
+          <SectionTitle variant="page">
             {editingMemo ? 'Edit Memo' : 'New Memo'}
-          </h3>
+          </SectionTitle>
           <div className="flex bg-gray-100 rounded-md p-0.5">
             <button
               type="button"
@@ -119,13 +120,13 @@ export default function MemoForm({ onClose, editingMemo }: MemoFormProps): React
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+              className={`px-4 py-2 text-sm ${button.subtle}`}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-4 py-2 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700"
+              className={`px-4 py-2 text-sm ${button.primary}`}
             >
               {editingMemo ? 'Save' : 'Add'}
             </button>

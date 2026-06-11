@@ -1,6 +1,7 @@
 import { format, isAfter, isBefore, isSameDay } from 'date-fns'
 import type { CalendarEvent } from '../../stores/calendarStore'
 import type { Todo } from '../../types'
+import { Badge, Card, EmptyState, todoPriority } from '../ui'
 
 interface Props {
   events: CalendarEvent[]
@@ -118,19 +119,14 @@ export default function TodaySchedule({ events, connected, todos = [] }: Props):
   })
 
   if (allItems.length === 0) {
-    if (!connected) {
-      return (
-        <div className="bg-white border border-gray-200 rounded-lg p-6 text-center">
-          <p className="text-gray-400 text-sm">
-            Connect Google Calendar to view today&apos;s schedule
-          </p>
-        </div>
-      )
-    }
     return (
-      <div className="bg-white border border-gray-200 rounded-lg p-6 text-center">
-        <p className="text-gray-400 text-sm">No events scheduled for today</p>
-      </div>
+      <Card>
+        <EmptyState compact>
+          {connected
+            ? 'No events scheduled for today'
+            : "Connect Google Calendar to view today's schedule"}
+        </EmptyState>
+      </Card>
     )
   }
 
@@ -153,12 +149,11 @@ export default function TodaySchedule({ events, connected, todos = [] }: Props):
     return end ? `${start} - ${end}` : start
   }
 
-  const priorityDotClass = (priority: 'low' | 'medium' | 'high'): string => {
-    return priority === 'high' ? 'bg-red-500' : priority === 'medium' ? 'bg-blue-500' : 'bg-gray-400'
-  }
+  const priorityDotClass = (priority: 'low' | 'medium' | 'high'): string =>
+    todoPriority[priority].dot
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
+    <Card padding="none" className="divide-y divide-gray-100">
       {allItems.map((item) => {
         const current = isCurrent(item)
         const isCompletedTodo = item.kind === 'todo' && item.isCompleted
@@ -225,15 +220,14 @@ export default function TodaySchedule({ events, connected, todos = [] }: Props):
                   {item.title}
                 </p>
                 {item.kind === 'todo' ? (
-                  isCompletedTodo ? (
-                    <span className="text-[10px] text-white bg-green-500 px-1.5 py-0.5 rounded-full flex-shrink-0">
-                      완료
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full flex-shrink-0">
-                      TODO
-                    </span>
-                  )
+                  <Badge
+                    size="xs"
+                    color={
+                      isCompletedTodo ? 'bg-green-100 text-green-700' : 'bg-green-50 text-green-600'
+                    }
+                  >
+                    {isCompletedTodo ? '완료' : 'TODO'}
+                  </Badge>
                 ) : null}
               </div>
               {item.kind === 'event' && item.location ? (
@@ -241,13 +235,11 @@ export default function TodaySchedule({ events, connected, todos = [] }: Props):
               ) : null}
             </div>
             {current && item.kind === 'event' ? (
-              <span className="text-xs font-medium text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">
-                Now
-              </span>
+              <Badge color="bg-blue-100 text-blue-600">Now</Badge>
             ) : null}
           </div>
         )
       })}
-    </div>
+    </Card>
   )
 }

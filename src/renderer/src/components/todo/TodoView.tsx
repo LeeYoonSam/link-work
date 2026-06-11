@@ -6,6 +6,7 @@ import TodoItem from './TodoItem'
 import TodoForm from './TodoForm'
 import TagManager from './TagManager'
 import type { Todo } from '../../types'
+import { Badge, EmptyState, button } from '../ui'
 
 function matchesSearch(todo: Todo, query: string): boolean {
   if (!query) return true
@@ -151,13 +152,13 @@ export default function TodoView(): React.ReactNode {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowTagManager(true)}
-            className="px-3 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            className={`px-3 py-2 text-sm ${button.subtle}`}
           >
             태그 관리
           </button>
           <button
             onClick={() => setShowForm(true)}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 transition-colors"
+            className={`px-4 py-2 text-sm font-medium ${button.primary}`}
           >
             + 새 TODO
           </button>
@@ -194,7 +195,7 @@ export default function TodoView(): React.ReactNode {
             onClick={() => setFilterTagId(null)}
             className={`px-3 py-1 text-xs rounded-full border transition-colors ${
               filterTagId === null
-                ? 'bg-gray-900 text-white border-gray-900'
+                ? `${button.dark} border-transparent`
                 : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
             }`}
           >
@@ -249,12 +250,12 @@ export default function TodoView(): React.ReactNode {
       ) : !showCompleted ? (
         <div className="space-y-2">
           {filteredTodos.length === 0 ? (
-            <div className="text-center text-gray-400 py-12 bg-white border border-gray-200 rounded-lg">
+            <EmptyState>
               <div className="text-3xl mb-2">{isSearching ? '🔍' : '☐'}</div>
               <div className="text-sm">
                 {isSearching ? '검색 결과가 없습니다' : 'TODO가 없습니다'}
               </div>
-            </div>
+            </EmptyState>
           ) : (
             filteredTodos.map((todo) => (
               <TodoItem key={todo.id} todo={todo} highlighted={todo.id === selectedTodoId} />
@@ -264,21 +265,21 @@ export default function TodoView(): React.ReactNode {
       ) : (
         <div className="space-y-5">
           {completedGroups.length === 0 ? (
-            <div className="text-center text-gray-400 py-12 bg-white border border-gray-200 rounded-lg">
+            <EmptyState>
               <div className="text-3xl mb-2">{isSearching ? '🔍' : '📋'}</div>
               <div className="text-sm">
                 {isSearching ? '검색 결과가 없습니다' : '완료된 TODO가 없습니다'}
               </div>
-            </div>
+            </EmptyState>
           ) : (
             completedGroups.map((group) => (
               <div key={group.key} className="space-y-2">
                 <div className="flex items-center gap-2">
                   <h3 className="text-xs font-semibold text-gray-500">{group.label}</h3>
                   {group.badge && (
-                    <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-blue-50 text-blue-600">
+                    <Badge color="bg-blue-50 text-blue-600" size="xs">
                       {group.badge}
-                    </span>
+                    </Badge>
                   )}
                   <span className="text-xs text-gray-400">{group.items.length}</span>
                   <div className="flex-1 h-px bg-gray-100" />

@@ -8,18 +8,14 @@ import TodaySchedule from './TodaySchedule'
 import MarkdownContent from '../memo/MarkdownContent'
 import { format } from 'date-fns'
 import type { Task, Todo } from '../../types'
+import { Card, EmptyState, SectionTitle, todoPriority } from '../ui'
 
 function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
   const { completeTodo, restoreTodo, setSelectedTodoId, setFilterTagId } = useTodoStore()
   const { setView } = useProjectStore()
   const isCompleted = todo.is_completed === 1
 
-  const priorityDot =
-    todo.priority === 'high'
-      ? 'bg-red-500'
-      : todo.priority === 'medium'
-        ? 'bg-blue-500'
-        : 'bg-gray-400'
+  const priorityDot = todoPriority[todo.priority].dot
 
   const isOverdue = Boolean(
     todo.due_date && !isCompleted && new Date(todo.due_date) < new Date()
@@ -196,7 +192,7 @@ export default function Dashboard(): React.ReactNode {
     <div className="flex flex-col min-h-full">
       {importantMemos.length > 0 ? (
         <div className="mb-6 flex-shrink-0">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">★ Important Memos</h3>
+          <SectionTitle variant="page" className="mb-4">★ Important Memos</SectionTitle>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {importantMemos.map((memo) => (
               <div
@@ -220,13 +216,13 @@ export default function Dashboard(): React.ReactNode {
         {/* 좌측: Project + Schedule */}
         <div className="flex-1 flex flex-col min-h-0 space-y-6 min-w-0">
           <div className="flex flex-col min-h-0 min-w-0">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex-shrink-0">
+            <SectionTitle variant="page" className="mb-4 flex-shrink-0">
               Active Projects
-            </h3>
+            </SectionTitle>
             {activeProjects.length === 0 ? (
-              <div className="text-center text-gray-400 py-8 bg-white border border-gray-200 rounded-lg text-sm">
-                No active projects
-              </div>
+              <Card>
+                <EmptyState compact>No active projects</EmptyState>
+              </Card>
             ) : (
               <div className="grid gap-4 min-w-0 [&>*]:min-w-0">
                 {activeProjects.map((project) => (
@@ -241,7 +237,7 @@ export default function Dashboard(): React.ReactNode {
           </div>
 
           <div className="flex-shrink-0 min-w-0">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Today&apos;s Schedule</h3>
+            <SectionTitle variant="page" className="mb-4">Today&apos;s Schedule</SectionTitle>
             <TodaySchedule
               events={events}
               connected={status.connected}
@@ -299,9 +295,9 @@ export default function Dashboard(): React.ReactNode {
                 </svg>
               </button>
               {todoPanelOpen ? (
-                <h3 className="text-lg font-semibold text-gray-900 whitespace-nowrap">
+                <SectionTitle variant="page" className="whitespace-nowrap">
                   ☑ TODO
-                </h3>
+                </SectionTitle>
               ) : (
                 <button
                   onClick={expandTodoPanel}
@@ -323,9 +319,9 @@ export default function Dashboard(): React.ReactNode {
           </div>
 
           {!todoPanelOpen ? null : activeTodos.length === 0 ? (
-            <div className="text-center text-gray-400 py-8 bg-white border border-gray-200 rounded-lg text-sm whitespace-nowrap">
-              진행 중인 TODO가 없습니다
-            </div>
+            <Card className="whitespace-nowrap">
+              <EmptyState compact>진행 중인 TODO가 없습니다</EmptyState>
+            </Card>
           ) : (
             <div className="space-y-4 overflow-auto pr-1 flex-1 min-h-0">
               {pendingTodos.length > 0 ? (

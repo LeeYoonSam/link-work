@@ -10,6 +10,7 @@ import {
   isSameDay,
   startOfWeek
 } from 'date-fns'
+import { SectionTitle, EmptyState, button } from '../ui'
 
 const DAY_LABELS = ['월', '화', '수', '목', '금']
 const WORK_DAYS = 5
@@ -153,19 +154,19 @@ export default function CalendarView(): React.ReactNode {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h3 className="text-lg font-semibold text-gray-900">
+        <SectionTitle variant="page">
           This Week&apos;s Schedule ({format(weekStart, 'MM-dd')} ~ {format(weekdayEnd, 'MM-dd')})
-        </h3>
+        </SectionTitle>
         <div className="flex gap-2">
           <button
             onClick={refreshEvents}
-            className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+            className={`px-3 py-1.5 text-sm ${button.subtle}`}
           >
             Refresh
           </button>
           <button
             onClick={() => setShowSettings(true)}
-            className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+            className={`px-3 py-1.5 text-sm ${button.subtle}`}
           >
             Settings
           </button>
@@ -173,7 +174,7 @@ export default function CalendarView(): React.ReactNode {
       </div>
 
       {loading ? (
-        <div className="text-center text-gray-500 py-12">Loading events...</div>
+        <EmptyState>Loading events...</EmptyState>
       ) : (
         <div className="space-y-5">
           {days.map((day, idx) => {

@@ -7,6 +7,7 @@ import TaskList from './TaskList'
 import ScheduleTimeline from './ScheduleTimeline'
 import DocumentForm from '../document/DocumentForm'
 import MarkdownContent from '../memo/MarkdownContent'
+import { Badge, Card, SectionTitle, projectStatus, button } from '../ui'
 
 export default function ProjectDetail(): React.ReactNode {
   const { currentProject, setProjectView, setEditingProject, deleteProject, tasks, updateTask } =
@@ -39,14 +40,7 @@ export default function ProjectDetail(): React.ReactNode {
     }
   }
 
-  const statusColors: Record<string, string> = {
-    scheduled: 'bg-slate-100 text-slate-700',
-    development: 'bg-green-100 text-green-800',
-    qa: 'bg-orange-100 text-orange-800',
-    deploy: 'bg-red-100 text-red-800',
-    completed: 'bg-blue-100 text-blue-800',
-    cancelled: 'bg-gray-100 text-gray-600'
-  }
+  const status = projectStatus[currentProject.status] ?? projectStatus.cancelled
 
   return (
     <div>
@@ -59,7 +53,7 @@ export default function ProjectDetail(): React.ReactNode {
         </button>
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+      <Card className="mb-6">
         <div className="flex items-start justify-between mb-4">
           <div>
             <h3 className="text-xl font-bold text-gray-900">{currentProject.name}</h3>
@@ -75,25 +69,18 @@ export default function ProjectDetail(): React.ReactNode {
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1">
-              <span
-                className={`px-2 py-0.5 text-xs rounded-full font-medium ${statusColors[currentProject.status]}`}
-              >
-                {currentProject.status}
-              </span>
+              <Badge color={status.badge}>{status.label}</Badge>
               {currentProject.status_manual === 1 && (
                 <span className="text-xs text-amber-500" title="수동 설정됨">✎</span>
               )}
             </div>
             <button
               onClick={() => setEditingProject(currentProject)}
-              className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+              className={`px-3 py-1.5 text-sm ${button.subtle}`}
             >
               Edit
             </button>
-            <button
-              onClick={handleDelete}
-              className="px-3 py-1.5 text-sm bg-red-50 text-red-600 rounded-md hover:bg-red-100"
-            >
+            <button onClick={handleDelete} className={`px-3 py-1.5 text-sm ${button.danger}`}>
               Delete
             </button>
           </div>
@@ -124,30 +111,30 @@ export default function ProjectDetail(): React.ReactNode {
             )}
           </div>
         </div>
-      </div>
+      </Card>
 
       {tasks.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
-          <h4 className="text-sm font-semibold text-gray-700 mb-4">Schedule</h4>
+        <Card className="mb-6">
+          <SectionTitle className="mb-4">Schedule</SectionTitle>
           <ScheduleTimeline
             project={currentProject}
             tasks={tasks}
             onCycleStatus={cycleStatus}
             variant="full"
           />
-        </div>
+        </Card>
       )}
 
-      <div className="bg-white border border-gray-200 rounded-lg p-6">
+      <Card>
         <TaskList projectId={currentProject.id} />
-      </div>
+      </Card>
 
-      <div className="bg-white border border-gray-200 rounded-lg p-6 mt-6">
+      <Card className="mt-6">
         <div className="flex items-center justify-between mb-4">
-          <h4 className="text-sm font-semibold text-gray-700">Documents</h4>
+          <SectionTitle>Documents</SectionTitle>
           <button
             onClick={() => setShowDocForm(true)}
-            className="px-3 py-1.5 text-xs text-white bg-blue-600 rounded-md hover:bg-blue-700"
+            className={`px-3 py-1.5 text-xs ${button.primary}`}
           >
             + Add
           </button>
@@ -182,7 +169,7 @@ export default function ProjectDetail(): React.ReactNode {
             ))}
           </div>
         )}
-      </div>
+      </Card>
 
       {showDocForm && (
         <DocumentForm

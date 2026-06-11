@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
 import type { ProjectInput } from '../../types'
+import { SectionTitle, button } from '../ui'
 
 export default function ProjectForm(): React.ReactNode {
   const { editingProject, createProject, updateProject, setProjectView } = useProjectStore()
@@ -81,9 +82,9 @@ export default function ProjectForm(): React.ReactNode {
   return (
     <div className="max-w-2xl">
       <div className="flex items-center justify-between mb-6">
-        <h3 className="text-lg font-semibold text-gray-900">
+        <SectionTitle variant="page">
           {editingProject ? 'Edit Project' : 'New Project'}
-        </h3>
+        </SectionTitle>
         <button
           onClick={() => setProjectView('list')}
           className="text-sm text-gray-500 hover:text-gray-700"
@@ -219,16 +220,13 @@ export default function ProjectForm(): React.ReactNode {
         )}
 
         <div className="pt-4 flex gap-3">
-          <button
-            type="submit"
-            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition-colors"
-          >
+          <button type="submit" className={`px-4 py-2 text-sm ${button.primary}`}>
             {editingProject ? 'Update Project' : 'Create Project'}
           </button>
           <button
             type="button"
             onClick={() => setProjectView('list')}
-            className="px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-md hover:bg-gray-200 transition-colors"
+            className={`px-4 py-2 text-sm ${button.subtle}`}
           >
             Cancel
           </button>

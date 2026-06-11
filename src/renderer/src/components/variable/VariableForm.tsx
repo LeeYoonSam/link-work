@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useVariableStore } from '../../stores/variableStore'
 import type { Variable, VariableViewType } from '../../types'
+import { SectionTitle, button } from '../ui'
 
 interface VariableFormProps {
   onClose: () => void
@@ -41,9 +42,9 @@ export default function VariableForm({
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg p-6 w-full max-w-md">
-        <h3 className="text-lg font-bold text-gray-900 mb-4">
+        <SectionTitle variant="page" className="mb-4">
           {editingVariable ? 'Edit Variable' : 'Add Variable'}
-        </h3>
+        </SectionTitle>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
@@ -96,13 +97,13 @@ export default function VariableForm({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+              className={`px-4 py-2 text-sm ${button.subtle}`}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-4 py-2 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700"
+              className={`px-4 py-2 text-sm ${button.primary}`}
             >
               {editingVariable ? 'Save' : 'Add'}
             </button>

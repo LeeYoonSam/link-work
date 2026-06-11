@@ -3,24 +3,7 @@ import { useProjectStore } from '../../stores/projectStore'
 import { format } from 'date-fns'
 import type { Project } from '../../types'
 import MarkdownContent from '../memo/MarkdownContent'
-
-const statusLabels: Record<string, string> = {
-  scheduled: 'Scheduled',
-  development: 'Development',
-  qa: 'QA',
-  deploy: 'Deploy',
-  completed: 'Completed',
-  cancelled: 'Cancelled'
-}
-
-const statusColors: Record<string, string> = {
-  scheduled: 'bg-slate-100 text-slate-700',
-  development: 'bg-green-100 text-green-800',
-  qa: 'bg-orange-100 text-orange-800',
-  deploy: 'bg-red-100 text-red-800',
-  completed: 'bg-blue-100 text-blue-800',
-  cancelled: 'bg-gray-100 text-gray-600'
-}
+import { Badge, Card, EmptyState, projectStatus, button } from '../ui'
 
 export default function ProjectList(): React.ReactNode {
   const { projects, fetchProjects, setProjectView, setEditingProject, fetchProject, loading } =
@@ -53,13 +36,9 @@ export default function ProjectList(): React.ReactNode {
             <button
               key={s}
               onClick={() => setFilter(s)}
-              className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-                filter === s
-                  ? 'bg-gray-900 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
+              className={`px-3 py-1.5 text-sm ${filter === s ? button.dark : button.subtle}`}
             >
-              {s === 'all' ? 'All' : statusLabels[s]}
+              {s === 'all' ? 'All' : projectStatus[s].label}
             </button>
           ))}
         </div>
@@ -68,24 +47,20 @@ export default function ProjectList(): React.ReactNode {
             setEditingProject(null)
             setProjectView('form')
           }}
-          className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition-colors"
+          className={`px-4 py-2 text-sm ${button.primary}`}
         >
           + New Project
         </button>
       </div>
 
       {loading ? (
-        <div className="text-center text-gray-500 py-12">Loading...</div>
+        <EmptyState>Loading...</EmptyState>
       ) : filtered.length === 0 ? (
-        <div className="text-center text-gray-400 py-12">No projects found</div>
+        <EmptyState>No projects found</EmptyState>
       ) : (
         <div className="grid gap-4">
           {filtered.map((project) => (
-            <div
-              key={project.id}
-              onClick={() => openDetail(project)}
-              className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
-            >
+            <Card key={project.id} padding="sm" hover onClick={() => openDetail(project)}>
               <div className="flex items-start justify-between">
                 <div>
                   <h3 className="font-semibold text-gray-900">{project.name}</h3>
@@ -99,11 +74,9 @@ export default function ProjectList(): React.ReactNode {
                     </div>
                   )}
                 </div>
-                <span
-                  className={`px-2 py-0.5 text-xs rounded-full font-medium ${statusColors[project.status]}`}
-                >
-                  {statusLabels[project.status]}
-                </span>
+                <Badge color={projectStatus[project.status].badge}>
+                  {projectStatus[project.status].label}
+                </Badge>
               </div>
               <div className="mt-3 flex gap-4 text-xs text-gray-500">
                 <span>
@@ -116,7 +89,7 @@ export default function ProjectList(): React.ReactNode {
                 </span>
                 <span>Deploy: {format(new Date(project.deploy_date), 'MM/dd')}</span>
               </div>
-            </div>
+            </Card>
           ))}
         </div>
       )}

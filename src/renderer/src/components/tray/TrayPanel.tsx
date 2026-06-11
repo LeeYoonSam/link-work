@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Badge, StatusDot, projectStatus, button } from '../ui'
 
 interface TrayProject {
   name: string
@@ -12,33 +13,6 @@ interface TrayProject {
   taskProgress: number
   doneTasks: number
   totalTasks: number
-}
-
-const statusLabels: Record<string, string> = {
-  scheduled: 'Scheduled',
-  development: 'Development',
-  qa: 'QA',
-  deploy: 'Deploy',
-  completed: 'Completed',
-  cancelled: 'Cancelled'
-}
-
-const statusColors: Record<string, string> = {
-  scheduled: 'bg-slate-500',
-  development: 'bg-green-500',
-  qa: 'bg-orange-500',
-  deploy: 'bg-red-500',
-  completed: 'bg-blue-500',
-  cancelled: 'bg-gray-400'
-}
-
-const statusCardBg: Record<string, string> = {
-  scheduled: 'bg-slate-50',
-  development: 'bg-green-50',
-  qa: 'bg-orange-50',
-  deploy: 'bg-red-50',
-  completed: 'bg-blue-50',
-  cancelled: 'bg-gray-50'
 }
 
 interface TrayEvent {
@@ -117,71 +91,79 @@ export default function TrayPanel(): React.ReactNode {
       <div className="flex-1 overflow-y-auto">
         {/* Projects Section */}
         <div className="px-4 py-3">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+          <h3 className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-2">
             Active Projects
           </h3>
           {data.projects.length === 0 ? (
             <p className="text-xs text-gray-400">No active projects</p>
           ) : (
             <div className="space-y-2.5">
-              {data.projects.map((project, i) => (
-                <div key={i} className={`rounded-lg p-2.5 ${statusCardBg[project.status] || 'bg-gray-50'}`}>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-sm font-medium text-gray-900 truncate mr-2">
-                      {project.name}
-                    </span>
-                    <div className="flex gap-1.5 shrink-0 items-center">
-                      <span
-                        className={`text-xs font-medium px-1.5 py-0.5 rounded-full text-white ${statusColors[project.status] || 'bg-gray-400'}`}
-                      >
-                        {statusLabels[project.status] || project.status}
+              {data.projects.map((project, i) => {
+                const st = projectStatus[project.status]
+                return (
+                  <div key={i} className="rounded-lg p-2.5 bg-gray-50">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-sm font-medium text-gray-900 truncate mr-2">
+                        {project.name}
                       </span>
-                      <span className={`text-xs font-bold ${getUrgencyColor(project.daysLeft)}`}>
-                        D{getDdayText(project.daysLeft).slice(1)}
-                      </span>
-                    </div>
-                  </div>
-                  {project.devDaysLeft >= 0 && (
-                    <>
-                      <div className="w-full bg-gray-200 rounded-full h-1.5">
-                        <div
-                          className={`h-1.5 rounded-full transition-all ${getBarColor(project.progress)}`}
-                          style={{ width: `${project.progress}%` }}
-                        />
-                      </div>
-                      <div className="flex justify-between mt-1">
-                        <span className="text-xs text-gray-400">{project.progress}%</span>
-                        <span className="text-xs text-gray-400">
-                          Dev ~{project.devEndDate} / Deploy {project.deployDate}
+                      <div className="flex gap-1.5 shrink-0 items-center">
+                        {st ? (
+                          <Badge color={st.badge} size="xs">
+                            <StatusDot color={st.dot} size="sm" />
+                            <span className="ml-1">{st.label}</span>
+                          </Badge>
+                        ) : (
+                          <Badge color="bg-gray-100 text-gray-600" size="xs">
+                            {project.status}
+                          </Badge>
+                        )}
+                        <span className={`text-xs font-bold ${getUrgencyColor(project.daysLeft)}`}>
+                          D{getDdayText(project.daysLeft).slice(1)}
                         </span>
                       </div>
-                    </>
-                  )}
-                  {project.devDaysLeft < 0 && (
-                    <div className="mt-0.5">
-                      <span className="text-xs text-gray-400">
-                        Deploy {project.deployDate}
-                      </span>
                     </div>
-                  )}
-                  {project.totalTasks > 0 && (
-                    <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-gray-200">
-                      <span className="text-xs text-gray-500">
-                        Tasks: {project.doneTasks}/{project.totalTasks} done
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-16 bg-gray-200 rounded-full h-1">
+                    {project.devDaysLeft >= 0 && (
+                      <>
+                        <div className="w-full bg-gray-200 rounded-full h-1.5">
                           <div
-                            className="h-1 rounded-full bg-green-500 transition-all"
-                            style={{ width: `${project.taskProgress}%` }}
+                            className={`h-1.5 rounded-full transition-all ${getBarColor(project.progress)}`}
+                            style={{ width: `${project.progress}%` }}
                           />
                         </div>
-                        <span className="text-xs text-gray-500">{project.taskProgress}%</span>
+                        <div className="flex justify-between mt-1">
+                          <span className="text-xs text-gray-400">{project.progress}%</span>
+                          <span className="text-xs text-gray-400">
+                            Dev ~{project.devEndDate} / Deploy {project.deployDate}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    {project.devDaysLeft < 0 && (
+                      <div className="mt-0.5">
+                        <span className="text-xs text-gray-400">
+                          Deploy {project.deployDate}
+                        </span>
                       </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+                    )}
+                    {project.totalTasks > 0 && (
+                      <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-gray-200">
+                        <span className="text-xs text-gray-500">
+                          Tasks: {project.doneTasks}/{project.totalTasks} done
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-16 bg-gray-200 rounded-full h-1">
+                            <div
+                              className="h-1 rounded-full bg-green-500 transition-all"
+                              style={{ width: `${project.taskProgress}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-gray-500">{project.taskProgress}%</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
@@ -191,8 +173,8 @@ export default function TrayPanel(): React.ReactNode {
 
         {/* Events Section */}
         <div className="px-4 py-3">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-            Today's Schedule
+          <h3 className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-2">
+            Today&apos;s Schedule
           </h3>
           {data.events.length === 0 ? (
             <p className="text-xs text-gray-400">No events today</p>
@@ -218,13 +200,12 @@ export default function TrayPanel(): React.ReactNode {
                     {event.summary}
                   </span>
                   {event.kind === 'todo' ? (
-                    <span className={`text-[9px] px-1 py-0.5 rounded-full shrink-0 ${
-                      event.isCompleted
-                        ? 'bg-green-500 text-white'
-                        : 'bg-green-50 text-green-600'
-                    }`}>
+                    <Badge
+                      color={event.isCompleted ? 'bg-green-100 text-green-700' : 'bg-green-50 text-green-600'}
+                      size="xs"
+                    >
                       {event.isCompleted ? '완료' : 'TODO'}
-                    </span>
+                    </Badge>
                   ) : null}
                 </div>
               ))}
@@ -249,7 +230,7 @@ export default function TrayPanel(): React.ReactNode {
               setLoading(false)
             })
           }}
-          className="text-xs text-blue-500 hover:text-blue-700"
+          className={`text-xs ${button.ghost}`}
         >
           Refresh
         </button>

@@ -3,6 +3,7 @@ import { useDocumentStore } from '../../stores/documentStore'
 import { useProjectStore } from '../../stores/projectStore'
 import DocumentForm from './DocumentForm'
 import type { Document } from '../../types'
+import { Card, EmptyState, SectionTitle, button } from '../ui'
 
 export default function DocumentList(): React.ReactNode {
   const { documents, fetchAllDocuments, deleteDocument, openDocument, reorderDocuments } =
@@ -157,14 +158,14 @@ export default function DocumentList(): React.ReactNode {
   const renderGroup = (key: string, title: string, docs: Document[]): React.ReactNode => {
     const isCollapsed = collapsedGroups.has(key)
     return (
-      <div key={key} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <Card key={key} padding="none">
         <button
           onClick={() => toggleGroup(key)}
           className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
         >
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-400">{isCollapsed ? '▶' : '▼'}</span>
-            <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+            <SectionTitle>{title}</SectionTitle>
             <span className="text-xs text-gray-400">({docs.length})</span>
           </div>
         </button>
@@ -173,7 +174,7 @@ export default function DocumentList(): React.ReactNode {
             {docs.map((doc, i) => renderDocItem(doc, i, key, docs))}
           </div>
         )}
-      </div>
+      </Card>
     )
   }
 
@@ -183,17 +184,17 @@ export default function DocumentList(): React.ReactNode {
         <h2 className="text-lg font-bold text-gray-900">Documents</h2>
         <button
           onClick={() => setShowForm(true)}
-          className="px-4 py-2 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700"
+          className={`px-4 py-2 text-sm ${button.primary}`}
         >
           + Add Document
         </button>
       </div>
 
       {documents.length === 0 ? (
-        <div className="text-center py-12 text-gray-400">
+        <EmptyState>
           <div className="text-4xl mb-3">📄</div>
           <p className="text-sm">No documents yet. Add your first document or link.</p>
-        </div>
+        </EmptyState>
       ) : (
         <div className="space-y-4">
           {Array.from(projectGroups.entries()).map(([projectId, group]) =>

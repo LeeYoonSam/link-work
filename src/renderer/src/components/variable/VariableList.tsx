@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useVariableStore } from '../../stores/variableStore'
 import VariableForm from './VariableForm'
 import type { Variable } from '../../types'
+import { Badge, Card, EmptyState, button } from '../ui'
 
 export default function VariableList(): React.ReactNode {
   const { variables, fetchVariables, deleteVariable, reorderVariables } = useVariableStore()
@@ -92,19 +93,19 @@ export default function VariableList(): React.ReactNode {
         <h2 className="text-lg font-bold text-gray-900">Variables</h2>
         <button
           onClick={() => setShowForm(true)}
-          className="px-4 py-2 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700"
+          className={`px-4 py-2 text-sm ${button.primary}`}
         >
           + Add Variable
         </button>
       </div>
 
       {variables.length === 0 ? (
-        <div className="text-center py-12 text-gray-400">
+        <EmptyState>
           <div className="text-4xl mb-3">&#x2699;</div>
           <p className="text-sm">No variables yet. Add your first variable.</p>
-        </div>
+        </EmptyState>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <Card padding="none">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
@@ -158,15 +159,15 @@ export default function VariableList(): React.ReactNode {
                   </td>
                   <td className="px-4 py-3 text-gray-500">{v.description || '-'}</td>
                   <td className="px-4 py-3">
-                    <span
-                      className={`px-2 py-0.5 text-xs rounded-full font-medium ${
+                    <Badge
+                      color={
                         v.view_type === 'secret'
                           ? 'bg-yellow-100 text-yellow-800'
                           : 'bg-gray-100 text-gray-600'
-                      }`}
+                      }
                     >
                       {v.view_type}
-                    </span>
+                    </Badge>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
@@ -190,7 +191,7 @@ export default function VariableList(): React.ReactNode {
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
 
       {showForm && <VariableForm onClose={handleCloseForm} editingVariable={editingVar} />}

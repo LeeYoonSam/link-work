@@ -6,6 +6,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell
 } from 'recharts'
+import { Card, SectionTitle, EmptyState, button } from '../ui'
 
 const ENTITY_LABELS: Record<string, string> = {
   project: 'Project',
@@ -115,7 +116,7 @@ export default function WeeklyReport(): React.ReactNode {
           {!isCurrentWeek && (
             <button
               onClick={goToCurrentWeek}
-              className="px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+              className={`px-3 py-1.5 text-sm rounded-lg ${button.primary}`}
             >
               Today
             </button>
@@ -134,14 +135,14 @@ export default function WeeklyReport(): React.ReactNode {
                 .filter((s) => s.entity_type === type)
                 .reduce((sum, s) => sum + s.count, 0)
               return (
-                <div key={type} className="bg-white rounded-xl border border-gray-200 p-4">
+                <Card key={type} padding="sm">
                   <div className="flex items-center gap-2 mb-1">
                     <div className="w-3 h-3 rounded-full" style={{ backgroundColor: ENTITY_COLORS[type] }} />
                     <span className="text-sm text-gray-500">{ENTITY_LABELS[type]}</span>
                   </div>
                   <div className="text-2xl font-bold text-gray-900">{count}</div>
                   <div className="text-xs text-gray-400">changes</div>
-                </div>
+                </Card>
               )
             })}
           </div>
@@ -149,12 +150,10 @@ export default function WeeklyReport(): React.ReactNode {
           {/* Charts Row */}
           <div className="grid grid-cols-3 gap-4">
             {/* Daily Activity Bar Chart */}
-            <div className="col-span-2 bg-white rounded-xl border border-gray-200 p-4">
-              <h3 className="text-sm font-semibold text-gray-700 mb-4">Daily Activity</h3>
+            <Card padding="sm" className="col-span-2">
+              <SectionTitle className="mb-4">Daily Activity</SectionTitle>
               {totalActivities === 0 ? (
-                <div className="flex items-center justify-center h-48 text-gray-400 text-sm">
-                  No activity this week
-                </div>
+                <EmptyState compact>No activity this week</EmptyState>
               ) : (
                 <ResponsiveContainer width="100%" height={240}>
                   <BarChart data={dailyChartData}>
@@ -169,14 +168,14 @@ export default function WeeklyReport(): React.ReactNode {
                   </BarChart>
                 </ResponsiveContainer>
               )}
-            </div>
+            </Card>
 
             {/* Pie Charts */}
-            <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-4">
+            <Card padding="sm" className="space-y-4">
               <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">By Type</h3>
+                <SectionTitle className="mb-2">By Type</SectionTitle>
                 {entityTotals.length === 0 ? (
-                  <div className="flex items-center justify-center h-24 text-gray-400 text-xs">No data</div>
+                  <EmptyState compact>No data</EmptyState>
                 ) : (
                   <ResponsiveContainer width="100%" height={120}>
                     <PieChart>
@@ -191,9 +190,9 @@ export default function WeeklyReport(): React.ReactNode {
                 )}
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">By Action</h3>
+                <SectionTitle className="mb-2">By Action</SectionTitle>
                 {actionTotals.length === 0 ? (
-                  <div className="flex items-center justify-center h-24 text-gray-400 text-xs">No data</div>
+                  <EmptyState compact>No data</EmptyState>
                 ) : (
                   <ResponsiveContainer width="100%" height={120}>
                     <PieChart>
@@ -207,18 +206,16 @@ export default function WeeklyReport(): React.ReactNode {
                   </ResponsiveContainer>
                 )}
               </div>
-            </div>
+            </Card>
           </div>
 
           {/* Activity Log Table */}
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-4">
+          <Card padding="sm">
+            <SectionTitle className="mb-4">
               Activity Log ({activities.length})
-            </h3>
+            </SectionTitle>
             {activities.length === 0 ? (
-              <div className="text-center py-8 text-gray-400 text-sm">
-                No activity recorded this week
-              </div>
+              <EmptyState>No activity recorded this week</EmptyState>
             ) : (
               <div className="overflow-auto max-h-80">
                 <table className="w-full text-sm">
@@ -265,7 +262,7 @@ export default function WeeklyReport(): React.ReactNode {
                 </table>
               </div>
             )}
-          </div>
+          </Card>
         </>
       )}
     </div>

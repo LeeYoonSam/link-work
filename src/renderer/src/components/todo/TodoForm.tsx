@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTodoStore } from '../../stores/todoStore'
 import type { Todo, TodoTag } from '../../types'
+import { SectionTitle, button } from '../ui'
 
 interface TodoFormProps {
   todo?: Todo | null
@@ -104,9 +105,7 @@ export default function TodoForm({ todo, onClose }: TodoFormProps): React.ReactN
       <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
         <form onSubmit={handleSubmit}>
           <div className="p-6 space-y-4">
-            <h2 className="text-lg font-semibold text-gray-900">
-              {todo ? 'TODO 수정' : '새 TODO'}
-            </h2>
+            <SectionTitle variant="page">{todo ? 'TODO 수정' : '새 TODO'}</SectionTitle>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">작업</label>
@@ -239,7 +238,7 @@ export default function TodoForm({ todo, onClose }: TodoFormProps): React.ReactN
             <button
               type="submit"
               disabled={!title.trim()}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 disabled:opacity-40 transition-colors"
+              className={`px-4 py-2 text-sm font-medium disabled:opacity-40 ${button.primary}`}
             >
               {todo ? '수정' : '추가'}
             </button>
