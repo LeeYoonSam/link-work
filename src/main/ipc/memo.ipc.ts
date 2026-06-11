@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
+import { setMemoArchived } from '../utils/memo-helpers'
 
 interface MemoInput {
   content: string
@@ -64,17 +65,13 @@ export function registerMemoIpc(): void {
   })
 
   ipcMain.handle('memo:archive', (_event, id: number) => {
-    db.prepare("UPDATE memos SET is_archived = 1, updated_at = datetime('now') WHERE id = ?").run(
-      id
-    )
+    setMemoArchived(db, id, true)
     logActivity('memo', 'archive', id)
     return { success: true }
   })
 
   ipcMain.handle('memo:restore', (_event, id: number) => {
-    db.prepare("UPDATE memos SET is_archived = 0, updated_at = datetime('now') WHERE id = ?").run(
-      id
-    )
+    setMemoArchived(db, id, false)
     logActivity('memo', 'restore', id)
     return { success: true }
   })

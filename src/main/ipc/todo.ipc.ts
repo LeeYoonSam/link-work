@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
-import { saveTodoHistory, saveTodoTags } from '../utils/todo-helpers'
+import { saveTodoHistory, saveTodoTags, setTodoCompletion } from '../utils/todo-helpers'
 
 interface TodoInput {
   title: string
@@ -149,14 +149,14 @@ export function registerTodoIpc(): void {
   })
 
   ipcMain.handle('todo:complete', (_event, id: number) => {
-    db.prepare("UPDATE todos SET is_completed = 1, completed_at = datetime('now', 'localtime'), updated_at = datetime('now', 'localtime') WHERE id = ?").run(id)
+    setTodoCompletion(db, id, true)
     saveHistory(db, id, 'complete')
     logActivity('todo', 'complete', id)
     return { success: true }
   })
 
   ipcMain.handle('todo:restore', (_event, id: number) => {
-    db.prepare("UPDATE todos SET is_completed = 0, completed_at = NULL, updated_at = datetime('now', 'localtime') WHERE id = ?").run(id)
+    setTodoCompletion(db, id, false)
     saveHistory(db, id, 'restore')
     logActivity('todo', 'restore', id)
     return { success: true }

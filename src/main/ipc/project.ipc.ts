@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
-import { calculateQaDates } from '../utils/project-dates'
+import { applyProjectAutoStatus, calculateQaDates } from '../utils/project-dates'
 
 interface ProjectInput {
   name: string
@@ -29,22 +29,6 @@ interface ProjectRow {
   status_manual: number
   created_at: string
   updated_at: string
-}
-
-function calculateAutoStatus(project: ProjectRow): string {
-  const today = new Date().toISOString().split('T')[0]
-  if (today < project.dev_start_date) return 'scheduled'
-  if (today > project.deploy_date) return 'completed'
-  if (today === project.deploy_date) return 'deploy'
-  if (today >= project.qa_start_date && today <= project.qa_end_date) return 'qa'
-  return 'development'
-}
-
-function applyAutoStatus(project: ProjectRow): ProjectRow {
-  if (project.status_manual === 0) {
-    return { ...project, status: calculateAutoStatus(project) }
-  }
-  return project
 }
 
 export function registerProjectIpc(): void {
@@ -79,7 +63,7 @@ export function registerProjectIpc(): void {
 
   ipcMain.handle('project:list', (_event, status?: string) => {
     const rows = db.prepare('SELECT * FROM projects ORDER BY created_at DESC').all() as ProjectRow[]
-    const projects = rows.map(applyAutoStatus)
+    const projects = rows.map(applyProjectAutoStatus)
     if (status) {
       return projects.filter((p) => p.status === status)
     }
@@ -89,7 +73,7 @@ export function registerProjectIpc(): void {
   ipcMain.handle('project:get', (_event, id: number) => {
     const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined
     if (!row) return null
-    return applyAutoStatus(row)
+    return applyProjectAutoStatus(row)
   })
 
   const ALLOWED_PROJECT_FIELDS = new Set([
@@ -112,7 +96,7 @@ export function registerProjectIpc(): void {
     db.prepare(`UPDATE projects SET ${fields.join(', ')} WHERE id = ?`).run(...values)
     const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow
     logActivity('project', 'update', id, row.name, Object.keys(input).join(', '))
-    return applyAutoStatus(row)
+    return applyProjectAutoStatus(row)
   })
 
   ipcMain.handle('project:delete', (_event, id: number) => {
