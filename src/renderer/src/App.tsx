@@ -12,6 +12,7 @@ import TodoView from './components/todo/TodoView'
 import WeeklyReport from './components/report/WeeklyReport'
 import TrayPanel from './components/tray/TrayPanel'
 import AiChatView from './components/ai/AiChatView'
+import RecordingView from './components/recording/RecordingView'
 import { useProjectStore } from './stores/projectStore'
 
 function App(): React.ReactNode {
@@ -55,6 +56,8 @@ function App(): React.ReactNode {
         return <WeeklyReport />
       case 'ai':
         return <AiChatView />
+      case 'recordings':
+        return <RecordingView />
       default:
         return <Dashboard />
     }

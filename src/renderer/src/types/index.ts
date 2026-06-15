@@ -390,3 +390,141 @@ export interface AiAPI {
   onStream: (callback: (event: AiStreamEvent) => void) => () => void
   onDataChanged: (callback: (data: { entity: string }) => void) => () => void
 }
+
+// ── 회의 녹음 (Meeting Recording) — docs/MEETING_RECORDING.md ──
+
+export type MeetingStatus =
+  | 'recording'
+  | 'processing'
+  | 'transcribed'
+  | 'summarized'
+  | 'failed'
+export type MeetingSource = 'mic' | 'mic+system'
+
+export interface Meeting {
+  id: number
+  title: string
+  status: MeetingStatus
+  audio_path: string | null
+  audio_mime: string
+  duration_ms: number
+  language: string
+  source: MeetingSource
+  project_id: number | null
+  calendar_event_id: string | null
+  calendar_event_title: string | null
+  error: string | null
+  started_at: string
+  created_at: string
+  updated_at: string
+}
+
+export interface MeetingSpeaker {
+  id: number
+  meeting_id: number
+  speaker_key: string
+  label: string
+  display_name: string | null
+  color: string
+  sort_order: number
+}
+
+export interface MeetingSegment {
+  id: number
+  meeting_id: number
+  start_ms: number
+  end_ms: number
+  speaker_id: number | null
+  text: string
+  confidence: number | null
+  speaker_corrected: number
+  sort_order: number
+}
+
+export interface MeetingCut {
+  id: number
+  meeting_id: number
+  type: 'silence' | 'filler' | 'manual'
+  start_ms: number
+  end_ms: number
+  enabled: number
+  auto: number
+  note: string | null
+}
+
+export interface ActionItem {
+  text: string
+  assignee?: string | null
+  due?: string | null
+  speaker_id?: number | null
+  source_segment_id?: number | null
+  todo_id?: number | null
+}
+
+export interface MeetingSummary {
+  id: number
+  meeting_id: number
+  tldr: string | null
+  key_points: string[]
+  decisions: string[]
+  action_items: ActionItem[]
+  next_steps: string[]
+  model: string | null
+  generated_at: string
+}
+
+export interface MeetingDetail {
+  meeting: Meeting
+  speakers: MeetingSpeaker[]
+  segments: MeetingSegment[]
+  cuts: MeetingCut[]
+  summary: MeetingSummary | null
+}
+
+export interface RecordingStreamEvent {
+  meetingId: number
+  phase: 'transcribe' | 'diarize' | 'vad' | 'merge' | 'summarize' | 'done' | 'error'
+  progress?: number
+  message?: string
+  error?: string
+}
+
+export interface CalendarMatch {
+  id: string
+  title: string
+  start: string
+}
+
+export interface RecordingAPI {
+  list: () => Promise<Meeting[]>
+  get: (id: number) => Promise<MeetingDetail | null>
+  createDraft: (input: { title?: string; source?: MeetingSource }) => Promise<{ id: number }>
+  saveAudio: (
+    id: number,
+    bytes: ArrayBuffer,
+    meta: { mime: string; durationMs: number }
+  ) => Promise<{ path: string }>
+  process: (id: number) => Promise<{ success: boolean; error?: string; transcribed?: boolean }>
+  summarize: (id: number) => Promise<{ success: boolean; error?: string }>
+  rename: (id: number, title: string) => Promise<{ success: boolean }>
+  remove: (id: number) => Promise<{ success: boolean }>
+  updateSpeaker: (
+    speakerId: number,
+    input: { display_name?: string | null; color?: string; label?: string }
+  ) => Promise<{ success: boolean }>
+  reassignSegment: (segmentId: number, speakerId: number | null) => Promise<{ success: boolean }>
+  mergeSpeakers: (
+    meetingId: number,
+    fromSpeakerId: number,
+    intoSpeakerId: number
+  ) => Promise<{ success: boolean }>
+  toggleCut: (cutId: number, enabled: boolean) => Promise<{ success: boolean }>
+  actionItemToTodo: (meetingId: number, index: number) => Promise<{ todo_id: number }>
+  calendarMatches: (id: number) => Promise<CalendarMatch[]>
+  linkCalendar: (
+    id: number,
+    eventId: string | null,
+    eventTitle: string | null
+  ) => Promise<{ success: boolean }>
+  onStream: (cb: (e: RecordingStreamEvent) => void) => () => void
+}

@@ -131,6 +131,38 @@ const api = {
       ipcRenderer.on('ai:dataChanged', handler)
       return () => ipcRenderer.removeListener('ai:dataChanged', handler)
     }
+  },
+  recording: {
+    list: () => ipcRenderer.invoke('recording:list'),
+    get: (id: number) => ipcRenderer.invoke('recording:get', id),
+    createDraft: (input: { title?: string; source?: string }) =>
+      ipcRenderer.invoke('recording:createDraft', input),
+    saveAudio: (id: number, bytes: ArrayBuffer, meta: { mime: string; durationMs: number }) =>
+      ipcRenderer.invoke('recording:saveAudio', id, bytes, meta),
+    process: (id: number) => ipcRenderer.invoke('recording:process', id),
+    summarize: (id: number) => ipcRenderer.invoke('recording:summarize', id),
+    rename: (id: number, title: string) => ipcRenderer.invoke('recording:rename', id, title),
+    remove: (id: number) => ipcRenderer.invoke('recording:remove', id),
+    updateSpeaker: (
+      speakerId: number,
+      input: { display_name?: string | null; color?: string; label?: string }
+    ) => ipcRenderer.invoke('recording:updateSpeaker', speakerId, input),
+    reassignSegment: (segmentId: number, speakerId: number | null) =>
+      ipcRenderer.invoke('recording:reassignSegment', segmentId, speakerId),
+    mergeSpeakers: (meetingId: number, fromSpeakerId: number, intoSpeakerId: number) =>
+      ipcRenderer.invoke('recording:mergeSpeakers', meetingId, fromSpeakerId, intoSpeakerId),
+    toggleCut: (cutId: number, enabled: boolean) =>
+      ipcRenderer.invoke('recording:toggleCut', cutId, enabled),
+    actionItemToTodo: (meetingId: number, index: number) =>
+      ipcRenderer.invoke('recording:actionItemToTodo', meetingId, index),
+    calendarMatches: (id: number) => ipcRenderer.invoke('recording:calendarMatches', id),
+    linkCalendar: (id: number, eventId: string | null, eventTitle: string | null) =>
+      ipcRenderer.invoke('recording:linkCalendar', id, eventId, eventTitle),
+    onStream: (callback: (event: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => callback(data)
+      ipcRenderer.on('recording:stream', handler)
+      return () => ipcRenderer.removeListener('recording:stream', handler)
+    }
   }
 }
 

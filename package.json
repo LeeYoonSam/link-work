@@ -29,6 +29,11 @@
     "zod": "^4.4.3",
     "zustand": "^5.0.0"
   },
+  "optionalDependencies": {
+    "@fugood/whisper.node": "^1.0.22",
+    "sherpa-onnx": "^1.0.0",
+    "silero-vad-node": "^1.0.0"
+  },
   "devDependencies": {
     "@electron/rebuild": "^3.7.1",
     "@tailwindcss/vite": "^4.0.0",
@@ -51,12 +56,17 @@
     "appId": "com.linkwork.app",
     "productName": "LinkWork",
     "asarUnpack": [
-      "node_modules/@anthropic-ai/claude-agent-sdk/**"
+      "node_modules/@anthropic-ai/claude-agent-sdk/**",
+      "**/*.node"
     ],
     "mac": {
       "target": "dmg",
       "icon": "resources/icon.icns",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "회의 녹음을 위해 마이크 접근이 필요합니다.",
+        "NSAudioCaptureUsageDescription": "회의 상대방 음성 녹음을 위해 시스템 오디오 접근이 필요합니다."
+      }
     },
     "files": [
       "out/**/*",

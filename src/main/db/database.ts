@@ -207,6 +207,76 @@ export function initDatabase(): void {
       duration_ms INTEGER,
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
+
+    -- ── 회의 녹음 (docs/MEETING_RECORDING.md) ──
+    CREATE TABLE IF NOT EXISTS meetings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL DEFAULT '제목 없는 회의',
+      status TEXT NOT NULL DEFAULT 'recording',
+      audio_path TEXT,
+      audio_mime TEXT DEFAULT 'audio/webm',
+      duration_ms INTEGER DEFAULT 0,
+      language TEXT DEFAULT 'ko',
+      source TEXT DEFAULT 'mic',
+      project_id INTEGER,
+      calendar_event_id TEXT,
+      calendar_event_title TEXT,
+      error TEXT,
+      started_at TEXT DEFAULT (datetime('now', 'localtime')),
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS meeting_speakers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id INTEGER NOT NULL,
+      speaker_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      display_name TEXT,
+      color TEXT NOT NULL DEFAULT '#4F8EF7',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS meeting_segments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id INTEGER NOT NULL,
+      start_ms INTEGER NOT NULL,
+      end_ms INTEGER NOT NULL,
+      speaker_id INTEGER,
+      text TEXT NOT NULL DEFAULT '',
+      confidence REAL,
+      speaker_corrected INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+      FOREIGN KEY (speaker_id) REFERENCES meeting_speakers(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS meeting_cuts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id INTEGER NOT NULL,
+      type TEXT NOT NULL DEFAULT 'silence',
+      start_ms INTEGER NOT NULL,
+      end_ms INTEGER NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      auto INTEGER NOT NULL DEFAULT 1,
+      note TEXT,
+      FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS meeting_summaries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id INTEGER NOT NULL UNIQUE,
+      tldr TEXT,
+      key_points TEXT,
+      decisions TEXT,
+      action_items TEXT,
+      next_steps TEXT,
+      model TEXT,
+      generated_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+    );
   `)
 
   // Migrations for existing databases

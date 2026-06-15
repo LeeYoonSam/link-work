@@ -10,6 +10,7 @@ export type MenuIconName =
   | 'calendar'
   | 'reports'
   | 'ai'
+  | 'recordings'
 
 const PATHS: Record<MenuIconName, React.ReactNode> = {
   dashboard: (
@@ -145,6 +146,15 @@ const PATHS: Record<MenuIconName, React.ReactNode> = {
         strokeLinejoin="round"
       />
       <circle cx="4.5" cy="18.5" r="1.3" fill="#4DABF7" stroke={INK} strokeWidth="1.4" />
+    </>
+  ),
+  recordings: (
+    <>
+      <rect x="8.3" y="2.5" width="7.4" height="12" rx="3.7" fill="#FF8787" stroke={INK} strokeWidth="1.9" />
+      <path d="M5 11a7 7 0 0 0 14 0" fill="none" stroke={INK} strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M12 18v3.2" stroke={INK} strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M8.6 21.4h6.8" stroke={INK} strokeWidth="1.9" strokeLinecap="round" />
+      <circle cx="12" cy="6" r="1.5" fill="#fff" />
     </>
   )
 }

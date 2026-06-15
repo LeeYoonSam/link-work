@@ -1,5 +1,6 @@
-import { app, shell, BrowserWindow } from 'electron'
-import { join } from 'path'
+import { app, shell, BrowserWindow, protocol, net } from 'electron'
+import { join, basename } from 'path'
+import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initDatabase, closeDatabase } from './db/database'
 import { registerProjectIpc } from './ipc/project.ipc'
@@ -13,11 +14,21 @@ import { registerReportIpc } from './ipc/report.ipc'
 import { registerTodoIpc } from './ipc/todo.ipc'
 import { registerTodoTagIpc } from './ipc/todo-tag.ipc'
 import { registerAiIpc } from './ipc/ai.ipc'
+import { registerRecordingIpc } from './ipc/recording.ipc'
 import { cancelAllAiQueries } from './services/ai-agent'
 import { startNotificationService, stopNotificationService } from './services/notification'
 import { createTrayWidget, destroyTrayWidget } from './services/tray-widget'
 
 let mainWindow: BrowserWindow | null = null
+
+// 녹음 오디오 재생용 커스텀 프로토콜 (renderer는 userData 경로를 모르고 file://는 막힘).
+// 반드시 app ready 전에 등록해야 한다.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'linkwork-media',
+    privileges: { secure: true, supportFetchAPI: true, stream: true, bypassCSP: true }
+  }
+])
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -84,6 +95,13 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  // 녹음 오디오 스트리밍 (linkwork-media://audio/<파일명>). basename으로 경로 탈출 차단.
+  protocol.handle('linkwork-media', (request) => {
+    const fileName = basename(decodeURIComponent(new URL(request.url).pathname))
+    const filePath = join(app.getPath('userData'), 'recordings', fileName)
+    return net.fetch(pathToFileURL(filePath).toString())
+  })
+
   initDatabase()
   registerProjectIpc()
   registerTaskIpc()
@@ -96,6 +114,7 @@ app.whenReady().then(() => {
   registerTodoIpc()
   registerTodoTagIpc()
   registerAiIpc()
+  registerRecordingIpc()
   startNotificationService()
   createTrayWidget(() => createWindow())
 

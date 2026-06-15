@@ -1,0 +1,227 @@
+import { useEffect, useRef, useState } from 'react'
+import { useRecorder } from '../../hooks/useRecorder'
+import { useRecordingStore } from '../../stores/recordingStore'
+import type { MeetingSource } from '../../types'
+import { button } from '../ui'
+
+function formatElapsed(ms: number): string {
+  const totalSec = Math.floor(ms / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+interface Props {
+  onDone: () => void
+}
+
+export default function RecorderControls({ onDone }: Props): React.ReactNode {
+  const { createDraft, saveAndProcess } = useRecordingStore()
+  const { state, elapsedMs, level, error, start, pause, resume, stop, reset } = useRecorder()
+
+  const [source, setSource] = useState<MeetingSource>('mic')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const draftIdRef = useRef<number | null>(null)
+
+  // 레벨 미터 바 개수
+  const BAR_COUNT = 20
+  const activeBars = Math.round(level * BAR_COUNT)
+
+  const handleStart = async (): Promise<void> => {
+    setSaveError(null)
+    try {
+      const id = await createDraft({ source })
+      draftIdRef.current = id
+      await start({ source })
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : '녹음 시작 실패')
+    }
+  }
+
+  const handleStop = async (): Promise<void> => {
+    if (draftIdRef.current == null) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const { blob, durationMs, mime } = await stop()
+      await saveAndProcess(draftIdRef.current, blob, durationMs, mime)
+      reset()
+      onDone()
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : '저장 실패')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleCancel = (): void => {
+    reset()
+    onDone()
+  }
+
+  const isIdle = state === 'idle'
+  const isRecording = state === 'recording'
+  const isPaused = state === 'paused'
+  const isStopped = state === 'stopped'
+
+  return (
+    <div className="px-4 py-3 space-y-3">
+      {/* 소스 선택 (idle 상태에서만) */}
+      {isIdle && (
+        <div className="flex bg-gray-100 rounded-md p-0.5 w-fit">
+          {(['mic', 'mic+system'] as MeetingSource[]).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setSource(s)}
+              className={`px-3 py-1 text-xs rounded font-medium transition-colors ${
+                source === s
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {s === 'mic' ? '마이크' : '마이크 + 시스템'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 경과 시간 + 레벨 미터 (녹음/일시정지 중) */}
+      {(isRecording || isPaused) && (
+        <div className="flex items-center gap-3">
+          {/* 시간 */}
+          <span className="font-mono text-sm font-semibold text-gray-800 tabular-nums w-14">
+            {formatElapsed(elapsedMs)}
+          </span>
+
+          {/* 레벨 미터 */}
+          <div className="flex items-end gap-px h-4" aria-label="입력 레벨">
+            {Array.from({ length: BAR_COUNT }).map((_, i) => (
+              <div
+                key={i}
+                className={`w-1 rounded-sm transition-all duration-75 ${
+                  i < activeBars
+                    ? isPaused
+                      ? 'bg-gray-400'
+                      : i < BAR_COUNT * 0.6
+                        ? 'bg-green-500'
+                        : i < BAR_COUNT * 0.85
+                          ? 'bg-yellow-400'
+                          : 'bg-red-500'
+                    : 'bg-gray-200'
+                }`}
+                style={{ height: `${Math.max(20, ((i + 1) / BAR_COUNT) * 100)}%` }}
+              />
+            ))}
+          </div>
+
+          {/* 상태 표시 */}
+          {isPaused ? (
+            <span className="text-[11px] text-gray-400 font-medium">일시정지됨</span>
+          ) : (
+            <span className="flex items-center gap-1 text-[11px] text-red-500 font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+              녹음 중
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* 컨트롤 버튼 */}
+      <div className="flex items-center gap-2">
+        {isIdle && (
+          <button
+            type="button"
+            onClick={handleStart}
+            className={`px-3 py-1.5 text-xs font-medium ${button.primary} flex items-center gap-1.5`}
+          >
+            <RecordIcon />
+            녹음 시작
+          </button>
+        )}
+
+        {isRecording && (
+          <>
+            <button
+              type="button"
+              onClick={pause}
+              className={`px-3 py-1.5 text-xs font-medium ${button.subtle}`}
+            >
+              일시정지
+            </button>
+            <button
+              type="button"
+              onClick={handleStop}
+              disabled={saving}
+              className={`px-3 py-1.5 text-xs font-medium ${button.dark} disabled:opacity-50`}
+            >
+              {saving ? '저장 중...' : '종료 및 저장'}
+            </button>
+          </>
+        )}
+
+        {isPaused && (
+          <>
+            <button
+              type="button"
+              onClick={resume}
+              className={`px-3 py-1.5 text-xs font-medium ${button.primary}`}
+            >
+              재개
+            </button>
+            <button
+              type="button"
+              onClick={handleStop}
+              disabled={saving}
+              className={`px-3 py-1.5 text-xs font-medium ${button.dark} disabled:opacity-50`}
+            >
+              {saving ? '저장 중...' : '종료 및 저장'}
+            </button>
+          </>
+        )}
+
+        {isStopped && (
+          <span className="text-xs text-gray-500">저장 완료</span>
+        )}
+
+        {!isIdle && (
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            취소
+          </button>
+        )}
+
+        {isIdle && (
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            닫기
+          </button>
+        )}
+      </div>
+
+      {/* 오류 표시 */}
+      {(error ?? saveError) && (
+        <p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-md">
+          {error ?? saveError}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function RecordIcon(): React.ReactNode {
+  return (
+    <svg width={12} height={12} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <circle cx="12" cy="12" r="10" />
+    </svg>
+  )
+}

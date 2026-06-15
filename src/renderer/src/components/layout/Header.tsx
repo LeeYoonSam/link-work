@@ -9,7 +9,8 @@ const viewTitles: Record<string, string> = {
   memos: 'Memos',
   calendar: 'Calendar',
   reports: 'Reports',
-  ai: 'AI 대화'
+  ai: 'AI 대화',
+  recordings: '회의 녹음'
 }
 
 export default function Header(): React.ReactNode {

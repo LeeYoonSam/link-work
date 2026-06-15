@@ -9,6 +9,7 @@ export type EntityType =
   | 'memo_category'
   | 'todo'
   | 'todo_tag'
+  | 'meeting'
 export type ActionType = 'create' | 'update' | 'delete' | 'archive' | 'restore' | 'complete'
 
 export function logActivity(

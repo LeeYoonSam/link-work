@@ -1,0 +1,395 @@
+import { useEffect, useRef, useState } from 'react'
+import { useRecordingStore } from '../../stores/recordingStore'
+import type { MeetingStatus } from '../../types'
+import { Badge, IconButton, ProgressBar, TrashIcon, PencilIcon, XIcon, LinkIcon } from '../ui'
+import AudioPlayer from './AudioPlayer'
+import SpeakerTimeline from './SpeakerTimeline'
+import SummaryPanel from './SummaryPanel'
+import SpeakerEditor from './SpeakerEditor'
+import type { AudioPlayerHandle } from './AudioPlayer'
+
+type Tab = 'timeline' | 'summary' | 'speakers'
+
+const STATUS_STYLES: Record<MeetingStatus, { badge: string; label: string }> = {
+  recording: { badge: 'bg-red-100 text-red-700', label: '녹음 중' },
+  processing: { badge: 'bg-yellow-100 text-yellow-700', label: '처리 중' },
+  transcribed: { badge: 'bg-blue-100 text-blue-700', label: '전사 완료' },
+  summarized: { badge: 'bg-green-100 text-green-700', label: '요약 완료' },
+  failed: { badge: 'bg-gray-100 text-gray-500', label: '실패' }
+}
+
+function formatDuration(ms: number): string {
+  if (!ms) return ''
+  const totalSec = Math.floor(ms / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (h > 0) return `${h}시간 ${m}분 ${s}초`
+  if (m > 0) return `${m}분 ${s}초`
+  return `${s}초`
+}
+
+function formatDateTime(dateStr: string): string {
+  const d = new Date(dateStr.replace(' ', 'T'))
+  if (Number.isNaN(d.getTime())) return dateStr
+  return d.toLocaleDateString('ko-KR', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+function formatCalTime(dateStr: string): string {
+  const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return dateStr
+  return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+}
+
+interface Props {
+  onClose: () => void
+}
+
+export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
+  const {
+    current,
+    processing,
+    renameMeeting,
+    removeMeeting,
+    calendarMatches,
+    linkCalendar,
+    reprocessMeeting,
+    refreshCurrent
+  } = useRecordingStore()
+
+  const [tab, setTab] = useState<Tab>('timeline')
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleValue, setTitleValue] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [calMatches, setCalMatches] = useState<{ id: string; title: string; start: string }[]>([])
+  const [calLoaded, setCalLoaded] = useState(false)
+  const [linkingCal, setLinkingCal] = useState(false)
+  const [reprocessing, setReprocessing] = useState(false)
+
+  const audioRef = useRef<AudioPlayerHandle>(null)
+
+  const meeting = current?.meeting
+  const speakers = current?.speakers ?? []
+  const segments = current?.segments ?? []
+  const cuts = current?.cuts ?? []
+  const summary = current?.summary ?? null
+
+  // 제목 편집 초기화
+  useEffect(() => {
+    if (meeting) {
+      setTitleValue(meeting.title)
+      setEditingTitle(false)
+      setConfirmDelete(false)
+    }
+  }, [meeting?.id])
+
+  // 탭 자동 전환: 상태에 따라
+  useEffect(() => {
+    if (!meeting) return
+    if (meeting.status === 'summarized' && summary) {
+      setTab('summary')
+    } else if (segments.length > 0) {
+      setTab('timeline')
+    }
+  }, [meeting?.id, meeting?.status])
+
+  // 캘린더 매칭 로드 (회의 ID 변경 시)
+  useEffect(() => {
+    if (!meeting) return
+    setCalLoaded(false)
+    setCalMatches([])
+  }, [meeting?.id])
+
+  useEffect(() => {
+    if (!meeting || calLoaded) return
+    setCalLoaded(true)
+    calendarMatches(meeting.id)
+      .then(setCalMatches)
+      .catch(() => setCalMatches([]))
+  }, [meeting?.id, calLoaded])
+
+  if (!meeting) return null
+
+  const statusStyle = STATUS_STYLES[meeting.status] ?? STATUS_STYLES.failed
+  const isProcessing =
+    processing?.meetingId === meeting.id &&
+    processing.phase !== 'done' &&
+    processing.phase !== 'error'
+  const processingPct = Math.round((processing?.progress ?? 0) * 100)
+
+  const phaseLabel: Record<string, string> = {
+    transcribe: '전사 중',
+    diarize: '화자 분리 중',
+    vad: 'VAD 처리 중',
+    merge: '병합 중',
+    summarize: 'AI 요약 생성 중'
+  }
+
+  const handleTitleSave = async (): Promise<void> => {
+    setEditingTitle(false)
+    const trimmed = titleValue.trim()
+    if (!trimmed || trimmed === meeting.title) return
+    await renameMeeting(meeting.id, trimmed)
+    await refreshCurrent()
+  }
+
+  const handleDelete = async (): Promise<void> => {
+    setDeleting(true)
+    try {
+      await removeMeeting(meeting.id)
+      onClose()
+    } finally {
+      setDeleting(false)
+      setConfirmDelete(false)
+    }
+  }
+
+  const handleLinkCalendar = async (eventId: string, eventTitle: string): Promise<void> => {
+    setLinkingCal(true)
+    try {
+      await linkCalendar(meeting.id, eventId, eventTitle)
+      await refreshCurrent()
+      setCalMatches([])
+    } finally {
+      setLinkingCal(false)
+    }
+  }
+
+  const handleUnlinkCalendar = async (): Promise<void> => {
+    setLinkingCal(true)
+    try {
+      await linkCalendar(meeting.id, null, null)
+      await refreshCurrent()
+    } finally {
+      setLinkingCal(false)
+    }
+  }
+
+  const handleReprocess = async (): Promise<void> => {
+    setReprocessing(true)
+    try {
+      await reprocessMeeting(meeting.id)
+    } finally {
+      setReprocessing(false)
+    }
+  }
+
+  const TABS: { id: Tab; label: string }[] = [
+    { id: 'timeline', label: `타임라인 (${segments.length})` },
+    { id: 'summary', label: '요약' },
+    { id: 'speakers', label: `화자 (${speakers.length})` }
+  ]
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      {/* 헤더 */}
+      <div className="px-5 pt-4 pb-3 bg-white border-b border-gray-200 shrink-0">
+        <div className="flex items-start gap-2 mb-2">
+          {/* 제목 인라인 편집 */}
+          {editingTitle ? (
+            <input
+              type="text"
+              value={titleValue}
+              onChange={(e) => setTitleValue(e.target.value)}
+              onBlur={handleTitleSave}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleTitleSave()
+                if (e.key === 'Escape') {
+                  setTitleValue(meeting.title)
+                  setEditingTitle(false)
+                }
+              }}
+              autoFocus
+              className="flex-1 text-base font-semibold text-gray-900 border-b-2 border-blue-400 focus:outline-none bg-transparent pb-0.5"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setEditingTitle(true)}
+              className="flex-1 text-left text-base font-semibold text-gray-900 hover:text-gray-700 transition-colors leading-snug"
+              title="클릭하여 제목 편집"
+            >
+              {meeting.title}
+            </button>
+          )}
+
+          <div className="flex items-center gap-0.5 shrink-0">
+            <IconButton title="제목 편집" onClick={() => setEditingTitle(true)} tone="default">
+              <PencilIcon size={14} />
+            </IconButton>
+            <IconButton title="삭제" onClick={() => setConfirmDelete(true)} tone="danger">
+              <TrashIcon size={14} />
+            </IconButton>
+            <IconButton title="닫기" onClick={onClose} tone="default">
+              <XIcon size={14} />
+            </IconButton>
+          </div>
+        </div>
+
+        {/* 메타 정보 */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge color={statusStyle.badge} size="xs">
+            {statusStyle.label}
+          </Badge>
+          <span className="text-[11px] text-gray-400">{formatDateTime(meeting.started_at)}</span>
+          {meeting.duration_ms > 0 && (
+            <span className="text-[11px] text-gray-400">{formatDuration(meeting.duration_ms)}</span>
+          )}
+          {meeting.source === 'mic+system' && (
+            <span className="text-[11px] text-gray-400">마이크 + 시스템</span>
+          )}
+          {meeting.calendar_event_title && (
+            <button
+              type="button"
+              onClick={handleUnlinkCalendar}
+              disabled={linkingCal}
+              className="flex items-center gap-1 text-[11px] text-blue-500 hover:text-blue-700 transition-colors disabled:opacity-50"
+              title="클릭하여 캘린더 연결 해제"
+            >
+              <LinkIcon size={11} />
+              {meeting.calendar_event_title}
+            </button>
+          )}
+        </div>
+
+        {/* 처리 중 프로그레스 */}
+        {isProcessing && (
+          <div className="mt-3 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-500">
+                {phaseLabel[processing?.phase ?? ''] ?? '처리 중'}
+              </span>
+              <span className="text-xs text-gray-400">{processingPct}%</span>
+            </div>
+            <ProgressBar percent={processingPct} color="bg-blue-500" height="h-1" />
+            {processing?.message && (
+              <p className="text-[11px] text-gray-400">{processing.message}</p>
+            )}
+          </div>
+        )}
+
+        {/* 실패 배너 */}
+        {meeting.status === 'failed' && meeting.error && (
+          <div className="mt-2 flex items-start gap-2 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+            <p className="text-xs text-red-600 flex-1">{meeting.error}</p>
+            <button
+              type="button"
+              onClick={handleReprocess}
+              disabled={reprocessing}
+              className="text-xs text-red-600 hover:text-red-800 underline shrink-0 disabled:opacity-50"
+            >
+              {reprocessing ? '재처리 중...' : '다시 처리'}
+            </button>
+          </div>
+        )}
+
+        {/* 캘린더 매칭 제안 배너 */}
+        {!meeting.calendar_event_id && calMatches.length > 0 && (
+          <div className="mt-2 bg-blue-50 border border-blue-200 rounded-md px-3 py-2 space-y-1.5">
+            <p className="text-xs font-medium text-blue-700">캘린더 이벤트와 연결하시겠어요?</p>
+            <div className="space-y-1">
+              {calMatches.slice(0, 3).map((ev) => (
+                <button
+                  key={ev.id}
+                  type="button"
+                  onClick={() => void handleLinkCalendar(ev.id, ev.title)}
+                  disabled={linkingCal}
+                  className="flex items-center gap-2 w-full text-left text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-100 px-2 py-1 rounded transition-colors disabled:opacity-50"
+                >
+                  <LinkIcon size={11} />
+                  <span className="font-medium">{ev.title}</span>
+                  <span className="text-blue-400 ml-auto">{formatCalTime(ev.start)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 오디오 플레이어 */}
+      <div className="px-5 py-2 bg-white border-b border-gray-100 shrink-0">
+        <AudioPlayer
+          ref={audioRef}
+          audioPath={meeting.audio_path}
+          cuts={cuts}
+          durationMs={meeting.duration_ms}
+        />
+      </div>
+
+      {/* 탭 네비게이션 */}
+      <div className="flex border-b border-gray-200 bg-white shrink-0 px-5">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              tab === t.id
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-400 hover:text-gray-600'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* 탭 콘텐츠 */}
+      <div className="flex-1 overflow-y-auto px-5 py-4 min-h-0">
+        {tab === 'timeline' && (
+          <SpeakerTimeline
+            segments={segments}
+            speakers={speakers}
+            cuts={cuts}
+            onSeek={(ms) => audioRef.current?.seekTo(ms)}
+          />
+        )}
+        {tab === 'summary' && <SummaryPanel summary={summary} meetingId={meeting.id} />}
+        {tab === 'speakers' && <SpeakerEditor speakers={speakers} meetingId={meeting.id} />}
+      </div>
+
+      {/* 삭제 확인 모달 */}
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+          onClick={() => setConfirmDelete(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl p-6 w-80 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-semibold text-gray-800">회의 삭제</p>
+            <p className="text-sm text-gray-600">
+              <span className="font-medium">"{meeting.title}"</span>을(를) 삭제합니다.
+              오디오 파일과 전사 내용이 모두 삭제되며 복구할 수 없습니다.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDelete()}
+                disabled={deleting}
+                className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {deleting ? '삭제 중...' : '삭제'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
