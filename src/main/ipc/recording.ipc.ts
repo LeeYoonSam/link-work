@@ -5,12 +5,16 @@ import { getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
 import { runMeetingPipeline } from '../services/meeting-pipeline'
 import { runMeetingSummary } from '../services/meeting-summary'
-import { getWeekEvents } from '../services/google-calendar'
 import type { RecordingStreamEvent, SendStream, SummaryActionItem } from '../services/meeting-types'
 
 // 녹음 오디오 저장 위치 (userData 밖이 아니라 안 — 백업/유지 일관성)
 function recordingsDir(): string {
   return join(app.getPath('userData'), 'recordings')
+}
+
+// 화자분리용 채널 에너지 envelope 파일 경로 ({id}.channels.json)
+function channelEnergyPath(id: number): string {
+  return join(recordingsDir(), `${id}.channels.json`)
 }
 
 interface SummaryRow {
@@ -48,12 +52,6 @@ function mapSummary(row: SummaryRow | undefined): unknown {
     model: row.model,
     generated_at: row.generated_at
   }
-}
-
-// 'YYYY-MM-DD HH:MM:SS' (localtime) → epoch ms
-function localStringToMs(s: string): number {
-  const t = Date.parse(s.replace(' ', 'T'))
-  return Number.isNaN(t) ? Date.now() : t
 }
 
 export function registerRecordingIpc(): void {
@@ -106,7 +104,13 @@ export function registerRecordingIpc(): void {
 
   ipcMain.handle(
     'recording:saveAudio',
-    async (_e, id: number, bytes: ArrayBuffer, meta: { mime: string; durationMs: number }) => {
+    async (
+      _e,
+      id: number,
+      bytes: ArrayBuffer,
+      meta: { mime: string; durationMs: number },
+      channelEnergy?: { hopMs: number; left: number[]; right: number[] } | null
+    ) => {
       const row = db.prepare('SELECT id FROM meetings WHERE id = ?').get(id)
       if (!row) throw new Error('존재하지 않는 회의입니다.')
       await mkdir(recordingsDir(), { recursive: true })
@@ -114,6 +118,19 @@ export function registerRecordingIpc(): void {
       const fileName = `${id}.${ext}`
       const filePath = join(recordingsDir(), fileName)
       await writeFile(filePath, Buffer.from(bytes))
+
+      // 화자분리용 채널 에너지 envelope 저장 (재처리 시 재사용). 없으면 이전 파일 정리.
+      const energyPath = channelEnergyPath(id)
+      if (channelEnergy && channelEnergy.left.length > 0) {
+        await writeFile(energyPath, JSON.stringify(channelEnergy))
+      } else {
+        try {
+          await unlink(energyPath)
+        } catch {
+          // 파일이 없으면 무시
+        }
+      }
+
       db.prepare(
         "UPDATE meetings SET audio_path = ?, audio_mime = ?, duration_ms = ?, updated_at = datetime('now','localtime') WHERE id = ?"
       ).run(fileName, meta.mime, Math.round(meta.durationMs), id)
@@ -170,6 +187,11 @@ export function registerRecordingIpc(): void {
       } catch {
         // 파일이 이미 없으면 무시
       }
+    }
+    try {
+      await unlink(channelEnergyPath(id))
+    } catch {
+      // 채널 에너지 파일이 없으면 무시
     }
     db.prepare('DELETE FROM meetings WHERE id = ?').run(id) // CASCADE로 하위 정리
     logActivity('meeting', 'delete', id)
@@ -260,31 +282,11 @@ export function registerRecordingIpc(): void {
     return { todo_id: todoId }
   })
 
-  // ── 캘린더 매칭 (녹음 시각 ±90분 후보) ──
-  ipcMain.handle('recording:calendarMatches', async (_e, id: number) => {
-    const meeting = db.prepare('SELECT started_at FROM meetings WHERE id = ?').get(id) as
-      | { started_at: string }
-      | undefined
-    if (!meeting) return []
-    const center = localStringToMs(meeting.started_at)
-    const windowMs = 90 * 60 * 1000
-    try {
-      const events = await getWeekEvents()
-      return (events as { id: string; summary: string; start: string }[])
-        .filter((ev) => Math.abs(Date.parse(ev.start) - center) <= windowMs)
-        .map((ev) => ({ id: ev.id, title: ev.summary, start: ev.start }))
-    } catch {
-      return []
-    }
+  // ── 프로젝트 연결 (projectId=null이면 해제) ──
+  ipcMain.handle('recording:linkProject', (_e, id: number, projectId: number | null) => {
+    db.prepare(
+      "UPDATE meetings SET project_id = ?, updated_at = datetime('now','localtime') WHERE id = ?"
+    ).run(projectId, id)
+    return { success: true }
   })
-
-  ipcMain.handle(
-    'recording:linkCalendar',
-    (_e, id: number, eventId: string | null, eventTitle: string | null) => {
-      db.prepare(
-        "UPDATE meetings SET calendar_event_id = ?, calendar_event_title = ?, updated_at = datetime('now','localtime') WHERE id = ?"
-      ).run(eventId, eventTitle, id)
-      return { success: true }
-    }
-  )
 }

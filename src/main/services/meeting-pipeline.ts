@@ -8,7 +8,6 @@ import { getSttAdapter } from './stt/index'
 import { GapAdapter } from './vad/gap-adapter'
 import { getVadAdapter } from './vad/index'
 import { getDiarizationAdapter } from './diarization/index'
-import { ChannelAdapter } from './diarization/channel-adapter'
 
 // 화자 색상 팔레트 (순환)
 const SPEAKER_COLORS = [
@@ -173,17 +172,17 @@ export async function runMeetingPipeline(
     let turns: DiarTurn[] = []
 
     try {
-      turns = await diarAdapter.diarize(audioPath, { minSpeakers: 1, maxSpeakers: 4 })
+      turns = await diarAdapter.diarize(audioPath, {
+        minSpeakers: 1,
+        maxSpeakers: 4,
+        source: meeting.source,
+        segments: rawSegments
+      })
     } catch {
       turns = []
     }
 
-    // channel 어댑터가 빈 결과를 반환하면 STT segments 기반으로 보완
-    if (turns.length === 0 && diarAdapter instanceof ChannelAdapter) {
-      turns = ChannelAdapter.buildFromSegments(rawSegments, meeting.source)
-    }
-
-    // turns도 비어 있으면 전체를 spk_0으로 단일화자 처리
+    // turns가 비어 있으면 merge 단계에서 전체가 spk_0(단일 화자)으로 귀속된다.
     send({ meetingId, phase: 'diarize', progress: 1, message: `${new Set(turns.map((t) => t.speaker_key)).size}명 화자 감지` })
 
     // ── 5. merge: speaker_key별 speakers 생성 + segments 귀속 ──

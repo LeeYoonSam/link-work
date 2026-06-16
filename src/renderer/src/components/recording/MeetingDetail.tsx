@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
+import { useProjectStore } from '../../stores/projectStore'
 import type { MeetingStatus } from '../../types'
 import { Badge, IconButton, ProgressBar, TrashIcon, PencilIcon, XIcon, LinkIcon } from '../ui'
 import AudioPlayer from './AudioPlayer'
@@ -41,12 +42,6 @@ function formatDateTime(dateStr: string): string {
   })
 }
 
-function formatCalTime(dateStr: string): string {
-  const d = new Date(dateStr)
-  if (Number.isNaN(d.getTime())) return dateStr
-  return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
-}
-
 interface Props {
   onClose: () => void
 }
@@ -57,20 +52,18 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
     processing,
     renameMeeting,
     removeMeeting,
-    calendarMatches,
-    linkCalendar,
+    linkProject,
     reprocessMeeting,
     refreshCurrent
   } = useRecordingStore()
+  const { projects, fetchProjects } = useProjectStore()
 
   const [tab, setTab] = useState<Tab>('timeline')
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleValue, setTitleValue] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [calMatches, setCalMatches] = useState<{ id: string; title: string; start: string }[]>([])
-  const [calLoaded, setCalLoaded] = useState(false)
-  const [linkingCal, setLinkingCal] = useState(false)
+  const [linkingProject, setLinkingProject] = useState(false)
   const [reprocessing, setReprocessing] = useState(false)
 
   const audioRef = useRef<AudioPlayerHandle>(null)
@@ -100,20 +93,10 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
     }
   }, [meeting?.id, meeting?.status])
 
-  // 캘린더 매칭 로드 (회의 ID 변경 시)
+  // 프로젝트 목록 로드 (연결 드롭다운용)
   useEffect(() => {
-    if (!meeting) return
-    setCalLoaded(false)
-    setCalMatches([])
-  }, [meeting?.id])
-
-  useEffect(() => {
-    if (!meeting || calLoaded) return
-    setCalLoaded(true)
-    calendarMatches(meeting.id)
-      .then(setCalMatches)
-      .catch(() => setCalMatches([]))
-  }, [meeting?.id, calLoaded])
+    void fetchProjects()
+  }, [])
 
   if (!meeting) return null
 
@@ -151,24 +134,12 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
     }
   }
 
-  const handleLinkCalendar = async (eventId: string, eventTitle: string): Promise<void> => {
-    setLinkingCal(true)
+  const handleLinkProject = async (projectId: number | null): Promise<void> => {
+    setLinkingProject(true)
     try {
-      await linkCalendar(meeting.id, eventId, eventTitle)
-      await refreshCurrent()
-      setCalMatches([])
+      await linkProject(meeting.id, projectId)
     } finally {
-      setLinkingCal(false)
-    }
-  }
-
-  const handleUnlinkCalendar = async (): Promise<void> => {
-    setLinkingCal(true)
-    try {
-      await linkCalendar(meeting.id, null, null)
-      await refreshCurrent()
-    } finally {
-      setLinkingCal(false)
+      setLinkingProject(false)
     }
   }
 
@@ -245,18 +216,34 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
           {meeting.source === 'mic+system' && (
             <span className="text-[11px] text-gray-400">마이크 + 시스템</span>
           )}
-          {meeting.calendar_event_title && (
-            <button
-              type="button"
-              onClick={handleUnlinkCalendar}
-              disabled={linkingCal}
-              className="flex items-center gap-1 text-[11px] text-blue-500 hover:text-blue-700 transition-colors disabled:opacity-50"
-              title="클릭하여 캘린더 연결 해제"
+
+          {/* 프로젝트 연결 (값 없음 = 미연결) */}
+          <div className="flex items-center gap-1">
+            <LinkIcon
+              size={11}
+              className={meeting.project_id ? 'text-blue-500' : 'text-gray-400'}
+            />
+            <select
+              value={meeting.project_id ?? ''}
+              onChange={(e) =>
+                void handleLinkProject(e.target.value ? Number(e.target.value) : null)
+              }
+              disabled={linkingProject}
+              title="프로젝트 연결"
+              className={`text-[11px] bg-transparent border-none focus:outline-none cursor-pointer disabled:opacity-50 max-w-[180px] ${
+                meeting.project_id
+                  ? 'text-blue-600 font-medium'
+                  : 'text-gray-400 hover:text-gray-600'
+              }`}
             >
-              <LinkIcon size={11} />
-              {meeting.calendar_event_title}
-            </button>
-          )}
+              <option value="">프로젝트 미연결</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* 처리 중 프로그레스 */}
@@ -290,27 +277,6 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
           </div>
         )}
 
-        {/* 캘린더 매칭 제안 배너 */}
-        {!meeting.calendar_event_id && calMatches.length > 0 && (
-          <div className="mt-2 bg-blue-50 border border-blue-200 rounded-md px-3 py-2 space-y-1.5">
-            <p className="text-xs font-medium text-blue-700">캘린더 이벤트와 연결하시겠어요?</p>
-            <div className="space-y-1">
-              {calMatches.slice(0, 3).map((ev) => (
-                <button
-                  key={ev.id}
-                  type="button"
-                  onClick={() => void handleLinkCalendar(ev.id, ev.title)}
-                  disabled={linkingCal}
-                  className="flex items-center gap-2 w-full text-left text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-100 px-2 py-1 rounded transition-colors disabled:opacity-50"
-                >
-                  <LinkIcon size={11} />
-                  <span className="font-medium">{ev.title}</span>
-                  <span className="text-blue-400 ml-auto">{formatCalTime(ev.start)}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* 오디오 플레이어 */}

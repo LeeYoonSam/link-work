@@ -1,7 +1,12 @@
-// 채널 기반 화자분리 폴백 어댑터
-// mic=L / system=R 스테레오 분리 저장 규약을 이용해 모델 없이 2화자 확보.
-// STT segment 경계를 재활용해 turn을 만든다 (STT 없을 경우 duration 전체를 각 채널로).
-import type { DiarizationAdapter, DiarTurn } from '../meeting-types'
+// 채널 기반 화자분리 어댑터 (모델 불필요)
+// 녹음 시 mic=L / system=R 스테레오로 분리 저장하고, renderer가 추출한 L/R 에너지
+// envelope({id}.channels.json)를 이용해 STT segment를 '나(mic)' / '상대(system)'에 귀속한다.
+// SSOT: docs/MEETING_RECORDING.md — "마이크=L / 시스템=R … 모델 없이도 2화자 확보"
+import { readFile } from 'fs/promises'
+import type { DiarizationAdapter, DiarTurn, SttSegment, ChannelEnergy } from '../meeting-types'
+
+// 두 채널 평균 에너지가 모두 이 값 미만이면 침묵으로 보고 직전 화자를 유지한다.
+const SILENCE_RMS = 1e-4
 
 export class ChannelAdapter implements DiarizationAdapter {
   readonly name = 'channel'
@@ -12,42 +17,79 @@ export class ChannelAdapter implements DiarizationAdapter {
   }
 
   /**
-   * mic+system 스테레오 소스에서 L/R 채널 에너지를 비교해 화자 turn을 추정.
-   * ffmpeg 없는 MVP 단계에서는 duration 전체를 mic/system 두 블록으로 단순 분할.
-   * (에너지 분석 구현은 후속 — 여기선 안전한 더미 분할)
+   * mic+system 스테레오 녹음에서 STT segment별 L/R 에너지를 비교해 화자 turn을 만든다.
+   * - source가 mic+system이 아니거나, 채널 에너지/세그먼트가 없으면 빈 배열 → 단일 화자 폴백.
    */
   async diarize(
-    _audioPath: string,
-    _opts: { minSpeakers?: number; maxSpeakers?: number; source?: string }
+    audioPath: string,
+    opts: { minSpeakers?: number; maxSpeakers?: number; source?: string; segments?: SttSegment[] }
   ): Promise<DiarTurn[]> {
-    // duration을 알 수 없으므로 빈 배열 반환.
-    // pipeline의 merge 단계에서 speaker_key 없는 segment는 'spk_0'으로 귀속됨.
-    // 실제 채널 에너지 분석은 ffmpeg/sox 연동 후속 단계에서 구현.
-    return []
-  }
+    if (opts.source !== 'mic+system') return []
 
-  /**
-   * STT segment 목록이 있을 때 사용하는 채널 분할 헬퍼.
-   * 단순히 mic 발화 추정(홀수 segment) / system(짝수)로 교번 분할.
-   * 정확한 채널 에너지 분석 전 임시 휴리스틱.
-   */
-  static buildFromSegments(
-    segments: Array<{ start_ms: number; end_ms: number }>,
-    source: string
-  ): DiarTurn[] {
-    if (source !== 'mic+system') {
-      // 단일 소스: 모두 mic
-      return segments.map((s) => ({
-        start_ms: s.start_ms,
-        end_ms: s.end_ms,
-        speaker_key: 'mic'
-      }))
+    const segments = opts.segments ?? []
+    if (segments.length === 0) return []
+
+    const energy = await loadChannelEnergy(audioPath)
+    if (!energy || energy.left.length === 0) return []
+
+    const { hopMs, left, right } = energy
+    const frameCount = Math.min(left.length, right.length)
+
+    const turns: DiarTurn[] = []
+    let lastKey = 'mic'
+
+    for (const seg of segments) {
+      const fStart = Math.max(0, Math.floor(seg.start_ms / hopMs))
+      const fEnd = Math.min(frameCount, Math.max(fStart + 1, Math.ceil(seg.end_ms / hopMs)))
+
+      let sumL = 0
+      let sumR = 0
+      let count = 0
+      for (let f = fStart; f < fEnd; f++) {
+        sumL += left[f]
+        sumR += right[f]
+        count++
+      }
+
+      let key: string
+      if (count === 0) {
+        key = lastKey
+      } else {
+        const avgL = sumL / count
+        const avgR = sumR / count
+        if (Math.max(avgL, avgR) < SILENCE_RMS) {
+          key = lastKey // 침묵 구간 — 직전 화자 유지
+        } else {
+          key = avgL >= avgR ? 'mic' : 'system'
+        }
+      }
+
+      turns.push({ start_ms: seg.start_ms, end_ms: seg.end_ms, speaker_key: key })
+      lastKey = key
     }
-    // mic+system: segment 인덱스 기반 교번 분할 (임시 휴리스틱)
-    return segments.map((s, i) => ({
-      start_ms: s.start_ms,
-      end_ms: s.end_ms,
-      speaker_key: i % 2 === 0 ? 'mic' : 'system'
-    }))
+
+    return turns
+  }
+}
+
+/**
+ * audioPath와 같은 위치의 {base}.channels.json을 읽어 채널 에너지 envelope를 복원한다.
+ * 파일이 없거나 파싱 실패 시 null.
+ */
+async function loadChannelEnergy(audioPath: string): Promise<ChannelEnergy | null> {
+  const energyPath = audioPath.replace(/\.[^./\\]+$/, '.channels.json')
+  try {
+    const raw = await readFile(energyPath, 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<ChannelEnergy>
+    if (
+      typeof parsed.hopMs === 'number' &&
+      Array.isArray(parsed.left) &&
+      Array.isArray(parsed.right)
+    ) {
+      return { hopMs: parsed.hopMs, left: parsed.left, right: parsed.right }
+    }
+    return null
+  } catch {
+    return null
   }
 }

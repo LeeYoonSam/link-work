@@ -44,8 +44,22 @@ export interface DiarizationAdapter {
   isAvailable(): Promise<boolean>
   diarize(
     audioPath: string,
-    opts: { minSpeakers?: number; maxSpeakers?: number; source?: string }
+    opts: {
+      minSpeakers?: number
+      maxSpeakers?: number
+      source?: string
+      // 채널 기반 어댑터가 STT segment 경계로 화자를 귀속할 때 사용 (다른 어댑터는 무시)
+      segments?: SttSegment[]
+    }
   ): Promise<DiarTurn[]>
+}
+
+// 채널 에너지 envelope — mic=L/system=R 스테레오를 모델 없이 2화자로 분리하기 위한 데이터.
+// renderer가 webm 디코딩 시 hopMs 간격으로 L/R RMS(0~1)를 계산해 저장한다.
+export interface ChannelEnergy {
+  hopMs: number
+  left: number[] // mic 채널 RMS
+  right: number[] // system 채널 RMS
 }
 
 // ── VAD (침묵 검출) 어댑터 ──

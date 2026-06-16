@@ -36,7 +36,18 @@ export class SherpaAdapter implements DiarizationAdapter {
 
   async isAvailable(): Promise<boolean> {
     const mod = await loadSherpa()
-    return mod !== null
+    if (!mod) return false
+    // 네이티브 모듈만 있고 segmentation 모델이 없으면 diarize가 실패하므로,
+    // 모델 파일 존재까지 확인해야 폴백(channel/none)이 올바르게 동작한다.
+    try {
+      const { app } = await import('electron')
+      const { join } = await import('path')
+      const { existsSync } = await import('fs')
+      const modelPath = join(app.getPath('userData'), 'models', 'sherpa-segmentation.onnx')
+      return existsSync(modelPath)
+    } catch {
+      return false
+    }
   }
 
   async diarize(

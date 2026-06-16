@@ -42,8 +42,7 @@ interface RecordingStore {
   mergeSpeakers: (meetingId: number, fromSpeakerId: number, intoSpeakerId: number) => Promise<void>
   toggleCut: (cutId: number, enabled: boolean) => Promise<void>
   actionItemToTodo: (meetingId: number, index: number) => Promise<void>
-  calendarMatches: (id: number) => Promise<{ id: string; title: string; start: string }[]>
-  linkCalendar: (id: number, eventId: string | null, eventTitle: string | null) => Promise<void>
+  linkProject: (id: number, projectId: number | null) => Promise<void>
 
   // 처리 진행률 스트림 구독
   subscribeStream: () => () => void
@@ -111,19 +110,23 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
       let bytes: ArrayBuffer
       let saveMime = mime
       let saveDuration = durationMs
+      let channelEnergy: { hopMs: number; left: number[]; right: number[] } | null = null
       try {
         const converted = await blobToWav16kMono(blob)
         bytes = converted.wav
         saveMime = 'audio/wav'
         if (converted.durationMs > 0) saveDuration = converted.durationMs
+        channelEnergy = converted.channelEnergy
       } catch (convErr) {
         console.warn('[recordingStore] WAV 변환 실패, 원본 저장:', convErr)
         bytes = await blob.arrayBuffer()
       }
-      await window.api.recording.saveAudio(meetingId, bytes, {
-        mime: saveMime,
-        durationMs: saveDuration
-      })
+      await window.api.recording.saveAudio(
+        meetingId,
+        bytes,
+        { mime: saveMime, durationMs: saveDuration },
+        channelEnergy
+      )
       await get().refreshCurrent()
 
       // 2) 전사+화자분리+VAD 파이프라인
@@ -238,22 +241,13 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
     }
   },
 
-  calendarMatches: async (id) => {
+  linkProject: async (id, projectId) => {
     try {
-      return await window.api.recording.calendarMatches(id)
-    } catch (err) {
-      console.error('[recordingStore] calendarMatches error:', err)
-      return []
-    }
-  },
-
-  linkCalendar: async (id, eventId, eventTitle) => {
-    try {
-      await window.api.recording.linkCalendar(id, eventId, eventTitle)
+      await window.api.recording.linkProject(id, projectId)
       await get().refreshCurrent()
       await get().fetchMeetings()
     } catch (err) {
-      console.error('[recordingStore] linkCalendar error:', err)
+      console.error('[recordingStore] linkProject error:', err)
     }
   },
 

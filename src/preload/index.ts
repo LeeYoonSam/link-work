@@ -137,8 +137,12 @@ const api = {
     get: (id: number) => ipcRenderer.invoke('recording:get', id),
     createDraft: (input: { title?: string; source?: string }) =>
       ipcRenderer.invoke('recording:createDraft', input),
-    saveAudio: (id: number, bytes: ArrayBuffer, meta: { mime: string; durationMs: number }) =>
-      ipcRenderer.invoke('recording:saveAudio', id, bytes, meta),
+    saveAudio: (
+      id: number,
+      bytes: ArrayBuffer,
+      meta: { mime: string; durationMs: number },
+      channelEnergy?: { hopMs: number; left: number[]; right: number[] } | null
+    ) => ipcRenderer.invoke('recording:saveAudio', id, bytes, meta, channelEnergy),
     process: (id: number) => ipcRenderer.invoke('recording:process', id),
     summarize: (id: number) => ipcRenderer.invoke('recording:summarize', id),
     rename: (id: number, title: string) => ipcRenderer.invoke('recording:rename', id, title),
@@ -155,9 +159,8 @@ const api = {
       ipcRenderer.invoke('recording:toggleCut', cutId, enabled),
     actionItemToTodo: (meetingId: number, index: number) =>
       ipcRenderer.invoke('recording:actionItemToTodo', meetingId, index),
-    calendarMatches: (id: number) => ipcRenderer.invoke('recording:calendarMatches', id),
-    linkCalendar: (id: number, eventId: string | null, eventTitle: string | null) =>
-      ipcRenderer.invoke('recording:linkCalendar', id, eventId, eventTitle),
+    linkProject: (id: number, projectId: number | null) =>
+      ipcRenderer.invoke('recording:linkProject', id, projectId),
     onStream: (callback: (event: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => callback(data)
       ipcRenderer.on('recording:stream', handler)

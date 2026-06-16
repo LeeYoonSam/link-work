@@ -489,10 +489,11 @@ export interface RecordingStreamEvent {
   error?: string
 }
 
-export interface CalendarMatch {
-  id: string
-  title: string
-  start: string
+// 화자분리용 L(mic)/R(system) 채널 에너지 envelope (utils/audio.ts에서 추출)
+export interface ChannelEnergy {
+  hopMs: number
+  left: number[]
+  right: number[]
 }
 
 export interface RecordingAPI {
@@ -502,7 +503,8 @@ export interface RecordingAPI {
   saveAudio: (
     id: number,
     bytes: ArrayBuffer,
-    meta: { mime: string; durationMs: number }
+    meta: { mime: string; durationMs: number },
+    channelEnergy?: ChannelEnergy | null
   ) => Promise<{ path: string }>
   process: (id: number) => Promise<{ success: boolean; error?: string; transcribed?: boolean }>
   summarize: (id: number) => Promise<{ success: boolean; error?: string }>
@@ -520,11 +522,6 @@ export interface RecordingAPI {
   ) => Promise<{ success: boolean }>
   toggleCut: (cutId: number, enabled: boolean) => Promise<{ success: boolean }>
   actionItemToTodo: (meetingId: number, index: number) => Promise<{ todo_id: number }>
-  calendarMatches: (id: number) => Promise<CalendarMatch[]>
-  linkCalendar: (
-    id: number,
-    eventId: string | null,
-    eventTitle: string | null
-  ) => Promise<{ success: boolean }>
+  linkProject: (id: number, projectId: number | null) => Promise<{ success: boolean }>
   onStream: (cb: (e: RecordingStreamEvent) => void) => () => void
 }
