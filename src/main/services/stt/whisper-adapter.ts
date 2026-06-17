@@ -8,7 +8,13 @@ import { ensureModel } from './model-manager'
 interface WhisperContextLike {
   transcribeFile(
     filePath: string,
-    options?: { language?: string; onProgress?: (progress: number) => void }
+    options?: {
+      language?: string
+      maxContext?: number
+      temperature?: number
+      temperatureInc?: number
+      onProgress?: (progress: number) => void
+    }
   ): { stop: () => Promise<void>; promise: Promise<WhisperTranscribeResult> }
   release(): Promise<void>
 }
@@ -77,15 +83,21 @@ export class WhisperAdapter implements SttAdapter {
     try {
       const { promise } = ctx.transcribeFile(audioPath, {
         language: opts.language,
+        // maxContext:0 → 직전 텍스트를 컨텍스트로 쓰지 않아 무음 구간 반복 환각을 억제.
+        // temperature 0 + fallback(0.2)으로 결정적 디코딩.
+        maxContext: 0,
+        temperature: 0,
+        temperatureInc: 0.2,
         // whisper onProgress: 0~100 → 0~1
         onProgress: (p) => opts.onProgress?.(Math.max(0, Math.min(1, p / 100)))
       })
       const result = await promise
-      // whisper.cpp 타임스탬프 t0/t1은 10ms(centiseconds) 단위 → ms. 원본 절대 시간 보존.
+      // @fugood/whisper.node(whisper.rn 호환)의 t0/t1은 이미 ms 단위다(centiseconds 아님).
+      // 원본 절대 시간을 그대로 보존한다.
       return result.segments
         .map((s) => ({
-          start_ms: Math.round(s.t0 * 10),
-          end_ms: Math.round(s.t1 * 10),
+          start_ms: Math.round(s.t0),
+          end_ms: Math.round(s.t1),
           text: s.text.trim()
         }))
         .filter((s) => s.text.length > 0)

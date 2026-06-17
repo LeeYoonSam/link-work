@@ -218,6 +218,7 @@ export function initDatabase(): void {
       duration_ms INTEGER DEFAULT 0,
       language TEXT DEFAULT 'ko',
       source TEXT DEFAULT 'mic',
+      expected_speakers INTEGER,
       project_id INTEGER,
       calendar_event_id TEXT,
       calendar_event_title TEXT,
@@ -310,6 +311,12 @@ export function initDatabase(): void {
   }
   if (projectColumns.length > 0 && !projectColumnNames.includes('deploy_version')) {
     db.exec("ALTER TABLE projects ADD COLUMN deploy_version TEXT")
+  }
+
+  // 회의: 참석 인원(지정 시 화자분리의 클러스터 수를 그 값으로 고정, null이면 자동 추정)
+  const meetingColumns = db.prepare("PRAGMA table_info(meetings)").all() as { name: string }[]
+  if (meetingColumns.length > 0 && !meetingColumns.map((c) => c.name).includes('expected_speakers')) {
+    db.exec("ALTER TABLE meetings ADD COLUMN expected_speakers INTEGER")
   }
 
   // Seed activity_log from existing data (one-time migration)

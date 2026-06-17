@@ -32,7 +32,8 @@ function formatDate(dateStr: string): string {
 function MeetingCard({ meeting }: { meeting: Meeting }): React.ReactNode {
   const { current, openMeeting, processing } = useRecordingStore()
   const isActive = current?.meeting.id === meeting.id
-  const isProcessing = processing?.meetingId === meeting.id
+  const proc = processing[meeting.id]
+  const isProcessing = !!proc
   const statusStyle = STATUS_STYLES[meeting.status] ?? STATUS_STYLES.failed
 
   return (
@@ -86,7 +87,7 @@ function MeetingCard({ meeting }: { meeting: Meeting }): React.ReactNode {
         <div className="mt-2 w-full bg-gray-200 rounded-full h-0.5">
           <div
             className="h-0.5 rounded-full bg-blue-500 transition-all duration-500"
-            style={{ width: `${Math.round((processing.progress ?? 0) * 100)}%` }}
+            style={{ width: `${Math.round((proc.progress ?? 0) * 100)}%` }}
           />
         </div>
       )}

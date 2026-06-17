@@ -62,13 +62,27 @@ function toFriendlyError(raw: string): string {
   return raw
 }
 
-// 길이 가드: 24000자 초과 시 앞부분 우선 절단
-const MAX_TRANSCRIPT_CHARS = 24000
-const TRUNCATION_SUFFIX = '\n\n(이하 생략 — 원본이 너무 길어 앞부분만 분석합니다)'
+// 길이 가드. 정제된 전사는 크게 줄어들지만, 장시간 회의는 여전히 한도를 넘을 수 있다.
+// 한도 초과 시 앞부분만 자르면 회의 후반이 통째로 누락되므로, 시간순 라인을 균등
+// 샘플링해 앞·중간·끝의 흐름을 모두 보존한다.
+const MAX_TRANSCRIPT_CHARS = 80000
 
-function truncateTranscript(text: string): string {
-  if (text.length <= MAX_TRANSCRIPT_CHARS) return text
-  return text.slice(0, MAX_TRANSCRIPT_CHARS) + TRUNCATION_SUFFIX
+function fitTranscript(lines: string[]): string {
+  const full = lines.join('\n')
+  if (full.length <= MAX_TRANSCRIPT_CHARS) return full
+
+  // 평균 라인 길이로 목표 라인 수를 추정해 일정 간격으로 추출
+  const avgLen = full.length / lines.length
+  const targetLines = Math.max(1, Math.floor(MAX_TRANSCRIPT_CHARS / avgLen))
+  const step = lines.length / targetLines
+  const sampled: string[] = []
+  for (let i = 0; i < lines.length; i += step) {
+    sampled.push(lines[Math.floor(i)])
+  }
+  return (
+    sampled.join('\n') +
+    '\n\n(회의가 길어 시간 순서대로 균등 샘플링한 발췌본입니다 — 일부 발언은 생략됨)'
+  )
 }
 
 // 시간 포맷 mm:ss
@@ -155,7 +169,7 @@ export async function runMeetingSummary(
     return { success: false, error: err }
   }
 
-  const transcript = truncateTranscript(transcriptRaw)
+  const transcript = fitTranscript(lines)
 
   // ── 2. Claude query ──
   send({ meetingId, phase: 'summarize', progress: 0, message: 'AI 요약 생성 중…' })
@@ -197,6 +211,8 @@ export async function runMeetingSummary(
     })
 
     type SdkMsg = import('@anthropic-ai/claude-agent-sdk').SDKMessage
+    // Claude 응답은 토큰 단위 진행률을 알 수 없어, 메시지 수신마다 진행률을 점진적으로 올린다.
+    let streamProgress = 0.1
     for await (const msg of q as AsyncIterable<SdkMsg>) {
       if (msg.type === 'assistant') {
         for (const block of msg.message.content) {
@@ -204,6 +220,8 @@ export async function runMeetingSummary(
             responseText += block.text
           }
         }
+        streamProgress = Math.min(0.7, streamProgress + 0.15)
+        send({ meetingId, phase: 'summarize', progress: streamProgress, message: 'AI 요약 생성 중…' })
       } else if (msg.type === 'result') {
         if (msg.subtype === 'success' && msg.result && !responseText) {
           responseText = msg.result

@@ -5,6 +5,7 @@ import { getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
 import { runMeetingPipeline } from '../services/meeting-pipeline'
 import { runMeetingSummary } from '../services/meeting-summary'
+import { wavDurationMs } from '../services/wav-util'
 import type { RecordingStreamEvent, SendStream, SummaryActionItem } from '../services/meeting-types'
 
 // 녹음 오디오 저장 위치 (userData 밖이 아니라 안 — 백업/유지 일관성)
@@ -131,23 +132,31 @@ export function registerRecordingIpc(): void {
         }
       }
 
+      // 길이는 WAV 파일 헤더(ground truth)로 정확히 계산한다. renderer가 보낸 타이머/
+      // 디코더 기반 durationMs는 환경에 따라 부정확할 수 있어, WAV면 파일을 신뢰한다.
+      const accurateMs = wavDurationMs(filePath)
+      const durationMs = accurateMs ?? Math.round(meta.durationMs)
+
       db.prepare(
         "UPDATE meetings SET audio_path = ?, audio_mime = ?, duration_ms = ?, updated_at = datetime('now','localtime') WHERE id = ?"
-      ).run(fileName, meta.mime, Math.round(meta.durationMs), id)
+      ).run(fileName, meta.mime, durationMs, id)
       return { path: fileName }
     }
   )
 
   // 전사+화자분리+VAD 파이프라인 (서비스에 위임, 진행률은 recording:stream)
-  ipcMain.handle('recording:process', async (event, id: number) => {
-    const row = db.prepare('SELECT id FROM meetings WHERE id = ?').get(id)
-    if (!row) return { success: false, error: '존재하지 않는 회의입니다.' }
-    db.prepare(
-      "UPDATE meetings SET status = 'processing', error = NULL, updated_at = datetime('now','localtime') WHERE id = ?"
-    ).run(id)
-    try {
-      return await runMeetingPipeline(id, streamTo(event))
-    } catch (err) {
+  // opts.skipTranscribe=true면 재전사 없이 기존 전사로 정제/화자분리만 다시 수행(빠른 재적용)
+  ipcMain.handle(
+    'recording:process',
+    async (event, id: number, opts?: { skipTranscribe?: boolean }) => {
+      const row = db.prepare('SELECT id FROM meetings WHERE id = ?').get(id)
+      if (!row) return { success: false, error: '존재하지 않는 회의입니다.' }
+      db.prepare(
+        "UPDATE meetings SET status = 'processing', error = NULL, updated_at = datetime('now','localtime') WHERE id = ?"
+      ).run(id)
+      try {
+        return await runMeetingPipeline(id, streamTo(event), opts)
+      } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       db.prepare(
         "UPDATE meetings SET status = 'failed', error = ? WHERE id = ?"
@@ -287,6 +296,15 @@ export function registerRecordingIpc(): void {
     db.prepare(
       "UPDATE meetings SET project_id = ?, updated_at = datetime('now','localtime') WHERE id = ?"
     ).run(projectId, id)
+    return { success: true }
+  })
+
+  // ── 참석 인원 설정 (화자분리 시 numClusters로 사용, null이면 자동 추정) ──
+  ipcMain.handle('recording:setExpectedSpeakers', (_e, id: number, n: number | null) => {
+    const v = n && n > 0 ? Math.round(n) : null
+    db.prepare(
+      "UPDATE meetings SET expected_speakers = ?, updated_at = datetime('now','localtime') WHERE id = ?"
+    ).run(v, id)
     return { success: true }
   })
 }

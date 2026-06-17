@@ -143,7 +143,8 @@ const api = {
       meta: { mime: string; durationMs: number },
       channelEnergy?: { hopMs: number; left: number[]; right: number[] } | null
     ) => ipcRenderer.invoke('recording:saveAudio', id, bytes, meta, channelEnergy),
-    process: (id: number) => ipcRenderer.invoke('recording:process', id),
+    process: (id: number, opts?: { skipTranscribe?: boolean }) =>
+      ipcRenderer.invoke('recording:process', id, opts),
     summarize: (id: number) => ipcRenderer.invoke('recording:summarize', id),
     rename: (id: number, title: string) => ipcRenderer.invoke('recording:rename', id, title),
     remove: (id: number) => ipcRenderer.invoke('recording:remove', id),
@@ -161,6 +162,8 @@ const api = {
       ipcRenderer.invoke('recording:actionItemToTodo', meetingId, index),
     linkProject: (id: number, projectId: number | null) =>
       ipcRenderer.invoke('recording:linkProject', id, projectId),
+    setExpectedSpeakers: (id: number, n: number | null) =>
+      ipcRenderer.invoke('recording:setExpectedSpeakers', id, n),
     onStream: (callback: (event: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => callback(data)
       ipcRenderer.on('recording:stream', handler)

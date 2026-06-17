@@ -54,6 +54,7 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
     removeMeeting,
     linkProject,
     reprocessMeeting,
+    setExpectedSpeakers,
     refreshCurrent
   } = useRecordingStore()
   const { projects, fetchProjects } = useProjectStore()
@@ -64,7 +65,12 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [linkingProject, setLinkingProject] = useState(false)
-  const [reprocessing, setReprocessing] = useState(false)
+  // 재처리/재분리는 회의별로 독립 실행되므로, 어느 회의에 대해 트리거됐는지 id로 추적한다.
+  // (MeetingDetailView는 회의 전환 시 언마운트되지 않고 재사용되므로 boolean을 쓰면
+  //  다른 회의 버튼에도 "처리 중…" 잔상이 남는다.)
+  const [reprocessingId, setReprocessingId] = useState<number | null>(null)
+  const [showReprocessMenu, setShowReprocessMenu] = useState(false)
+  const [speakerCount, setSpeakerCount] = useState('')
 
   const audioRef = useRef<AudioPlayerHandle>(null)
 
@@ -98,14 +104,20 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
     void fetchProjects()
   }, [])
 
+  // 참석 인원 입력값을 현재 회의 값으로 동기화
+  useEffect(() => {
+    setSpeakerCount(meeting?.expected_speakers ? String(meeting.expected_speakers) : '')
+  }, [meeting?.id, meeting?.expected_speakers])
+
   if (!meeting) return null
 
   const statusStyle = STATUS_STYLES[meeting.status] ?? STATUS_STYLES.failed
+  // 현재 보고 있는 회의가 재처리 트리거 대상일 때만 버튼을 "처리 중"으로 표시한다.
+  const reprocessing = reprocessingId === meeting.id
+  const proc = processing[meeting.id]
   const isProcessing =
-    processing?.meetingId === meeting.id &&
-    processing.phase !== 'done' &&
-    processing.phase !== 'error'
-  const processingPct = Math.round((processing?.progress ?? 0) * 100)
+    !!proc && proc.phase !== 'done' && proc.phase !== 'error'
+  const processingPct = Math.round((proc?.progress ?? 0) * 100)
 
   const phaseLabel: Record<string, string> = {
     transcribe: '전사 중',
@@ -143,12 +155,27 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
     }
   }
 
-  const handleReprocess = async (): Promise<void> => {
-    setReprocessing(true)
+  const handleReprocess = async (fast: boolean): Promise<void> => {
+    const targetId = meeting.id
+    setReprocessingId(targetId)
     try {
-      await reprocessMeeting(meeting.id)
+      await reprocessMeeting(targetId, fast)
     } finally {
-      setReprocessing(false)
+      setReprocessingId((prev) => (prev === targetId ? null : prev))
+    }
+  }
+
+  // 참석 인원을 저장하고 그 수로 화자를 다시 분리(재전사 없이 빠른 재적용)
+  const handleReprocessWithSpeakers = async (): Promise<void> => {
+    const parsed = speakerCount.trim() === '' ? null : parseInt(speakerCount, 10)
+    const n = parsed && parsed > 0 ? parsed : null
+    const targetId = meeting.id
+    setReprocessingId(targetId)
+    try {
+      await setExpectedSpeakers(targetId, n)
+      await reprocessMeeting(targetId, true)
+    } finally {
+      setReprocessingId((prev) => (prev === targetId ? null : prev))
     }
   }
 
@@ -244,6 +271,74 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
               ))}
             </select>
           </div>
+
+          {/* 참석 인원 지정 → 정확한 화자 분리 (sherpa numClusters) */}
+          {meeting.status !== 'recording' && meeting.audio_path && !isProcessing && (
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] text-gray-400">참석</span>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={speakerCount}
+                onChange={(e) => setSpeakerCount(e.target.value)}
+                placeholder="자동"
+                disabled={reprocessing}
+                title="참석 인원을 지정하면 그 수만큼 화자를 분리합니다 (비우면 자동 추정)"
+                className="w-12 text-[11px] px-1.5 py-0.5 border border-gray-200 rounded text-center focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:opacity-50"
+              />
+              <span className="text-[11px] text-gray-400">명</span>
+              <button
+                type="button"
+                onClick={() => void handleReprocessWithSpeakers()}
+                disabled={reprocessing}
+                title="이 인원으로 화자를 다시 분리합니다 (재전사 없음)"
+                className="text-[11px] text-blue-500 hover:text-blue-700 transition-colors disabled:opacity-50"
+              >
+                {reprocessing ? '처리 중…' : '재분리'}
+              </button>
+            </div>
+          )}
+
+          {/* 다시 처리: 빠른 재적용(정제·화자분리만) / 전체 재처리(재전사 포함) 선택 */}
+          {meeting.status !== 'recording' && meeting.audio_path && !isProcessing && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowReprocessMenu((v) => !v)}
+                disabled={reprocessing}
+                className="text-[11px] text-gray-400 hover:text-blue-500 transition-colors disabled:opacity-50"
+              >
+                {reprocessing ? '처리 중…' : '↻ 다시 처리 ▾'}
+              </button>
+              {showReprocessMenu && (
+                <div className="absolute z-20 right-0 top-6 w-max bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowReprocessMenu(false)
+                      void handleReprocess(true)
+                    }}
+                    className="block w-full text-left px-3 py-1.5 hover:bg-gray-50 transition-colors"
+                  >
+                    <span className="text-xs text-gray-700">빠른 재적용</span>
+                    <span className="block text-[10px] text-gray-400">정제·화자 분리만 · 빠름</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowReprocessMenu(false)
+                      void handleReprocess(false)
+                    }}
+                    className="block w-full text-left px-3 py-1.5 hover:bg-gray-50 transition-colors"
+                  >
+                    <span className="text-xs text-gray-700">전체 재처리</span>
+                    <span className="block text-[10px] text-gray-400">재전사 포함 · 정확</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* 처리 중 프로그레스 */}
@@ -251,13 +346,13 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
           <div className="mt-3 space-y-1">
             <div className="flex items-center justify-between">
               <span className="text-xs text-gray-500">
-                {phaseLabel[processing?.phase ?? ''] ?? '처리 중'}
+                {phaseLabel[proc?.phase ?? ''] ?? '처리 중'}
               </span>
               <span className="text-xs text-gray-400">{processingPct}%</span>
             </div>
             <ProgressBar percent={processingPct} color="bg-blue-500" height="h-1" />
-            {processing?.message && (
-              <p className="text-[11px] text-gray-400">{processing.message}</p>
+            {proc?.message && (
+              <p className="text-[11px] text-gray-400">{proc.message}</p>
             )}
           </div>
         )}
@@ -268,7 +363,7 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
             <p className="text-xs text-red-600 flex-1">{meeting.error}</p>
             <button
               type="button"
-              onClick={handleReprocess}
+              onClick={() => handleReprocess(false)}
               disabled={reprocessing}
               className="text-xs text-red-600 hover:text-red-800 underline shrink-0 disabled:opacity-50"
             >

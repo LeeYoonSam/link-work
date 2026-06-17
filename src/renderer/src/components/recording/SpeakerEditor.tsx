@@ -166,7 +166,7 @@ function SpeakerRow({
         />
         {showColorPicker && (
           <div
-            className="absolute z-20 left-0 top-8 bg-white border border-gray-200 rounded-lg shadow-lg p-2 grid grid-cols-5 gap-1"
+            className="absolute z-20 left-0 top-8 w-max bg-white border border-gray-200 rounded-lg shadow-lg p-2 grid grid-cols-5 gap-1"
             onClick={(e) => e.stopPropagation()}
           >
             {PRESET_COLORS.map((c) => (

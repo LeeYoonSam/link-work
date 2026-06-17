@@ -14,8 +14,13 @@ interface Props {
 }
 
 function formatTime(sec: number): string {
-  const m = Math.floor(sec / 60)
-  const s = Math.floor(sec % 60)
+  const total = Math.floor(sec)
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  }
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
@@ -173,7 +178,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
       </button>
 
       {/* 시간 표시 */}
-      <span className="text-[11px] font-mono text-gray-500 shrink-0 tabular-nums w-10">
+      <span className="text-[11px] font-mono text-gray-500 shrink-0 tabular-nums w-14">
         {formatTime(currentTime)}
       </span>
 
@@ -212,7 +217,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
       </div>
 
       {/* 총 길이 */}
-      <span className="text-[11px] font-mono text-gray-400 shrink-0 tabular-nums w-10 text-right">
+      <span className="text-[11px] font-mono text-gray-400 shrink-0 tabular-nums w-14 text-right">
         {formatTime(effectiveDuration)}
       </span>
     </div>

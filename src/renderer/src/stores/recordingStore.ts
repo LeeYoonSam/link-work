@@ -17,7 +17,9 @@ interface RecordingStore {
   meetings: Meeting[]
   current: MeetingDetail | null
   loading: boolean
-  processing: ProcessingState | null
+  // 회의별 진행률 맵 (meetingId → 상태). 여러 회의를 동시에 재처리해도
+  // 각 회의의 진행률이 서로 덮어쓰지 않고 독립적으로 표시된다.
+  processing: Record<number, ProcessingState>
 
   // 목록/상세
   fetchMeetings: () => Promise<void>
@@ -29,7 +31,7 @@ interface RecordingStore {
   createDraft: (input: { title?: string; source: 'mic' | 'mic+system' }) => Promise<number>
   saveAndProcess: (meetingId: number, blob: Blob, durationMs: number, mime: string) => Promise<void>
   summarizeMeeting: (id: number) => Promise<void>
-  reprocessMeeting: (id: number) => Promise<void>
+  reprocessMeeting: (id: number, fast?: boolean) => Promise<void>
 
   // 편집/연계
   renameMeeting: (id: number, title: string) => Promise<void>
@@ -43,6 +45,7 @@ interface RecordingStore {
   toggleCut: (cutId: number, enabled: boolean) => Promise<void>
   actionItemToTodo: (meetingId: number, index: number) => Promise<void>
   linkProject: (id: number, projectId: number | null) => Promise<void>
+  setExpectedSpeakers: (id: number, n: number | null) => Promise<void>
 
   // 처리 진행률 스트림 구독
   subscribeStream: () => () => void
@@ -52,7 +55,7 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
   meetings: [],
   current: null,
   loading: false,
-  processing: null,
+  processing: {},
 
   fetchMeetings: async () => {
     set({ loading: true })
@@ -161,15 +164,27 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
     }
   },
 
-  reprocessMeeting: async (id) => {
+  reprocessMeeting: async (id, fast = false) => {
     try {
-      const processResult = await window.api.recording.process(id)
+      const processResult = await window.api.recording.process(
+        id,
+        fast ? { skipTranscribe: true } : undefined
+      )
       await get().refreshCurrent()
       if (processResult.success && processResult.transcribed) {
         await get().summarizeMeeting(id)
       }
     } catch (err) {
       console.error('[recordingStore] reprocessMeeting error:', err)
+    }
+  },
+
+  setExpectedSpeakers: async (id, n) => {
+    try {
+      await window.api.recording.setExpectedSpeakers(id, n)
+      await get().refreshCurrent()
+    } catch (err) {
+      console.error('[recordingStore] setExpectedSpeakers error:', err)
     }
   },
 
@@ -255,8 +270,14 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
     const unsubscribe = window.api.recording.onStream((e: RecordingStreamEvent) => {
       const { current } = get()
 
-      if (e.phase === 'done') {
-        set({ processing: null })
+      // 완료/실패 시 해당 회의 슬롯만 제거 (다른 회의의 진행률은 보존)
+      if (e.phase === 'done' || e.phase === 'error') {
+        set((state) => {
+          if (!(e.meetingId in state.processing)) return state
+          const next = { ...state.processing }
+          delete next[e.meetingId]
+          return { processing: next }
+        })
         if (current?.meeting.id === e.meetingId) {
           get().refreshCurrent()
         }
@@ -264,23 +285,18 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
         return
       }
 
-      if (e.phase === 'error') {
-        set({ processing: null })
-        if (current?.meeting.id === e.meetingId) {
-          get().refreshCurrent()
-        }
-        get().fetchMeetings()
-        return
-      }
-
-      set({
+      // 해당 회의 슬롯만 갱신
+      set((state) => ({
         processing: {
-          meetingId: e.meetingId,
-          phase: e.phase,
-          progress: e.progress,
-          message: e.message
+          ...state.processing,
+          [e.meetingId]: {
+            meetingId: e.meetingId,
+            phase: e.phase,
+            progress: e.progress,
+            message: e.message
+          }
         }
-      })
+      }))
 
       // 진행 중인 회의가 현재 열려있으면 현재 상태도 갱신
       if (current?.meeting.id === e.meetingId) {

@@ -31,7 +31,7 @@
   },
   "optionalDependencies": {
     "@fugood/whisper.node": "^1.0.22",
-    "sherpa-onnx": "^1.0.0",
+    "sherpa-onnx-node": "^1.13.3",
     "silero-vad-node": "^1.0.0"
   },
   "devDependencies": {
@@ -57,7 +57,8 @@
     "productName": "LinkWork",
     "asarUnpack": [
       "node_modules/@anthropic-ai/claude-agent-sdk/**",
-      "**/*.node"
+      "**/*.node",
+      "node_modules/sherpa-onnx-darwin-arm64/**"
     ],
     "mac": {
       "target": "dmg",

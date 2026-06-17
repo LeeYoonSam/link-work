@@ -47,6 +47,8 @@ export interface DiarizationAdapter {
     opts: {
       minSpeakers?: number
       maxSpeakers?: number
+      // 정확한 참석자 수를 알 때 지정 (sherpa clustering numClusters로 직접 사용). 미지정 시 자동 추정.
+      numSpeakers?: number
       source?: string
       // 채널 기반 어댑터가 STT segment 경계로 화자를 귀속할 때 사용 (다른 어댑터는 무시)
       segments?: SttSegment[]

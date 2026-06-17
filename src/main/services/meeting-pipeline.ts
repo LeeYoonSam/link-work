@@ -8,6 +8,10 @@ import { getSttAdapter } from './stt/index'
 import { GapAdapter } from './vad/gap-adapter'
 import { getVadAdapter } from './vad/index'
 import { getDiarizationAdapter } from './diarization/index'
+import { ensureDiarizationModels } from './diarization/model-manager'
+import { cleanSegments } from './transcript-cleaner'
+import { wavDurationMs } from './wav-util'
+import { postprocessTurns } from './diarization/postprocess'
 
 // 화자 색상 팔레트 (순환)
 const SPEAKER_COLORS = [
@@ -30,6 +34,7 @@ interface MeetingRow {
   language: string
   source: string
   status: string
+  expected_speakers: number | null
 }
 
 /**
@@ -86,7 +91,8 @@ function resolveSpeakerMeta(
 
 export async function runMeetingPipeline(
   meetingId: number,
-  send: SendStream
+  send: SendStream,
+  opts?: { skipTranscribe?: boolean }
 ): Promise<{ success: boolean; error?: string; transcribed?: boolean }> {
   const db = getDatabase()
 
@@ -113,26 +119,59 @@ export async function runMeetingPipeline(
   const audioPath = join(app.getPath('userData'), 'recordings', meeting.audio_path)
 
   try {
-    // ── 2. STT 전사 ──
-    send({ meetingId, phase: 'transcribe', progress: 0, message: '음성 인식 중…' })
-
-    const sttAdapter = await getSttAdapter()
-    let rawSegments: SttSegment[] = []
-
-    rawSegments = await sttAdapter.transcribe(audioPath, {
-      language: meeting.language || 'ko',
-      onProgress: (p) => {
-        send({ meetingId, phase: 'transcribe', progress: p })
-      },
-      onMessage: (m) => {
-        send({ meetingId, phase: 'transcribe', message: m })
-      }
+    // ── 2. STT 전사 (또는 기존 전사 재사용) ──
+    send({
+      meetingId,
+      phase: 'transcribe',
+      progress: 0,
+      message: opts?.skipTranscribe ? '기존 전사 재사용 중…' : '음성 인식 중…'
     })
 
-    // manual 어댑터(엔진 미설치) 또는 결과 없음 → 안내 segment 삽입
-    const isManualFallback = sttAdapter.name === 'manual' || rawSegments.length === 0
+    let rawSegments: SttSegment[] = []
+    let sttName = 'whisper'
 
-    if (isManualFallback && sttAdapter.name === 'manual') {
+    // 빠른 재적용: 재전사 없이 기존 meeting_segments를 재사용 (정제/화자분리만 다시 수행)
+    if (opts?.skipTranscribe) {
+      const existing = db
+        .prepare(
+          'SELECT start_ms, end_ms, text FROM meeting_segments WHERE meeting_id = ? ORDER BY start_ms, sort_order'
+        )
+        .all(meetingId) as { start_ms: number; end_ms: number; text: string }[]
+      rawSegments = existing
+        .map((s) => ({ start_ms: s.start_ms, end_ms: s.end_ms, text: s.text }))
+        .filter((s) => s.text && s.text.trim())
+    }
+
+    // 일반 모드이거나, 빠른 재적용인데 기존 전사가 없으면 STT 실행
+    if (rawSegments.length === 0) {
+      const sttAdapter = await getSttAdapter()
+      sttName = sttAdapter.name
+      rawSegments = await sttAdapter.transcribe(audioPath, {
+        language: meeting.language || 'ko',
+        onProgress: (p) => {
+          send({ meetingId, phase: 'transcribe', progress: p })
+        },
+        onMessage: (m) => {
+          send({ meetingId, phase: 'transcribe', message: m })
+        }
+      })
+    }
+
+    // 환각/반복/filler 후처리 정제 (manual 폴백/빈 결과는 변화 없음)
+    const beforeClean = rawSegments.length
+    rawSegments = cleanSegments(rawSegments)
+    if (beforeClean !== rawSegments.length) {
+      send({
+        meetingId,
+        phase: 'transcribe',
+        message: `정제 완료 (${beforeClean} → ${rawSegments.length} segment)`
+      })
+    }
+
+    // manual 어댑터(엔진 미설치) 또는 결과 없음 → 안내 segment 삽입
+    const isManualFallback = sttName === 'manual' || rawSegments.length === 0
+
+    if (isManualFallback && sttName === 'manual') {
       rawSegments = [
         {
           start_ms: 0,
@@ -168,18 +207,51 @@ export async function runMeetingPipeline(
     // ── 4. 화자 분리 ──
     send({ meetingId, phase: 'diarize', progress: 0, message: '화자 분리 중…' })
 
+    // mic-only 회의는 음성 임베딩 기반 분리(sherpa)를 위해 모델이 필요 → 최초 1회 자동 다운로드.
+    // mic+system은 채널 기반 분리라 모델이 필요 없다. 다운로드 실패 시 단일 화자로 폴백.
+    if (meeting.source !== 'mic+system') {
+      try {
+        await ensureDiarizationModels(({ ratio, label }) =>
+          send({ meetingId, phase: 'diarize', progress: ratio, message: label })
+        )
+      } catch {
+        // graceful: 모델이 없으면 getDiarizationAdapter가 none으로 폴백
+      }
+    }
+
     const diarAdapter = await getDiarizationAdapter(meeting.source)
     let turns: DiarTurn[] = []
 
     try {
+      // 참석 인원(expected_speakers)을 지정하면 sherpa가 정확히 그 수로 클러스터링(numClusters).
+      // 미지정 시 threshold(0.85) 자동 추정 + postprocessTurns 후처리(smoothing + 소수화자 흡수)로 보정.
       turns = await diarAdapter.diarize(audioPath, {
-        minSpeakers: 1,
-        maxSpeakers: 4,
         source: meeting.source,
-        segments: rawSegments
+        segments: rawSegments,
+        numSpeakers:
+          meeting.expected_speakers && meeting.expected_speakers > 0
+            ? meeting.expected_speakers
+            : undefined
       })
     } catch {
       turns = []
+    }
+
+    // 후처리: smoothing + 소수 화자 흡수로 과분할 감소
+    if (turns.length > 0) {
+      const beforeCount = new Set(turns.map((t) => t.speaker_key)).size
+      turns = postprocessTurns(turns, {
+        smooth: { minTurnMs: 200, sandwichMs: 600, gapFillMs: 500 },
+        absorb: { minRatio: 0.02, minDurationMs: 60_000 }
+      })
+      const afterCount = new Set(turns.map((t) => t.speaker_key)).size
+      if (beforeCount !== afterCount) {
+        send({
+          meetingId,
+          phase: 'diarize',
+          message: `화자 후처리: ${beforeCount}명 → ${afterCount}명`
+        })
+      }
     }
 
     // turns가 비어 있으면 merge 단계에서 전체가 spk_0(단일 화자)으로 귀속된다.
@@ -258,12 +330,13 @@ export async function runMeetingPipeline(
         ).run(meetingId, region.start_ms, region.end_ms)
       }
 
-      // duration 보정: 마지막 segment end_ms 또는 기존 duration 중 큰 값
+      // duration 결정: WAV 파일 헤더(ground truth) > STT 마지막 발화 끝 > 기존 duration_ms.
+      // 과거 회귀로 duration_ms가 부풀려진(예: 10배) 데이터를 재처리 시 자동 교정한다.
+      // (기존엔 Math.max로 잘못된 큰 값을 그대로 영속화하는 버그가 있었다.)
+      const wavMs = wavDurationMs(audioPath)
       const lastSegEnd =
-        rawSegments.length > 0
-          ? Math.max(...rawSegments.map((s) => s.end_ms))
-          : 0
-      const duration = Math.max(meeting.duration_ms, lastSegEnd)
+        rawSegments.length > 0 ? Math.max(...rawSegments.map((s) => s.end_ms)) : 0
+      const duration = wavMs ?? (lastSegEnd > 0 ? lastSegEnd : meeting.duration_ms)
 
       db.prepare(
         `UPDATE meetings

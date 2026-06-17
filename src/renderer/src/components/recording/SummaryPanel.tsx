@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
 import type { ActionItem, MeetingSummary } from '../../types'
 import { EmptyState, ProgressBar } from '../ui'
@@ -10,29 +10,41 @@ interface Props {
 
 export default function SummaryPanel({ summary, meetingId }: Props): React.ReactNode {
   const { processing, summarizeMeeting, actionItemToTodo, refreshCurrent } = useRecordingStore()
-  const [summarizing, setSummarizing] = useState(false)
+  // 요약 재생성은 회의별로 독립 실행된다. SummaryPanel은 회의 전환 시 언마운트되지 않고
+  // 재사용되므로, boolean 대신 트리거된 회의 id로 추적해 다른 회의에 "재생성 중…" 잔상이
+  // 남지 않게 한다.
+  const [summarizingId, setSummarizingId] = useState<number | null>(null)
   const [summaryError, setSummaryError] = useState<string | null>(null)
 
+  const summarizing = summarizingId === meetingId
+
+  // 회의를 전환하면 이전 회의의 에러 메시지가 남지 않도록 초기화한다.
+  useEffect(() => {
+    setSummaryError(null)
+  }, [meetingId])
+
+  const proc = processing[meetingId]
   const isProcessing =
-    processing?.meetingId === meetingId &&
-    (processing.phase === 'summarize' || processing.phase === 'transcribe' ||
-      processing.phase === 'diarize' || processing.phase === 'vad' || processing.phase === 'merge')
+    !!proc &&
+    (proc.phase === 'summarize' || proc.phase === 'transcribe' ||
+      proc.phase === 'diarize' || proc.phase === 'vad' || proc.phase === 'merge')
 
   const handleSummarize = async (): Promise<void> => {
-    setSummarizing(true)
+    const targetId = meetingId
+    setSummarizingId(targetId)
     setSummaryError(null)
     try {
-      await summarizeMeeting(meetingId)
+      await summarizeMeeting(targetId)
       await refreshCurrent()
     } catch (e) {
       setSummaryError(e instanceof Error ? e.message : '요약 생성 실패')
     } finally {
-      setSummarizing(false)
+      setSummarizingId((prev) => (prev === targetId ? null : prev))
     }
   }
 
   if (isProcessing) {
-    const pct = Math.round((processing?.progress ?? 0) * 100)
+    const pct = Math.round((proc?.progress ?? 0) * 100)
     const phaseLabel: Record<string, string> = {
       transcribe: '전사 중',
       diarize: '화자 분리 중',
@@ -40,13 +52,13 @@ export default function SummaryPanel({ summary, meetingId }: Props): React.React
       merge: '병합 중',
       summarize: 'AI 요약 생성 중'
     }
-    const label = phaseLabel[processing?.phase ?? ''] ?? '처리 중'
+    const label = phaseLabel[proc?.phase ?? ''] ?? '처리 중'
     return (
       <div className="space-y-3 py-4">
         <p className="text-sm text-gray-600">{label}</p>
         <ProgressBar percent={pct} color="bg-blue-500" height="h-1.5" />
-        {processing?.message && (
-          <p className="text-xs text-gray-400">{processing.message}</p>
+        {proc?.message && (
+          <p className="text-xs text-gray-400">{proc.message}</p>
         )}
       </div>
     )

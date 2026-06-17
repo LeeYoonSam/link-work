@@ -410,6 +410,7 @@ export interface Meeting {
   duration_ms: number
   language: string
   source: MeetingSource
+  expected_speakers: number | null
   project_id: number | null
   calendar_event_id: string | null
   calendar_event_title: string | null
@@ -506,7 +507,10 @@ export interface RecordingAPI {
     meta: { mime: string; durationMs: number },
     channelEnergy?: ChannelEnergy | null
   ) => Promise<{ path: string }>
-  process: (id: number) => Promise<{ success: boolean; error?: string; transcribed?: boolean }>
+  process: (
+    id: number,
+    opts?: { skipTranscribe?: boolean }
+  ) => Promise<{ success: boolean; error?: string; transcribed?: boolean }>
   summarize: (id: number) => Promise<{ success: boolean; error?: string }>
   rename: (id: number, title: string) => Promise<{ success: boolean }>
   remove: (id: number) => Promise<{ success: boolean }>
@@ -523,5 +527,6 @@ export interface RecordingAPI {
   toggleCut: (cutId: number, enabled: boolean) => Promise<{ success: boolean }>
   actionItemToTodo: (meetingId: number, index: number) => Promise<{ todo_id: number }>
   linkProject: (id: number, projectId: number | null) => Promise<{ success: boolean }>
+  setExpectedSpeakers: (id: number, n: number | null) => Promise<{ success: boolean }>
   onStream: (cb: (e: RecordingStreamEvent) => void) => () => void
 }
