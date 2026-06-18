@@ -1,0 +1,10 @@
+{
+  "meeting_id": 0,
+  "audio": "0.wav",
+  "duration_ms": 0,
+  "_HOWTO": "이 파일은 정답(ground truth) 라벨 포맷 예시입니다. 실제 사용 시: (1) `python3 export_meeting.py --meeting <id> --bootstrap-ref` 로 refs/meeting_<id>.json 을 생성하면 앱의 가설이 채워집니다. (2) 오디오를 들으며 각 segment의 'speaker'(실제 화자명/식별자)와 'text'(정확한 전사)를 정답으로 수정하세요. (3) start_ms/end_ms 는 대략적이어도 됩니다(DER collar·cpWER이 흡수). 화자 라벨 문자열은 가설과 달라도 됩니다(최적 매칭으로 정렬됨).",
+  "segments": [
+    { "start_ms": 0, "end_ms": 3200, "speaker": "화자A", "text": "정확한 발화 내용을 여기에 적습니다." },
+    { "start_ms": 3200, "end_ms": 7000, "speaker": "화자B", "text": "두 번째 발화." }
+  ]
+}

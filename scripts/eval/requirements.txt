@@ -1,0 +1,13 @@
+# LinkWork 회의 파이프라인 평가 하네스 의존성
+#
+# 설치(권장: 가상환경):
+#   cd scripts/eval
+#   python3 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+#
+# 주의: 의존성 없이도 STT(CER/WER)와 화자 수 정확도, 요약(LLM-judge)은 동작한다.
+#       DER/JER에는 pyannote.metrics, cpWER에는 meeteval 이 필요하다.
+
+pyannote.metrics>=3.2   # DER / JER (화자분리)
+meeteval>=0.4           # cpWER / ORC-WER (화자귀속 종단)
+jiwer>=3.0              # (선택) CER/WER — 없으면 내장 Levenshtein 사용

@@ -10,3 +10,12 @@ dist
 # Claude Code - 로컬 전용/런타임 파일 (공유 설정은 .claude/settings.json 사용)
 .claude/settings.local.json
 .claude/*.lock
+
+# 평가 하네스 — 실제 회의 내용/산출물은 민감 데이터이므로 커밋 금지
+scripts/eval/refs/*
+!scripts/eval/refs/.gitkeep
+!scripts/eval/refs/_TEMPLATE.json
+scripts/eval/out/*
+!scripts/eval/out/.gitkeep
+scripts/eval/.venv/
+scripts/eval/**/__pycache__/
