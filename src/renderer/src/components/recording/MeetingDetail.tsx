@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
 import { useProjectStore } from '../../stores/projectStore'
 import type { MeetingStatus } from '../../types'
-import { Badge, IconButton, ProgressBar, TrashIcon, PencilIcon, XIcon, LinkIcon } from '../ui'
+import { Badge, IconButton, ProgressBar, TrashIcon, PencilIcon, XIcon, LinkIcon, UndoIcon } from '../ui'
 import AudioPlayer from './AudioPlayer'
 import SpeakerTimeline from './SpeakerTimeline'
 import SummaryPanel from './SummaryPanel'
@@ -54,6 +54,7 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
     removeMeeting,
     linkProject,
     reprocessMeeting,
+    summarizeMeeting,
     setExpectedSpeakers,
     refreshCurrent
   } = useRecordingStore()
@@ -179,6 +180,20 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
     }
   }
 
+  // AI 요약만 다시 생성 (전사 재사용)
+  const handleSummarizeFromMenu = async (): Promise<void> => {
+    const targetId = meeting.id
+    setReprocessingId(targetId)
+    try {
+      await summarizeMeeting(targetId)
+    } finally {
+      setReprocessingId((prev) => (prev === targetId ? null : prev))
+    }
+  }
+
+  // 재처리/재생성 진행 중 여부 (메뉴 항목 비활성화에 사용)
+  const busy = reprocessing || isProcessing
+
   const TABS: { id: Tab; label: string }[] = [
     { id: 'timeline', label: `타임라인 (${segments.length})` },
     { id: 'summary', label: '요약' },
@@ -219,6 +234,89 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
           )}
 
           <div className="flex items-center gap-0.5 shrink-0">
+            {/* 재생성 메뉴: 화자 재분리 / 요약 재생성 / 전체 재처리 / 빠른 재적용 통합 */}
+            {meeting.status !== 'recording' && meeting.audio_path && (
+              <div className="relative">
+                <IconButton
+                  title="다시 처리 · 재생성"
+                  onClick={() => setShowReprocessMenu((v) => !v)}
+                  tone="primary"
+                  active={showReprocessMenu}
+                >
+                  <span className={busy ? 'inline-block animate-spin' : ''}>
+                    <UndoIcon size={14} />
+                  </span>
+                </IconButton>
+                {showReprocessMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-20"
+                      onClick={() => setShowReprocessMenu(false)}
+                    />
+                    <div className="absolute z-30 right-0 top-8 w-64 bg-white border border-gray-200 rounded-xl shadow-lg py-1.5">
+                      {/* 화자 다시 분리 (참석 인원) */}
+                      <div className="px-3 py-2 border-b border-gray-100">
+                        <p className="text-[11px] font-medium text-gray-500 mb-1.5">화자 다시 분리</p>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min={1}
+                            max={20}
+                            value={speakerCount}
+                            onChange={(e) => setSpeakerCount(e.target.value)}
+                            placeholder="자동"
+                            disabled={busy}
+                            title="참석 인원을 지정하면 그 수만큼 화자를 분리합니다 (비우면 자동 추정)"
+                            className="w-14 text-xs px-1.5 py-1 border border-gray-200 rounded text-center focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:opacity-50"
+                          />
+                          <span className="text-[11px] text-gray-400">명</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowReprocessMenu(false)
+                              void handleReprocessWithSpeakers()
+                            }}
+                            disabled={busy}
+                            className="ml-auto text-xs px-2.5 py-1 rounded-md bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors disabled:opacity-50"
+                          >
+                            재분리
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-gray-400 mt-1">비우면 자동 추정 · 재전사 없음</p>
+                      </div>
+
+                      <ReprocessMenuItem
+                        title="AI 요약 다시 생성"
+                        desc="전사 기반 5분류 요약 재생성"
+                        disabled={busy}
+                        onClick={() => {
+                          setShowReprocessMenu(false)
+                          void handleSummarizeFromMenu()
+                        }}
+                      />
+                      <ReprocessMenuItem
+                        title="전체 다시 처리"
+                        desc="재전사 포함 · 가장 정확 · 느림"
+                        disabled={busy}
+                        onClick={() => {
+                          setShowReprocessMenu(false)
+                          void handleReprocess(false)
+                        }}
+                      />
+                      <ReprocessMenuItem
+                        title="빠른 재적용"
+                        desc="정제 · 화자 분리만 · 빠름"
+                        disabled={busy}
+                        onClick={() => {
+                          setShowReprocessMenu(false)
+                          void handleReprocess(true)
+                        }}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             <IconButton title="제목 편집" onClick={() => setEditingTitle(true)} tone="default">
               <PencilIcon size={14} />
             </IconButton>
@@ -272,73 +370,6 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
             </select>
           </div>
 
-          {/* 참석 인원 지정 → 정확한 화자 분리 (sherpa numClusters) */}
-          {meeting.status !== 'recording' && meeting.audio_path && !isProcessing && (
-            <div className="flex items-center gap-1">
-              <span className="text-[11px] text-gray-400">참석</span>
-              <input
-                type="number"
-                min={1}
-                max={20}
-                value={speakerCount}
-                onChange={(e) => setSpeakerCount(e.target.value)}
-                placeholder="자동"
-                disabled={reprocessing}
-                title="참석 인원을 지정하면 그 수만큼 화자를 분리합니다 (비우면 자동 추정)"
-                className="w-12 text-[11px] px-1.5 py-0.5 border border-gray-200 rounded text-center focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:opacity-50"
-              />
-              <span className="text-[11px] text-gray-400">명</span>
-              <button
-                type="button"
-                onClick={() => void handleReprocessWithSpeakers()}
-                disabled={reprocessing}
-                title="이 인원으로 화자를 다시 분리합니다 (재전사 없음)"
-                className="text-[11px] text-blue-500 hover:text-blue-700 transition-colors disabled:opacity-50"
-              >
-                {reprocessing ? '처리 중…' : '재분리'}
-              </button>
-            </div>
-          )}
-
-          {/* 다시 처리: 빠른 재적용(정제·화자분리만) / 전체 재처리(재전사 포함) 선택 */}
-          {meeting.status !== 'recording' && meeting.audio_path && !isProcessing && (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowReprocessMenu((v) => !v)}
-                disabled={reprocessing}
-                className="text-[11px] text-gray-400 hover:text-blue-500 transition-colors disabled:opacity-50"
-              >
-                {reprocessing ? '처리 중…' : '↻ 다시 처리 ▾'}
-              </button>
-              {showReprocessMenu && (
-                <div className="absolute z-20 right-0 top-6 w-max bg-white border border-gray-200 rounded-lg shadow-lg py-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowReprocessMenu(false)
-                      void handleReprocess(true)
-                    }}
-                    className="block w-full text-left px-3 py-1.5 hover:bg-gray-50 transition-colors"
-                  >
-                    <span className="text-xs text-gray-700">빠른 재적용</span>
-                    <span className="block text-[10px] text-gray-400">정제·화자 분리만 · 빠름</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowReprocessMenu(false)
-                      void handleReprocess(false)
-                    }}
-                    className="block w-full text-left px-3 py-1.5 hover:bg-gray-50 transition-colors"
-                  >
-                    <span className="text-xs text-gray-700">전체 재처리</span>
-                    <span className="block text-[10px] text-gray-400">재전사 포함 · 정확</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
         {/* 처리 중 프로그레스 */}
@@ -452,5 +483,30 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
         </div>
       )}
     </div>
+  )
+}
+
+// 재생성 메뉴의 단일 항목 (제목 + 설명)
+function ReprocessMenuItem({
+  title,
+  desc,
+  onClick,
+  disabled
+}: {
+  title: string
+  desc: string
+  onClick: () => void
+  disabled?: boolean
+}): React.ReactNode {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="block w-full text-left px-3 py-2 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:hover:bg-transparent"
+    >
+      <span className="block text-xs text-gray-700">{title}</span>
+      <span className="block text-[10px] text-gray-400">{desc}</span>
+    </button>
   )
 }

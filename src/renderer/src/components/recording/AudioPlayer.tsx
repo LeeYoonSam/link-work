@@ -58,12 +58,12 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
   const [duration, setDuration] = useState(0)
   const [loadError, setLoadError] = useState(false)
 
-  // 외부에서 seekTo 호출 가능하게 노출
+  // 외부에서 seekTo 호출 가능하게 노출 (타임라인 클릭 → 정확히 그 위치로 이동, 컷 스킵 없음)
   useImperativeHandle(ref, () => ({
     seekTo(ms: number) {
       const audio = audioRef.current
       if (!audio) return
-      const targetSec = skipCuts(ms / 1000, cuts)
+      const targetSec = ms / 1000
       audio.currentTime = targetSec
       setCurrentTime(targetSec)
       if (audio.paused) {
@@ -87,10 +87,10 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
     const audio = audioRef.current
     if (!audio) return
     const t = audio.currentTime
-    // 컷 구간 스킵
-    if (isInEnabledCut(t, cuts)) {
-      const next = skipCuts(t, cuts)
-      audio.currentTime = next
+    // 컷 구간 자동 스킵은 '재생 중'에만 적용한다. 일시정지 상태에서 사용자가 컷 안으로
+    // 직접 시킹한 경우엔 그 위치를 유지해야 한다(드래그 시킹이 컷으로 튕기던 버그 방지).
+    if (!audio.paused && isInEnabledCut(t, cuts)) {
+      audio.currentTime = skipCuts(t, cuts)
       return
     }
     setCurrentTime(t)
@@ -122,13 +122,14 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
     }
   }
 
+  // 프로그레스바 드래그/클릭 → 정확히 그 위치로 이동한다(컷 스킵을 적용하지 않음).
+  // 컷 스킵은 재생 중 handleTimeUpdate에서만 자동 처리된다.
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const audio = audioRef.current
     if (!audio) return
     const t = Number(e.target.value)
-    const safe = skipCuts(t, cuts)
-    audio.currentTime = safe
-    setCurrentTime(safe)
+    audio.currentTime = t
+    setCurrentTime(t)
   }
 
   // webm duration이 없으면(0) 저장된 durationMs를 사용
@@ -162,6 +163,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
         src={src}
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
+        onDurationChange={handleLoadedMetadata}
         onEnded={handleEnded}
         onError={handleError}
         preload="metadata"

@@ -156,20 +156,12 @@ export default function SummaryPanel({ summary, meetingId }: Props): React.React
         </SummarySection>
       )}
 
-      {/* 재생성 버튼 */}
-      <div className="pt-2 border-t border-gray-100 flex items-center justify-between">
+      {/* 생성 정보 (요약 재생성은 상단 ↻ 메뉴에서) */}
+      <div className="pt-2 border-t border-gray-100">
         <span className="text-[11px] text-gray-400">
           생성: {formatDate(summary.generated_at)}
           {summary.model && ` · ${summary.model}`}
         </span>
-        <button
-          type="button"
-          onClick={handleSummarize}
-          disabled={summarizing}
-          className="text-xs text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
-        >
-          {summarizing ? '재생성 중...' : '다시 생성'}
-        </button>
       </div>
 
       {summaryError && (
