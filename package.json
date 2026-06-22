@@ -9,7 +9,7 @@
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "electron-vite build && electron-builder --dir",
     "build:mac": "electron-vite build && electron-builder --mac",
-    "deploy": "electron-vite build && electron-builder --dir && rsync -a --delete dist/mac-arm64/LinkWork.app /Applications/LinkWork.app && echo '✅ LinkWork updated in /Applications'",
+    "deploy": "electron-vite build && electron-builder --dir && rsync -a --delete dist/mac-arm64/LinkWork.app/ /Applications/LinkWork.app/ && echo '✅ LinkWork updated in /Applications'",
     "preview": "electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
