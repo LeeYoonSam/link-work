@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
 import { useProjectStore } from '../../stores/projectStore'
 import type { MeetingStatus } from '../../types'
@@ -72,8 +72,13 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
   const [reprocessingId, setReprocessingId] = useState<number | null>(null)
   const [showReprocessMenu, setShowReprocessMenu] = useState(false)
   const [speakerCount, setSpeakerCount] = useState('')
+  // 현재 재생 위치(ms) — AudioPlayer가 보고하고 SpeakerTimeline 하이라이트/싱크에 사용
+  const [currentMs, setCurrentMs] = useState(0)
 
   const audioRef = useRef<AudioPlayerHandle>(null)
+
+  // 타임라인 → 프로그레스바 시킹. ref가 안정적이라 빈 deps로 고정해 SegmentRow memo를 유지한다.
+  const handleSeek = useCallback((ms: number) => audioRef.current?.seekTo(ms), [])
 
   const meeting = current?.meeting
   const speakers = current?.speakers ?? []
@@ -87,6 +92,7 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
       setTitleValue(meeting.title)
       setEditingTitle(false)
       setConfirmDelete(false)
+      setCurrentMs(0)
     }
   }, [meeting?.id])
 
@@ -412,6 +418,7 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
           audioPath={meeting.audio_path}
           cuts={cuts}
           durationMs={meeting.duration_ms}
+          onPositionChange={setCurrentMs}
         />
       </div>
 
@@ -440,7 +447,8 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
             segments={segments}
             speakers={speakers}
             cuts={cuts}
-            onSeek={(ms) => audioRef.current?.seekTo(ms)}
+            currentMs={currentMs}
+            onSeek={handleSeek}
           />
         )}
         {tab === 'summary' && <SummaryPanel summary={summary} meetingId={meeting.id} />}

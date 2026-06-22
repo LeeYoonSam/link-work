@@ -11,6 +11,8 @@ interface Props {
   // MediaRecorder webm/opus는 duration 메타데이터가 없어 audio.duration이 Infinity가 된다.
   // 녹음 시 저장한 정확한 길이를 fallback으로 사용한다.
   durationMs?: number
+  // 현재 재생 위치(ms)를 부모로 보고한다(타임라인 하이라이트/싱크용).
+  onPositionChange?: (ms: number) => void
 }
 
 function formatTime(sec: number): string {
@@ -49,7 +51,7 @@ function skipCuts(timeSec: number, cuts: MeetingCut[]): number {
 }
 
 const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
-  { audioPath, cuts, durationMs },
+  { audioPath, cuts, durationMs, onPositionChange },
   ref
 ) {
   const audioRef = useRef<HTMLAudioElement>(null)
@@ -57,6 +59,9 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [loadError, setLoadError] = useState(false)
+  // 시킹 목표(초). seek 완료 전 timeupdate가 옛 위치를 흘려 프로그레스바가 초기화되던
+  // race를 막기 위해, 실제 위치가 목표에 도달하기 전까지 timeupdate를 무시한다.
+  const seekTargetRef = useRef<number | null>(null)
 
   // 외부에서 seekTo 호출 가능하게 노출 (타임라인 클릭 → 정확히 그 위치로 이동, 컷 스킵 없음)
   useImperativeHandle(ref, () => ({
@@ -64,6 +69,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
       const audio = audioRef.current
       if (!audio) return
       const targetSec = ms / 1000
+      seekTargetRef.current = targetSec
       audio.currentTime = targetSec
       setCurrentTime(targetSec)
       if (audio.paused) {
@@ -81,12 +87,29 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
     setCurrentTime(0)
     setDuration(0)
     setPlaying(false)
+    seekTargetRef.current = null
   }, [audioPath])
+
+  // 현재 재생 위치를 부모로 보고한다(타임라인 하이라이트/자동 스크롤 싱크용).
+  // audio의 timeupdate는 브라우저에서 ~4Hz로 제한되므로 별도 throttle 없이 보고한다.
+  useEffect(() => {
+    onPositionChange?.(Math.round(currentTime * 1000))
+  }, [currentTime, onPositionChange])
 
   const handleTimeUpdate = (): void => {
     const audio = audioRef.current
     if (!audio) return
     const t = audio.currentTime
+    // 시킹 진행 중: 실제 위치가 목표 근처에 도달하기 전의 옛 위치 보고를 무시한다.
+    // (seek 직후 timeupdate가 0/이전 위치를 흘려 프로그레스바가 초기화되던 race 방지)
+    const target = seekTargetRef.current
+    if (target !== null) {
+      if (Math.abs(t - target) < 0.4) {
+        seekTargetRef.current = null
+      } else {
+        return
+      }
+    }
     // 컷 구간 자동 스킵은 '재생 중'에만 적용한다. 일시정지 상태에서 사용자가 컷 안으로
     // 직접 시킹한 경우엔 그 위치를 유지해야 한다(드래그 시킹이 컷으로 튕기던 버그 방지).
     if (!audio.paused && isInEnabledCut(t, cuts)) {
@@ -94,6 +117,14 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
       return
     }
     setCurrentTime(t)
+  }
+
+  // seek 완료. 잠금을 풀고 실제 위치로 동기화한다(목표에 영영 도달 못하는 경우 대비 백업).
+  const handleSeeked = (): void => {
+    const audio = audioRef.current
+    if (!audio) return
+    seekTargetRef.current = null
+    setCurrentTime(audio.currentTime)
   }
 
   const handleLoadedMetadata = (): void => {
@@ -128,6 +159,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
     const audio = audioRef.current
     if (!audio) return
     const t = Number(e.target.value)
+    seekTargetRef.current = t
     audio.currentTime = t
     setCurrentTime(t)
   }
@@ -162,6 +194,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
         ref={audioRef}
         src={src}
         onTimeUpdate={handleTimeUpdate}
+        onSeeked={handleSeeked}
         onLoadedMetadata={handleLoadedMetadata}
         onDurationChange={handleLoadedMetadata}
         onEnded={handleEnded}

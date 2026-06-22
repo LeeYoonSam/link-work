@@ -1,6 +1,6 @@
-import { app, shell, BrowserWindow, protocol, net } from 'electron'
+import { app, shell, BrowserWindow, protocol } from 'electron'
 import { join, basename } from 'path'
-import { pathToFileURL } from 'url'
+import { stat, open, readFile } from 'fs/promises'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initDatabase, closeDatabase } from './db/database'
 import { registerProjectIpc } from './ipc/project.ipc'
@@ -96,10 +96,67 @@ app.whenReady().then(() => {
   })
 
   // 녹음 오디오 스트리밍 (linkwork-media://audio/<파일명>). basename으로 경로 탈출 차단.
-  protocol.handle('linkwork-media', (request) => {
+  // <audio>가 시킹할 때 보내는 HTTP Range 요청을 206 Partial Content로 처리해야
+  // 전체 파일을 받지 않고도 즉시 seek이 가능하다. (Range 미지원 시 큰 WAV에서
+  // 시킹이 간헐적으로 실패하거나 위치가 초기화되던 버그)
+  protocol.handle('linkwork-media', async (request) => {
     const fileName = basename(decodeURIComponent(new URL(request.url).pathname))
     const filePath = join(app.getPath('userData'), 'recordings', fileName)
-    return net.fetch(pathToFileURL(filePath).toString())
+
+    let fileSize: number
+    try {
+      fileSize = (await stat(filePath)).size
+    } catch {
+      return new Response('Not Found', { status: 404 })
+    }
+
+    const contentType = fileName.endsWith('.wav')
+      ? 'audio/wav'
+      : fileName.endsWith('.ogg')
+        ? 'audio/ogg'
+        : 'audio/webm'
+
+    const rangeHeader = request.headers.get('Range')
+    if (rangeHeader) {
+      const m = /bytes=(\d*)-(\d*)/.exec(rangeHeader)
+      let start = m && m[1] ? parseInt(m[1], 10) : 0
+      let end = m && m[2] ? parseInt(m[2], 10) : fileSize - 1
+      if (!Number.isFinite(start) || start < 0) start = 0
+      if (!Number.isFinite(end) || end >= fileSize) end = fileSize - 1
+      if (start > end) {
+        return new Response('Range Not Satisfiable', {
+          status: 416,
+          headers: { 'Content-Range': `bytes */${fileSize}` }
+        })
+      }
+      const chunkSize = end - start + 1
+      const buf = Buffer.alloc(chunkSize)
+      const fd = await open(filePath, 'r')
+      try {
+        await fd.read(buf, 0, chunkSize, start)
+      } finally {
+        await fd.close()
+      }
+      return new Response(buf, {
+        status: 206,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(chunkSize)
+        }
+      })
+    }
+
+    const buf = await readFile(filePath)
+    return new Response(buf, {
+      status: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': String(fileSize)
+      }
+    })
   })
 
   initDatabase()
