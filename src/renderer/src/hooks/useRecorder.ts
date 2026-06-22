@@ -157,13 +157,11 @@ export function useRecorder(): UseRecorder {
       }
       systemStreamRef.current = sysStream
 
-      // 3) Web Audio 믹싱: mic=L / system=R 스테레오 분리
+      // 3) Web Audio 믹싱
       const ctx = new AudioContext()
       audioCtxRef.current = ctx
 
-      const merger = ctx.createChannelMerger(2)
-
-      // 마이크 소스 → 채널 0 (L)
+      // 마이크 소스
       const micSource = ctx.createMediaStreamSource(micStream)
 
       // 레벨미터용 AnalyserNode (마이크 신호 기준)
@@ -171,19 +169,23 @@ export function useRecorder(): UseRecorder {
       analyser.fftSize = 1024
       analyserRef.current = analyser
       micSource.connect(analyser)
-      micSource.connect(merger, 0, 0)
-
-      // 시스템 오디오 소스 → 채널 1 (R)
-      if (sysStream) {
-        const sysSource = ctx.createMediaStreamSource(sysStream)
-        sysSource.connect(merger, 0, 1)
-      } else {
-        // 시스템 없으면 mic 을 R 에도 연결(모노 폴백)
-        micSource.connect(merger, 0, 1)
-      }
 
       const dest = ctx.createMediaStreamDestination()
-      merger.connect(dest)
+
+      if (sysStream) {
+        // mic=L / system=R 스테레오 분리 → 채널 기반 화자분리('나'/'상대')에 사용
+        const merger = ctx.createChannelMerger(2)
+        micSource.connect(merger, 0, 0)
+        const sysSource = ctx.createMediaStreamSource(sysStream)
+        sysSource.connect(merger, 0, 1)
+        merger.connect(dest)
+      } else {
+        // 시스템 오디오가 없으면 mono로 녹음한다. (과거엔 mic을 양 채널에 복제해
+        // '2채널인 척'했지만 L≈R이라 채널 분리가 무의미했고 화자 1명으로 붕괴했다.)
+        // mono 저장 시 채널 에너지가 없어 main에서 source를 'mic'으로 강등하고,
+        // sherpa 임베딩 기반 다화자 분리로 처리한다.
+        micSource.connect(dest)
+      }
 
       // 4) MediaRecorder 설정
       const mime = getSupportedMime()

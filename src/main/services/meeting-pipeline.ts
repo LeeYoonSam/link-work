@@ -7,7 +7,7 @@ import type { SendStream, SttSegment, DiarTurn } from './meeting-types'
 import { getSttAdapter } from './stt/index'
 import { GapAdapter } from './vad/gap-adapter'
 import { getVadAdapter } from './vad/index'
-import { getDiarizationAdapter } from './diarization/index'
+import { diarizeWithFallback } from './diarization/index'
 import { ensureDiarizationModels } from './diarization/model-manager'
 import { cleanSegments } from './transcript-cleaner'
 import { wavDurationMs } from './wav-util'
@@ -140,6 +140,22 @@ export async function runMeetingPipeline(
       rawSegments = existing
         .map((s) => ({ start_ms: s.start_ms, end_ms: s.end_ms, text: s.text }))
         .filter((s) => s.text && s.text.trim())
+
+      // 박제 차단: 기존 세그먼트의 끝시각이 실제 WAV 길이를 크게 초과하면(과거 ×10 오염 등)
+      // 재사용을 포기하고 아래에서 전체 재전사로 폴백한다. 빠른 재적용이 오염 데이터를
+      // 그대로 영속화하던 문제를 방지한다.
+      const wavMs0 = wavDurationMs(audioPath)
+      if (wavMs0 && rawSegments.length > 0) {
+        const maxEnd = Math.max(...rawSegments.map((s) => s.end_ms))
+        if (maxEnd > wavMs0 * 1.5) {
+          send({
+            meetingId,
+            phase: 'transcribe',
+            message: '기존 전사가 오디오 길이와 어긋나 전체 재전사로 전환합니다.'
+          })
+          rawSegments = []
+        }
+      }
     }
 
     // 일반 모드이거나, 빠른 재적용인데 기존 전사가 없으면 STT 실행
@@ -166,6 +182,20 @@ export async function runMeetingPipeline(
         phase: 'transcribe',
         message: `정제 완료 (${beforeClean} → ${rawSegments.length} segment)`
       })
+    }
+
+    // 타임스탬프 방어: 실제 WAV 길이(ground truth)를 넘는 비정상 타임스탬프를 클램프한다.
+    // (과거 회귀로 STT 타임스탬프가 ×10로 부풀려져 타임라인이 실제 오디오보다 길게
+    //  표시되고 재생 시킹이 깨지던 사례 방지.) 정상 데이터에는 영향 없음(no-op).
+    const audioMs = wavDurationMs(audioPath)
+    if (audioMs && audioMs > 0) {
+      rawSegments = rawSegments
+        .map((s) => {
+          const start = Math.min(Math.max(0, s.start_ms), audioMs)
+          const end = Math.min(Math.max(start, s.end_ms), audioMs)
+          return { ...s, start_ms: start, end_ms: end }
+        })
+        .filter((s) => s.end_ms > s.start_ms)
     }
 
     // manual 어댑터(엔진 미설치) 또는 결과 없음 → 안내 segment 삽입
@@ -204,35 +234,28 @@ export async function runMeetingPipeline(
 
     send({ meetingId, phase: 'vad', progress: 1, message: `${silenceRegions.length}개 침묵 구간` })
 
-    // ── 4. 화자 분리 ──
+    // ── 4. 화자 분리 (폴백 체인: channel → sherpa → none) ──
     send({ meetingId, phase: 'diarize', progress: 0, message: '화자 분리 중…' })
 
-    // mic-only 회의는 음성 임베딩 기반 분리(sherpa)를 위해 모델이 필요 → 최초 1회 자동 다운로드.
-    // mic+system은 채널 기반 분리라 모델이 필요 없다. 다운로드 실패 시 단일 화자로 폴백.
-    if (meeting.source !== 'mic+system') {
-      try {
-        await ensureDiarizationModels(({ ratio, label }) =>
-          send({ meetingId, phase: 'diarize', progress: ratio, message: label })
-        )
-      } catch {
-        // graceful: 모델이 없으면 getDiarizationAdapter가 none으로 폴백
-      }
-    }
-
-    const diarAdapter = await getDiarizationAdapter(meeting.source)
+    // 참석 인원(expected_speakers)을 지정하면 sherpa가 정확히 그 수로 클러스터링(numClusters).
+    // 미지정 시 threshold(0.85) 자동 추정 + postprocessTurns 후처리(smoothing + 소수화자 흡수)로 보정.
+    // mic+system은 채널 분리를 우선하되, 채널 에너지가 없거나 단일 화자로만 나오면 sherpa로 폴백한다.
+    // sherpa 모델은 폴백 직전(ensureModels 콜백)에만 다운로드한다.
     let turns: DiarTurn[] = []
-
     try {
-      // 참석 인원(expected_speakers)을 지정하면 sherpa가 정확히 그 수로 클러스터링(numClusters).
-      // 미지정 시 threshold(0.85) 자동 추정 + postprocessTurns 후처리(smoothing + 소수화자 흡수)로 보정.
-      turns = await diarAdapter.diarize(audioPath, {
+      const result = await diarizeWithFallback(audioPath, {
         source: meeting.source,
         segments: rawSegments,
         numSpeakers:
           meeting.expected_speakers && meeting.expected_speakers > 0
             ? meeting.expected_speakers
-            : undefined
+            : undefined,
+        ensureModels: () =>
+          ensureDiarizationModels(({ ratio, label }) =>
+            send({ meetingId, phase: 'diarize', progress: ratio, message: label })
+          )
       })
+      turns = result.turns
     } catch {
       turns = []
     }

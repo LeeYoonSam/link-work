@@ -68,6 +68,10 @@ export class ChannelAdapter implements DiarizationAdapter {
       lastKey = key
     }
 
+    // 결과가 한 화자(전부 mic 또는 전부 system)뿐이면 채널 분리가 무의미하다.
+    // 빈 배열을 반환해 상위 오케스트레이션이 sherpa 임베딩 분리로 폴백하도록 한다.
+    if (new Set(turns.map((t) => t.speaker_key)).size < 2) return []
+
     return turns
   }
 }

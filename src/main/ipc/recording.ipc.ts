@@ -112,7 +112,9 @@ export function registerRecordingIpc(): void {
       meta: { mime: string; durationMs: number },
       channelEnergy?: { hopMs: number; left: number[]; right: number[] } | null
     ) => {
-      const row = db.prepare('SELECT id FROM meetings WHERE id = ?').get(id)
+      const row = db.prepare('SELECT id, source FROM meetings WHERE id = ?').get(id) as
+        | { id: number; source: string }
+        | undefined
       if (!row) throw new Error('존재하지 않는 회의입니다.')
       await mkdir(recordingsDir(), { recursive: true })
       const ext = meta.mime.includes('wav') ? 'wav' : meta.mime.includes('ogg') ? 'ogg' : 'webm'
@@ -121,8 +123,9 @@ export function registerRecordingIpc(): void {
       await writeFile(filePath, Buffer.from(bytes))
 
       // 화자분리용 채널 에너지 envelope 저장 (재처리 시 재사용). 없으면 이전 파일 정리.
+      const hasStereo = !!(channelEnergy && channelEnergy.left.length > 0)
       const energyPath = channelEnergyPath(id)
-      if (channelEnergy && channelEnergy.left.length > 0) {
+      if (hasStereo) {
         await writeFile(energyPath, JSON.stringify(channelEnergy))
       } else {
         try {
@@ -132,14 +135,19 @@ export function registerRecordingIpc(): void {
         }
       }
 
+      // mic+system으로 요청했지만 실제 스테레오 채널 분리가 불가능하면(시스템 오디오 미캡처 →
+      // mono 녹음 → 채널 에너지 없음) source를 'mic'으로 강등한다. 그래야 화자분리가
+      // 채널 어댑터(2화자 고정)가 아니라 sherpa 임베딩 기반 다화자 분리로 라우팅된다.
+      const effectiveSource = !hasStereo && row.source === 'mic+system' ? 'mic' : row.source
+
       // 길이는 WAV 파일 헤더(ground truth)로 정확히 계산한다. renderer가 보낸 타이머/
       // 디코더 기반 durationMs는 환경에 따라 부정확할 수 있어, WAV면 파일을 신뢰한다.
       const accurateMs = wavDurationMs(filePath)
       const durationMs = accurateMs ?? Math.round(meta.durationMs)
 
       db.prepare(
-        "UPDATE meetings SET audio_path = ?, audio_mime = ?, duration_ms = ?, updated_at = datetime('now','localtime') WHERE id = ?"
-      ).run(fileName, meta.mime, durationMs, id)
+        "UPDATE meetings SET audio_path = ?, audio_mime = ?, duration_ms = ?, source = ?, updated_at = datetime('now','localtime') WHERE id = ?"
+      ).run(fileName, meta.mime, durationMs, effectiveSource, id)
       return { path: fileName }
     }
   )
