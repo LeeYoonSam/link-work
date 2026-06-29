@@ -207,7 +207,9 @@ export default function ProjectForm(): React.ReactNode {
                 <option value="auto">Auto (날짜 기반 자동)</option>
                 <option value="scheduled">Scheduled</option>
                 <option value="development">Development</option>
+                <option value="qa_pending">QA Pending</option>
                 <option value="qa">QA</option>
+                <option value="deploy_pending">Deploy Pending</option>
                 <option value="deploy">Deploy</option>
                 <option value="completed">Completed</option>
                 <option value="cancelled">Cancelled</option>

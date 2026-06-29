@@ -3,6 +3,7 @@ import type { Project, Task } from '../../types'
 import { differenceInCalendarDays, format } from 'date-fns'
 import ScheduleTimeline from '../project/ScheduleTimeline'
 import { Badge, ProgressBar, projectStatus, urgency } from '../ui'
+import PhaseHint from '../project/PhaseHint'
 
 type UrgencyLevel = 'early' | 'mid' | 'late'
 
@@ -29,7 +30,9 @@ function getUrgencyLevel(progress: number): UrgencyLevel {
 const statusCardBg: Record<string, string> = {
   scheduled: 'bg-slate-50 border-slate-200',
   development: 'bg-green-50 border-green-200',
+  qa_pending: 'bg-teal-50 border-teal-200',
   qa: 'bg-orange-50 border-orange-200',
+  deploy_pending: 'bg-amber-50 border-amber-200',
   deploy: 'bg-red-50 border-red-200',
   completed: 'bg-blue-50 border-blue-200',
   cancelled: 'bg-gray-50 border-gray-200'
@@ -104,6 +107,7 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
               <span className={`text-2xl font-bold ${config.text}`}>{progress}%</span>
             )}
             <Badge color={status.badge}>{status.label}</Badge>
+            <PhaseHint project={project} today={today} />
           </div>
         </div>
 

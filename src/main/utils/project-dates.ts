@@ -28,6 +28,7 @@ export interface ProjectStatusFields {
   status: string
   status_manual: number
   dev_start_date: string
+  dev_end_date: string
   qa_start_date: string
   qa_end_date: string
   deploy_date: string
@@ -42,6 +43,10 @@ export function calculateProjectStatus(p: ProjectStatusFields): string {
   if (today > p.deploy_date) return 'completed'
   if (today === p.deploy_date) return 'deploy'
   if (today >= p.qa_start_date && today <= p.qa_end_date) return 'qa'
+  // QA 종료 ~ 배포일 사이의 공백 구간(예: QA 26일 종료, 배포 30일)은 배포대기 상태.
+  if (today > p.qa_end_date) return 'deploy_pending'
+  // 개발 종료 ~ QA 시작 사이의 공백 구간(예: 개발 24일 종료, QA 26일 시작)은 QA대기 상태.
+  if (today > p.dev_end_date) return 'qa_pending'
   return 'development'
 }
 

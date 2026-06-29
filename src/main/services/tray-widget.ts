@@ -13,15 +13,12 @@ let updateInterval: ReturnType<typeof setInterval> | null = null
 interface TrayProject {
   name: string
   status: string
-  devEndDate: string
-  deployDate: string
-  devDaysLeft: number
-  deployDaysLeft: number
-  daysLeft: number
-  progress: number
-  taskProgress: number
-  doneTasks: number
-  totalTasks: number
+  dev_start_date: string
+  dev_end_date: string
+  qa_start_date: string
+  qa_end_date: string
+  deploy_date: string
+  daysLeft: number // 상태별 마감 D-day(툴팁 긴급도 판정용)
 }
 
 interface TrayEvent {
@@ -39,27 +36,40 @@ interface TrayData {
 
 /**
  * 위젯 필터 정책: 대시보드와 동일하게 적용
- * - scheduled, development, qa, deploy 상태만 표시
+ * - scheduled, development, qa_pending, qa, deploy_pending, deploy 상태만 표시
  * - completed, cancelled 상태는 제외
  * - 상태는 날짜 기반 자동 계산 (status_manual=0) 또는 수동 설정값 사용
  *
  * 정책 변경 시 Dashboard.tsx의 필터도 함께 수정할 것
  */
-const VISIBLE_STATUSES = new Set(['scheduled', 'development', 'qa', 'deploy'])
+const VISIBLE_STATUSES = new Set([
+  'scheduled',
+  'development',
+  'qa_pending',
+  'qa',
+  'deploy_pending',
+  'deploy'
+])
 
 const STATUS_PRIORITY: Record<string, number> = {
   development: 0,
   qa: 1,
-  deploy: 2,
-  scheduled: 3
+  qa_pending: 2,
+  deploy_pending: 3,
+  deploy: 4,
+  scheduled: 5
 }
 
-function calculateAutoStatus(project: { dev_start_date: string; qa_start_date: string; qa_end_date: string; deploy_date: string }): string {
+function calculateAutoStatus(project: { dev_start_date: string; dev_end_date: string; qa_start_date: string; qa_end_date: string; deploy_date: string }): string {
   const today = new Date().toISOString().split('T')[0]
   if (today < project.dev_start_date) return 'scheduled'
   if (today > project.deploy_date) return 'completed'
   if (today === project.deploy_date) return 'deploy'
   if (today >= project.qa_start_date && today <= project.qa_end_date) return 'qa'
+  // QA 종료 ~ 배포일 사이의 공백 구간은 배포대기 상태.
+  if (today > project.qa_end_date) return 'deploy_pending'
+  // 개발 종료 ~ QA 시작 사이의 공백 구간은 QA대기 상태.
+  if (today > project.dev_end_date) return 'qa_pending'
   return 'development'
 }
 
@@ -71,10 +81,6 @@ function getActiveProjects(): TrayProject[] {
     )
     .all() as { id: number; name: string; dev_start_date: string; dev_end_date: string; qa_start_date: string; qa_end_date: string; deploy_date: string; status: string; status_manual: number }[]
 
-  const taskCountStmt = db.prepare(
-    "SELECT COUNT(*) as total, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done FROM tasks WHERE project_id = ?"
-  )
-
   const today = new Date()
   return projects
     .map((p) => {
@@ -83,50 +89,36 @@ function getActiveProjects(): TrayProject[] {
     })
     .filter((p) => VISIBLE_STATUSES.has(p.status))
     .map((p) => {
-      const total = differenceInCalendarDays(new Date(p.dev_end_date), new Date(p.dev_start_date))
-      const elapsed = differenceInCalendarDays(today, new Date(p.dev_start_date))
-      const progress = total > 0 ? Math.min(100, Math.max(0, Math.round((elapsed / total) * 100))) : 100
-
-      const taskCount = taskCountStmt.get(p.id) as { total: number; done: number }
-      const totalTasks = taskCount.total ?? 0
-      const doneTasks = taskCount.done ?? 0
-      const taskProgress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0
-
-      const devDaysLeft = differenceInCalendarDays(new Date(p.dev_end_date), today)
-      const deployDaysLeft = differenceInCalendarDays(new Date(p.deploy_date), today)
-
-      // 상태별 마감일 기준 D-day 계산
+      // 상태별 마감일 기준 D-day. 위젯 표시는 renderer의 getPhaseHint가 담당하고,
+      // 이 값은 툴팁 긴급도(daysLeft <= 3) 판정에 쓰인다.
       let daysLeft: number
       switch (p.status) {
         case 'scheduled':
           daysLeft = differenceInCalendarDays(new Date(p.dev_start_date), today)
           break
         case 'development':
-          daysLeft = devDaysLeft
+          daysLeft = differenceInCalendarDays(new Date(p.dev_end_date), today)
+          break
+        case 'qa_pending':
+          daysLeft = differenceInCalendarDays(new Date(p.qa_start_date), today)
           break
         case 'qa':
           daysLeft = differenceInCalendarDays(new Date(p.qa_end_date), today)
           break
-        case 'deploy':
-          daysLeft = deployDaysLeft
-          break
-        default:
-          daysLeft = deployDaysLeft
+        default: // deploy_pending, deploy
+          daysLeft = differenceInCalendarDays(new Date(p.deploy_date), today)
           break
       }
 
       return {
         name: p.name,
         status: p.status,
-        devEndDate: p.dev_end_date,
-        deployDate: p.deploy_date,
-        devDaysLeft,
-        deployDaysLeft,
-        daysLeft,
-        progress,
-        taskProgress,
-        doneTasks,
-        totalTasks
+        dev_start_date: p.dev_start_date,
+        dev_end_date: p.dev_end_date,
+        qa_start_date: p.qa_start_date,
+        qa_end_date: p.qa_end_date,
+        deploy_date: p.deploy_date,
+        daysLeft
       }
     })
     .sort((a, b) => (STATUS_PRIORITY[a.status] ?? 99) - (STATUS_PRIORITY[b.status] ?? 99))

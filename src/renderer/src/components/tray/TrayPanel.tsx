@@ -1,18 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Badge, StatusDot, projectStatus, button } from '../ui'
+import PhaseHint from '../project/PhaseHint'
 
 interface TrayProject {
   name: string
   status: string
-  devEndDate: string
-  deployDate: string
-  devDaysLeft: number
-  deployDaysLeft: number
+  dev_start_date: string
+  dev_end_date: string
+  qa_start_date: string
+  qa_end_date: string
+  deploy_date: string
   daysLeft: number
-  progress: number
-  taskProgress: number
-  doneTasks: number
-  totalTasks: number
 }
 
 interface TrayEvent {
@@ -28,22 +26,9 @@ interface TrayData {
   events: TrayEvent[]
 }
 
-function getDdayText(days: number): string {
-  if (days < 0) return `D+${Math.abs(days)}`
-  if (days === 0) return 'D-Day'
-  return `D-${days}`
-}
-
-function getUrgencyColor(daysLeft: number): string {
-  if (daysLeft <= 3) return 'text-red-600'
-  if (daysLeft <= 7) return 'text-yellow-600'
-  return 'text-green-600'
-}
-
-function getBarColor(progress: number): string {
-  if (progress <= 33) return 'bg-green-500'
-  if (progress <= 66) return 'bg-blue-500'
-  return 'bg-red-500'
+// 'YYYY-MM-DD' → 'MM-DD' (좁은 위젯용 압축 표기)
+function md(dateStr: string): string {
+  return dateStr.slice(5)
 }
 
 export default function TrayPanel(): React.ReactNode {
@@ -97,70 +82,38 @@ export default function TrayPanel(): React.ReactNode {
           {data.projects.length === 0 ? (
             <p className="text-xs text-gray-400">No active projects</p>
           ) : (
-            <div className="space-y-2.5">
+            <div className="space-y-2">
               {data.projects.map((project, i) => {
                 const st = projectStatus[project.status]
                 return (
-                  <div key={i} className="rounded-lg p-2.5 bg-gray-50">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-sm font-medium text-gray-900 truncate mr-2">
+                  <div
+                    key={i}
+                    className="rounded-lg bg-gray-50 border border-gray-100 px-2.5 py-2"
+                  >
+                    {/* Row 1: 이름 + 상태 배지 */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13px] font-semibold text-gray-900 truncate flex-1 min-w-0">
                         {project.name}
                       </span>
-                      <div className="flex gap-1.5 shrink-0 items-center">
-                        {st ? (
-                          <Badge color={st.badge} size="xs">
-                            <StatusDot color={st.dot} size="sm" />
-                            <span className="ml-1">{st.label}</span>
-                          </Badge>
-                        ) : (
-                          <Badge color="bg-gray-100 text-gray-600" size="xs">
-                            {project.status}
-                          </Badge>
-                        )}
-                        <span className={`text-xs font-bold ${getUrgencyColor(project.daysLeft)}`}>
-                          D{getDdayText(project.daysLeft).slice(1)}
-                        </span>
-                      </div>
+                      {st ? (
+                        <Badge color={st.badge} size="xs">
+                          <StatusDot color={st.dot} size="sm" />
+                          <span className="ml-1">{st.label}</span>
+                        </Badge>
+                      ) : (
+                        <Badge color="bg-gray-100 text-gray-600" size="xs">
+                          {project.status}
+                        </Badge>
+                      )}
                     </div>
-                    {project.devDaysLeft >= 0 && (
-                      <>
-                        <div className="w-full bg-gray-200 rounded-full h-1.5">
-                          <div
-                            className={`h-1.5 rounded-full transition-all ${getBarColor(project.progress)}`}
-                            style={{ width: `${project.progress}%` }}
-                          />
-                        </div>
-                        <div className="flex justify-between mt-1">
-                          <span className="text-xs text-gray-400">{project.progress}%</span>
-                          <span className="text-xs text-gray-400">
-                            Dev ~{project.devEndDate} / Deploy {project.deployDate}
-                          </span>
-                        </div>
-                      </>
-                    )}
-                    {project.devDaysLeft < 0 && (
-                      <div className="mt-0.5">
-                        <span className="text-xs text-gray-400">
-                          Deploy {project.deployDate}
-                        </span>
-                      </div>
-                    )}
-                    {project.totalTasks > 0 && (
-                      <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-gray-200">
-                        <span className="text-xs text-gray-500">
-                          Tasks: {project.doneTasks}/{project.totalTasks} done
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <div className="w-16 bg-gray-200 rounded-full h-1">
-                            <div
-                              className="h-1 rounded-full bg-green-500 transition-all"
-                              style={{ width: `${project.taskProgress}%` }}
-                            />
-                          </div>
-                          <span className="text-xs text-gray-500">{project.taskProgress}%</span>
-                        </div>
-                      </div>
-                    )}
+
+                    {/* Row 2: 현재 상태 기준 진행 일차 / 다음 단계 D-day + 배포일 */}
+                    <div className="flex items-center gap-2 mt-1">
+                      <PhaseHint project={project} className="text-[11px]" />
+                      <span className="text-[11px] text-gray-400 shrink-0 tabular-nums">
+                        Deploy {md(project.deploy_date)}
+                      </span>
+                    </div>
                   </div>
                 )
               })}

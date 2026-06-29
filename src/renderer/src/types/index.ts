@@ -8,7 +8,15 @@ export interface Project {
   qa_end_date: string
   deploy_date: string
   deploy_version: string | null
-  status: 'scheduled' | 'development' | 'qa' | 'deploy' | 'completed' | 'cancelled'
+  status:
+    | 'scheduled'
+    | 'development'
+    | 'qa_pending'
+    | 'qa'
+    | 'deploy_pending'
+    | 'deploy'
+    | 'completed'
+    | 'cancelled'
   status_manual: number
   created_at: string
   updated_at: string

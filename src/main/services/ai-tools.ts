@@ -58,10 +58,19 @@ async function buildServer(): Promise<McpSdkServerConfigWithInstance> {
 
   const listProjects = tool(
   'list_projects',
-  '프로젝트 목록을 조회한다. 각 프로젝트의 일정(개발/QA/배포), 상태, 태스크 진행 요약을 반환한다. status로 필터링 가능 (scheduled|development|qa|deploy|completed|cancelled). "진행중인 프로젝트"는 completed/cancelled가 아닌 프로젝트를 의미한다.',
+  '프로젝트 목록을 조회한다. 각 프로젝트의 일정(개발/QA/배포), 상태, 태스크 진행 요약을 반환한다. status로 필터링 가능 (scheduled|development|qa_pending|qa|deploy_pending|deploy|completed|cancelled). qa_pending은 개발 종료 후 QA 시작 전까지의 QA대기, deploy_pending은 QA 종료 후 배포일 전까지의 배포대기 상태. "진행중인 프로젝트"는 completed/cancelled가 아닌 프로젝트를 의미한다.',
   {
     status: z
-      .enum(['scheduled', 'development', 'qa', 'deploy', 'completed', 'cancelled'])
+      .enum([
+        'scheduled',
+        'development',
+        'qa_pending',
+        'qa',
+        'deploy_pending',
+        'deploy',
+        'completed',
+        'cancelled'
+      ])
       .optional()
       .describe('프로젝트 상태 필터'),
     search: searchTerm('프로젝트 이름 부분 검색어')

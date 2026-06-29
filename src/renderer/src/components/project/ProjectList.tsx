@@ -4,6 +4,7 @@ import { format } from 'date-fns'
 import type { Project } from '../../types'
 import MarkdownContent from '../memo/MarkdownContent'
 import { Badge, Card, EmptyState, projectStatus, button } from '../ui'
+import PhaseHint from './PhaseHint'
 
 export default function ProjectList(): React.ReactNode {
   const { projects, fetchProjects, setProjectView, setEditingProject, fetchProject, loading } =
@@ -14,11 +15,22 @@ export default function ProjectList(): React.ReactNode {
     fetchProjects()
   }, [])
 
-  const today = new Date().toISOString().split('T')[0]
+  // 진행 중(development/qa)을 최상단, 그다음 대기·배포 임박(qa_pending/deploy_pending/deploy),
+  // 이후 예정(scheduled), 완료/취소 순. 같은 그룹 내에서는 최신 생성순.
+  const statusOrder: Record<string, number> = {
+    development: 0,
+    qa: 1,
+    qa_pending: 2,
+    deploy_pending: 3,
+    deploy: 4,
+    scheduled: 5,
+    completed: 6,
+    cancelled: 7
+  }
   const sorted = [...projects].sort((a, b) => {
-    const aExpired = a.deploy_date < today ? 1 : 0
-    const bExpired = b.deploy_date < today ? 1 : 0
-    if (aExpired !== bExpired) return aExpired - bExpired
+    const ao = statusOrder[a.status] ?? 99
+    const bo = statusOrder[b.status] ?? 99
+    if (ao !== bo) return ao - bo
     return b.created_at.localeCompare(a.created_at)
   })
   const filtered = filter === 'all' ? sorted : sorted.filter((p) => p.status === filter)
@@ -32,7 +44,7 @@ export default function ProjectList(): React.ReactNode {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div className="flex gap-2">
-          {['all', 'scheduled', 'development', 'qa', 'deploy', 'completed', 'cancelled'].map((s) => (
+          {['all', 'scheduled', 'development', 'qa_pending', 'qa', 'deploy_pending', 'deploy', 'completed', 'cancelled'].map((s) => (
             <button
               key={s}
               onClick={() => setFilter(s)}
@@ -74,9 +86,12 @@ export default function ProjectList(): React.ReactNode {
                     </div>
                   )}
                 </div>
-                <Badge color={projectStatus[project.status].badge}>
-                  {projectStatus[project.status].label}
-                </Badge>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <Badge color={projectStatus[project.status].badge}>
+                    {projectStatus[project.status].label}
+                  </Badge>
+                  <PhaseHint project={project} />
+                </div>
               </div>
               <div className="mt-3 flex gap-4 text-xs text-gray-500">
                 <span>

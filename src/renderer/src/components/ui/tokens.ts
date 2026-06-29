@@ -12,7 +12,17 @@ export interface StatusStyle {
 export const projectStatus: Record<string, StatusStyle> = {
   scheduled: { label: 'Scheduled', badge: 'bg-slate-100 text-slate-700', dot: 'bg-slate-400' },
   development: { label: 'Development', badge: 'bg-green-100 text-green-700', dot: 'bg-green-500' },
+  qa_pending: {
+    label: 'QA Pending',
+    badge: 'bg-teal-100 text-teal-700',
+    dot: 'bg-teal-500'
+  },
   qa: { label: 'QA', badge: 'bg-orange-100 text-orange-700', dot: 'bg-orange-500' },
+  deploy_pending: {
+    label: 'Deploy Pending',
+    badge: 'bg-amber-100 text-amber-700',
+    dot: 'bg-amber-500'
+  },
   deploy: { label: 'Deploy', badge: 'bg-red-100 text-red-700', dot: 'bg-red-500' },
   completed: { label: 'Completed', badge: 'bg-blue-100 text-blue-700', dot: 'bg-blue-500' },
   cancelled: { label: 'Cancelled', badge: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' }

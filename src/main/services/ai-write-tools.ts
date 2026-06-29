@@ -473,7 +473,16 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
       deploy_date: dateField('배포일').optional(),
       deploy_version: z.string().max(50).nullable().optional().describe('배포 버전 (null이면 비움)'),
       status: z
-        .enum(['scheduled', 'development', 'qa', 'deploy', 'completed', 'cancelled'])
+        .enum([
+          'scheduled',
+          'development',
+          'qa_pending',
+          'qa',
+          'deploy_pending',
+          'deploy',
+          'completed',
+          'cancelled'
+        ])
         .optional()
         .describe('프로젝트 상태 — 지정 시 수동 상태로 고정됨')
     },

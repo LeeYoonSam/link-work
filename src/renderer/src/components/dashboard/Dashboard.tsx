@@ -157,11 +157,17 @@ export default function Dashboard(): React.ReactNode {
     const statusPriority: Record<string, number> = {
       development: 0,
       qa: 1,
-      deploy: 2,
-      scheduled: 3
+      qa_pending: 2,
+      deploy_pending: 3,
+      deploy: 4,
+      scheduled: 5
     }
     return projects
-      .filter((p) => ['scheduled', 'development', 'qa', 'deploy'].includes(p.status))
+      .filter((p) =>
+        ['scheduled', 'development', 'qa_pending', 'qa', 'deploy_pending', 'deploy'].includes(
+          p.status
+        )
+      )
       .slice()
       .sort((a, b) => (statusPriority[a.status] ?? 99) - (statusPriority[b.status] ?? 99))
   }, [projects])
