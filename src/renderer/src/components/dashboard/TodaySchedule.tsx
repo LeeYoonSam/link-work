@@ -1,4 +1,4 @@
-import { format, isAfter, isBefore, isSameDay } from 'date-fns'
+import { addDays, format, isAfter, isBefore, isSameDay } from 'date-fns'
 import type { CalendarEvent } from '../../stores/calendarStore'
 import type { Todo } from '../../types'
 import { Badge, Card, EmptyState, todoPriority } from '../ui'
@@ -32,6 +32,15 @@ type ScheduleItem =
 
 function hasTime(dueDate: string): boolean {
   return /\s\d{2}:\d{2}/.test(dueDate)
+}
+
+// 종일 이벤트의 날짜 문자열("YYYY-MM-DD")을 로컬 자정 Date로 파싱한다.
+// new Date("YYYY-MM-DD")는 UTC 자정으로 해석돼 KST 등 동쪽 타임존에서 하루 경계가
+// 밀리는(어제 종일 일정이 오늘로 새어 들어오는) 문제가 생기므로 직접 분해해 로컬 기준으로 만든다.
+function parseAllDayDate(s: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  return new Date(s)
 }
 
 export default function TodaySchedule({ events, connected, todos = [] }: Props): React.ReactNode {
@@ -78,18 +87,16 @@ export default function TodaySchedule({ events, connected, todos = [] }: Props):
     ? events
         .filter((e) => {
           if (!e.start) return false
-          const startDate = new Date(e.start)
           if (e.allDay) {
-            const endDate = e.end ? new Date(e.end) : startDate
-            if (
-              !(
-                isSameDay(startDate, today) ||
-                (isBefore(startDate, today) && isAfter(endDate, today))
-              )
-            ) {
+            // Google 종일 이벤트의 종료일(end.date)은 배타적(exclusive)이다.
+            // 로컬 자정 기준으로 파싱해 반열린 구간 [시작일, 종료일)에 오늘이 드는지 본다.
+            // (end가 없으면 하루짜리로 간주)
+            const startDay = parseAllDayDate(e.start)
+            const endExclusive = e.end ? parseAllDayDate(e.end) : addDays(startDay, 1)
+            if (today < startDay || today >= endExclusive) {
               return false
             }
-          } else if (!isSameDay(startDate, today)) {
+          } else if (!isSameDay(new Date(e.start), today)) {
             return false
           }
           const key = todayDedupKey(e)
