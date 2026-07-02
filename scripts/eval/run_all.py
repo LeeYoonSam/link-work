@@ -157,7 +157,7 @@ def main() -> int:
     ap.add_argument("--meeting", type=int, help="평가할 meeting id")
     ap.add_argument("--all", action="store_true", help="DB의 모든 회의 평가")
     ap.add_argument("--no-summary", action="store_true", help="LLM 요약 평가 생략(빠름)")
-    ap.add_argument("--model", default="claude-sonnet-4-6")
+    ap.add_argument("--model", default="claude-sonnet-5")
     ap.add_argument("--db")
     args = ap.parse_args()
 

@@ -198,7 +198,7 @@ export async function runMeetingSummary(
       prompt,
       options: {
         systemPrompt,
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         maxTurns: 3,
         mcpServers: {},
         allowedTools: [],
@@ -281,7 +281,7 @@ export async function runMeetingSummary(
     JSON.stringify(parsed.decisions),
     JSON.stringify(parsed.action_items),
     JSON.stringify(parsed.next_steps),
-    'claude-sonnet-4-6'
+    'claude-sonnet-5'
   )
 
   db.prepare(

@@ -12,7 +12,7 @@ claude 미설치/미로그인 시 graceful degrade(점수 None).
 ref 요약(refs/summary_<id>.json)이 있으면 coverage를 정답 대비로도 비교한다(선택).
 
 단독 실행:
-    python3 eval_summary.py --meeting 4 [--model claude-sonnet-4-6]
+    python3 eval_summary.py --meeting 4 [--model claude-sonnet-5]
 """
 from __future__ import annotations
 
@@ -147,7 +147,7 @@ def _fit(text: str) -> str:
     return head + "\n…(중략)…\n" + tail
 
 
-def evaluate(meeting_id: int, *, model: str = "claude-sonnet-4-6",
+def evaluate(meeting_id: int, *, model: str = "claude-sonnet-5",
              db_path: Optional[str] = None) -> dict[str, Any]:
     conn = db.connect(db_path)
     try:
@@ -184,7 +184,7 @@ def evaluate(meeting_id: int, *, model: str = "claude-sonnet-4-6",
 def main() -> int:
     ap = argparse.ArgumentParser(description="AI 요약 LLM-as-judge 평가")
     ap.add_argument("--meeting", type=int, required=True)
-    ap.add_argument("--model", default="claude-sonnet-4-6")
+    ap.add_argument("--model", default="claude-sonnet-5")
     ap.add_argument("--db")
     args = ap.parse_args()
 

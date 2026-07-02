@@ -17,7 +17,7 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 |---|---|
 | AI 실행 | `@anthropic-ai/claude-agent-sdk` (^0.3.170), Electron **main 프로세스**에서 실행 |
 | 인증 | **Claude Code 구독 계정 OAuth 전용** — 시스템에 설치·로그인된 Claude Code의 인증을 그대로 사용 (구독 한도 소모, 별도 과금 없음). API 키/Bedrock/Vertex 등 과금 경로는 앱이 env에서 제거해 원천 차단 |
-| 모델 | `claude-sonnet-4-6` (`ai-agent.ts`의 `AI_MODEL` 상수) |
+| 모델 | `claude-sonnet-5` (`ai-agent.ts`의 `AI_MODEL` 상수) |
 | 턴 제한 | `maxTurns: 30` |
 | 데이터 조회 | in-process MCP 서버 (`createSdkMcpServer` + `tool()`) — 별도 프로세스 없이 main 프로세스 안에서 도구 핸들러 실행 |
 | 영속화 | better-sqlite3 (`ai_chats`, `ai_messages`, `ai_audit_log`) |

@@ -22,7 +22,7 @@ function loadSdk(): Promise<SdkModule> {
 
 // Claude Code 구독 인증을 그대로 사용한다 (로컬 전용 기능).
 // 데이터 조회 용도이므로 응답이 빠른 sonnet을 기본으로 사용.
-const AI_MODEL = 'claude-sonnet-4-6'
+const AI_MODEL = 'claude-sonnet-5'
 const MAX_TURNS = 30
 // 가드레일: 동시 실행 쿼리 상한 (리소스/구독 한도 보호)
 const MAX_CONCURRENT_QUERIES = 3
