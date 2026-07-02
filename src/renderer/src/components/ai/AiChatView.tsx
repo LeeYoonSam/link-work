@@ -7,13 +7,15 @@ import { useVariableStore } from '../../stores/variableStore'
 import MarkdownContent from '../memo/MarkdownContent'
 import type {
   AiApprovalRequest,
+  AiAttachmentInput,
+  AiAttachmentMeta,
   AiChat,
   AiMessage,
   AiStatus,
   AiStreamEvent,
   AiWriteMode
 } from '../../types'
-import { AlertTriangleIcon, Card, XIcon, button } from '../ui'
+import { AlertTriangleIcon, Card, ImageIcon, XIcon, button } from '../ui'
 
 // 채팅별 데이터 작성 모드 선택지 (헤더 세그먼트 컨트롤)
 const WRITE_MODES: { value: AiWriteMode; label: string; title: string }[] = [
@@ -22,8 +24,14 @@ const WRITE_MODES: { value: AiWriteMode; label: string; title: string }[] = [
   { value: 'auto', label: '자동 쓰기', title: 'AI가 승인 없이 즉시 생성·수정합니다 (변수는 항상 승인)' }
 ]
 
-// auto 모드에서도 항상 승인 카드를 거치는 도구 (main의 ALWAYS_CONFIRM_WRITE_TOOLS와 동일)
-const ALWAYS_CONFIRM_TOOLS = ['create_variable', 'update_variable']
+// "이 채팅에서 항상 승인"을 노출하지 않는 도구 — 변수는 auto 모드에서도 항상 승인
+// (main의 ALWAYS_CONFIRM_WRITE_TOOLS), fetch_url은 쓰기 모드와 무관한 별도 게이트
+const ALWAYS_CONFIRM_TOOLS = ['create_variable', 'update_variable', 'fetch_url']
+
+// 이미지 첨부 제한 (main의 ai-attachments.ts와 동일 기준 — renderer 검증은 UX용)
+const MAX_ATTACHMENTS = 4
+const MAX_ATTACHMENT_MB = 8
+const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 
 const EXAMPLE_PROMPTS = [
   '현재 진행중인 프로젝트 알려줘',
@@ -56,14 +64,21 @@ export default function AiChatView(): React.ReactNode {
   } = useAiChatStore()
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null)
   const [listCollapsed, setListCollapsed] = useState(false)
+  const [notionConnected, setNotionConnected] = useState(false)
+  const [showNotionSettings, setShowNotionSettings] = useState(false)
 
   const checkStatus = (): void => {
     window.api.ai.status().then(setAiStatus)
   }
 
+  const refreshNotionStatus = (): void => {
+    window.api.ai.notionStatus().then((s) => setNotionConnected(s.connected))
+  }
+
   useEffect(() => {
     fetchChats()
     checkStatus()
+    refreshNotionStatus()
     const unsubscribe = window.api.ai.onStream((event) =>
       handleStreamEvent(event as AiStreamEvent)
     )
@@ -163,6 +178,20 @@ export default function AiChatView(): React.ReactNode {
               ))
             )}
           </div>
+          <div className="p-2 border-t border-gray-200">
+            <button
+              onClick={() => setShowNotionSettings(true)}
+              title="AI가 Notion 문서를 읽을 수 있게 연동합니다"
+              className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded transition-colors"
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  notionConnected ? 'bg-green-500' : 'bg-gray-300'
+                }`}
+              />
+              Notion 연동{notionConnected ? ' 중' : ''}
+            </button>
+          </div>
         </div>
       )}
 
@@ -195,6 +224,8 @@ export default function AiChatView(): React.ReactNode {
             <p className="text-sm text-gray-500 mb-6">
               프로젝트, TODO, 메모, 문서 등 LinkWork의 데이터를 검색하고 정리해 드립니다.
               <br />
+              Notion 문서와 웹 링크를 읽고, 첨부한 이미지를 보고 답할 수 있습니다.
+              <br />
               승인을 거쳐 프로젝트·TODO·메모·변수를 만들거나 수정해 드릴 수도 있습니다.
               (작성 방식은 채팅 상단에서 채팅별로 선택)
             </p>
@@ -212,6 +243,14 @@ export default function AiChatView(): React.ReactNode {
           </div>
         )}
       </div>
+
+      {showNotionSettings && (
+        <NotionSettingsModal
+          connected={notionConnected}
+          onClose={() => setShowNotionSettings(false)}
+          onChanged={refreshNotionStatus}
+        />
+      )}
     </div>
   )
 }
@@ -323,8 +362,11 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
   const { setView, setProjectView, fetchProject } = useProjectStore()
   const [input, setInput] = useState('')
   const [editingTitle, setEditingTitle] = useState<string | null>(null)
+  // 전송 전 이미지 첨부 대기열 (previewUrl은 blob URL — 제거/전송 시 revoke)
+  const [attachments, setAttachments] = useState<{ file: File; previewUrl: string }[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const chat = chats.find((c) => c.id === currentChatId)
   const writeMode: AiWriteMode = chat?.write_mode ?? 'ask'
@@ -332,6 +374,43 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingText, toolStatus, pendingApproval])
+
+  // 채팅 전환 시 첨부 대기열 초기화 (blob URL 정리 포함)
+  useEffect(() => {
+    setAttachments((prev) => {
+      prev.forEach((a) => URL.revokeObjectURL(a.previewUrl))
+      return []
+    })
+  }, [currentChatId])
+
+  const addAttachmentFiles = (files: Iterable<File>): void => {
+    setAttachments((prev) => {
+      const next = [...prev]
+      for (const file of files) {
+        if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+          window.alert(`지원하지 않는 이미지 형식입니다: ${file.name}\n(PNG/JPEG/WebP/GIF만 첨부할 수 있습니다)`)
+          continue
+        }
+        if (file.size > MAX_ATTACHMENT_MB * 1024 * 1024) {
+          window.alert(`이미지가 너무 큽니다 (최대 ${MAX_ATTACHMENT_MB}MB): ${file.name}`)
+          continue
+        }
+        if (next.length >= MAX_ATTACHMENTS) {
+          window.alert(`이미지는 한 번에 최대 ${MAX_ATTACHMENTS}장까지 첨부할 수 있습니다.`)
+          break
+        }
+        next.push({ file, previewUrl: URL.createObjectURL(file) })
+      }
+      return next
+    })
+  }
+
+  const removeAttachment = (index: number): void => {
+    setAttachments((prev) => {
+      URL.revokeObjectURL(prev[index].previewUrl)
+      return prev.filter((_, i) => i !== index)
+    })
+  }
 
   // linkwork:// 링크 → 앱 내 네비게이션/문서 열기
   const handleInternalLink = async (href: string): Promise<void> => {
@@ -366,11 +445,24 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
     }
   }
 
-  const handleSend = (): void => {
+  const handleSend = async (): Promise<void> => {
     const text = input.trim()
-    if (!text || isStreaming || disabled) return
+    if ((!text && attachments.length === 0) || isStreaming || disabled) return
+    const pending = attachments
     setInput('')
-    void sendMessage(text)
+    setAttachments([])
+    let payload: AiAttachmentInput[] | undefined
+    if (pending.length > 0) {
+      payload = await Promise.all(
+        pending.map(async (a) => ({
+          name: a.file.name,
+          type: a.file.type,
+          bytes: await a.file.arrayBuffer()
+        }))
+      )
+      pending.forEach((a) => URL.revokeObjectURL(a.previewUrl))
+    }
+    void sendMessage(text, payload)
     textareaRef.current?.focus()
   }
 
@@ -480,9 +572,61 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
         <div ref={bottomRef} />
       </div>
 
-      {/* 입력 영역 */}
-      <div className="border-t border-gray-200 p-3">
+      {/* 입력 영역 (이미지 첨부: 버튼/붙여넣기/드래그&드롭) */}
+      <div
+        className="border-t border-gray-200 p-3"
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('Files')) e.preventDefault()
+        }}
+        onDrop={(e) => {
+          const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
+          if (files.length > 0) {
+            e.preventDefault()
+            addAttachmentFiles(files)
+          }
+        }}
+      >
+        {attachments.length > 0 && (
+          <div className="flex gap-2 mb-2">
+            {attachments.map((a, i) => (
+              <div key={a.previewUrl} className="relative group">
+                <img
+                  src={a.previewUrl}
+                  alt={a.file.name}
+                  title={a.file.name}
+                  className="w-14 h-14 object-cover rounded-lg border border-gray-200"
+                />
+                <button
+                  onClick={() => removeAttachment(i)}
+                  title="첨부 제거"
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center bg-gray-800 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <XIcon size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={ACCEPTED_IMAGE_TYPES.join(',')}
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.length) addAttachmentFiles(e.target.files)
+              e.target.value = ''
+            }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled || isStreaming}
+            title="이미지 첨부 (클립보드 붙여넣기, 드래그&드롭도 가능)"
+            className="p-2 rounded-lg shrink-0 text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <ImageIcon size={18} />
+          </button>
           <textarea
             ref={textareaRef}
             value={input}
@@ -490,7 +634,16 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
-                handleSend()
+                void handleSend()
+              }
+            }}
+            onPaste={(e) => {
+              const files = Array.from(e.clipboardData?.files ?? []).filter((f) =>
+                f.type.startsWith('image/')
+              )
+              if (files.length > 0) {
+                e.preventDefault()
+                addAttachmentFiles(files)
               }
             }}
             rows={Math.min(5, Math.max(1, input.split('\n').length))}
@@ -498,7 +651,7 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
             placeholder={
               disabled
                 ? 'Claude Code 설치/로그인 후 사용할 수 있습니다.'
-                : 'LinkWork 데이터에 대해 질문해 보세요… (Enter 전송, Shift+Enter 줄바꿈)'
+                : 'LinkWork 데이터, Notion 문서, 웹 링크에 대해 질문해 보세요… (Enter 전송, 이미지 붙여넣기 가능)'
             }
             className="flex-1 resize-none px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
           />
@@ -511,8 +664,8 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
             </button>
           ) : (
             <button
-              onClick={handleSend}
-              disabled={!input.trim() || disabled}
+              onClick={() => void handleSend()}
+              disabled={(!input.trim() && attachments.length === 0) || disabled}
               className={`px-4 py-2 text-sm rounded-lg shrink-0 ${button.dark} disabled:opacity-40 disabled:cursor-not-allowed`}
             >
               전송
@@ -535,13 +688,17 @@ function ApprovalCard({
   allowAlways: boolean
   onRespond: (approved: boolean, always?: boolean) => void
 }): React.ReactNode {
+  // fetch_url은 저장이 아니라 외부 페이지 읽기 승인 (사용자 메시지에 없는 주소일 때만 표시됨)
+  const isFetch = request.name === 'fetch_url'
   return (
     <div className="max-w-[85%] border border-amber-300 bg-amber-50 rounded-lg px-4 py-3">
       <p className="text-sm font-semibold text-gray-900">
         AI가 <span className="text-amber-700">{request.label}</span> 승인을 요청했습니다
       </p>
       <p className="mt-0.5 text-xs text-gray-500">
-        승인하면 아래 내용이 즉시 저장됩니다. 5분 안에 응답하지 않으면 자동으로 거절됩니다.
+        {isFetch
+          ? '대화에서 직접 언급하지 않은 주소입니다. 승인하면 AI가 이 웹 페이지의 내용을 읽습니다. 5분 안에 응답하지 않으면 자동으로 거절됩니다.'
+          : '승인하면 아래 내용이 즉시 저장됩니다. 5분 안에 응답하지 않으면 자동으로 거절됩니다.'}
       </p>
       {request.current && (
         <>
@@ -582,6 +739,17 @@ function ApprovalCard({
   )
 }
 
+// ai_messages.meta JSON에서 이미지 첨부 목록 파싱 (없거나 손상 시 빈 배열)
+function parseAttachments(meta: string | null): AiAttachmentMeta[] {
+  if (!meta) return []
+  try {
+    const parsed = JSON.parse(meta) as { attachments?: AiAttachmentMeta[] }
+    return Array.isArray(parsed.attachments) ? parsed.attachments : []
+  } catch {
+    return []
+  }
+}
+
 function MessageBubble({
   message,
   onInternalLink
@@ -590,10 +758,28 @@ function MessageBubble({
   onInternalLink: (href: string) => void
 }): React.ReactNode {
   if (message.role === 'user') {
+    const attachments = parseAttachments(message.meta)
     return (
       <div className="flex justify-end">
-        <div className={`max-w-[75%] text-white text-sm rounded-lg rounded-tr-none px-4 py-2.5 whitespace-pre-wrap break-words ${button.dark}`}>
-          {message.content}
+        <div className="max-w-[75%] flex flex-col items-end gap-1.5">
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap justify-end gap-1.5">
+              {attachments.map((a) => (
+                <img
+                  key={a.file}
+                  src={`linkwork-media://attachment/${encodeURIComponent(a.file)}`}
+                  alt={a.name}
+                  title={a.name}
+                  className="max-h-48 max-w-[200px] object-contain rounded-lg border border-gray-200 bg-gray-50"
+                />
+              ))}
+            </div>
+          )}
+          {message.content && (
+            <div className={`text-white text-sm rounded-lg rounded-tr-none px-4 py-2.5 whitespace-pre-wrap break-words ${button.dark}`}>
+              {message.content}
+            </div>
+          )}
         </div>
       </div>
     )
@@ -601,6 +787,146 @@ function MessageBubble({
   return (
     <div className="max-w-[85%] bg-gray-50 border border-gray-200 rounded-lg rounded-tl-none px-4 py-3">
       <MarkdownContent content={message.content} compact onInternalLink={onInternalLink} />
+    </div>
+  )
+}
+
+// Notion internal integration 토큰 등록/해제 모달.
+// 토큰은 main에서 검증(API 호출) 후 safeStorage로 암호화 저장된다 (services/notion.ts).
+function NotionSettingsModal({
+  connected,
+  onClose,
+  onChanged
+}: {
+  connected: boolean
+  onClose: () => void
+  onChanged: () => void
+}): React.ReactNode {
+  const [token, setToken] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [savedWorkspace, setSavedWorkspace] = useState<string | null>(null)
+
+  const handleSave = async (): Promise<void> => {
+    if (!token.trim() || busy) return
+    setBusy(true)
+    setError('')
+    const result = await window.api.ai.notionSaveToken(token.trim())
+    setBusy(false)
+    if (result.success) {
+      setToken('')
+      setSavedWorkspace(result.workspace ?? 'Notion')
+      onChanged()
+    } else {
+      setError(result.error ?? '토큰 저장에 실패했습니다.')
+    }
+  }
+
+  const handleDisconnect = async (): Promise<void> => {
+    if (!window.confirm('Notion 연동을 해제할까요? AI가 더 이상 Notion 문서를 읽을 수 없습니다.')) return
+    await window.api.ai.notionDisconnect()
+    setSavedWorkspace(null)
+    onChanged()
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <Card padding="md" className="bg-white">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-base font-semibold text-gray-900">Notion 연동</h3>
+            <button
+              onClick={onClose}
+              className="p-1 text-gray-400 hover:text-gray-700 transition-colors"
+              title="닫기"
+            >
+              <XIcon size={16} />
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mb-3">
+            연동하면 AI가 대화에서 Notion 문서를 검색하고 내용을 읽을 수 있습니다. (읽기 전용)
+          </p>
+
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-xs text-blue-900">
+            <p className="font-medium mb-1">가장 간단한 방법: Claude 계정의 Notion 커넥터</p>
+            <p>
+              Claude 계정(claude.ai)에 Notion 커넥터가 연결되어 있으면 <b>여기서 아무 설정 없이</b>{' '}
+              AI가 바로 Notion을 읽을 수 있습니다. 커넥터가 없다면{' '}
+              <a
+                href="https://claude.ai/settings/connectors"
+                target="_blank"
+                rel="noreferrer"
+                className="underline"
+              >
+                claude.ai → 설정 → 커넥터
+              </a>
+              에서 Notion을 연결하세요. 아래 토큰 방식은 커넥터를 쓰지 않을 때의 대안입니다.
+            </p>
+          </div>
+
+          {connected ? (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4 flex items-center justify-between gap-2">
+              <p className="text-sm text-green-800">
+                연동됨{savedWorkspace ? ` — ${savedWorkspace}` : ''}
+              </p>
+              <button
+                onClick={() => void handleDisconnect()}
+                className="shrink-0 px-3 py-1.5 text-xs text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
+              >
+                연동 해제
+              </button>
+            </div>
+          ) : (
+            <ol className="text-xs text-gray-600 space-y-1 mb-4 list-decimal pl-4">
+              <li>
+                <a
+                  href="https://www.notion.so/my-integrations"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-blue-600 hover:underline"
+                >
+                  notion.so/my-integrations
+                </a>
+                에서 내부 통합(Internal Integration)을 생성합니다. (권한은 &quot;콘텐츠 읽기&quot;만)
+              </li>
+              <li>Internal Integration Secret을 복사해 아래에 붙여넣습니다.</li>
+              <li>
+                AI가 읽을 페이지에서 <b>⋯ → 연결(Connections)</b>에 만든 통합을 추가합니다.
+                (하위 페이지에 자동 적용)
+              </li>
+            </ol>
+          )}
+
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleSave()
+              }}
+              placeholder={connected ? '새 토큰으로 교체하려면 입력' : 'ntn_ 으로 시작하는 토큰'}
+              className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500"
+            />
+            <button
+              onClick={() => void handleSave()}
+              disabled={!token.trim() || busy}
+              className={`px-4 py-2 text-sm rounded-lg shrink-0 ${button.dark} disabled:opacity-40 disabled:cursor-not-allowed`}
+            >
+              {busy ? '확인 중…' : '저장'}
+            </button>
+          </div>
+
+          {error && (
+            <p className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2.5">
+              {error}
+            </p>
+          )}
+        </Card>
+      </div>
     </div>
   )
 }

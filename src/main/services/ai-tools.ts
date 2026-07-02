@@ -6,6 +6,14 @@ import { applyProjectAutoStatus, type ProjectStatusFields } from '../utils/proje
 import { TODO_TAGS_SUBQUERY } from '../utils/todo-helpers'
 import { getEventsInRange } from './google-calendar'
 import { buildWriteTools, maskSecretVariable, TRUNCATION_MARKER } from './ai-write-tools'
+import {
+  getNotionDatabaseEntries,
+  getNotionPageContent,
+  isNotionConnected,
+  searchNotion
+} from './notion'
+import { extractNotionPageId } from './notion-markdown'
+import { fetchUrlAsText } from './web-fetch'
 
 // LinkWork 데이터 검색 도구.
 //
@@ -32,8 +40,16 @@ export const LINKWORK_TOOL_NAMES = [
   'list_documents',
   'list_variables',
   'get_activity_log',
-  'get_calendar_events'
+  'get_calendar_events',
+  // Notion은 사용자 자신의 워크스페이스를 읽기 전용으로 조회하므로 자동 허용
+  'search_notion',
+  'get_notion_page'
 ].map((name) => `mcp__linkwork__${name}`)
+
+// fetch_url은 의도적으로 LINKWORK_TOOL_NAMES(자동 허용)에 넣지 않는다.
+// 도구 결과(메모 등)에 심긴 지시문이 임의 URL로 데이터를 실어 보내는 유출 경로가
+// 될 수 있어, 사용자 메시지에 없는 호스트는 승인 카드를 거친다 (ai-agent.ts canUseTool).
+export const FETCH_URL_TOOL_NAME = 'mcp__linkwork__fetch_url'
 
 let serverPromise: Promise<McpSdkServerConfigWithInstance> | null = null
 
@@ -44,6 +60,18 @@ export function getLinkworkMcpServer(): Promise<McpSdkServerConfigWithInstance> 
 
 function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] } {
   return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 1) }] }
+}
+
+const NOTION_NOT_CONNECTED_MESSAGE =
+  'Notion이 연동되어 있지 않습니다. AI 대화 화면의 "Notion 연동" 설정에서 통합 토큰을 등록하도록 사용자에게 안내하세요.'
+
+function toErrorMessage(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  if (message === 'NOTION_NOT_CONNECTED') return NOTION_NOT_CONNECTED_MESSAGE
+  if (/timeout|timed?\s*out|aborted/i.test(message)) {
+    return '요청 시간이 초과되었습니다. 잠시 후 다시 시도하거나 다른 URL을 사용해 주세요.'
+  }
+  return message
 }
 
 function truncate(text: string | null, max: number): string | null {
@@ -375,6 +403,98 @@ const getActivityLog = tool(
     }
   )
 
+  // ── 외부 지식 도구 (Notion / 웹 링크) — docs/AI_GUARDRAILS.md 8절 ──
+  // 모두 읽기 전용(GET/검색)이며, 반환 내용은 신뢰할 수 없는 데이터로 취급된다
+  // (시스템 프롬프트의 인젝션 방어 규칙 적용 대상).
+
+  const searchNotionTool = tool(
+    'search_notion',
+    '연동된 Notion 워크스페이스에서 페이지/데이터베이스를 검색한다. 제목, ID, URL, 최근 수정 시각을 반환한다. 내용을 읽으려면 반환된 ID/URL로 get_notion_page를 호출한다.',
+    {
+      query: z.string().max(200).describe('검색어 (제목 기준)')
+    },
+    async (args) => {
+      if (!isNotionConnected()) return jsonResult({ error: NOTION_NOT_CONNECTED_MESSAGE })
+      try {
+        const results = await searchNotion(args.query)
+        if (results.length === 0) {
+          return jsonResult({
+            results: [],
+            hint: '검색 결과가 없습니다. 통합(integration)에 공유된 페이지만 검색됩니다.'
+          })
+        }
+        return jsonResult({ results })
+      } catch (err) {
+        return jsonResult({ error: toErrorMessage(err) })
+      }
+    }
+  )
+
+  const getNotionPageTool = tool(
+    'get_notion_page',
+    'Notion 페이지의 전체 내용을 마크다운으로 읽는다. page에 Notion URL(notion.so/notion.site) 또는 32자리 페이지 ID를 전달한다. 데이터베이스 ID를 전달하면 항목 목록(제목/ID)을 반환한다. 사용자가 Notion 링크를 주거나 Notion 문서 내용을 물으면 이 도구를 사용한다.',
+    {
+      page: z.string().max(500).describe('Notion 페이지 URL 또는 페이지 ID')
+    },
+    async (args) => {
+      if (!isNotionConnected()) return jsonResult({ error: NOTION_NOT_CONNECTED_MESSAGE })
+      try {
+        const page = await getNotionPageContent(args.page)
+        return jsonResult({
+          ...page,
+          ...(page.truncated ? { notice: `내용이 길어 앞부분만 반환되었습니다${TRUNCATION_MARKER}` } : {})
+        })
+      } catch (err) {
+        // 페이지가 아니라 데이터베이스인 경우 항목 목록으로 폴백
+        const message = toErrorMessage(err)
+        const id = extractNotionPageId(args.page)
+        if (id && /database|400/i.test(message)) {
+          try {
+            const entries = await getNotionDatabaseEntries(id)
+            return jsonResult({
+              type: 'database',
+              entries,
+              hint: '데이터베이스입니다. 개별 항목은 entries의 id로 get_notion_page를 호출하세요.'
+            })
+          } catch {
+            // 폴백 실패 시 원래 오류 반환
+          }
+        }
+        return jsonResult({ error: message })
+      }
+    }
+  )
+
+  const fetchUrlTool = tool(
+    'fetch_url',
+    '웹 페이지(URL)의 내용을 텍스트로 읽는다. 사용자가 링크를 공유하거나 특정 웹 문서의 내용을 물을 때 사용한다. http/https만 지원하며, Notion URL은 자동으로 Notion API로 읽는다. JS 렌더링이 필요한 페이지는 본문이 비어 있을 수 있다.',
+    {
+      url: z.string().max(2000).describe('읽을 웹 페이지의 전체 URL')
+    },
+    async (args) => {
+      try {
+        // Notion 링크는 API/커넥터로 읽어야 한다 — notion.so는 로그인 없이는 빈 페이지
+        if (extractNotionPageId(args.url)) {
+          if (isNotionConnected()) {
+            const page = await getNotionPageContent(args.url)
+            return jsonResult(page)
+          }
+          return jsonResult({
+            error:
+              'Notion 페이지는 fetch_url로 읽을 수 없습니다. mcp__claude_ai_Notion__notion-fetch 도구를 사용하세요 (없으면 ToolSearch로 로드). 그 도구도 없으면 Notion 연동이 필요하다고 안내하세요.'
+          })
+        }
+        const page = await fetchUrlAsText(args.url)
+        return jsonResult({
+          ...page,
+          ...(page.truncated ? { notice: `내용이 길어 앞부분만 반환되었습니다${TRUNCATION_MARKER}` } : {})
+        })
+      } catch (err) {
+        return jsonResult({ error: toErrorMessage(err) })
+      }
+    }
+  )
+
   // 쓰기 도구는 서버에 항상 등록하되, 실행 게이트(opt-in + 사용자 승인)는
   // ai-agent.ts의 canUseTool에서 강제한다 — docs/AI_GUARDRAILS.md 7절
   const writeTools = await buildWriteTools()
@@ -393,6 +513,9 @@ const getActivityLog = tool(
       listVariables,
       getActivityLog,
       getCalendarEvents,
+      searchNotionTool,
+      getNotionPageTool,
+      fetchUrlTool,
       ...writeTools
     ]
   })

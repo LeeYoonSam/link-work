@@ -351,6 +351,25 @@ export interface AiMessage {
   created_at: string
 }
 
+// 사용자 메시지의 이미지 첨부 (ai_messages.meta JSON의 attachments 항목)
+// file: 저장 파일명 — linkwork-media://attachment/<file> 로 표시
+export interface AiAttachmentMeta {
+  file: string
+  name: string
+  type: string
+}
+
+// ai:send로 전달하는 첨부 이미지 원본 바이트
+export interface AiAttachmentInput {
+  name: string
+  type: string
+  bytes: ArrayBuffer
+}
+
+export interface AiNotionStatus {
+  connected: boolean
+}
+
 // 쓰기 도구 실행 전 사용자 승인 요청 (HITL)
 // current: 수정(update) 도구의 변경 전 현재 값 (생성 도구는 null)
 export interface AiApprovalRequest {
@@ -389,10 +408,17 @@ export interface AiAPI {
   chatDelete: (id: number) => Promise<{ success: boolean }>
   chatRename: (id: number, title: string) => Promise<{ success: boolean }>
   messages: (chatId: number) => Promise<AiMessage[]>
-  send: (chatId: number, text: string) => Promise<{ started: boolean; error?: string }>
+  send: (
+    chatId: number,
+    text: string,
+    attachments?: AiAttachmentInput[]
+  ) => Promise<{ started: boolean; error?: string }>
   cancel: (chatId: number) => Promise<{ success: boolean }>
   progress: (chatId: number) => Promise<AiProgress>
   status: () => Promise<AiStatus>
+  notionStatus: () => Promise<AiNotionStatus>
+  notionSaveToken: (token: string) => Promise<{ success: boolean; workspace?: string; error?: string }>
+  notionDisconnect: () => Promise<{ success: boolean }>
   approve: (requestId: string, approved: boolean) => Promise<{ success: boolean }>
   setChatWriteMode: (chatId: number, mode: AiWriteMode) => Promise<{ success: boolean }>
   onStream: (callback: (event: AiStreamEvent) => void) => () => void

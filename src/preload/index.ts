@@ -112,10 +112,17 @@ const api = {
     chatDelete: (id: number) => ipcRenderer.invoke('ai:chatDelete', id),
     chatRename: (id: number, title: string) => ipcRenderer.invoke('ai:chatRename', id, title),
     messages: (chatId: number) => ipcRenderer.invoke('ai:messages', chatId),
-    send: (chatId: number, text: string) => ipcRenderer.invoke('ai:send', chatId, text),
+    send: (
+      chatId: number,
+      text: string,
+      attachments?: { name: string; type: string; bytes: ArrayBuffer }[]
+    ) => ipcRenderer.invoke('ai:send', chatId, text, attachments),
     cancel: (chatId: number) => ipcRenderer.invoke('ai:cancel', chatId),
     progress: (chatId: number) => ipcRenderer.invoke('ai:progress', chatId),
     status: () => ipcRenderer.invoke('ai:status'),
+    notionStatus: () => ipcRenderer.invoke('ai:notionStatus'),
+    notionSaveToken: (token: string) => ipcRenderer.invoke('ai:notionSaveToken', token),
+    notionDisconnect: () => ipcRenderer.invoke('ai:notionDisconnect'),
     approve: (requestId: string, approved: boolean) =>
       ipcRenderer.invoke('ai:approve', requestId, approved),
     setChatWriteMode: (chatId: number, mode: string) =>

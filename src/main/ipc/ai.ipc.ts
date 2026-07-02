@@ -14,6 +14,14 @@ import {
   setChatWriteMode,
   type AiWriteMode
 } from '../services/ai-agent'
+import {
+  removeChatAttachments,
+  saveAttachments,
+  validateAttachments,
+  type AiAttachmentInput,
+  type SavedAttachment
+} from '../services/ai-attachments'
+import { disconnectNotion, isNotionConnected, saveNotionToken } from '../services/notion'
 
 const AI_WRITE_MODES: AiWriteMode[] = ['readonly', 'ask', 'auto']
 
@@ -43,6 +51,7 @@ export function registerAiIpc(): void {
   ipcMain.handle('ai:chatDelete', (_event, id: number) => {
     cancelAiQuery(id)
     db.prepare('DELETE FROM ai_chats WHERE id = ?').run(id)
+    void removeChatAttachments(id)
     return { success: true }
   })
 
@@ -59,48 +68,79 @@ export function registerAiIpc(): void {
     return db.prepare('SELECT * FROM ai_messages WHERE chat_id = ? ORDER BY id ASC').all(chatId)
   })
 
-  ipcMain.handle('ai:send', (event, chatId: number, text: string) => {
-    const trimmed = (text ?? '').trim()
-    if (!trimmed) return { started: false, error: '메시지가 비어 있습니다.' }
-    if (trimmed.length > MAX_MESSAGE_LENGTH) {
-      return {
-        started: false,
-        error: `메시지가 너무 깁니다. ${MAX_MESSAGE_LENGTH.toLocaleString()}자 이내로 입력해 주세요.`
+  ipcMain.handle(
+    'ai:send',
+    async (event, chatId: number, text: string, attachments?: AiAttachmentInput[]) => {
+      const trimmed = (text ?? '').trim()
+      const atts = Array.isArray(attachments) ? attachments : []
+      if (!trimmed && atts.length === 0) return { started: false, error: '메시지가 비어 있습니다.' }
+      if (trimmed.length > MAX_MESSAGE_LENGTH) {
+        return {
+          started: false,
+          error: `메시지가 너무 깁니다. ${MAX_MESSAGE_LENGTH.toLocaleString()}자 이내로 입력해 주세요.`
+        }
       }
+      // 가드레일: 첨부 개수/크기/타입은 main에서 재검증한다
+      const attachmentError = validateAttachments(atts)
+      if (attachmentError) return { started: false, error: attachmentError }
+      if (isAiQueryRunning(chatId)) return { started: false, error: '이미 응답을 생성 중입니다.' }
+      if (!canStartAiQuery()) {
+        return { started: false, error: '동시에 진행할 수 있는 대화 수를 초과했습니다. 잠시 후 다시 시도해 주세요.' }
+      }
+
+      const chat = db.prepare('SELECT id FROM ai_chats WHERE id = ?').get(chatId)
+      if (!chat) return { started: false, error: '존재하지 않는 대화입니다.' }
+
+      let saved: SavedAttachment[] = []
+      if (atts.length > 0) {
+        try {
+          saved = await saveAttachments(chatId, atts)
+        } catch {
+          return { started: false, error: '이미지 파일 저장에 실패했습니다.' }
+        }
+      }
+
+      // meta에는 표시용 정보만 남긴다 (절대 경로는 renderer에 불필요)
+      const meta =
+        saved.length > 0
+          ? JSON.stringify({
+              attachments: saved.map(({ file, name, type }) => ({ file, name, type }))
+            })
+          : null
+      db.prepare(
+        "INSERT INTO ai_messages (chat_id, role, content, meta) VALUES (?, 'user', ?, ?)"
+      ).run(chatId, trimmed, meta)
+
+      // 첫 사용자 메시지면 대화 제목으로 자동 설정
+      const userCount = (
+        db
+          .prepare("SELECT COUNT(*) AS c FROM ai_messages WHERE chat_id = ? AND role = 'user'")
+          .get(chatId) as { c: number }
+      ).c
+      if (userCount === 1) {
+        const base = trimmed || '(이미지 첨부)'
+        const autoTitle = base.length > 30 ? `${base.slice(0, 30)}…` : base
+        db.prepare('UPDATE ai_chats SET title = ? WHERE id = ?').run(autoTitle, chatId)
+      }
+      db.prepare("UPDATE ai_chats SET updated_at = datetime('now', 'localtime') WHERE id = ?").run(
+        chatId
+      )
+
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { started: false, error: '윈도우를 찾을 수 없습니다.' }
+
+      // 첨부 이미지는 저장 경로를 프롬프트에 명시해 AI가 Read 도구로 읽게 한다
+      // (Read는 첨부 디렉토리 안의 파일만 허용 — ai-agent.ts canUseTool)
+      let prompt = trimmed
+      if (saved.length > 0) {
+        const fileList = saved.map((s) => `- ${s.name}: ${s.path}`).join('\n')
+        prompt = `${trimmed ? `${trimmed}\n\n` : ''}[첨부 이미지]\n${fileList}\n(위 이미지 파일을 Read 도구로 읽어 내용을 확인한 뒤 답하세요)`
+      }
+
+      void runAiQuery(chatId, prompt, win)
+      return { started: true }
     }
-    if (isAiQueryRunning(chatId)) return { started: false, error: '이미 응답을 생성 중입니다.' }
-    if (!canStartAiQuery()) {
-      return { started: false, error: '동시에 진행할 수 있는 대화 수를 초과했습니다. 잠시 후 다시 시도해 주세요.' }
-    }
-
-    const chat = db.prepare('SELECT id FROM ai_chats WHERE id = ?').get(chatId)
-    if (!chat) return { started: false, error: '존재하지 않는 대화입니다.' }
-
-    db.prepare("INSERT INTO ai_messages (chat_id, role, content) VALUES (?, 'user', ?)").run(
-      chatId,
-      trimmed
-    )
-
-    // 첫 사용자 메시지면 대화 제목으로 자동 설정
-    const userCount = (
-      db
-        .prepare("SELECT COUNT(*) AS c FROM ai_messages WHERE chat_id = ? AND role = 'user'")
-        .get(chatId) as { c: number }
-    ).c
-    if (userCount === 1) {
-      const autoTitle = trimmed.length > 30 ? `${trimmed.slice(0, 30)}…` : trimmed
-      db.prepare('UPDATE ai_chats SET title = ? WHERE id = ?').run(autoTitle, chatId)
-    }
-    db.prepare("UPDATE ai_chats SET updated_at = datetime('now', 'localtime') WHERE id = ?").run(
-      chatId
-    )
-
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win) return { started: false, error: '윈도우를 찾을 수 없습니다.' }
-
-    void runAiQuery(chatId, trimmed, win)
-    return { started: true }
-  })
+  )
 
   ipcMain.handle('ai:cancel', (_event, chatId: number) => {
     return { success: cancelAiQuery(chatId) }
@@ -122,6 +162,36 @@ export function registerAiIpc(): void {
 
   ipcMain.handle('ai:progress', (_event, chatId: number) => {
     return getAiProgress(chatId)
+  })
+
+  // ── Notion 연동 (AI 조회 도구 search_notion / get_notion_page 용) ──
+
+  ipcMain.handle('ai:notionStatus', () => {
+    return { connected: isNotionConnected() }
+  })
+
+  // 토큰을 Notion API로 검증한 뒤 저장 (safeStorage 암호화 — services/notion.ts)
+  ipcMain.handle('ai:notionSaveToken', async (_event, token: string) => {
+    if (typeof token !== 'string' || !token.trim()) {
+      return { success: false, error: '토큰을 입력해 주세요.' }
+    }
+    try {
+      const { workspace } = await saveNotionToken(token)
+      return { success: true, workspace }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return {
+        success: false,
+        error: /401|유효하지/.test(message)
+          ? '토큰이 유효하지 않습니다. Notion 통합(integration)의 Internal Integration Secret을 확인해 주세요.'
+          : message
+      }
+    }
+  })
+
+  ipcMain.handle('ai:notionDisconnect', () => {
+    disconnectNotion()
+    return { success: true }
   })
 
   ipcMain.handle('ai:status', () => {

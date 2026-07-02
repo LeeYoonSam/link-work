@@ -1,5 +1,12 @@
 import { create } from 'zustand'
-import type { AiApprovalRequest, AiChat, AiMessage, AiStreamEvent, AiWriteMode } from '../types'
+import type {
+  AiApprovalRequest,
+  AiAttachmentInput,
+  AiChat,
+  AiMessage,
+  AiStreamEvent,
+  AiWriteMode
+} from '../types'
 
 interface AiChatStore {
   chats: AiChat[]
@@ -17,7 +24,7 @@ interface AiChatStore {
   renameChat: (id: number, title: string) => Promise<void>
   openChat: (id: number) => Promise<void>
   closeChat: () => void
-  sendMessage: (text: string) => Promise<void>
+  sendMessage: (text: string, attachments?: AiAttachmentInput[]) => Promise<void>
   cancelStream: () => Promise<void>
   setWriteMode: (chatId: number, mode: AiWriteMode) => Promise<void>
   respondApproval: (requestId: string, approved: boolean, alwaysForChat?: boolean) => Promise<void>
@@ -86,17 +93,19 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
     set({ currentChatId: null, messages: [], streamingText: '', toolStatus: null, error: null, pendingApproval: null })
   },
 
-  sendMessage: async (text) => {
+  sendMessage: async (text, attachments) => {
     const chatId = get().currentChatId
     const trimmed = text.trim()
-    if (!chatId || !trimmed || get().isStreaming) return
+    const hasAttachments = !!attachments?.length
+    if (!chatId || (!trimmed && !hasAttachments) || get().isStreaming) return
 
-    // 사용자 메시지 낙관적 추가 (done/오류와 무관하게 서버에 이미 저장됨)
+    // 사용자 메시지 낙관적 추가 (done/오류와 무관하게 서버에 이미 저장됨).
+    // 첨부 파일명은 저장 후에 정해지므로 전송 성공 뒤 재조회로 썸네일을 채운다.
     const optimistic: AiMessage = {
       id: -Date.now(),
       chat_id: chatId,
       role: 'user',
-      content: trimmed,
+      content: trimmed || '(이미지 첨부)',
       meta: null,
       created_at: new Date().toISOString()
     }
@@ -108,10 +117,14 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
       error: null
     }))
 
-    const result = await window.api.ai.send(chatId, trimmed)
+    const result = await window.api.ai.send(chatId, trimmed, attachments)
     if (!result.started) {
       set({ isStreaming: false, error: result.error ?? '메시지 전송에 실패했습니다.' })
       return
+    }
+    if (hasAttachments) {
+      const fresh = await window.api.ai.messages(chatId)
+      if (get().currentChatId === chatId) set({ messages: fresh })
     }
     // 첫 메시지로 제목이 자동 설정되므로 리스트 갱신
     void get().fetchChats()

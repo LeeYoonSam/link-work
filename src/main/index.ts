@@ -100,7 +100,29 @@ app.whenReady().then(() => {
   // 전체 파일을 받지 않고도 즉시 seek이 가능하다. (Range 미지원 시 큰 WAV에서
   // 시킹이 간헐적으로 실패하거나 위치가 초기화되던 버그)
   protocol.handle('linkwork-media', async (request) => {
-    const fileName = basename(decodeURIComponent(new URL(request.url).pathname))
+    const url = new URL(request.url)
+    const fileName = basename(decodeURIComponent(url.pathname))
+
+    // AI 대화 첨부 이미지 (linkwork-media://attachment/<파일명>)
+    if (url.host === 'attachment') {
+      const imagePath = join(app.getPath('userData'), 'ai-attachments', fileName)
+      try {
+        const buf = await readFile(imagePath)
+        const ext = fileName.split('.').pop()?.toLowerCase()
+        const imageType =
+          ext === 'png'
+            ? 'image/png'
+            : ext === 'webp'
+              ? 'image/webp'
+              : ext === 'gif'
+                ? 'image/gif'
+                : 'image/jpeg'
+        return new Response(buf, { status: 200, headers: { 'Content-Type': imageType } })
+      } catch {
+        return new Response('Not Found', { status: 404 })
+      }
+    }
+
     const filePath = join(app.getPath('userData'), 'recordings', fileName)
 
     let fileSize: number

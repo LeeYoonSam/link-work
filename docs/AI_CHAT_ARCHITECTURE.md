@@ -42,9 +42,11 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 │  ai-agent.ts      Agent SDK query() 실행/스트리밍/취소/세션     │
 │   ├─ canUseTool   도구 화이트리스트 강제                       │
 │   └─ ai-audit.ts  감사 로그 (ai_audit_log)                   │
-│  ai-tools.ts      LinkWork 조회 도구 8종 (in-process MCP)     │
+│  ai-tools.ts      조회 도구 13종 (in-process MCP)             │
 │   ├─ database.ts  getAiReadOnlyDatabase() ← 읽기 전용 커넥션   │
-│   └─ google-calendar.ts  getEventsInRange()                 │
+│   ├─ google-calendar.ts  getEventsInRange()                 │
+│   ├─ notion.ts    Notion API (검색/페이지 읽기)                │
+│   └─ web-fetch.ts fetch_url (SSRF 가드 + HTML→텍스트)         │
 └──────────────┬─────────────────────────────────────────────┘
                │ spawn (Agent SDK 내부)
 ┌─ Claude Code CLI ──────────────────────────────────────────┐
@@ -64,14 +66,19 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 
 | 파일 | 역할 |
 |---|---|
-| `src/main/services/ai-agent.ts` | 쿼리 실행 엔진. 시스템 프롬프트, 스트리밍 중계, 취소, 세션 resume, 진행상태 보관, 동시 실행 상한 |
-| `src/main/services/ai-tools.ts` | LinkWork 조회 도구 8종 정의 (zod 스키마 + SQL) |
+| `src/main/services/ai-agent.ts` | 쿼리 실행 엔진. 시스템 프롬프트, 스트리밍 중계, 취소, 세션 resume, 진행상태 보관, 동시 실행 상한, 도구 게이트(canUseTool) |
+| `src/main/services/ai-tools.ts` | LinkWork 조회 도구 + 외부 지식 도구(Notion/웹) 정의 (zod 스키마 + SQL) |
+| `src/main/services/ai-write-tools.ts` | 쓰기 도구 9종 (HITL 승인 — 가드레일 문서 7절) |
 | `src/main/services/ai-audit.ts` | 감사 로그 기록 헬퍼 |
-| `src/main/ipc/ai.ipc.ts` | IPC 핸들러 (`ai:*` 채널), 입력 검증, 제목 자동 설정 |
+| `src/main/services/notion.ts` | Notion 연동 (토큰 safeStorage 저장, 검색/페이지/DB 조회 API) |
+| `src/main/services/notion-markdown.ts` | Notion 블록 → 마크다운 변환 (순수 함수, 단위 테스트) |
+| `src/main/services/web-fetch.ts` | fetch_url용 웹 페이지 로드 + HTML→텍스트 (SSRF 가드, 단위 테스트) |
+| `src/main/services/ai-attachments.ts` | 이미지 첨부 저장/검증/정리 (`userData/ai-attachments`) |
+| `src/main/ipc/ai.ipc.ts` | IPC 핸들러 (`ai:*` 채널), 입력/첨부 검증, 제목 자동 설정, Notion 연동 IPC |
 | `src/main/db/database.ts` | 테이블 스키마 + AI 전용 읽기 전용 커넥션 |
 | `src/preload/index.ts` | `window.api.ai` 노출 |
 | `src/renderer/src/stores/aiChatStore.ts` | 채팅 상태 관리 (zustand) |
-| `src/renderer/src/components/ai/AiChatView.tsx` | 채팅 UI 전체 |
+| `src/renderer/src/components/ai/AiChatView.tsx` | 채팅 UI 전체 (이미지 첨부, Notion 연동 모달 포함) |
 | `src/renderer/src/types/index.ts` | `AiChat`, `AiMessage`, `AiStreamEvent`, `AiAPI` 등 타입 |
 
 ## 5. 데이터 모델
@@ -86,7 +93,8 @@ ai_messages (                       -- 메시지
   id, chat_id → ai_chats(CASCADE),
   role,                             -- 'user' | 'assistant'
   content,                          -- 마크다운 텍스트
-  meta, created_at
+  meta,                             -- JSON: 이미지 첨부 { attachments: [{ file, name, type }] }
+  created_at
 )
 ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고)
   id, chat_id, event, tool_name, input, detail, duration_ms, created_at
@@ -99,10 +107,13 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 사용자 입력 (Enter)
   → aiChatStore.sendMessage()
       1. user 메시지 낙관적 추가 + isStreaming=true
-      2. invoke('ai:send', chatId, text)
+      2. invoke('ai:send', chatId, text, attachments?)   ← 이미지는 ArrayBuffer로 전달
   → ai.ipc.ts 'ai:send'
-      3. 검증: 빈 메시지 / 4,000자 초과 / 채팅당 1쿼리 / 전체 동시 3쿼리
-      4. user 메시지 DB 저장, 첫 메시지면 채팅 제목 자동 설정
+      3. 검증: 빈 메시지 / 4,000자 초과 / 첨부(개수·크기·타입) / 채팅당 1쿼리 / 전체 동시 3쿼리
+      4. 첨부 이미지를 userData/ai-attachments에 저장 → user 메시지 DB 저장
+         (meta에 첨부 목록 JSON), 첫 메시지면 채팅 제목 자동 설정
+      4-1. 첨부가 있으면 프롬프트에 "[첨부 이미지]" 경로 목록을 덧붙임
+           → AI가 Read 도구로 이미지를 직접 확인 (Read는 첨부 디렉토리만 허용)
       5. runAiQuery() 시작 (await 안 함 — 즉시 { started: true } 반환)
   → ai-agent.ts runAiQuery()
       6. 감사 query_start 기록, AbortController 등록
@@ -141,20 +152,57 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 - 세션 파일이 삭제/만료돼 resume이 실패하면 새 세션으로 1회 자동 재시도
   (이 경우 이전 맥락은 사라지지만 동작은 유지).
 
-## 8. LinkWork 데이터 조회 도구 (8종)
+## 8. 조회 도구
 
-모두 읽기 전용 커넥션 사용. 전체 이름은 `mcp__linkwork__<이름>`.
+모두 읽기 전용이며 전체 이름은 `mcp__linkwork__<이름>`. LinkWork 데이터 도구는
+읽기 전용 DB 커넥션을 사용한다.
+
+### 8.1 LinkWork 데이터 (10종)
 
 | 도구 | 용도 |
 |---|---|
 | `list_projects` | 프로젝트 목록 + 태스크 진행 요약 (status/이름 필터) |
 | `get_project` | 프로젝트 상세 + 전체 태스크 + 연결 문서 (ID 또는 이름) |
-| `list_todos` | TODO 목록 + 태그 (완료/검색/태그 필터) |
-| `search_memos` | 메모 검색 (내용/카테고리/중요/보관 필터) |
+| `list_todos` | TODO 목록 + 태그 (완료/검색/태그 필터, notes 300자 truncate) |
+| `get_todo` | TODO 상세 (notes 전문 + 알람 설정 — 수정 전 확인용) |
+| `search_memos` | 메모 검색 (내용/카테고리/중요/보관 필터, 1000자 truncate) |
+| `get_memo` | 메모 전문 조회 (수정 전 확인용) |
 | `list_documents` | 문서 목록 + 프로젝트명 (검색/프로젝트 필터) |
 | `list_variables` | 변수 목록 (secret 값은 마스킹) |
 | `get_activity_log` | 기간별 활동 이력 — "이번주 작업 정리" 용 |
 | `get_calendar_events` | Google 캘린더 일정 (기간 지정, 미연동 시 안내 반환) |
+
+### 8.2 외부 지식 (Notion / 웹 링크 — 3종)
+
+| 도구 | 용도 | 게이트 |
+|---|---|---|
+| `search_notion` | 연동된 Notion 워크스페이스 검색 (제목/ID/URL) | 자동 허용 (사용자 소유 데이터) |
+| `get_notion_page` | Notion 페이지 내용을 마크다운으로 읽기 (URL 또는 ID, DB면 항목 목록) | 자동 허용 |
+| `fetch_url` | 일반 웹 페이지를 텍스트로 읽기 (Notion URL은 API로 위임) | **조건부 승인 카드** — 사용자 메시지에 없는 호스트는 HITL |
+
+- **Notion 연동 (2가지 경로)**:
+  1. **claude.ai Notion 커넥터 (기본, 제로 설정)** — 구독 계정에 커넥터가 연결돼
+     있으면 SDK 쿼리에 자동 로드된다. 앱은 읽기 도구 2종
+     (`mcp__claude_ai_Notion__notion-search`/`notion-fetch`)만 화이트리스트에 허용
+     (가드레일 문서 8.1절). 도구는 ToolSearch 뒤에 지연 로드되므로
+     `HARNESS_ALLOWED_TOOLS`의 ToolSearch 허용이 전제 조건.
+  2. **internal integration 토큰 (대안)** — 채팅 리스트 하단의 "Notion 연동" 버튼 →
+     토큰 등록 (main이 `/users/me`로 검증 후 safeStorage 암호화하여 `app_settings`에
+     저장). 블록 트리는 깊이 3 / 500블록 / 15,000자 상한으로 수집한다 (`notion.ts`).
+     토큰 등록 시 시스템 프롬프트가 이 경로를 우선 지시한다.
+- **fetch_url**: http/https만, 로컬호스트/사설망 차단, 리다이렉트 5회(매 단계 재검증),
+  2MB/15초/12,000자 상한 (`web-fetch.ts`). 승인 게이트의 근거는 가드레일 문서 8절.
+
+### 8.3 이미지 첨부
+
+- 입력창의 이미지 버튼/클립보드 붙여넣기/드래그&드롭으로 첨부 (최대 4장,
+  장당 8MB, PNG/JPEG/WebP/GIF — renderer와 main 양쪽에서 검증).
+- 파일은 `userData/ai-attachments/<chatId>-<ts>-<i>.<ext>`에 저장되고,
+  프롬프트에 경로가 추가되어 AI가 내장 `Read` 도구로 이미지를 직접 본다.
+  `canUseTool`이 Read를 **첨부 디렉토리 안의 파일로만 제한**한다.
+- renderer 표시는 `linkwork-media://attachment/<파일명>` 프로토콜 라우트 사용
+  (`main/index.ts` — 오디오와 같은 프로토콜의 별도 host).
+- 채팅 삭제 시 해당 채팅의 첨부 파일도 함께 삭제된다 (`removeChatAttachments`).
 
 ## 9. `linkwork://` 링크 스킴 (앱 내 액션)
 

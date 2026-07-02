@@ -16,6 +16,8 @@ export type AiAuditEvent =
   | 'write_rejected'
   | 'write_executed'
   | 'write_toggle'
+  | 'fetch_approved'
+  | 'fetch_rejected'
 
 interface AiAuditEntry {
   chatId?: number | null
