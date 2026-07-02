@@ -93,16 +93,27 @@ export default function ProjectList(): React.ReactNode {
                   <PhaseHint project={project} />
                 </div>
               </div>
-              <div className="mt-3 flex gap-4 text-xs text-gray-500">
-                <span>
-                  Dev: {format(new Date(project.dev_start_date), 'MM/dd')} ~{' '}
+              {/* 단계별 색상은 상태 배지와 동일한 의미 체계 (개발=초록/QA=주황/배포=빨강 — ui/tokens.ts) */}
+              <div className="mt-3 flex flex-wrap gap-4 text-xs">
+                <span className="text-green-700">
+                  <span className="font-medium">Dev:</span>{' '}
+                  {format(new Date(project.dev_start_date), 'MM/dd')} ~{' '}
                   {format(new Date(project.dev_end_date), 'MM/dd')}
                 </span>
-                <span>
-                  QA: {format(new Date(project.qa_start_date), 'MM/dd')} ~{' '}
+                <span className="text-orange-700">
+                  <span className="font-medium">QA:</span>{' '}
+                  {format(new Date(project.qa_start_date), 'MM/dd')} ~{' '}
                   {format(new Date(project.qa_end_date), 'MM/dd')}
                 </span>
-                <span>Deploy: {format(new Date(project.deploy_date), 'MM/dd')}</span>
+                <span className="text-red-700">
+                  <span className="font-medium">Deploy:</span>{' '}
+                  {format(new Date(project.deploy_date), 'MM/dd')}
+                </span>
+                {project.deploy_version && (
+                  <span className="px-1.5 py-0.5 -my-0.5 rounded bg-gray-100 text-gray-600 font-medium">
+                    v{project.deploy_version}
+                  </span>
+                )}
               </div>
             </Card>
           ))}
