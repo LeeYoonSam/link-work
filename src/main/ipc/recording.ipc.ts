@@ -3,7 +3,7 @@ import { writeFile, mkdir, unlink } from 'fs/promises'
 import { join } from 'path'
 import { getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
-import { runMeetingPipeline } from '../services/meeting-pipeline'
+import { runMeetingPipeline, SPEAKER_COLORS } from '../services/meeting-pipeline'
 import { runMeetingSummary } from '../services/meeting-summary'
 import { wavDurationMs } from '../services/wav-util'
 import type { RecordingStreamEvent, SendStream, SummaryActionItem } from '../services/meeting-types'
@@ -245,6 +245,39 @@ export function registerRecordingIpc(): void {
       'UPDATE meeting_segments SET speaker_id = ?, speaker_corrected = 1 WHERE id = ?'
     ).run(speakerId, segmentId)
     return { success: true }
+  })
+
+  // ── 발언 텍스트 보정 (전사 오류 수동 수정) ──
+  ipcMain.handle('recording:updateSegmentText', (_e, segmentId: number, text: string) => {
+    db.prepare(
+      'UPDATE meeting_segments SET text = ?, text_corrected = 1 WHERE id = ?'
+    ).run((text ?? '').trim(), segmentId)
+    return { success: true }
+  })
+
+  // ── 화자 수동 추가 (타임라인에서 즉석 추가). 같은 이름이 이미 있으면 그 화자를 재사용 ──
+  ipcMain.handle('recording:addSpeaker', (_e, meetingId: number, name: string) => {
+    const trimmed = (name ?? '').trim()
+    if (!trimmed) return { success: false, error: '화자 이름이 비어 있습니다.' }
+    const existing = db
+      .prepare(
+        'SELECT id FROM meeting_speakers WHERE meeting_id = ? AND (display_name = ? OR label = ?)'
+      )
+      .get(meetingId, trimmed, trimmed) as { id: number } | undefined
+    if (existing) return { success: true, id: existing.id, existed: true }
+
+    const stats = db
+      .prepare(
+        'SELECT COUNT(*) AS cnt, COALESCE(MAX(sort_order), -1) AS maxOrder FROM meeting_speakers WHERE meeting_id = ?'
+      )
+      .get(meetingId) as { cnt: number; maxOrder: number }
+    const color = SPEAKER_COLORS[stats.cnt % SPEAKER_COLORS.length]
+    const result = db
+      .prepare(
+        'INSERT INTO meeting_speakers (meeting_id, speaker_key, label, display_name, color, sort_order) VALUES (?, ?, ?, ?, ?, ?)'
+      )
+      .run(meetingId, `manual_${Date.now()}`, trimmed, trimmed, color, stats.maxOrder + 1)
+    return { success: true, id: Number(result.lastInsertRowid), existed: false }
   })
 
   ipcMain.handle(

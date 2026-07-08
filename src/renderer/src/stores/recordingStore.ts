@@ -41,6 +41,9 @@ interface RecordingStore {
     input: { display_name?: string | null; color?: string; label?: string }
   ) => Promise<void>
   reassignSegment: (segmentId: number, speakerId: number | null) => Promise<void>
+  updateSegmentText: (segmentId: number, text: string) => Promise<void>
+  // 새 화자를 추가하고 id를 반환 (같은 이름이 있으면 기존 화자 id 재사용). 실패 시 null
+  addSpeaker: (meetingId: number, name: string) => Promise<number | null>
   mergeSpeakers: (meetingId: number, fromSpeakerId: number, intoSpeakerId: number) => Promise<void>
   toggleCut: (cutId: number, enabled: boolean) => Promise<void>
   actionItemToTodo: (meetingId: number, index: number) => Promise<void>
@@ -226,6 +229,26 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
       await get().refreshCurrent()
     } catch (err) {
       console.error('[recordingStore] reassignSegment error:', err)
+    }
+  },
+
+  updateSegmentText: async (segmentId, text) => {
+    try {
+      await window.api.recording.updateSegmentText(segmentId, text)
+      await get().refreshCurrent()
+    } catch (err) {
+      console.error('[recordingStore] updateSegmentText error:', err)
+    }
+  },
+
+  addSpeaker: async (meetingId, name) => {
+    try {
+      const result = await window.api.recording.addSpeaker(meetingId, name)
+      await get().refreshCurrent()
+      return result.success && result.id != null ? result.id : null
+    } catch (err) {
+      console.error('[recordingStore] addSpeaker error:', err)
+      return null
     }
   },
 

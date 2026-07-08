@@ -13,8 +13,8 @@ import { cleanSegments } from './transcript-cleaner'
 import { wavDurationMs } from './wav-util'
 import { postprocessTurns } from './diarization/postprocess'
 
-// 화자 색상 팔레트 (순환)
-const SPEAKER_COLORS = [
+// 화자 색상 팔레트 (순환) — 수동 화자 추가(recording.ipc)에서도 사용
+export const SPEAKER_COLORS = [
   '#4F8EF7',
   '#F7844F',
   '#4FBF7A',

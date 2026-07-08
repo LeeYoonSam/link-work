@@ -161,6 +161,10 @@ const api = {
     ) => ipcRenderer.invoke('recording:updateSpeaker', speakerId, input),
     reassignSegment: (segmentId: number, speakerId: number | null) =>
       ipcRenderer.invoke('recording:reassignSegment', segmentId, speakerId),
+    updateSegmentText: (segmentId: number, text: string) =>
+      ipcRenderer.invoke('recording:updateSegmentText', segmentId, text),
+    addSpeaker: (meetingId: number, name: string) =>
+      ipcRenderer.invoke('recording:addSpeaker', meetingId, name),
     mergeSpeakers: (meetingId: number, fromSpeakerId: number, intoSpeakerId: number) =>
       ipcRenderer.invoke('recording:mergeSpeakers', meetingId, fromSpeakerId, intoSpeakerId),
     toggleCut: (cutId: number, enabled: boolean) =>

@@ -473,6 +473,7 @@ export interface MeetingSegment {
   text: string
   confidence: number | null
   speaker_corrected: number
+  text_corrected: number
   sort_order: number
 }
 
@@ -553,6 +554,11 @@ export interface RecordingAPI {
     input: { display_name?: string | null; color?: string; label?: string }
   ) => Promise<{ success: boolean }>
   reassignSegment: (segmentId: number, speakerId: number | null) => Promise<{ success: boolean }>
+  updateSegmentText: (segmentId: number, text: string) => Promise<{ success: boolean }>
+  addSpeaker: (
+    meetingId: number,
+    name: string
+  ) => Promise<{ success: boolean; id?: number; existed?: boolean; error?: string }>
   mergeSpeakers: (
     meetingId: number,
     fromSpeakerId: number,

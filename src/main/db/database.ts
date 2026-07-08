@@ -249,6 +249,7 @@ export function initDatabase(): void {
       text TEXT NOT NULL DEFAULT '',
       confidence REAL,
       speaker_corrected INTEGER NOT NULL DEFAULT 0,
+      text_corrected INTEGER NOT NULL DEFAULT 0,
       sort_order INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
       FOREIGN KEY (speaker_id) REFERENCES meeting_speakers(id) ON DELETE SET NULL
@@ -317,6 +318,12 @@ export function initDatabase(): void {
   const meetingColumns = db.prepare("PRAGMA table_info(meetings)").all() as { name: string }[]
   if (meetingColumns.length > 0 && !meetingColumns.map((c) => c.name).includes('expected_speakers')) {
     db.exec("ALTER TABLE meetings ADD COLUMN expected_speakers INTEGER")
+  }
+
+  // 회의 세그먼트: 사용자가 발언 텍스트를 수동 수정했는지 표시 (speaker_corrected와 동일한 패턴)
+  const segmentColumns = db.prepare("PRAGMA table_info(meeting_segments)").all() as { name: string }[]
+  if (segmentColumns.length > 0 && !segmentColumns.map((c) => c.name).includes('text_corrected')) {
+    db.exec("ALTER TABLE meeting_segments ADD COLUMN text_corrected INTEGER NOT NULL DEFAULT 0")
   }
 
   // Seed activity_log from existing data (one-time migration)
