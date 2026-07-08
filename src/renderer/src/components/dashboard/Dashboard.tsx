@@ -7,6 +7,7 @@ import ProjectProgress from './ProjectProgress'
 import TodaySchedule from './TodaySchedule'
 import MarkdownContent from '../memo/MarkdownContent'
 import { format } from 'date-fns'
+import { formatDateSafe } from '../../utils/date'
 import type { Task, Todo } from '../../types'
 import { Card, EmptyState, SectionTitle, StarIcon, todoPriority } from '../ui'
 
@@ -101,7 +102,7 @@ function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
             isOverdue ? 'text-red-500 font-medium' : 'text-gray-400'
           }`}
         >
-          {format(new Date(todo.due_date), 'MM-dd HH:mm')}
+          {formatDateSafe(todo.due_date, 'MM-dd HH:mm')}
         </span>
       ) : null}
     </div>

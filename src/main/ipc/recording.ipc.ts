@@ -283,10 +283,20 @@ export function registerRecordingIpc(): void {
     const item = items[index]
     if (!item) throw new Error('해당 액션아이템이 없습니다.')
 
-    const notes = `회의에서 추출: ${meeting?.title ?? ''}${item.assignee ? `\n담당: ${item.assignee}` : ''}`
+    // AI 요약의 due는 "다음 주" 같은 자유 텍스트일 수 있다. todos.due_date는 날짜 포맷을
+    // 전제로 렌더링되므로(ai-write-tools.ts의 todoDueField와 동일 규약) 형식이 맞을 때만
+    // due_date로 쓰고, 아니면 notes에 원문을 남긴다.
+    const dueIsDate = !!item.due && /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$/.test(item.due)
+    const notes = [
+      `회의에서 추출: ${meeting?.title ?? ''}`,
+      item.assignee ? `담당: ${item.assignee}` : null,
+      !dueIsDate && item.due ? `기한: ${item.due}` : null
+    ]
+      .filter(Boolean)
+      .join('\n')
     const result = db
       .prepare('INSERT INTO todos (title, priority, due_date, notes) VALUES (?, ?, ?, ?)')
-      .run(item.text, 'medium', item.due ?? null, notes)
+      .run(item.text, 'medium', dueIsDate ? item.due : null, notes)
     const todoId = Number(result.lastInsertRowid)
     logActivity('todo', 'create', todoId, item.text)
 

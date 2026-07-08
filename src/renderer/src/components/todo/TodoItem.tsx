@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { format, subDays } from 'date-fns'
+import { formatDateSafe } from '../../utils/date'
 import { useTodoStore } from '../../stores/todoStore'
 import MarkdownContent from '../memo/MarkdownContent'
 import type { Todo } from '../../types'
@@ -157,7 +158,7 @@ export default function TodoItem({ todo, highlighted = false }: TodoItemProps): 
                 }`}
               >
                 {isOverdue ? <AlertTriangleIcon size={12} /> : null}
-                {format(new Date(todo.due_date), 'yyyy-MM-dd HH:mm')}
+                {formatDateSafe(todo.due_date, 'yyyy-MM-dd HH:mm')}
                 {todo.due_reminder === 1 ? (
                   <BellIcon size={12} className="text-amber-400" />
                 ) : null}
