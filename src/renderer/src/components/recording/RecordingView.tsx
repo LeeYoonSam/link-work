@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
+import { useRecorderStore } from '../../stores/recorderStore'
 import RecordingList from './RecordingList'
 import RecorderControls from './RecorderControls'
 import MeetingDetailView from './MeetingDetail'
@@ -9,6 +10,8 @@ export default function RecordingView(): React.ReactNode {
   const { meetings, current, loading, fetchMeetings, closeMeeting, subscribeStream } =
     useRecordingStore()
   const [showRecorder, setShowRecorder] = useState(false)
+  // 다른 메뉴에 다녀와도 녹음이 진행 중이면 컨트롤 패널을 다시 펼쳐서 보여준다.
+  const recorderActive = useRecorderStore((s) => s.state !== 'idle')
 
   useEffect(() => {
     fetchMeetings()
@@ -36,7 +39,7 @@ export default function RecordingView(): React.ReactNode {
         </div>
 
         {/* 녹음 컨트롤 (인라인 드롭다운) */}
-        {showRecorder && (
+        {(showRecorder || recorderActive) && (
           <div className="border-b border-gray-100 bg-gray-50">
             <RecorderControls onDone={() => setShowRecorder(false)} />
           </div>

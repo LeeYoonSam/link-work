@@ -1,4 +1,5 @@
 import { useProjectStore } from '../../stores/projectStore'
+import { formatElapsed, useRecorderStore } from '../../stores/recorderStore'
 import MenuIcon, { MenuIconName } from '../icons/MenuIcon'
 
 const navItems = [
@@ -16,6 +17,10 @@ const navItems = [
 
 export default function Sidebar(): React.ReactNode {
   const { view, setView, setProjectView } = useProjectStore()
+  const recorderState = useRecorderStore((s) => s.state)
+  // 초 단위로만 구독해 리렌더를 1초에 한 번으로 제한
+  const elapsedSec = useRecorderStore((s) => Math.floor(s.elapsedMs / 1000))
+  const isRecording = recorderState === 'recording' || recorderState === 'paused'
 
   return (
     <aside className="w-56 bg-gray-900 text-white flex flex-col h-screen">
@@ -38,6 +43,16 @@ export default function Sidebar(): React.ReactNode {
           >
             <MenuIcon name={item.icon} size={18} dimmed={view !== item.id} />
             {item.label}
+            {item.id === 'recordings' && isRecording && (
+              <span className="ml-auto flex items-center gap-1.5 text-[11px] font-medium text-red-400 tabular-nums">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full bg-red-500 ${
+                    recorderState === 'recording' ? 'animate-pulse' : ''
+                  }`}
+                />
+                {formatElapsed(elapsedSec * 1000)}
+              </span>
+            )}
           </button>
         ))}
       </nav>

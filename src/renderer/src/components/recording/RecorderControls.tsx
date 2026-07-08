@@ -1,17 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { useRecorder } from '../../hooks/useRecorder'
+import { useState } from 'react'
+import { formatElapsed, useRecorderStore } from '../../stores/recorderStore'
 import { useRecordingStore } from '../../stores/recordingStore'
 import type { MeetingSource } from '../../types'
 import { button } from '../ui'
-
-function formatElapsed(ms: number): string {
-  const totalSec = Math.floor(ms / 1000)
-  const h = Math.floor(totalSec / 3600)
-  const m = Math.floor((totalSec % 3600) / 60)
-  const s = totalSec % 60
-  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-}
 
 interface Props {
   onDone: () => void
@@ -19,12 +10,26 @@ interface Props {
 
 export default function RecorderControls({ onDone }: Props): React.ReactNode {
   const { createDraft, saveAndProcess } = useRecordingStore()
-  const { state, elapsedMs, level, error, start, pause, resume, stop, reset } = useRecorder()
+  // 녹음 상태는 화면(View) 언마운트에도 유지되도록 전역 스토어에 있다.
+  // 다른 메뉴로 이동해도 녹음은 계속되고, 돌아오면 이 컴포넌트가 이어서 표시한다.
+  const {
+    state,
+    elapsedMs,
+    level,
+    error,
+    draftId,
+    saving,
+    saveError,
+    start,
+    pause,
+    resume,
+    stop,
+    reset,
+    setSaving,
+    setSaveError
+  } = useRecorderStore()
 
   const [source, setSource] = useState<MeetingSource>('mic')
-  const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
-  const draftIdRef = useRef<number | null>(null)
 
   // 레벨 미터 바 개수
   const BAR_COUNT = 20
@@ -34,25 +39,23 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
     setSaveError(null)
     try {
       const id = await createDraft({ source })
-      draftIdRef.current = id
-      await start({ source })
+      await start({ source, draftId: id })
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : '녹음 시작 실패')
     }
   }
 
   const handleStop = async (): Promise<void> => {
-    if (draftIdRef.current == null) return
+    if (draftId == null) return
     setSaving(true)
     setSaveError(null)
     try {
       const { blob, durationMs, mime } = await stop()
-      await saveAndProcess(draftIdRef.current, blob, durationMs, mime)
+      await saveAndProcess(draftId, blob, durationMs, mime)
       reset()
       onDone()
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : '저장 실패')
-    } finally {
       setSaving(false)
     }
   }
