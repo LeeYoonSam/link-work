@@ -216,6 +216,11 @@ function createPanelWindow(): BrowserWindow {
     alwaysOnTop: true,
     transparent: true,
     hasShadow: true,
+    // 비활성화(non-activating) NSPanel. 트레이 위젯을 열어도 앱이 활성화되지 않아
+    // Stage Manager 스테이지 전환을 일으키지 않고, 전체화면 앱 위에도 뜬다.
+    // 생성 시 "NSWindow does not support nonactivating panel styleMask" 경고가
+    // 한 번 찍히지만 무해함(electron#35815) — 비활성화 동작은 정상 작동 확인됨.
+    type: 'panel',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -224,7 +229,19 @@ function createPanelWindow(): BrowserWindow {
     }
   })
 
-  panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  // 트레이 드롭다운은 시스템 컨텍스트 메뉴와 같은 층(pop-up-menu)에서 표시.
+  panel.setAlwaysOnTop(true, 'pop-up-menu')
+
+  // skipTransformProcessType 필수: 이 옵션 없이 visibleOnFullScreen을 켜면 Electron이
+  // 앱 전체를 UIElement(액세서리) 프로세스로 변환해서(DockHide) Stage Manager가
+  // 메인 창을 관리 대상에서 제외한다 — 앱 실행 시 스테이지 전환이 안 되고,
+  // 다른 창 클릭 시 스트립으로 안 들어가고 뒤로 가라앉으며, Dock 아이콘이
+  // 간헐적으로 사라지던 증상의 원인. (type:'panel'이 전체화면 위 표시를 담당하고,
+  // 이 호출은 모든 스페이스에서 보이는 속성만 추가한다.)
+  panel.setVisibleOnAllWorkspaces(true, {
+    visibleOnFullScreen: true,
+    skipTransformProcessType: true
+  })
 
   panel.once('ready-to-show', () => {
     panelReady = true
