@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
-import { useCalendarStore } from '../../stores/calendarStore'
+import { useCalendarStore, useWeekEvents } from '../../stores/calendarStore'
 import { useMemoStore } from '../../stores/memoStore'
 import { useTodoStore } from '../../stores/todoStore'
 import ProjectProgress from './ProjectProgress'
@@ -111,7 +111,10 @@ function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
 
 export default function Dashboard(): React.ReactNode {
   const { projects, fetchProjects, setView } = useProjectStore()
-  const { events, status, fetchEvents, fetchStatus } = useCalendarStore()
+  const { status, fetchEvents, fetchStatus } = useCalendarStore()
+  // 대시보드는 항상 이번 주(오늘) 일정만 본다. 캘린더 메뉴에서 다른 주로 이동해도 영향받지 않는다.
+  const today = useMemo(() => new Date(), [])
+  const events = useWeekEvents(today)
   const { importantMemos, fetchImportantMemos } = useMemoStore()
   const { activeTodos, fetchActiveTodos, setSelectedTodoId, setFilterTagId } = useTodoStore()
 

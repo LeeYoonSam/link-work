@@ -30,8 +30,8 @@ const api = {
   },
   calendar: {
     auth: () => ipcRenderer.invoke('calendar:auth'),
-    getEvents: () => ipcRenderer.invoke('calendar:events'),
-    refresh: () => ipcRenderer.invoke('calendar:refresh'),
+    getEvents: (weekStartISO?: string) => ipcRenderer.invoke('calendar:events', weekStartISO),
+    refresh: (weekStartISO?: string) => ipcRenderer.invoke('calendar:refresh', weekStartISO),
     disconnect: () => ipcRenderer.invoke('calendar:disconnect'),
     status: () => ipcRenderer.invoke('calendar:status'),
     saveSettings: (clientId: string, clientSecret: string) =>

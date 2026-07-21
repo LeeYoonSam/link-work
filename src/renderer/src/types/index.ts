@@ -103,8 +103,8 @@ export interface CalendarStatus {
 
 export interface CalendarAPI {
   auth: () => Promise<{ success: boolean; error?: string }>
-  getEvents: () => Promise<CalendarEvent[]>
-  refresh: () => Promise<CalendarEvent[]>
+  getEvents: (weekStartISO?: string) => Promise<CalendarEvent[]>
+  refresh: (weekStartISO?: string) => Promise<CalendarEvent[]>
   disconnect: () => Promise<{ success: boolean }>
   status: () => Promise<CalendarStatus>
   saveSettings: (clientId: string, clientSecret: string) => Promise<{ success: boolean }>

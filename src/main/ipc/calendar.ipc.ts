@@ -18,9 +18,10 @@ export function registerCalendarIpc(): void {
     }
   })
 
-  ipcMain.handle('calendar:events', async () => {
+  // weekStartISO: 조회할 주(월요일 기준)의 임의 시각. 없으면 이번 주.
+  ipcMain.handle('calendar:events', async (_event, weekStartISO?: string) => {
     try {
-      const events = await getWeekEvents()
+      const events = await getWeekEvents(weekStartISO)
       return events
     } catch (error) {
       console.error('Failed to get events:', error)
@@ -28,9 +29,9 @@ export function registerCalendarIpc(): void {
     }
   })
 
-  ipcMain.handle('calendar:refresh', async () => {
+  ipcMain.handle('calendar:refresh', async (_event, weekStartISO?: string) => {
     try {
-      const events = await getWeekEvents(true)
+      const events = await getWeekEvents(weekStartISO, true)
       return events
     } catch (error) {
       return []

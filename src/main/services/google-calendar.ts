@@ -1,6 +1,6 @@
 import { google } from 'googleapis'
 import { getAuthenticatedClient } from './google-auth'
-import { startOfDay, endOfDay, startOfWeek, endOfWeek } from 'date-fns'
+import { startOfDay, endOfDay, startOfWeek, endOfWeek, format } from 'date-fns'
 
 export interface CalendarEvent {
   id: string
@@ -15,8 +15,9 @@ export interface CalendarEvent {
 
 let cachedTodayEvents: CalendarEvent[] = []
 let lastTodayFetchTime = 0
-let cachedWeekEvents: CalendarEvent[] = []
-let lastWeekFetchTime = 0
+// 주 단위 이동(이전/다음 주)을 지원하므로 주차별로 캐시한다. 키는 해당 주 월요일의 yyyy-MM-dd.
+const weekCache = new Map<string, { events: CalendarEvent[]; fetchedAt: number }>()
+const WEEK_CACHE_LIMIT = 12
 const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
 
 function mapEvent(event: {
@@ -87,19 +88,30 @@ export async function getTodayEvents(forceRefresh = false): Promise<CalendarEven
   }
 }
 
-export async function getWeekEvents(forceRefresh = false): Promise<CalendarEvent[]> {
+/**
+ * 주간 일정 조회. weekStartISO를 주면 그 날짜가 속한 주를, 없으면 이번 주를 반환한다.
+ * (렌더러가 이전/다음 주로 이동할 때 사용)
+ */
+export async function getWeekEvents(
+  weekStartISO?: string,
+  forceRefresh = false
+): Promise<CalendarEvent[]> {
+  const base = weekStartISO ? new Date(weekStartISO) : new Date()
+  const target = Number.isNaN(base.getTime()) ? new Date() : base
+  const weekStart = startOfWeek(target, { weekStartsOn: 1 })
+  const weekEnd = endOfWeek(target, { weekStartsOn: 1 })
+  const key = format(weekStart, 'yyyy-MM-dd')
+
   const now = Date.now()
-  if (!forceRefresh && cachedWeekEvents.length > 0 && now - lastWeekFetchTime < CACHE_DURATION) {
-    return cachedWeekEvents
+  const cached = weekCache.get(key)
+  if (!forceRefresh && cached && now - cached.fetchedAt < CACHE_DURATION) {
+    return cached.events
   }
 
   const auth = getAuthenticatedClient()
   if (!auth) return []
 
   const calendar = google.calendar({ version: 'v3', auth })
-  const today = new Date()
-  const weekStart = startOfWeek(today, { weekStartsOn: 1 })
-  const weekEnd = endOfWeek(today, { weekStartsOn: 1 })
 
   try {
     const response = await calendar.events.list({
@@ -110,12 +122,19 @@ export async function getWeekEvents(forceRefresh = false): Promise<CalendarEvent
       orderBy: 'startTime'
     })
 
-    cachedWeekEvents = dedupEvents((response.data.items || []).map(mapEvent))
-    lastWeekFetchTime = now
-    return cachedWeekEvents
+    const events = dedupEvents((response.data.items || []).map(mapEvent))
+    weekCache.delete(key) // 재삽입해 최근 사용 순서를 유지
+    weekCache.set(key, { events, fetchedAt: now })
+    // 오래된 주차부터 정리해 무한정 쌓이지 않게 한다.
+    while (weekCache.size > WEEK_CACHE_LIMIT) {
+      const oldest = weekCache.keys().next().value
+      if (oldest === undefined) break
+      weekCache.delete(oldest)
+    }
+    return events
   } catch (error) {
     console.error('Failed to fetch calendar events:', error)
-    return cachedWeekEvents
+    return cached?.events ?? []
   }
 }
 
@@ -149,6 +168,5 @@ export async function getEventsInRange(
 export function clearCache(): void {
   cachedTodayEvents = []
   lastTodayFetchTime = 0
-  cachedWeekEvents = []
-  lastWeekFetchTime = 0
+  weekCache.clear()
 }
