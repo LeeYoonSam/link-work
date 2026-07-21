@@ -113,7 +113,14 @@ export default function Dashboard(): React.ReactNode {
   const { projects, fetchProjects, setView } = useProjectStore()
   const { events, status, fetchEvents, fetchStatus } = useCalendarStore()
   const { importantMemos, fetchImportantMemos } = useMemoStore()
-  const { activeTodos, fetchActiveTodos } = useTodoStore()
+  const { activeTodos, fetchActiveTodos, setSelectedTodoId, setFilterTagId } = useTodoStore()
+
+  // 오늘 일정 타임라인의 TODO 행에서 TODO 메뉴로 이동 (TodoRow와 동일 동작)
+  const selectTodo = (todo: Todo): void => {
+    setFilterTagId(null)
+    setSelectedTodoId(todo.id)
+    setView('todos')
+  }
 
   const [showPending, setShowPending] = useState(true)
   const [showCompleted, setShowCompleted] = useState(true)
@@ -249,6 +256,7 @@ export default function Dashboard(): React.ReactNode {
               events={events}
               connected={status.connected}
               todos={activeTodos}
+              onSelectTodo={selectTodo}
             />
           </div>
         </div>
