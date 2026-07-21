@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCalendarStore, type CalendarEvent } from '../../stores/calendarStore'
 import CalendarSettings from './CalendarSettings'
-import { renderDescription } from './linkify'
+import MarkdownContent from '../memo/MarkdownContent'
 import {
   addDays,
   format,
@@ -52,12 +52,14 @@ function EventRow({
           )}
         </div>
         {hasDescription && (
-          <div
-            className={`text-xs text-gray-600 mt-1 whitespace-pre-wrap break-words leading-relaxed ${
-              expanded ? '' : 'line-clamp-2'
-            }`}
-          >
-            {renderDescription(event.description!)}
+          <div className={`mt-1 ${expanded ? '' : 'max-h-[3.25rem] overflow-hidden'}`}>
+            <MarkdownContent
+              content={event.description!}
+              allowHtml
+              compact
+              // 캘린더 행은 조밀하므로 본문 텍스트를 xs/회색으로 낮춰 제목보다 덜 튀게 한다.
+              className="break-words [&_p]:text-xs [&_p]:text-gray-600 [&_li]:text-xs [&_li]:text-gray-600 [&_ul]:text-xs [&_ol]:text-xs"
+            />
           </div>
         )}
         {hasDescription && (

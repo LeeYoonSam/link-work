@@ -25,6 +25,8 @@
     "googleapis": "^171.4.0",
     "react-markdown": "^10.1.0",
     "recharts": "^3.8.1",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
     "zod": "^4.4.3",
     "zustand": "^5.0.0"

@@ -1,6 +1,10 @@
 import { memo } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
+import { rehypeLinkifyBareUrls, rehypeStripEmptyParagraphs } from './rehypeHtmlPlugins'
+import type { PluggableList } from 'unified'
 
 interface MarkdownContentProps {
   content: string
@@ -9,15 +13,35 @@ interface MarkdownContentProps {
   // 입력의 단일 줄바꿈을 시각적 줄바꿈으로 보존 (markdown 하드 브레이크로 변환).
   // 자유서술 본문(프로젝트 설명 등)에서 사용자가 친 Enter를 그대로 보여줄 때 사용.
   preserveNewlines?: boolean
+  // 본문에 섞인 raw HTML 태그(<ul>, <li>, <a>, <br> 등)를 렌더링한다.
+  // Google Calendar description처럼 HTML로 저장된 외부 데이터를 표시할 때 사용.
+  // rehype-sanitize로 안전한 태그/속성만 통과시키므로 XSS로부터 안전하다.
+  allowHtml?: boolean
   // linkwork:// 스킴 링크 클릭 시 앱 내 네비게이션을 수행할 핸들러 (AI 대화 등)
   onInternalLink?: (href: string) => void
 }
+
+// 기본 스키마(GitHub 기준)에는 <u>가 빠져 있는데, Google Calendar 설명은 밑줄을
+// <u>로 보내므로 서식이 사라진다. 순수 표현용 태그라 허용해도 안전하다.
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), 'u', 's']
+}
+
+// allowHtml일 때만: raw HTML 파싱 → 맨 URL 링크화 → 살균 → 빈 문단 정리
+const HTML_REHYPE_PLUGINS: PluggableList = [
+  rehypeRaw,
+  rehypeLinkifyBareUrls,
+  [rehypeSanitize, sanitizeSchema],
+  rehypeStripEmptyParagraphs
+]
 
 function MarkdownContentImpl({
   content,
   className = '',
   compact = false,
   preserveNewlines = false,
+  allowHtml = false,
   onInternalLink
 }: MarkdownContentProps): React.ReactNode {
   const gap = compact ? 'space-y-1.5' : 'space-y-3'
@@ -28,6 +52,7 @@ function MarkdownContentImpl({
     <div className={`markdown-body ${gap} text-sm text-gray-800 leading-relaxed ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={allowHtml ? HTML_REHYPE_PLUGINS : undefined}
         // react-markdown은 기본적으로 http(s) 외 프로토콜 href를 제거하므로
         // 앱 내 네비게이션용 linkwork:// 링크는 예외로 보존한다
         urlTransform={(url) =>
