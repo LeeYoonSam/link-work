@@ -75,6 +75,9 @@ export interface VadAdapter {
   detectSilence(audioPath: string, opts?: { minSilenceMs?: number }): Promise<VadRegion[]>
 }
 
+// 녹음 종류 — 요약 스키마와 상세 UI가 이 값으로 갈린다 (meetings.kind)
+export type MeetingKind = 'meeting' | 'interview'
+
 // AI 요약 5분류 (meeting_summaries에 JSON 직렬화되어 저장)
 export interface SummaryActionItem {
   text: string
@@ -87,4 +90,28 @@ export interface MeetingSummaryResult {
   decisions: string[]
   action_items: SummaryActionItem[]
   next_steps: string[]
+}
+
+// ── 면접 기록 (kind='interview') 전용 요약 구조 ──
+// 설계 원칙: 합격/불합격 판단이나 점수를 생성하지 않는다. 지원자의 실제 발언을
+// 질문 단위로 정리하고, 근거(인용)와 확인이 필요한 지점만 남긴다.
+export interface InterviewQaPair {
+  question: string
+  answer_summary: string
+  // 질문이 시작된 오디오 위치(ms). 파싱 실패 시 null → 재생 점프 버튼을 숨긴다.
+  start_ms: number | null
+  // 지원자 발언 원문 인용 (요약이 아닌 실제 문장)
+  quote?: string | null
+}
+export interface InterviewCompetency {
+  topic: string
+  evidence: string[]
+  note?: string | null
+}
+export interface InterviewSummaryResult {
+  overview: string
+  qa_pairs: InterviewQaPair[]
+  competencies: InterviewCompetency[]
+  follow_ups: string[]
+  fact_checks: string[]
 }

@@ -10,7 +10,7 @@ const navItems = [
   { id: 'variables' as const, label: 'Variables', icon: 'variables' as MenuIconName },
   { id: 'memos' as const, label: 'Memos', icon: 'memos' as MenuIconName },
   { id: 'calendar' as const, label: 'Calendar', icon: 'calendar' as MenuIconName },
-  { id: 'recordings' as const, label: '회의 녹음', icon: 'recordings' as MenuIconName },
+  { id: 'recordings' as const, label: '녹음', icon: 'recordings' as MenuIconName },
   { id: 'reports' as const, label: 'Reports', icon: 'reports' as MenuIconName },
   { id: 'ai' as const, label: 'AI 대화', icon: 'ai' as MenuIconName }
 ]

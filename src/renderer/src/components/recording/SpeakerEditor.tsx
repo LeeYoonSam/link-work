@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
-import type { MeetingSpeaker } from '../../types'
+import type { MeetingKind, MeetingSpeaker } from '../../types'
 import { IconButton, TrashIcon } from '../ui'
 
 interface Props {
   speakers: MeetingSpeaker[]
   meetingId: number
+  kind?: MeetingKind
 }
 
 const PRESET_COLORS = [
@@ -13,7 +14,11 @@ const PRESET_COLORS = [
   '#EC4899', '#06B6D4', '#84CC16', '#F97316', '#6B7280'
 ]
 
-export default function SpeakerEditor({ speakers, meetingId }: Props): React.ReactNode {
+// 면접에서 화자 이름을 한 번에 지정하기 위한 프리셋. 요약 프롬프트가 "질문하는 쪽=면접관"을
+// 추론하긴 하지만, 이름을 명시해두면 Q&A 귀속이 훨씬 안정적이다.
+const INTERVIEW_NAME_PRESETS = ['면접관', '지원자']
+
+export default function SpeakerEditor({ speakers, meetingId, kind }: Props): React.ReactNode {
   const { updateSpeaker, mergeSpeakers, refreshCurrent } = useRecordingStore()
   const [mergeFrom, setMergeFrom] = useState<number | null>(null)
   const [mergeBusy, setMergeBusy] = useState(false)
@@ -46,11 +51,18 @@ export default function SpeakerEditor({ speakers, meetingId }: Props): React.Rea
     <div className="space-y-3">
       <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">화자 보정</p>
 
+      {kind === 'interview' && (
+        <p className="text-[11px] text-gray-400">
+          화자 이름을 지정하면 질문·답변 정리가 더 정확해집니다
+        </p>
+      )}
+
       <ul className="space-y-2">
         {speakers.map((spk) => (
           <SpeakerRow
             key={spk.id}
             speaker={spk}
+            namePresets={kind === 'interview' ? INTERVIEW_NAME_PRESETS : []}
             mergeFromId={mergeFrom}
             isMergeTarget={mergeFrom != null && mergeFrom !== spk.id}
             mergeBusy={mergeBusy}
@@ -92,6 +104,7 @@ export default function SpeakerEditor({ speakers, meetingId }: Props): React.Rea
 
 function SpeakerRow({
   speaker,
+  namePresets,
   mergeFromId,
   isMergeTarget,
   mergeBusy,
@@ -100,6 +113,7 @@ function SpeakerRow({
   onMergeInto
 }: {
   speaker: MeetingSpeaker
+  namePresets: string[]
   mergeFromId: number | null
   isMergeTarget: boolean
   mergeBusy: boolean
@@ -133,6 +147,17 @@ function SpeakerRow({
     setSaving(true)
     try {
       await onUpdate({ color })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handlePresetName = async (name: string): Promise<void> => {
+    if (name === speaker.display_name) return
+    setNameValue(name)
+    setSaving(true)
+    try {
+      await onUpdate({ display_name: name })
     } finally {
       setSaving(false)
     }
@@ -223,6 +248,27 @@ function SpeakerRow({
             <span className="text-gray-400 italic">실명 입력...</span>
           )}
         </button>
+      )}
+
+      {/* 면접 프리셋 이름 (아직 이름이 없는 화자에만 노출) */}
+      {!isMergeTarget && !editingName && !speaker.display_name && namePresets.length > 0 && (
+        <div className="flex items-center gap-1 shrink-0">
+          {namePresets.map((name) => (
+            <button
+              key={name}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                void handlePresetName(name)
+              }}
+              disabled={saving}
+              className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 hover:bg-purple-100 hover:text-purple-700 transition-colors disabled:opacity-50"
+              title={`이 화자를 '${name}'으로 지정`}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
       )}
 
       {/* 병합 선택 버튼 */}

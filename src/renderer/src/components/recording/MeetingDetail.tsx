@@ -6,6 +6,7 @@ import { Badge, IconButton, ProgressBar, TrashIcon, PencilIcon, XIcon, LinkIcon,
 import AudioPlayer from './AudioPlayer'
 import SpeakerTimeline from './SpeakerTimeline'
 import SummaryPanel from './SummaryPanel'
+import InterviewPanel from './InterviewPanel'
 import SpeakerEditor from './SpeakerEditor'
 import type { AudioPlayerHandle } from './AudioPlayer'
 
@@ -200,9 +201,13 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
   // 재처리/재생성 진행 중 여부 (메뉴 항목 비활성화에 사용)
   const busy = reprocessing || isProcessing
 
+  // 면접 녹음은 요약 스키마와 상세 패널이 다르다 (meetings.kind)
+  const isInterview = meeting.kind === 'interview'
+  const kindNoun = isInterview ? '면접' : '회의'
+
   const TABS: { id: Tab; label: string }[] = [
     { id: 'timeline', label: `타임라인 (${segments.length})` },
-    { id: 'summary', label: '요약' },
+    { id: 'summary', label: isInterview ? '면접 기록' : '요약' },
     { id: 'speakers', label: `화자 (${speakers.length})` }
   ]
 
@@ -292,8 +297,12 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
                       </div>
 
                       <ReprocessMenuItem
-                        title="AI 요약 다시 생성"
-                        desc="전사 기반 5분류 요약 재생성"
+                        title={isInterview ? '면접 기록 다시 정리' : 'AI 요약 다시 생성'}
+                        desc={
+                          isInterview
+                            ? '전사 기반 질문·답변 재정리'
+                            : '전사 기반 5분류 요약 재생성'
+                        }
                         disabled={busy}
                         onClick={() => {
                           setShowReprocessMenu(false)
@@ -337,6 +346,11 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
 
         {/* 메타 정보 */}
         <div className="flex items-center gap-2 flex-wrap">
+          {isInterview && (
+            <Badge color="bg-purple-100 text-purple-700" size="xs">
+              면접
+            </Badge>
+          )}
           <Badge color={statusStyle.badge} size="xs">
             {statusStyle.label}
           </Badge>
@@ -451,8 +465,15 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
             onSeek={handleSeek}
           />
         )}
-        {tab === 'summary' && <SummaryPanel summary={summary} meetingId={meeting.id} />}
-        {tab === 'speakers' && <SpeakerEditor speakers={speakers} meetingId={meeting.id} />}
+        {tab === 'summary' &&
+          (isInterview ? (
+            <InterviewPanel summary={summary} meetingId={meeting.id} onSeek={handleSeek} />
+          ) : (
+            <SummaryPanel summary={summary} meetingId={meeting.id} />
+          ))}
+        {tab === 'speakers' && (
+          <SpeakerEditor speakers={speakers} meetingId={meeting.id} kind={meeting.kind} />
+        )}
       </div>
 
       {/* 삭제 확인 모달 */}
@@ -465,7 +486,7 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
             className="bg-white rounded-xl shadow-xl p-6 w-80 space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-sm font-semibold text-gray-800">회의 삭제</p>
+            <p className="text-sm font-semibold text-gray-800">{kindNoun} 삭제</p>
             <p className="text-sm text-gray-600">
               <span className="font-medium">"{meeting.title}"</span>을(를) 삭제합니다.
               오디오 파일과 전사 내용이 모두 삭제되며 복구할 수 없습니다.

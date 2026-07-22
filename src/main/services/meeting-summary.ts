@@ -1,12 +1,17 @@
-// AI 회의 요약 — Claude Code 구독 OAuth 패턴 재사용 (ai-agent.ts 인프라)
+// AI 요약 실행 인프라 — Claude Code 구독 OAuth 패턴 재사용 (ai-agent.ts 인프라)
 // SSOT: docs/MEETING_RECORDING.md §6
+//
+// 녹음 종류(meetings.kind)에 따라 프롬프트/검증/저장만 SummarySpec으로 갈아끼운다.
+// 회의=MEETING_SPEC(이 파일), 면접=INTERVIEW_SPEC(interview-summary.ts).
 import { app } from 'electron'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { z } from 'zod'
 import { getDatabase } from '../db/database'
+import { INTERVIEW_SPEC } from './interview-summary'
 import type { SendStream, MeetingSummaryResult } from './meeting-types'
+import type { SummarySpec } from './summary-spec'
 
 // ── ai-agent.ts와 동일한 인증/환경 패턴 복제 (ai-agent.ts 수정 금지) ──
 
@@ -108,6 +113,65 @@ const SummarySchema = z.object({
   next_steps: z.array(z.string()).default([])
 })
 
+// ── 회의 요약 스펙 (kind='meeting') ──
+// 면접 전용 4분류는 빈 배열로 덮어써, 종류를 바꿔 재요약했을 때 이전 종류의
+// 잔여 데이터가 남지 않게 한다 (INTERVIEW_SPEC.persist와 대칭).
+const MEETING_SPEC: SummarySpec<MeetingSummaryResult> = {
+  systemPrompt: `회의록을 분석해 한국어로 JSON만 출력하세요.
+키: tldr(string), key_points(string[]), decisions(string[]), action_items({text, assignee?, due?}[]), next_steps(string[]).
+회의에 없는 내용 생성 금지, 불확실하면 해당 배열을 비워두세요.
+코드펜스 없이 순수 JSON만 출력하세요.`,
+
+  buildPrompt: (transcript) =>
+    `다음 회의 전사록을 분석해 JSON으로 요약하세요:\n\n${transcript}`,
+
+  progressMessage: 'AI 요약 생성 중…',
+
+  validate: (raw) => {
+    const v = SummarySchema.parse(raw)
+    return {
+      tldr: v.tldr,
+      key_points: v.key_points,
+      decisions: v.decisions,
+      action_items: v.action_items.map((item) => ({
+        text: item.text,
+        assignee: item.assignee ?? null,
+        due: item.due ?? null
+      })),
+      next_steps: v.next_steps
+    }
+  },
+
+  persist: (db, meetingId, parsed, model) => {
+    db.prepare(
+      `INSERT INTO meeting_summaries
+         (meeting_id, tldr, key_points, decisions, action_items, next_steps,
+          qa_pairs, competencies, follow_ups, fact_checks, model, generated_at)
+       VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]', '[]', ?, datetime('now','localtime'))
+       ON CONFLICT(meeting_id) DO UPDATE SET
+         tldr = excluded.tldr,
+         key_points = excluded.key_points,
+         decisions = excluded.decisions,
+         action_items = excluded.action_items,
+         next_steps = excluded.next_steps,
+         qa_pairs = excluded.qa_pairs,
+         competencies = excluded.competencies,
+         follow_ups = excluded.follow_ups,
+         fact_checks = excluded.fact_checks,
+         model = excluded.model,
+         generated_at = excluded.generated_at`
+    ).run(
+      meetingId,
+      parsed.tldr,
+      JSON.stringify(parsed.key_points),
+      JSON.stringify(parsed.decisions),
+      JSON.stringify(parsed.action_items),
+      JSON.stringify(parsed.next_steps),
+      model
+    )
+  }
+}
+
 // 응답에서 JSON 블록 추출 (코드펜스 ```json … ``` 허용)
 function extractJson(text: string): string {
   // ```json ... ``` 또는 ``` ... ```
@@ -130,11 +194,22 @@ interface SegmentRow {
   display_name: string | null
 }
 
+const MODEL = 'claude-sonnet-5'
+
 export async function runMeetingSummary(
   meetingId: number,
   send: SendStream
 ): Promise<{ success: boolean; error?: string }> {
   const db = getDatabase()
+
+  // 녹음 종류에 따라 요약 스펙 선택 (기본=회의)
+  const kindRow = db.prepare('SELECT kind FROM meetings WHERE id = ?').get(meetingId) as
+    | { kind: string }
+    | undefined
+  const spec: SummarySpec<unknown> =
+    kindRow?.kind === 'interview'
+      ? (INTERVIEW_SPEC as SummarySpec<unknown>)
+      : (MEETING_SPEC as SummarySpec<unknown>)
 
   // ── 1. 전사 로드 ──
   const segments = db
@@ -172,14 +247,10 @@ export async function runMeetingSummary(
   const transcript = fitTranscript(lines)
 
   // ── 2. Claude query ──
-  send({ meetingId, phase: 'summarize', progress: 0, message: 'AI 요약 생성 중…' })
+  send({ meetingId, phase: 'summarize', progress: 0, message: spec.progressMessage })
 
-  const systemPrompt = `회의록을 분석해 한국어로 JSON만 출력하세요.
-키: tldr(string), key_points(string[]), decisions(string[]), action_items({text, assignee?, due?}[]), next_steps(string[]).
-회의에 없는 내용 생성 금지, 불확실하면 해당 배열을 비워두세요.
-코드펜스 없이 순수 JSON만 출력하세요.`
-
-  const prompt = `다음 회의 전사록을 분석해 JSON으로 요약하세요:\n\n${transcript}`
+  const systemPrompt = spec.systemPrompt
+  const prompt = spec.buildPrompt(transcript)
 
   const claudePath = findClaudeExecutable()
 
@@ -198,7 +269,7 @@ export async function runMeetingSummary(
       prompt,
       options: {
         systemPrompt,
-        model: 'claude-sonnet-5',
+        model: MODEL,
         maxTurns: 3,
         mcpServers: {},
         allowedTools: [],
@@ -221,7 +292,7 @@ export async function runMeetingSummary(
           }
         }
         streamProgress = Math.min(0.7, streamProgress + 0.15)
-        send({ meetingId, phase: 'summarize', progress: streamProgress, message: 'AI 요약 생성 중…' })
+        send({ meetingId, phase: 'summarize', progress: streamProgress, message: spec.progressMessage })
       } else if (msg.type === 'result') {
         if (msg.subtype === 'success' && msg.result && !responseText) {
           responseText = msg.result
@@ -237,23 +308,11 @@ export async function runMeetingSummary(
 
   send({ meetingId, phase: 'summarize', progress: 0.8, message: 'JSON 파싱 중…' })
 
-  // ── 3. JSON 파싱 + zod 검증 ──
-  let parsed: MeetingSummaryResult
+  // ── 3. JSON 파싱 + zod 검증 (스펙별) ──
+  let parsed: unknown
   try {
     const jsonStr = extractJson(responseText)
-    const raw = JSON.parse(jsonStr)
-    const validated = SummarySchema.parse(raw)
-    parsed = {
-      tldr: validated.tldr,
-      key_points: validated.key_points,
-      decisions: validated.decisions,
-      action_items: validated.action_items.map((item) => ({
-        text: item.text,
-        assignee: item.assignee ?? null,
-        due: item.due ?? null
-      })),
-      next_steps: validated.next_steps
-    }
+    parsed = spec.validate(JSON.parse(jsonStr))
   } catch (err) {
     const parseErr = err instanceof Error ? err.message : String(err)
     const friendly = `AI 응답 파싱에 실패했습니다: ${parseErr}\n\n원본 응답:\n${responseText.slice(0, 500)}`
@@ -261,28 +320,8 @@ export async function runMeetingSummary(
     return { success: false, error: friendly }
   }
 
-  // ── 4. meeting_summaries UPSERT ──
-  db.prepare(
-    `INSERT INTO meeting_summaries
-       (meeting_id, tldr, key_points, decisions, action_items, next_steps, model, generated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
-     ON CONFLICT(meeting_id) DO UPDATE SET
-       tldr = excluded.tldr,
-       key_points = excluded.key_points,
-       decisions = excluded.decisions,
-       action_items = excluded.action_items,
-       next_steps = excluded.next_steps,
-       model = excluded.model,
-       generated_at = excluded.generated_at`
-  ).run(
-    meetingId,
-    parsed.tldr,
-    JSON.stringify(parsed.key_points),
-    JSON.stringify(parsed.decisions),
-    JSON.stringify(parsed.action_items),
-    JSON.stringify(parsed.next_steps),
-    'claude-sonnet-5'
-  )
+  // ── 4. meeting_summaries UPSERT (스펙별) ──
+  spec.persist(db, meetingId, parsed, MODEL)
 
   db.prepare(
     "UPDATE meetings SET status = 'summarized', updated_at = datetime('now','localtime') WHERE id = ?"

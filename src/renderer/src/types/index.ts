@@ -434,10 +434,13 @@ export type MeetingStatus =
   | 'summarized'
   | 'failed'
 export type MeetingSource = 'mic' | 'mic+system'
+// 녹음 종류 — 요약 스키마와 상세 UI가 이 값으로 갈린다
+export type MeetingKind = 'meeting' | 'interview'
 
 export interface Meeting {
   id: number
   title: string
+  kind: MeetingKind
   status: MeetingStatus
   audio_path: string | null
   audio_mime: string
@@ -497,14 +500,37 @@ export interface ActionItem {
   todo_id?: number | null
 }
 
+// ── 면접 기록 (kind='interview') 전용 요약 구조 ──
+// 점수·합불 판단을 담지 않는다. 실제 발언과 확인이 필요한 지점만 기록한다.
+export interface InterviewQaPair {
+  question: string
+  answer_summary: string
+  // 질문 시작 위치(ms). null이면 재생 점프 불가.
+  start_ms: number | null
+  quote?: string | null
+}
+
+export interface InterviewCompetency {
+  topic: string
+  evidence: string[]
+  note?: string | null
+}
+
 export interface MeetingSummary {
   id: number
   meeting_id: number
+  // 회의: TL;DR / 면접: 면접 개요
   tldr: string | null
   key_points: string[]
+  // 회의 전용 3분류 (면접에서는 빈 배열)
   decisions: string[]
   action_items: ActionItem[]
   next_steps: string[]
+  // 면접 전용 4분류 (회의에서는 빈 배열)
+  qa_pairs: InterviewQaPair[]
+  competencies: InterviewCompetency[]
+  follow_ups: string[]
+  fact_checks: string[]
   model: string | null
   generated_at: string
 }
@@ -535,7 +561,11 @@ export interface ChannelEnergy {
 export interface RecordingAPI {
   list: () => Promise<Meeting[]>
   get: (id: number) => Promise<MeetingDetail | null>
-  createDraft: (input: { title?: string; source?: MeetingSource }) => Promise<{ id: number }>
+  createDraft: (input: {
+    title?: string
+    source?: MeetingSource
+    kind?: MeetingKind
+  }) => Promise<{ id: number }>
   saveAudio: (
     id: number,
     bytes: ArrayBuffer,

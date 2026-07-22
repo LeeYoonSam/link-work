@@ -6,7 +6,13 @@ import { logActivity } from '../utils/activity-logger'
 import { runMeetingPipeline, SPEAKER_COLORS } from '../services/meeting-pipeline'
 import { runMeetingSummary } from '../services/meeting-summary'
 import { wavDurationMs } from '../services/wav-util'
-import type { RecordingStreamEvent, SendStream, SummaryActionItem } from '../services/meeting-types'
+import type {
+  RecordingStreamEvent,
+  SendStream,
+  SummaryActionItem,
+  InterviewQaPair,
+  InterviewCompetency
+} from '../services/meeting-types'
 
 // 녹음 오디오 저장 위치 (userData 밖이 아니라 안 — 백업/유지 일관성)
 function recordingsDir(): string {
@@ -26,6 +32,10 @@ interface SummaryRow {
   decisions: string | null
   action_items: string | null
   next_steps: string | null
+  qa_pairs: string | null
+  competencies: string | null
+  follow_ups: string | null
+  fact_checks: string | null
   model: string | null
   generated_at: string
 }
@@ -50,6 +60,11 @@ function mapSummary(row: SummaryRow | undefined): unknown {
     decisions: parseJsonArray<string>(row.decisions),
     action_items: parseJsonArray<SummaryActionItem>(row.action_items),
     next_steps: parseJsonArray<string>(row.next_steps),
+    // 면접 전용 4분류 (회의 요약에서는 빈 배열)
+    qa_pairs: parseJsonArray<InterviewQaPair>(row.qa_pairs),
+    competencies: parseJsonArray<InterviewCompetency>(row.competencies),
+    follow_ups: parseJsonArray<string>(row.follow_ups),
+    fact_checks: parseJsonArray<string>(row.fact_checks),
     model: row.model,
     generated_at: row.generated_at
   }
@@ -91,12 +106,19 @@ export function registerRecordingIpc(): void {
 
   ipcMain.handle(
     'recording:createDraft',
-    (_e, input: { title?: string; source?: string }) => {
-      const title = (input?.title ?? '').trim() || '제목 없는 회의'
+    (_e, input: { title?: string; source?: string; kind?: string }) => {
+      const kind = input?.kind === 'interview' ? 'interview' : 'meeting'
+      const title =
+        (input?.title ?? '').trim() || (kind === 'interview' ? '제목 없는 면접' : '제목 없는 회의')
       const source = input?.source === 'mic+system' ? 'mic+system' : 'mic'
+      // 면접은 면접관+지원자 2인이 기본형이라 화자분리 클러스터 수를 2로 미리 고정한다.
+      // (자동 추정이 과분할되는 것을 막는다. 상세 화면에서 언제든 바꿔 재분리 가능.)
+      const expectedSpeakers = kind === 'interview' ? 2 : null
       const result = db
-        .prepare("INSERT INTO meetings (title, status, source) VALUES (?, 'recording', ?)")
-        .run(title, source)
+        .prepare(
+          "INSERT INTO meetings (title, kind, status, source, expected_speakers) VALUES (?, ?, 'recording', ?, ?)"
+        )
+        .run(title, kind, source, expectedSpeakers)
       const id = Number(result.lastInsertRowid)
       logActivity('meeting', 'create', id, title)
       return { id }

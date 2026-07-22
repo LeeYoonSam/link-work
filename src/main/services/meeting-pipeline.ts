@@ -1,4 +1,4 @@
-// 회의 녹음 파이프라인: STT → VAD → Diarization → merge → DB 저장
+// 녹음 처리 파이프라인(회의·면접 공통): STT → VAD → Diarization → merge → DB 저장
 // SSOT: docs/MEETING_RECORDING.md §5
 import { app } from 'electron'
 import { join } from 'path'

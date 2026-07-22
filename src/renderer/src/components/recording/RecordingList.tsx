@@ -53,6 +53,11 @@ function MeetingCard({ meeting }: { meeting: Meeting }): React.ReactNode {
         >
           {meeting.title}
         </span>
+        {meeting.kind === 'interview' && (
+          <Badge color="bg-purple-100 text-purple-700" size="xs">
+            면접
+          </Badge>
+        )}
         <Badge color={statusStyle.badge} size="xs">
           {statusStyle.label}
         </Badge>
@@ -102,23 +107,39 @@ function MeetingCard({ meeting }: { meeting: Meeting }): React.ReactNode {
 }
 
 export default function RecordingList(): React.ReactNode {
-  const { meetings } = useRecordingStore()
+  const { meetings, kindFilter } = useRecordingStore()
 
-  if (meetings.length === 0) {
+  const visible =
+    kindFilter === 'all' ? meetings : meetings.filter((m) => m.kind === kindFilter)
+
+  if (visible.length === 0) {
+    // 녹음이 아예 없는 것과, 필터에 걸려 안 보이는 것은 다른 상황이다
+    const filtered = meetings.length > 0
     return (
       <EmptyState>
         <div className="mb-2 text-gray-300">
           <MicOffIcon />
         </div>
-        <p>녹음된 회의가 없습니다</p>
-        <p className="text-[11px] mt-1 text-gray-300">상단 버튼으로 첫 녹음을 시작하세요</p>
+        {filtered ? (
+          <>
+            <p>{kindFilter === 'interview' ? '면접' : '회의'} 녹음이 없습니다</p>
+            <p className="text-[11px] mt-1 text-gray-300">
+              전체 탭에서 다른 녹음을 볼 수 있습니다
+            </p>
+          </>
+        ) : (
+          <>
+            <p>녹음된 항목이 없습니다</p>
+            <p className="text-[11px] mt-1 text-gray-300">상단 버튼으로 첫 녹음을 시작하세요</p>
+          </>
+        )}
       </EmptyState>
     )
   }
 
   return (
     <div>
-      {meetings.map((m) => (
+      {visible.map((m) => (
         <MeetingCard key={m.id} meeting={m} />
       ))}
     </div>

@@ -142,7 +142,7 @@ const api = {
   recording: {
     list: () => ipcRenderer.invoke('recording:list'),
     get: (id: number) => ipcRenderer.invoke('recording:get', id),
-    createDraft: (input: { title?: string; source?: string }) =>
+    createDraft: (input: { title?: string; source?: string; kind?: string }) =>
       ipcRenderer.invoke('recording:createDraft', input),
     saveAudio: (
       id: number,

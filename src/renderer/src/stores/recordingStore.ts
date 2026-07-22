@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type {
   Meeting,
   MeetingDetail,
+  MeetingKind,
   RecordingStreamEvent
 } from '../types'
 import { blobToWav16kMono } from '../utils/audio'
@@ -13,6 +14,9 @@ interface ProcessingState {
   message?: string
 }
 
+// 목록 필터 — 'all'이면 회의·면접을 함께 본다
+export type KindFilter = 'all' | MeetingKind
+
 interface RecordingStore {
   meetings: Meeting[]
   current: MeetingDetail | null
@@ -20,6 +24,10 @@ interface RecordingStore {
   // 회의별 진행률 맵 (meetingId → 상태). 여러 회의를 동시에 재처리해도
   // 각 회의의 진행률이 서로 덮어쓰지 않고 독립적으로 표시된다.
   processing: Record<number, ProcessingState>
+  // 다른 메뉴에 다녀와도 보고 있던 필터가 유지되도록 전역 상태로 둔다
+  // (RecordingView는 메뉴 전환 시 언마운트된다).
+  kindFilter: KindFilter
+  setKindFilter: (f: KindFilter) => void
 
   // 목록/상세
   fetchMeetings: () => Promise<void>
@@ -28,7 +36,11 @@ interface RecordingStore {
   refreshCurrent: () => Promise<void>
 
   // 녹음 완료 → 저장+처리+요약 오케스트레이션
-  createDraft: (input: { title?: string; source: 'mic' | 'mic+system' }) => Promise<number>
+  createDraft: (input: {
+    title?: string
+    source: 'mic' | 'mic+system'
+    kind?: MeetingKind
+  }) => Promise<number>
   saveAndProcess: (meetingId: number, blob: Blob, durationMs: number, mime: string) => Promise<void>
   summarizeMeeting: (id: number) => Promise<void>
   reprocessMeeting: (id: number, fast?: boolean) => Promise<void>
@@ -59,6 +71,9 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
   current: null,
   loading: false,
   processing: {},
+  kindFilter: 'all',
+
+  setKindFilter: (f) => set({ kindFilter: f }),
 
   fetchMeetings: async () => {
     set({ loading: true })
@@ -102,7 +117,8 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
   createDraft: async (input) => {
     const result = await window.api.recording.createDraft({
       title: input.title,
-      source: input.source
+      source: input.source,
+      kind: input.kind
     })
     await get().fetchMeetings()
     return result.id

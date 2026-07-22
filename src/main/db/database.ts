@@ -212,6 +212,8 @@ export function initDatabase(): void {
     CREATE TABLE IF NOT EXISTS meetings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL DEFAULT '제목 없는 회의',
+      -- 'meeting' | 'interview'. 요약 스키마와 상세 UI가 이 값으로 갈린다.
+      kind TEXT NOT NULL DEFAULT 'meeting',
       status TEXT NOT NULL DEFAULT 'recording',
       audio_path TEXT,
       audio_mime TEXT DEFAULT 'audio/webm',
@@ -275,6 +277,12 @@ export function initDatabase(): void {
       decisions TEXT,
       action_items TEXT,
       next_steps TEXT,
+      -- 면접(kind='interview') 전용 4분류. 회의에서는 비어 있고, 면접에서는
+      -- decisions/action_items/next_steps가 비어 있다 (meetings.kind로 분기).
+      qa_pairs TEXT,
+      competencies TEXT,
+      follow_ups TEXT,
+      fact_checks TEXT,
       model TEXT,
       generated_at TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
@@ -316,8 +324,24 @@ export function initDatabase(): void {
 
   // 회의: 참석 인원(지정 시 화자분리의 클러스터 수를 그 값으로 고정, null이면 자동 추정)
   const meetingColumns = db.prepare("PRAGMA table_info(meetings)").all() as { name: string }[]
-  if (meetingColumns.length > 0 && !meetingColumns.map((c) => c.name).includes('expected_speakers')) {
+  const meetingColumnNames = meetingColumns.map((c) => c.name)
+  if (meetingColumns.length > 0 && !meetingColumnNames.includes('expected_speakers')) {
     db.exec("ALTER TABLE meetings ADD COLUMN expected_speakers INTEGER")
+  }
+  // 녹음 종류: 기존 녹음은 전부 회의로 간주(DEFAULT 'meeting')
+  if (meetingColumns.length > 0 && !meetingColumnNames.includes('kind')) {
+    db.exec("ALTER TABLE meetings ADD COLUMN kind TEXT NOT NULL DEFAULT 'meeting'")
+  }
+
+  // 면접 요약 4분류 (회의 요약 행에서는 NULL로 남는다)
+  const summaryColumns = db.prepare("PRAGMA table_info(meeting_summaries)").all() as { name: string }[]
+  const summaryColumnNames = summaryColumns.map((c) => c.name)
+  if (summaryColumns.length > 0) {
+    for (const col of ['qa_pairs', 'competencies', 'follow_ups', 'fact_checks']) {
+      if (!summaryColumnNames.includes(col)) {
+        db.exec(`ALTER TABLE meeting_summaries ADD COLUMN ${col} TEXT`)
+      }
+    }
   }
 
   // 회의 세그먼트: 사용자가 발언 텍스트를 수동 수정했는지 표시 (speaker_corrected와 동일한 패턴)

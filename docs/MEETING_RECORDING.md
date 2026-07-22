@@ -56,6 +56,7 @@ RecordingView ── recordingStore ──IPC──► recording.ipc.ts
 CREATE TABLE IF NOT EXISTS meetings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL DEFAULT '제목 없는 회의',
+  kind TEXT NOT NULL DEFAULT 'meeting',       -- meeting|interview (요약 스키마·상세 UI 분기)
   status TEXT NOT NULL DEFAULT 'recording',   -- recording|processing|transcribed|summarized|failed
   audio_path TEXT,                            -- userData/recordings/ 상대 파일명
   audio_mime TEXT DEFAULT 'audio/webm',
@@ -112,11 +113,17 @@ CREATE TABLE IF NOT EXISTS meeting_cuts (
 CREATE TABLE IF NOT EXISTS meeting_summaries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   meeting_id INTEGER NOT NULL UNIQUE,
-  tldr TEXT,                                  -- 한 줄/문단 요약
+  tldr TEXT,                                  -- 한 줄/문단 요약 (면접에서는 '면접 개요')
   key_points TEXT,                            -- JSON string[]
+  -- 회의(kind='meeting') 전용 3분류. 면접 요약 시 '[]'로 덮어쓴다.
   decisions TEXT,                             -- JSON string[]
   action_items TEXT,                          -- JSON ActionItem[] (아래 타입)
   next_steps TEXT,                            -- JSON string[]
+  -- 면접(kind='interview') 전용 4분류. 회의 요약 시 '[]'로 덮어쓴다.
+  qa_pairs TEXT,                              -- JSON InterviewQaPair[]
+  competencies TEXT,                          -- JSON InterviewCompetency[]
+  follow_ups TEXT,                            -- JSON string[]
+  fact_checks TEXT,                           -- JSON string[]
   model TEXT,
   generated_at TEXT DEFAULT (datetime('now','localtime')),
   FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
@@ -131,9 +138,12 @@ CREATE TABLE IF NOT EXISTS meeting_summaries (
 export type MeetingStatus = 'recording' | 'processing' | 'transcribed' | 'summarized' | 'failed'
 export type MeetingSource = 'mic' | 'mic+system'
 
+export type MeetingKind = 'meeting' | 'interview'
+
 export interface Meeting {
   id: number
   title: string
+  kind: MeetingKind
   status: MeetingStatus
   audio_path: string | null
   audio_mime: string
@@ -191,14 +201,34 @@ export interface ActionItem {
   todo_id?: number | null    // 등록 완료 시 채움
 }
 
+// 면접(kind='interview') 전용 구조 — 점수·합불 판단을 담지 않는다
+export interface InterviewQaPair {
+  question: string
+  answer_summary: string
+  start_ms: number | null   // AI는 "mm:ss"로 답하고, main에서 ms로 환산
+  quote?: string | null
+}
+
+export interface InterviewCompetency {
+  topic: string
+  evidence: string[]
+  note?: string | null
+}
+
 export interface MeetingSummary {
   id: number
   meeting_id: number
-  tldr: string | null
+  tldr: string | null       // 면접에서는 '면접 개요'
   key_points: string[]
+  // 회의 전용 (면접에서는 빈 배열)
   decisions: string[]
   action_items: ActionItem[]
   next_steps: string[]
+  // 면접 전용 (회의에서는 빈 배열)
+  qa_pairs: InterviewQaPair[]
+  competencies: InterviewCompetency[]
+  follow_ups: string[]
+  fact_checks: string[]
   model: string | null
   generated_at: string
 }
@@ -224,7 +254,11 @@ export interface RecordingStreamEvent {
 export interface RecordingAPI {
   list: () => Promise<Meeting[]>
   get: (id: number) => Promise<MeetingDetail | null>
-  createDraft: (input: { title?: string; source?: MeetingSource }) => Promise<{ id: number }>
+  createDraft: (input: {
+    title?: string
+    source?: MeetingSource
+    kind?: MeetingKind        // 'interview'면 expected_speakers=2로 생성
+  }) => Promise<{ id: number }>
   /** 오디오 바이트 저장 (ArrayBuffer). 저장 후 duration/경로 메타 갱신 */
   saveAudio: (id: number, bytes: ArrayBuffer, meta: { mime: string; durationMs: number }) => Promise<{ path: string }>
   /** 전사+화자분리+VAD 파이프라인 실행 (진행률은 onStream) */
@@ -329,6 +363,27 @@ export interface VadAdapter {
 - 출력 파싱: 응답에서 JSON 블록 추출(코드펜스 허용) → zod 검증(`zod`는 이미 의존성) → `meeting_summaries` upsert.
 - 진행률: phase:summarize, 완료 시 phase:done. 실패 시 friendly error(`toFriendlyError` 패턴 재사용 — 미로그인/미설치 안내).
 
+### 6-1. 종류별 요약 스펙 (SummarySpec)
+
+실행 인프라는 하나이고, **프롬프트 · 검증 · 저장만** `meetings.kind`로 갈아끼운다 (`summary-spec.ts`).
+
+| kind | 스펙 | 위치 |
+|---|---|---|
+| `meeting` | `MEETING_SPEC` — 기존 5분류 | `meeting-summary.ts` |
+| `interview` | `INTERVIEW_SPEC` — 면접 4분류 | `interview-summary.ts` |
+
+두 스펙 모두 **상대 종류의 컬럼을 `'[]'`로 덮어쓴다**. 종류를 바꿔 재요약했을 때 이전 종류의 잔여 데이터가 화면에 남지 않게 하기 위함이다.
+
+### 6-2. 면접 기록 (kind='interview')
+
+**이 기능은 채용 판정 도구가 아니라 기록 보조다.** 프롬프트가 점수·등급·합불 의견·직무 무관 정보(성별·나이·출신 등) 생성을 금지하고, 화면에도 판정 근거로 쓰지 말라는 고지를 상시 노출한다.
+
+- 출력 키: `overview`(→ tldr 컬럼 재사용), `qa_pairs`, `competencies`, `follow_ups`, `fact_checks`.
+- **타임스탬프 규약**: AI에게 ms 정수를 만들게 하지 않는다. 전사록에 이미 `[mm:ss]`가 있으므로 그 표기를 `at` 필드로 그대로 돌려받고, `interview-summary.ts`의 `parseTimestamp`가 ms로 환산한다(형식이 어긋나면 `null` → 재생 점프 버튼 숨김). 회귀 테스트: `interview-summary.test.ts`.
+- 화자 귀속: "질문하는 쪽=면접관"을 프롬프트가 추론하되, 화자 이름이 지정돼 있으면 그것을 우선한다. 화자 탭의 면접 프리셋(`면접관`/`지원자`)으로 지정하면 정확도가 올라간다.
+- 녹음 시작 시 `expected_speakers=2`를 기본 지정한다(면접관+지원자 기본형 → 화자 자동추정 과분할 방지).
+- 녹음 시작 전 **동의 고지 체크**가 필수다(개인정보보호법상 사전 동의). 체크 전에는 시작 버튼이 비활성.
+
 ## 7. 연계 플로우
 
 **액션아이템 → TODO** (`recording:actionItemToTodo`): summary.action_items[index] → `todo:create({ title: text, due_date: due, notes: '회의: <title> 에서 추출' })`. 반환 todo_id를 action_items[index].todo_id에 기록 후 summary 갱신. (오토가 아니라 사용자 클릭 — 오탐 방지, Zoom Tasks Accept 패턴)
@@ -341,17 +396,20 @@ export interface VadAdapter {
 hooks/useRecorder.ts          # 캡처 상태머신: idle|recording|paused|stopped
 stores/recordingStore.ts      # 목록/상세/처리상태/스트림 구독
 components/recording/
-  RecordingView.tsx           # 좌: 목록, 우: 상세 (또는 목록→상세 전환)
-  RecorderControls.tsx        # 시작/일시정지/종료 + 레벨미터 + 경과시간
-  RecordingList.tsx           # 회의 카드 목록(상태 pill)
-  MeetingDetail.tsx           # 헤더(제목/날짜/상태) + 탭(타임라인/요약)
+  RecordingView.tsx           # 좌: 목록 + 종류 필터(전체/회의/면접), 우: 상세
+  RecorderControls.tsx        # 종류(회의/면접) + 소스 선택, 시작/일시정지/종료 + 레벨미터
+  RecordingList.tsx           # 녹음 카드 목록(상태 pill, 면접 배지), kindFilter 적용
+  MeetingDetail.tsx           # 헤더(제목/날짜/상태) + 탭(타임라인/요약), kind별 패널 분기
   SpeakerTimeline.tsx         # 시간대별 화자 발언 (클릭→오디오 점프), 컷 토글
-  SummaryPanel.tsx            # 5분류 + 액션아이템 TODO버튼 + 캘린더 매칭
-  SpeakerEditor.tsx           # 화자 실명 입력/색상/병합/세그먼트 재할당
+  SummaryPanel.tsx            # [회의] 5분류 + 액션아이템 TODO버튼 + 캘린더 매칭
+  InterviewPanel.tsx          # [면접] Q&A(클릭→질문 시점 재생)/근거/추가확인/레퍼런스체크
+  SpeakerEditor.tsx           # 화자 실명 입력/색상/병합/세그먼트 재할당 (면접 프리셋 지원)
   AudioPlayer.tsx             # <audio> + seek, cuts enabled 구간 skip(비파괴)
 ```
 
 디자인: 반드시 `components/ui/tokens.ts`(button/typo/status pill), `ui/index.tsx`(Card/Badge/IconButton/EmptyState/SectionTitle), `ui/icons.tsx` 재사용. 새 색/커스텀 CSS 금지, Tailwind v4 인라인 클래스 + 토큰.
+
+메뉴는 회의·면접 통합 단일 메뉴(`Sidebar` → `녹음`)다. 종류 구분은 목록 상단 필터 탭으로 하며, 선택값은 `recordingStore.kindFilter`에 둔다 — `RecordingView`가 메뉴 전환 시 언마운트되므로 로컬 state면 필터가 초기화된다.
 
 상태머신: `idle → (start) recording → (pause/resume) → (stop) → saveAudio → process → summarize`. 녹음 중엔 경과시간/레벨미터. 종료 시 자동으로 process 트리거, 완료 후 summarize 버튼(또는 자동).
 
