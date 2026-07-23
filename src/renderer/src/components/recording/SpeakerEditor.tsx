@@ -18,6 +18,17 @@ const PRESET_COLORS = [
 // 추론하긴 하지만, 이름을 명시해두면 Q&A 귀속이 훨씬 안정적이다.
 const INTERVIEW_NAME_PRESETS = ['면접관', '지원자']
 
+// 프리셋 이름이 이미 다른 화자에게 쓰이고 있으면 '면접관 2', '면접관 3'…처럼
+// 다음 빈 번호를 붙여 돌려준다. 다인 면접(면접관·지원자 여럿)에서 이름 충돌을 막는다.
+export function nextPresetName(base: string, usedNames: string[]): string {
+  const used = new Set(usedNames.map((n) => n.trim()).filter(Boolean))
+  if (!used.has(base)) return base
+  for (let n = 2; ; n++) {
+    const candidate = `${base} ${n}`
+    if (!used.has(candidate)) return candidate
+  }
+}
+
 export default function SpeakerEditor({ speakers, meetingId, kind }: Props): React.ReactNode {
   const { updateSpeaker, mergeSpeakers, refreshCurrent } = useRecordingStore()
   const [mergeFrom, setMergeFrom] = useState<number | null>(null)
@@ -63,6 +74,10 @@ export default function SpeakerEditor({ speakers, meetingId, kind }: Props): Rea
             key={spk.id}
             speaker={spk}
             namePresets={kind === 'interview' ? INTERVIEW_NAME_PRESETS : []}
+            usedNames={speakers
+              .filter((s) => s.id !== spk.id)
+              .map((s) => s.display_name ?? '')
+              .filter(Boolean)}
             mergeFromId={mergeFrom}
             isMergeTarget={mergeFrom != null && mergeFrom !== spk.id}
             mergeBusy={mergeBusy}
@@ -105,6 +120,7 @@ export default function SpeakerEditor({ speakers, meetingId, kind }: Props): Rea
 function SpeakerRow({
   speaker,
   namePresets,
+  usedNames,
   mergeFromId,
   isMergeTarget,
   mergeBusy,
@@ -114,6 +130,8 @@ function SpeakerRow({
 }: {
   speaker: MeetingSpeaker
   namePresets: string[]
+  // 이 화자를 제외한 다른 화자들이 이미 쓰고 있는 이름 (프리셋 자동 번호 부여용)
+  usedNames: string[]
   mergeFromId: number | null
   isMergeTarget: boolean
   mergeBusy: boolean
@@ -152,7 +170,9 @@ function SpeakerRow({
     }
   }
 
-  const handlePresetName = async (name: string): Promise<void> => {
+  const handlePresetName = async (base: string): Promise<void> => {
+    // 같은 프리셋 이름을 이미 다른 화자가 쓰고 있으면 '면접관 2'처럼 번호를 붙인다.
+    const name = nextPresetName(base, usedNames)
     if (name === speaker.display_name) return
     setNameValue(name)
     setSaving(true)

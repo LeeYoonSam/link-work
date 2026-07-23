@@ -24,6 +24,9 @@ interface RecordingStore {
   // 회의별 진행률 맵 (meetingId → 상태). 여러 회의를 동시에 재처리해도
   // 각 회의의 진행률이 서로 덮어쓰지 않고 독립적으로 표시된다.
   processing: Record<number, ProcessingState>
+  // 취소 요청을 보낸 회의 (meetingId → true). 취소 버튼 중복 클릭을 막고
+  // 버튼을 "취소 중…"으로 표시한다. phase:'cancelled' 수신 시 해제된다.
+  cancelling: Record<number, boolean>
   // 다른 메뉴에 다녀와도 보고 있던 필터가 유지되도록 전역 상태로 둔다
   // (RecordingView는 메뉴 전환 시 언마운트된다).
   kindFilter: KindFilter
@@ -40,10 +43,14 @@ interface RecordingStore {
     title?: string
     source: 'mic' | 'mic+system'
     kind?: MeetingKind
+    // 참석 인원(화자분리 클러스터 수). 미지정 시 면접=2, 회의=자동 추정.
+    expected_speakers?: number | null
   }) => Promise<number>
   saveAndProcess: (meetingId: number, blob: Blob, durationMs: number, mime: string) => Promise<void>
   summarizeMeeting: (id: number) => Promise<void>
   reprocessMeeting: (id: number, fast?: boolean) => Promise<void>
+  // 진행 중인 처리(전사/화자분리/요약)를 취소한다
+  cancelProcessing: (meetingId: number) => Promise<void>
 
   // 편집/연계
   renameMeeting: (id: number, title: string) => Promise<void>
@@ -71,6 +78,7 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
   current: null,
   loading: false,
   processing: {},
+  cancelling: {},
   kindFilter: 'all',
 
   setKindFilter: (f) => set({ kindFilter: f }),
@@ -118,7 +126,8 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
     const result = await window.api.recording.createDraft({
       title: input.title,
       source: input.source,
-      kind: input.kind
+      kind: input.kind,
+      expected_speakers: input.expected_speakers
     })
     await get().fetchMeetings()
     return result.id
@@ -195,6 +204,28 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
       }
     } catch (err) {
       console.error('[recordingStore] reprocessMeeting error:', err)
+    }
+  },
+
+  cancelProcessing: async (meetingId) => {
+    // 취소 대기 표시(버튼 비활성 + "취소 중…"). 실제 상태 정리는 아래 분기 또는
+    // phase:'cancelled' 스트림 이벤트가 담당한다.
+    set((state) => ({ cancelling: { ...state.cancelling, [meetingId]: true } }))
+    const clearCancelling = (): void =>
+      set((state) => {
+        if (!(meetingId in state.cancelling)) return state
+        const next = { ...state.cancelling }
+        delete next[meetingId]
+        return { cancelling: next }
+      })
+    try {
+      const result = await window.api.recording.cancel(meetingId)
+      // 취소할 활성 파이프라인이 없었으면(success:false) 'cancelled' 스트림이 오지 않으므로
+      // 여기서 즉시 대기 표시를 해제한다. 성공 시엔 스트림 수신에서 정리된다.
+      if (!result.success) clearCancelling()
+    } catch (err) {
+      console.error('[recordingStore] cancelProcessing error:', err)
+      clearCancelling()
     }
   },
 
@@ -309,13 +340,17 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
     const unsubscribe = window.api.recording.onStream((e: RecordingStreamEvent) => {
       const { current } = get()
 
-      // 완료/실패 시 해당 회의 슬롯만 제거 (다른 회의의 진행률은 보존)
-      if (e.phase === 'done' || e.phase === 'error') {
+      // 완료/실패/취소 시 해당 회의의 진행률·취소대기 슬롯만 제거 (다른 회의 진행률은 보존)
+      if (e.phase === 'done' || e.phase === 'error' || e.phase === 'cancelled') {
         set((state) => {
-          if (!(e.meetingId in state.processing)) return state
-          const next = { ...state.processing }
-          delete next[e.meetingId]
-          return { processing: next }
+          const inProcessing = e.meetingId in state.processing
+          const inCancelling = e.meetingId in state.cancelling
+          if (!inProcessing && !inCancelling) return state
+          const nextProcessing = { ...state.processing }
+          const nextCancelling = { ...state.cancelling }
+          delete nextProcessing[e.meetingId]
+          delete nextCancelling[e.meetingId]
+          return { processing: nextProcessing, cancelling: nextCancelling }
         })
         if (current?.meeting.id === e.meetingId) {
           get().refreshCurrent()

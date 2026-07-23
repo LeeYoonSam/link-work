@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
 import { useProjectStore } from '../../stores/projectStore'
 import type { MeetingStatus } from '../../types'
-import { Badge, IconButton, ProgressBar, TrashIcon, PencilIcon, XIcon, LinkIcon, UndoIcon } from '../ui'
+import { Badge, IconButton, ProgressBar, TrashIcon, PencilIcon, XIcon, LinkIcon, UndoIcon, button } from '../ui'
 import AudioPlayer from './AudioPlayer'
 import SpeakerTimeline from './SpeakerTimeline'
 import SummaryPanel from './SummaryPanel'
@@ -51,12 +51,14 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
   const {
     current,
     processing,
+    cancelling,
     renameMeeting,
     removeMeeting,
     linkProject,
     reprocessMeeting,
     summarizeMeeting,
     setExpectedSpeakers,
+    cancelProcessing,
     refreshCurrent
   } = useRecordingStore()
   const { projects, fetchProjects } = useProjectStore()
@@ -126,13 +128,17 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
   const isProcessing =
     !!proc && proc.phase !== 'done' && proc.phase !== 'error'
   const processingPct = Math.round((proc?.progress ?? 0) * 100)
+  // 이 회의에 취소 요청을 보내고 아직 'cancelled' 스트림을 기다리는 중인지
+  const isCancelling = !!cancelling?.[meeting.id]
 
   const phaseLabel: Record<string, string> = {
     transcribe: '전사 중',
     diarize: '화자 분리 중',
     vad: 'VAD 처리 중',
     merge: '병합 중',
-    summarize: 'AI 요약 생성 중'
+    summarize: 'AI 요약 생성 중',
+    // 에러(빨강)와 구분되는 중립 종료 표시
+    cancelled: '취소됨'
   }
 
   const handleTitleSave = async (): Promise<void> => {
@@ -392,14 +398,24 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
 
         </div>
 
-        {/* 처리 중 프로그레스 */}
+        {/* 처리 중 프로그레스 + 취소 */}
         {isProcessing && (
           <div className="mt-3 space-y-1">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <span className="text-xs text-gray-500">
                 {phaseLabel[proc?.phase ?? ''] ?? '처리 중'}
               </span>
-              <span className="text-xs text-gray-400">{processingPct}%</span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs text-gray-400">{processingPct}%</span>
+                <button
+                  type="button"
+                  onClick={() => void cancelProcessing(meeting.id)}
+                  disabled={isCancelling}
+                  className={`${button.subtle} px-2 py-0.5 text-[11px] disabled:opacity-50`}
+                >
+                  {isCancelling ? '취소 중…' : '취소'}
+                </button>
+              </div>
             </div>
             <ProgressBar percent={processingPct} color="bg-blue-500" height="h-1" />
             {proc?.message && (

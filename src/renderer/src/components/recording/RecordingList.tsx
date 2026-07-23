@@ -30,17 +30,27 @@ function formatDate(dateStr: string): string {
 }
 
 function MeetingCard({ meeting }: { meeting: Meeting }): React.ReactNode {
-  const { current, openMeeting, processing } = useRecordingStore()
+  const { current, openMeeting, processing, cancelling, cancelProcessing } = useRecordingStore()
   const isActive = current?.meeting.id === meeting.id
   const proc = processing[meeting.id]
   const isProcessing = !!proc
+  const isCancelling = !!cancelling?.[meeting.id]
   const statusStyle = STATUS_STYLES[meeting.status] ?? STATUS_STYLES.failed
 
+  // 취소 버튼을 중첩하기 위해 카드 루트는 button이 아니라 role="button" div로 둔다
+  // (button 안에 button은 유효하지 않은 마크업).
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => openMeeting(meeting.id)}
-      className={`w-full text-left px-4 py-3 border-b border-gray-100 transition-colors hover:bg-gray-50 ${
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          openMeeting(meeting.id)
+        }
+      }}
+      className={`w-full text-left px-4 py-3 border-b border-gray-100 transition-colors hover:bg-gray-50 cursor-pointer ${
         isActive ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''
       }`}
     >
@@ -87,13 +97,26 @@ function MeetingCard({ meeting }: { meeting: Meeting }): React.ReactNode {
         )}
       </div>
 
-      {/* 처리 중 미니 프로그레스 */}
+      {/* 처리 중 미니 프로그레스 + 취소 */}
       {isProcessing && (
-        <div className="mt-2 w-full bg-gray-200 rounded-full h-0.5">
-          <div
-            className="h-0.5 rounded-full bg-blue-500 transition-all duration-500"
-            style={{ width: `${Math.round((proc.progress ?? 0) * 100)}%` }}
-          />
+        <div className="mt-2 flex items-center gap-2">
+          <div className="flex-1 bg-gray-200 rounded-full h-0.5">
+            <div
+              className="h-0.5 rounded-full bg-blue-500 transition-all duration-500"
+              style={{ width: `${Math.round((proc.progress ?? 0) * 100)}%` }}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              void cancelProcessing(meeting.id)
+            }}
+            disabled={isCancelling}
+            className="shrink-0 text-[11px] text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50 disabled:hover:text-gray-400"
+          >
+            {isCancelling ? '취소 중…' : '취소'}
+          </button>
         </div>
       )}
 
@@ -102,7 +125,7 @@ function MeetingCard({ meeting }: { meeting: Meeting }): React.ReactNode {
           {meeting.error}
         </p>
       )}
-    </button>
+    </div>
   )
 }
 

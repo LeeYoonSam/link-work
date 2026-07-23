@@ -545,7 +545,16 @@ export interface MeetingDetail {
 
 export interface RecordingStreamEvent {
   meetingId: number
-  phase: 'transcribe' | 'diarize' | 'vad' | 'merge' | 'summarize' | 'done' | 'error'
+  // 'cancelled' — 사용자 취소로 파이프라인이 중단됨(에러와 구분되는 중립 종료)
+  phase:
+    | 'transcribe'
+    | 'diarize'
+    | 'vad'
+    | 'merge'
+    | 'summarize'
+    | 'done'
+    | 'error'
+    | 'cancelled'
   progress?: number
   message?: string
   error?: string
@@ -565,6 +574,8 @@ export interface RecordingAPI {
     title?: string
     source?: MeetingSource
     kind?: MeetingKind
+    // 참석 인원(화자분리 클러스터 수). 미지정 시 면접=2, 회의=자동 추정(null).
+    expected_speakers?: number | null
   }) => Promise<{ id: number }>
   saveAudio: (
     id: number,
@@ -576,6 +587,8 @@ export interface RecordingAPI {
     id: number,
     opts?: { skipTranscribe?: boolean }
   ) => Promise<{ success: boolean; error?: string; transcribed?: boolean }>
+  // 활성 파이프라인 취소. success=취소된 파이프라인이 있었는지 여부
+  cancel: (id: number) => Promise<{ success: boolean }>
   summarize: (id: number) => Promise<{ success: boolean; error?: string }>
   rename: (id: number, title: string) => Promise<{ success: boolean }>
   remove: (id: number) => Promise<{ success: boolean }>

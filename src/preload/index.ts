@@ -142,8 +142,12 @@ const api = {
   recording: {
     list: () => ipcRenderer.invoke('recording:list'),
     get: (id: number) => ipcRenderer.invoke('recording:get', id),
-    createDraft: (input: { title?: string; source?: string; kind?: string }) =>
-      ipcRenderer.invoke('recording:createDraft', input),
+    createDraft: (input: {
+      title?: string
+      source?: string
+      kind?: string
+      expected_speakers?: number | null
+    }) => ipcRenderer.invoke('recording:createDraft', input),
     saveAudio: (
       id: number,
       bytes: ArrayBuffer,
@@ -152,6 +156,7 @@ const api = {
     ) => ipcRenderer.invoke('recording:saveAudio', id, bytes, meta, channelEnergy),
     process: (id: number, opts?: { skipTranscribe?: boolean }) =>
       ipcRenderer.invoke('recording:process', id, opts),
+    cancel: (id: number) => ipcRenderer.invoke('recording:cancel', id),
     summarize: (id: number) => ipcRenderer.invoke('recording:summarize', id),
     rename: (id: number, title: string) => ipcRenderer.invoke('recording:rename', id, title),
     remove: (id: number) => ipcRenderer.invoke('recording:remove', id),

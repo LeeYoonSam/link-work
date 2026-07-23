@@ -36,6 +36,8 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
 
   const [source, setSource] = useState<MeetingSource>('mic')
   const [kind, setKind] = useState<MeetingKind>('meeting')
+  // 참석 인원(화자분리 클러스터 수). 빈 값이면 자동 추정. 면접 기본 2, 회의 기본 자동.
+  const [speakerCount, setSpeakerCount] = useState('')
   // 면접 녹음은 지원자 동의가 전제다. 고지를 확인해야만 시작 버튼이 활성화된다.
   const [consent, setConsent] = useState(false)
 
@@ -45,10 +47,18 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
 
   const isInterview = kind === 'interview'
 
+  // 종류를 바꾸면 참석 인원 기본값도 리셋한다(면접=2, 회의=자동).
+  const handleKindChange = (k: MeetingKind): void => {
+    setKind(k)
+    setSpeakerCount(k === 'interview' ? '2' : '')
+  }
+
   const handleStart = async (): Promise<void> => {
     setSaveError(null)
     try {
-      const id = await createDraft({ source, kind })
+      const parsed = speakerCount.trim() === '' ? NaN : parseInt(speakerCount, 10)
+      const expected_speakers = Number.isNaN(parsed) ? null : parsed
+      const id = await createDraft({ source, kind, expected_speakers })
       await start({ source, draftId: id })
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : '녹음 시작 실패')
@@ -92,7 +102,7 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
                 <button
                   key={k}
                   type="button"
-                  onClick={() => setKind(k)}
+                  onClick={() => handleKindChange(k)}
                   className={`px-3 py-1 text-xs rounded font-medium transition-colors ${
                     kind === k
                       ? 'bg-white text-gray-900 shadow-sm'
@@ -122,6 +132,23 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* 참석 인원 — 화자분리 클러스터 수. 비우면 자동 추정 (MeetingDetail 재분리 입력과 동일 규약) */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-gray-500">참석 인원</span>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={speakerCount}
+              onChange={(e) => setSpeakerCount(e.target.value)}
+              placeholder="자동"
+              title="참석 인원을 지정하면 그 수만큼 화자를 분리합니다 (비우면 자동 추정)"
+              className="w-14 text-xs px-1.5 py-1 border border-gray-200 rounded text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+            <span className="text-[11px] text-gray-400">명</span>
+            <span className="text-[10px] text-gray-400">비우면 자동 추정</span>
           </div>
 
           {/* 면접: 동의 고지 (개인정보보호법상 사전 동의 필요) */}
