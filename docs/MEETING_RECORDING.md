@@ -245,7 +245,8 @@ export interface MeetingDetail {
 /** 처리 진행률 스트림 (recording:stream) */
 export interface RecordingStreamEvent {
   meetingId: number
-  phase: 'transcribe' | 'diarize' | 'vad' | 'merge' | 'summarize' | 'done' | 'error'
+  // 'cancelled' — 사용자 취소로 파이프라인이 중단됨(에러와 구분되는 중립 종료)
+  phase: 'transcribe' | 'diarize' | 'vad' | 'merge' | 'summarize' | 'done' | 'error' | 'cancelled'
   progress?: number          // 0..1
   message?: string
   error?: string
@@ -257,12 +258,15 @@ export interface RecordingAPI {
   createDraft: (input: {
     title?: string
     source?: MeetingSource
-    kind?: MeetingKind        // 'interview'면 expected_speakers=2로 생성
+    kind?: MeetingKind
+    expected_speakers?: number | null  // 참석 인원(화자분리 클러스터 수). 미지정 시 면접=2, 회의=자동(null)
   }) => Promise<{ id: number }>
   /** 오디오 바이트 저장 (ArrayBuffer). 저장 후 duration/경로 메타 갱신 */
   saveAudio: (id: number, bytes: ArrayBuffer, meta: { mime: string; durationMs: number }) => Promise<{ path: string }>
   /** 전사+화자분리+VAD 파이프라인 실행 (진행률은 onStream) */
   process: (id: number) => Promise<{ success: boolean; error?: string }>
+  /** 진행 중인 처리 취소. success=취소된 활성 파이프라인이 있었는지 여부. 취소 완료는 onStream phase:'cancelled' */
+  cancel: (id: number) => Promise<{ success: boolean }>
   /** AI 요약 5분류 생성 (진행률은 onStream) */
   summarize: (id: number) => Promise<{ success: boolean; error?: string }>
   rename: (id: number, title: string) => Promise<{ success: boolean }>
@@ -291,9 +295,10 @@ export interface RecordingAPI {
 |---|---|---|
 | `recording:list` | — | `Meeting[]` |
 | `recording:get` | `id` | `MeetingDetail \| null` |
-| `recording:createDraft` | `{title?, source?}` | `{id}` |
+| `recording:createDraft` | `{title?, source?, kind?, expected_speakers?}` | `{id}` |
 | `recording:saveAudio` | `id, ArrayBuffer, {mime,durationMs}` | `{path}` |
 | `recording:process` | `id` | `{success, error?}` |
+| `recording:cancel` | `id` | `{success}` (활성 파이프라인 abort, 완료는 stream phase:`cancelled`) |
 | `recording:summarize` | `id` | `{success, error?}` |
 | `recording:rename` | `id, title` | `{success}` |
 | `recording:remove` | `id` | `{success}` |
@@ -318,7 +323,7 @@ export interface SttSegment { start_ms: number; end_ms: number; text: string; co
 export interface SttAdapter {
   readonly name: string
   isAvailable(): Promise<boolean>
-  transcribe(wavPath: string, opts: { language: string; onProgress?: (p: number) => void }): Promise<SttSegment[]>
+  transcribe(wavPath: string, opts: { language: string; prompt?: string; signal?: AbortSignal; onProgress?: (p: number) => void }): Promise<SttSegment[]>
 }
 // 구현: whisper-adapter (lazy import '@fugood/whisper.node', optionalDependency),
 //        manual-adapter (폴백: 빈 결과 + '수동 입력 필요' — 앱이 항상 동작)
@@ -328,7 +333,7 @@ export interface DiarTurn { start_ms: number; end_ms: number; speaker_key: strin
 export interface DiarizationAdapter {
   readonly name: string
   isAvailable(): Promise<boolean>
-  diarize(wavPath: string, opts: { minSpeakers?: number; maxSpeakers?: number }): Promise<DiarTurn[]>
+  diarize(wavPath: string, opts: { minSpeakers?: number; maxSpeakers?: number; numSpeakers?: number; signal?: AbortSignal }): Promise<DiarTurn[]>
 }
 // 구현: sherpa-adapter (lazy 'sherpa-onnx'),
 //        channel-adapter (폴백: mic=L/sys=R 스테레오를 두 화자로 — 모델 불필요),
@@ -381,7 +386,8 @@ export interface VadAdapter {
 - 출력 키: `overview`(→ tldr 컬럼 재사용), `qa_pairs`, `competencies`, `follow_ups`, `fact_checks`.
 - **타임스탬프 규약**: AI에게 ms 정수를 만들게 하지 않는다. 전사록에 이미 `[mm:ss]`가 있으므로 그 표기를 `at` 필드로 그대로 돌려받고, `interview-summary.ts`의 `parseTimestamp`가 ms로 환산한다(형식이 어긋나면 `null` → 재생 점프 버튼 숨김). 회귀 테스트: `interview-summary.test.ts`.
 - 화자 귀속: "질문하는 쪽=면접관"을 프롬프트가 추론하되, 화자 이름이 지정돼 있으면 그것을 우선한다. 화자 탭의 면접 프리셋(`면접관`/`지원자`)으로 지정하면 정확도가 올라간다.
-- 녹음 시작 시 `expected_speakers=2`를 기본 지정한다(면접관+지원자 기본형 → 화자 자동추정 과분할 방지).
+- 참석 인원(`expected_speakers`)은 면접 기본 2(면접관+지원자 기본형 → 화자 자동추정 과분할 방지), 녹음 시작 화면의 "참석 인원" 입력으로 변경 가능하다(비우면 자동 추정). 다대일 면접이면 면접관 수를 포함한 인원을 지정한다. 상세 화면에서 사후 재분리도 가능(`recording:setExpectedSpeakers`).
+- 면접관은 한 명 이상일 수 있다(다대일 면접). 요약 프롬프트가 "질문하는 쪽=면접관"을 복수로 허용하고, 화자 프리셋(`면접관`/`지원자`)을 여러 화자에 지정하면 이름이 겹치지 않게 `면접관 2`, `지원자 2`…로 자동 번호가 붙는다.
 - 녹음 시작 전 **동의 고지 체크**가 필수다(개인정보보호법상 사전 동의). 체크 전에는 시작 버튼이 비활성.
 
 ## 7. 연계 플로우

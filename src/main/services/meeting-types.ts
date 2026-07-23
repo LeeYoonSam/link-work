@@ -4,7 +4,8 @@
 
 export interface RecordingStreamEvent {
   meetingId: number
-  phase: 'transcribe' | 'diarize' | 'vad' | 'merge' | 'summarize' | 'done' | 'error'
+  // 'cancelled': 사용자가 처리를 취소해 이전 상태로 복원됨 (일반 'error'와 구분).
+  phase: 'transcribe' | 'diarize' | 'vad' | 'merge' | 'summarize' | 'done' | 'error' | 'cancelled'
   progress?: number
   message?: string
   error?: string
@@ -26,9 +27,14 @@ export interface SttAdapter {
     audioPath: string,
     opts: {
       language: string
+      // whisper initial_prompt로 전달되는 도메인 컨텍스트(회의 제목·참석자 등).
+      // whisper는 마지막 224토큰만 반영하므로 그 이상은 잘린다.
+      prompt?: string
       onProgress?: (p: number) => void
       // 모델 다운로드 등 단계 안내를 UI에 노출 (옵셔널)
       onMessage?: (m: string) => void
+      // 취소 신호. 어댑터는 aborted 시 실행 중인 whisper 프로세스를 가능한 한 빨리 중단해야 한다.
+      signal?: AbortSignal
     }
   ): Promise<SttSegment[]>
 }
@@ -52,6 +58,8 @@ export interface DiarizationAdapter {
       source?: string
       // 채널 기반 어댑터가 STT segment 경계로 화자를 귀속할 때 사용 (다른 어댑터는 무시)
       segments?: SttSegment[]
+      // 취소 신호. 어댑터는 aborted 시 실행 중인 sherpa 프로세스를 가능한 한 빨리 중단해야 한다.
+      signal?: AbortSignal
     }
   ): Promise<DiarTurn[]>
 }

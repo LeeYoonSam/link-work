@@ -6,6 +6,7 @@ import { logActivity } from '../utils/activity-logger'
 import { runMeetingPipeline, SPEAKER_COLORS } from '../services/meeting-pipeline'
 import { runMeetingSummary } from '../services/meeting-summary'
 import { wavDurationMs } from '../services/wav-util'
+import { cancelPipeline } from '../services/pipeline-abort'
 import type {
   RecordingStreamEvent,
   SendStream,
@@ -70,8 +71,52 @@ function mapSummary(row: SummaryRow | undefined): unknown {
   }
 }
 
+// 처리 중 박제 복구 — 앱 시작 시 1회 실행.
+// 처리 파이프라인 실행 중 앱이 네이티브 abort로 크래시하면 recording:process가 기록한
+// status='processing'이 DB에 그대로 남아, 재시작 후 실제로는 아무것도 돌지 않는데 UI는
+// 계속 "처리 중"으로 표시되고 사용자가 손댈 수 없게 된다. 이를 정리한다.
+//
+// 이 함수는 IPC 핸들러 등록 시점(앱 시작 직후)에만 호출되며, recording:process는 이 등록
+// 이후에만 invoke될 수 있으므로 이 순간 파이프라인이 실행 중일 가능성은 없다. 따라서
+// 'processing' 행은 전부 죽은 잔재로 간주하고 안전하게 되돌릴 수 있다.
+//
+// meeting-pipeline.ts의 restoreAfterCancel과 복원 규칙(요약 있으면 summarized, 세그먼트만
+// 있으면 transcribed, 둘 다 없으면 failed)은 같지만 목적이 다르다: restoreAfterCancel은
+// '살아 있는 프로세스 내'에서의 사용자 취소 복구이고, 이 함수는 '죽었다 살아난 뒤'의 잔재
+// 정리다. 그 파일은 타 팀원 영역이므로 import하지 않고 여기에 로컬로 둔다.
+function restoreStuckProcessing(db: ReturnType<typeof getDatabase>): void {
+  const stuck = db
+    .prepare("SELECT id FROM meetings WHERE status = 'processing'")
+    .all() as { id: number }[]
+  for (const { id } of stuck) {
+    const hasSummary = db
+      .prepare('SELECT 1 FROM meeting_summaries WHERE meeting_id = ? LIMIT 1')
+      .get(id)
+    const hasSegments = db
+      .prepare('SELECT 1 FROM meeting_segments WHERE meeting_id = ? LIMIT 1')
+      .get(id)
+
+    if (hasSummary) {
+      db.prepare(
+        "UPDATE meetings SET status = 'summarized', error = NULL, updated_at = datetime('now','localtime') WHERE id = ?"
+      ).run(id)
+    } else if (hasSegments) {
+      db.prepare(
+        "UPDATE meetings SET status = 'transcribed', error = NULL, updated_at = datetime('now','localtime') WHERE id = ?"
+      ).run(id)
+    } else {
+      db.prepare(
+        "UPDATE meetings SET status = 'failed', error = '이전 처리가 비정상 종료되었습니다. 다시 시도해 주세요.', updated_at = datetime('now','localtime') WHERE id = ?"
+      ).run(id)
+    }
+  }
+}
+
 export function registerRecordingIpc(): void {
   const db = getDatabase()
+
+  // 앱 시작 시 1회: 지난 세션에서 크래시로 'processing'에 박제된 회의를 복구한다.
+  restoreStuckProcessing(db)
 
   const streamTo = (event: Electron.IpcMainInvokeEvent): SendStream => {
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -106,14 +151,23 @@ export function registerRecordingIpc(): void {
 
   ipcMain.handle(
     'recording:createDraft',
-    (_e, input: { title?: string; source?: string; kind?: string }) => {
+    (
+      _e,
+      input: { title?: string; source?: string; kind?: string; expected_speakers?: number | null }
+    ) => {
       const kind = input?.kind === 'interview' ? 'interview' : 'meeting'
       const title =
         (input?.title ?? '').trim() || (kind === 'interview' ? '제목 없는 면접' : '제목 없는 회의')
       const source = input?.source === 'mic+system' ? 'mic+system' : 'mic'
-      // 면접은 면접관+지원자 2인이 기본형이라 화자분리 클러스터 수를 2로 미리 고정한다.
-      // (자동 추정이 과분할되는 것을 막는다. 상세 화면에서 언제든 바꿔 재분리 가능.)
-      const expectedSpeakers = kind === 'interview' ? 2 : null
+      // 참석 인원(화자분리 클러스터 수). 입력값이 유효한 정수(1~20)면 그 값을 쓰고,
+      // 없으면 면접은 면접관+지원자 2인 기본형(자동추정 과분할 방지), 회의는 자동 추정(null).
+      // 상세 화면에서 언제든 바꿔 재분리 가능.
+      const raw = input?.expected_speakers
+      const requested =
+        typeof raw === 'number' && Number.isFinite(raw) && raw >= 1
+          ? Math.min(20, Math.round(raw))
+          : null
+      const expectedSpeakers = requested ?? (kind === 'interview' ? 2 : null)
       const result = db
         .prepare(
           "INSERT INTO meetings (title, kind, status, source, expected_speakers) VALUES (?, ?, 'recording', ?, ?)"
@@ -193,6 +247,12 @@ export function registerRecordingIpc(): void {
       ).run(message, id)
       return { success: false, error: message }
     }
+  })
+
+  // 처리 취소 — 활성 파이프라인을 abort. 취소된 파이프라인이 있었으면 success:true.
+  // 실제 취소 정리와 phase:'cancelled' 스트림 방출은 meeting-pipeline이 담당한다.
+  ipcMain.handle('recording:cancel', (_e, meetingId: number) => {
+    return { success: cancelPipeline(meetingId) }
   })
 
   // AI 요약 5분류 (서비스에 위임)

@@ -11,7 +11,7 @@ export class ManualAdapter implements SttAdapter {
 
   async transcribe(
     _audioPath: string,
-    _opts: { language: string; onProgress?: (p: number) => void }
+    _opts: { language: string; prompt?: string; onProgress?: (p: number) => void }
   ): Promise<SttSegment[]> {
     // 빈 결과 반환 — pipeline이 안내 segment를 삽입
     return []

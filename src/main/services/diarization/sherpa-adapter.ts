@@ -25,6 +25,13 @@ function workerPath(): string {
   return join(__dirname, 'diarization-worker.js')
 }
 
+// 취소를 나타내는 에러. name='AbortError'로 호출측이 취소를 식별한다.
+function abortError(): Error {
+  const e = new Error('화자분리가 취소되었습니다.')
+  e.name = 'AbortError'
+  return e
+}
+
 // sherpa-onnx-node 모듈이 설치돼 있는지(로드까지는 워커에서) require.resolve로 가볍게 확인
 function isSherpaInstalled(): boolean {
   try {
@@ -46,21 +53,33 @@ export class SherpaAdapter implements DiarizationAdapter {
 
   async diarize(
     audioPath: string,
-    opts: { minSpeakers?: number; maxSpeakers?: number; numSpeakers?: number; source?: string; segments?: SttSegment[] }
+    opts: {
+      minSpeakers?: number
+      maxSpeakers?: number
+      numSpeakers?: number
+      source?: string
+      segments?: SttSegment[]
+      signal?: AbortSignal
+    }
   ): Promise<DiarTurn[]> {
+    if (opts.signal?.aborted) throw abortError()
     const segModel = segmentationModelPath()
     const embModel = embeddingModelPath()
     if (!existsSync(segModel) || !existsSync(embModel)) {
       throw new Error('화자분리 모델이 준비되지 않았습니다.')
     }
 
-    const segments = await runDiarizationWorker(workerPath(), {
-      audioPath,
-      segModel,
-      embModel,
-      numSpeakers: opts.numSpeakers,
-      maxSpeakers: opts.maxSpeakers
-    })
+    const segments = await runDiarizationWorker(
+      workerPath(),
+      {
+        audioPath,
+        segModel,
+        embModel,
+        numSpeakers: opts.numSpeakers,
+        maxSpeakers: opts.maxSpeakers
+      },
+      opts.signal
+    )
 
     return segments.map((s) => ({
       start_ms: Math.round(s.start * 1000),
@@ -76,15 +95,23 @@ export class SherpaAdapter implements DiarizationAdapter {
  */
 function runDiarizationWorker(
   path: string,
-  req: { audioPath: string; segModel: string; embModel: string; numSpeakers?: number; maxSpeakers?: number }
+  req: { audioPath: string; segModel: string; embModel: string; numSpeakers?: number; maxSpeakers?: number },
+  signal?: AbortSignal
 ): Promise<SherpaSegment[]> {
   return new Promise((resolve, reject) => {
+    // 시작 시점에 이미 취소됐으면 fork 자체를 생략한다.
+    if (signal?.aborted) {
+      reject(abortError())
+      return
+    }
     const child = utilityProcess.fork(path)
     let settled = false
 
     const finish = (fn: () => void): void => {
       if (settled) return
       settled = true
+      // 정상 종료·에러·취소 어느 경로로 끝나든 취소 리스너를 해제한다.
+      signal?.removeEventListener('abort', onAbort)
       try {
         child.kill()
       } catch {
@@ -92,6 +119,10 @@ function runDiarizationWorker(
       }
       fn()
     }
+
+    // 취소 시 워커를 즉시 kill하고 AbortError로 reject한다.
+    const onAbort = (): void => finish(() => reject(abortError()))
+    signal?.addEventListener('abort', onAbort)
 
     child.on('message', (msg: WorkerResult) => {
       if (msg?.ok && msg.segments) {
