@@ -4,6 +4,7 @@ import { differenceInCalendarDays, format } from 'date-fns'
 import ScheduleTimeline from '../project/ScheduleTimeline'
 import { Badge, ProgressBar, projectStatus, urgency } from '../ui'
 import PhaseHint from '../project/PhaseHint'
+import { countLeafProgress } from '../../utils/taskTree'
 
 type UrgencyLevel = 'early' | 'mid' | 'late'
 
@@ -76,8 +77,8 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
   const config = urgency[level]
   const status = projectStatus[project.status] ?? projectStatus.cancelled
 
-  const doneTasks = tasks.filter((t) => t.status === 'done').length
-  const totalTasks = tasks.length
+  // 하위를 가진 상위는 롤업 대상에서 제외하고 leaf만 집계
+  const { done: doneTasks, total: totalTasks } = countLeafProgress(tasks)
   const taskProgress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0
 
   return (

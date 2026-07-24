@@ -25,6 +25,8 @@ export interface Project {
 export interface Task {
   id: number
   project_id: number
+  // 상위 작업 id. null이면 최상위 작업. 깊이는 1단계만(상위는 항상 최상위).
+  parent_task_id: number | null
   name: string
   start_date: string | null
   end_date: string | null
@@ -48,6 +50,7 @@ export interface ProjectInput {
 
 export interface TaskInput {
   project_id: number
+  parent_task_id?: number | null
   name: string
   start_date?: string
   end_date?: string

@@ -135,6 +135,28 @@ function buildSetClause(
   return { set, values, keys }
 }
 
+// 1단계 태스크 계층 규약 검증 — 부모 후보가 (a) 존재하고 (b) 같은 프로젝트이며 (c) 최상위(parent_task_id IS NULL)인지 확인한다.
+// 위반이면 한국어 오류 문자열을, 통과면 null을 반환한다 (create_task/update_task 공용).
+function validateTaskParent(
+  db: Database.Database,
+  parentId: number,
+  projectId: number
+): string | null {
+  const parent = db
+    .prepare('SELECT id, project_id, parent_task_id FROM tasks WHERE id = ?')
+    .get(parentId) as { id: number; project_id: number; parent_task_id: number | null } | undefined
+  if (!parent) {
+    return `상위 작업 id=${parentId}를 찾지 못했습니다. get_project로 태스크 id를 확인하세요.`
+  }
+  if (parent.project_id !== projectId) {
+    return '상위 작업은 같은 프로젝트의 작업이어야 합니다.'
+  }
+  if (parent.parent_task_id !== null) {
+    return '상위 작업으로는 최상위 작업만 지정할 수 있습니다 (하위 작업 아래에 다시 하위를 둘 수 없습니다).'
+  }
+  return null
+}
+
 // 태그 이름 목록 → 태그 id 변환. 기존 태그는 연결, 없는 태그는 생성 (create/update 공용)
 function resolveTodoTagIds(
   db: Database.Database,
@@ -270,7 +292,18 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
           z.object({
             name: z.string().min(1).max(200).describe('세부 작업 이름'),
             start_date: dateField('작업 시작일').optional(),
-            end_date: dateField('작업 종료일').optional()
+            end_date: dateField('작업 종료일').optional(),
+            subtasks: z
+              .array(
+                z.object({
+                  name: z.string().min(1).max(200).describe('하위 작업 이름'),
+                  start_date: dateField('하위 작업 시작일').optional(),
+                  end_date: dateField('하위 작업 종료일').optional()
+                })
+              )
+              .max(20)
+              .optional()
+              .describe('이 작업의 하위 작업 목록 (1단계) — 표시 순서대로 전달')
           })
         )
         .max(30)
@@ -310,6 +343,18 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
             )
             .run(projectId, t.name, t.start_date ?? null, t.end_date ?? null, index)
           logActivity('task', 'create', taskResult.lastInsertRowid, t.name, 'AI 생성')
+          // 하위 작업(1단계)은 방금 만든 최상위 작업을 부모로, 부모 내 index를 sort_order로 삽입
+          const parentTaskId = taskResult.lastInsertRowid
+          const subtasks = t.subtasks ?? []
+          subtasks.forEach((s, subIndex) => {
+            const subResult = db
+              .prepare(
+                `INSERT INTO tasks (project_id, name, start_date, end_date, status, sort_order, parent_task_id)
+                 VALUES (?, ?, ?, ?, 'pending', ?, ?)`
+              )
+              .run(projectId, s.name, s.start_date ?? null, s.end_date ?? null, subIndex, parentTaskId)
+            logActivity('task', 'create', subResult.lastInsertRowid, s.name, 'AI 생성')
+          })
         })
         return projectId
       })
@@ -328,7 +373,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
 
   const createTask = tool(
     'create_task',
-    '기존 프로젝트에 세부 작업(태스크)을 1건 추가한다. project_id는 list_projects/get_project로 확인한다. 새 태스크는 목록 맨 뒤에 추가된다. 여러 작업을 추가할 때는 작업마다 한 번씩 호출한다. 실행 전 사용자 승인이 필요하다.',
+    '기존 프로젝트에 세부 작업(태스크)을 1건 추가한다. parent_task_id를 지정하면 해당 최상위 작업의 하위 작업(1단계)으로 추가된다. project_id는 list_projects/get_project로 확인한다. 새 태스크는 목록 맨 뒤에 추가된다. 여러 작업을 추가할 때는 작업마다 한 번씩 호출한다. 실행 전 사용자 승인이 필요하다.',
     {
       project_id: z
         .number()
@@ -338,7 +383,13 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
       name: z.string().min(1).max(200).describe('세부 작업 이름'),
       start_date: dateField('작업 시작일').optional(),
       end_date: dateField('작업 종료일').optional(),
-      status: z.enum(['pending', 'in_progress', 'done']).optional().describe('작업 상태 (기본 pending)')
+      status: z.enum(['pending', 'in_progress', 'done']).optional().describe('작업 상태 (기본 pending)'),
+      parent_task_id: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('상위 작업 id — 지정하면 해당 작업의 하위 작업으로 추가 (상위 작업은 최상위여야 함)')
     },
     async (args) => {
       if (args.start_date && args.end_date && args.start_date > args.end_date) {
@@ -353,13 +404,22 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
           error: `프로젝트 id=${args.project_id}를 찾지 못했습니다. list_projects로 프로젝트 id를 확인하세요.`
         })
       }
+      if (args.parent_task_id !== undefined) {
+        const parentError = validateTaskParent(db, args.parent_task_id, args.project_id)
+        if (parentError) return jsonResult({ error: parentError })
+      }
+      // sort_order는 형제 그룹(같은 부모, 하위면 부모의 자식 / 최상위면 프로젝트의 최상위) 안에서 append 채번
       const sortRow = db
-        .prepare('SELECT COALESCE(MAX(sort_order) + 1, 0) AS next FROM tasks WHERE project_id = ?')
-        .get(args.project_id) as { next: number }
+        .prepare(
+          args.parent_task_id !== undefined
+            ? 'SELECT COALESCE(MAX(sort_order) + 1, 0) AS next FROM tasks WHERE parent_task_id = ?'
+            : 'SELECT COALESCE(MAX(sort_order) + 1, 0) AS next FROM tasks WHERE project_id = ? AND parent_task_id IS NULL'
+        )
+        .get(args.parent_task_id ?? args.project_id) as { next: number }
       const result = db
         .prepare(
-          `INSERT INTO tasks (project_id, name, start_date, end_date, status, sort_order)
-           VALUES (?, ?, ?, ?, ?, ?)`
+          `INSERT INTO tasks (project_id, name, start_date, end_date, status, sort_order, parent_task_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           args.project_id,
@@ -367,7 +427,8 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
           args.start_date ?? null,
           args.end_date ?? null,
           args.status ?? 'pending',
-          sortRow.next
+          sortRow.next,
+          args.parent_task_id ?? null
         )
       const taskId = result.lastInsertRowid
       logActivity('task', 'create', taskId, args.name, 'AI 생성')
@@ -608,13 +669,20 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
 
   const updateTask = tool(
     'update_task',
-    '프로젝트의 세부 작업(태스크)을 수정한다. task_id로 대상을 지정한다 (get_project가 태스크 id를 반환). 변경할 필드만 전달한다. 실행 전 사용자 승인이 필요하다.',
+    '프로젝트의 세부 작업(태스크)을 수정한다. task_id로 대상을 지정한다 (get_project가 태스크 id를 반환). 변경할 필드만 전달한다. parent_task_id로 상위 작업(최상위여야 함) 아래로 옮기거나 null로 최상위로 이동할 수 있다. 실행 전 사용자 승인이 필요하다.',
     {
       task_id: z.number().int().positive().describe('수정할 태스크 id'),
       name: z.string().min(1).max(200).optional().describe('작업 이름'),
       start_date: dateField('작업 시작일 (null이면 비움)').nullable().optional(),
       end_date: dateField('작업 종료일 (null이면 비움)').nullable().optional(),
-      status: z.enum(['pending', 'in_progress', 'done']).optional().describe('작업 상태')
+      status: z.enum(['pending', 'in_progress', 'done']).optional().describe('작업 상태'),
+      parent_task_id: z
+        .number()
+        .int()
+        .positive()
+        .nullable()
+        .optional()
+        .describe('상위 작업 변경 (null이면 최상위로 이동)')
     },
     async (args) => {
       const db = getDatabase()
@@ -626,7 +694,30 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
           error: `태스크 id=${args.task_id}를 찾지 못했습니다. get_project로 태스크 id를 확인하세요.`
         })
       }
-      const { set, values, keys } = buildSetClause(args, ['name', 'start_date', 'end_date', 'status'])
+      // parent_task_id 변경 검증 (null=최상위 이동은 항상 허용). 1단계 계층 규약:
+      // 자기 참조 금지 / 하위를 가진 작업은 남의 하위가 될 수 없음 / 부모는 같은 프로젝트의 최상위여야 함.
+      if (args.parent_task_id != null) {
+        if (args.parent_task_id === args.task_id) {
+          return jsonResult({ error: '작업을 자기 자신의 하위로 지정할 수 없습니다.' })
+        }
+        const hasChildren = db
+          .prepare('SELECT 1 FROM tasks WHERE parent_task_id = ? LIMIT 1')
+          .get(args.task_id)
+        if (hasChildren) {
+          return jsonResult({
+            error: '하위 작업을 가진 작업은 다른 작업의 하위로 옮길 수 없습니다. 먼저 하위 작업을 정리하세요.'
+          })
+        }
+        const parentError = validateTaskParent(db, args.parent_task_id, row.project_id)
+        if (parentError) return jsonResult({ error: parentError })
+      }
+      const { set, values, keys } = buildSetClause(args, [
+        'name',
+        'start_date',
+        'end_date',
+        'status',
+        'parent_task_id'
+      ])
       if (set.length === 0) return jsonResult({ error: '변경할 필드가 없습니다.' })
       db.prepare(`UPDATE tasks SET ${set.join(', ')} WHERE id = ?`).run(...values, args.task_id)
       logActivity('task', 'update', args.task_id, args.name ?? row.name, `AI 수정: ${keys.join(', ')}`)

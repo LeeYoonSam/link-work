@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { eachDayOfInterval, format, isSameDay, max, min, startOfDay } from 'date-fns'
 import type { Project, Task } from '../../types'
 import { filterBusinessDays, isKoreanHoliday, isNewWeekStart, isWeekend } from '../../utils/timeline'
+import { buildTaskTree } from '../../utils/taskTree'
 import { Badge, taskStatus, phase, typo } from '../ui'
 
 interface Props {
@@ -26,6 +27,17 @@ export default function ScheduleTimeline({
   const barH = isFull ? 'h-5' : 'h-4'
   const dotSize = isFull ? 'w-3 h-3' : 'w-2.5 h-2.5'
   const nameColW = isFull ? 'w-44' : 'w-32'
+
+  // 상위→하위 순으로 평탄화한 렌더 순서. 바/도트 로직은 그대로 재사용하고
+  // 행 순서와 이름 라벨 들여쓰기만 계층 기준으로 바꾼다.
+  const orderedTasks = useMemo(() => {
+    const flat: { task: Task; isChild: boolean }[] = []
+    for (const node of buildTaskTree(tasks)) {
+      flat.push({ task: node.task, isChild: false })
+      for (const child of node.children) flat.push({ task: child, isChild: true })
+    }
+    return flat
+  }, [tasks])
 
   const { days, dayKeys } = useMemo(() => {
     const taskDateStrs = tasks
@@ -115,10 +127,13 @@ export default function ScheduleTimeline({
           <div className="h-9 flex items-end pb-0.5">
             <span className={typo.microLabel}>Task</span>
           </div>
-          {tasks.map((task) => (
+          {orderedTasks.map(({ task, isChild }) => (
             <div key={task.id} className={`${rowH} flex items-center`}>
-              <span className="text-xs text-gray-800 truncate" title={task.name}>
-                {task.name}
+              <span
+                className={`text-xs text-gray-800 truncate ${isChild ? 'pl-3 text-gray-500' : ''}`}
+                title={task.name}
+              >
+                {isChild ? `↳ ${task.name}` : task.name}
               </span>
             </div>
           ))}
@@ -201,7 +216,7 @@ export default function ScheduleTimeline({
                 />
               )}
 
-              {tasks.map((task) => {
+              {orderedTasks.map(({ task }) => {
                 const startStr = task.start_date ?? task.end_date
                 const endStr = task.end_date ?? task.start_date
                 let content: React.ReactNode = null
@@ -289,7 +304,7 @@ export default function ScheduleTimeline({
           <div className="h-9 flex items-end justify-center pb-0.5">
             <span className={typo.microLabel}>Status</span>
           </div>
-          {tasks.map((task) => (
+          {orderedTasks.map(({ task }) => (
             <div key={task.id} className={`${rowH} flex items-center justify-center`}>
               <Badge
                 color={taskStatus[task.status].badge}

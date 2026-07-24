@@ -109,18 +109,24 @@ async function buildServer(): Promise<McpSdkServerConfigWithInstance> {
     // 메뉴와 결과가 달라진다. 검색만 SQL에서 거르고 상태 필터는 계산 후 JS에서 적용한다.
     const where = args.search ? 'WHERE p.name LIKE ?' : ''
     const params = args.search ? [`%${args.search}%`] : []
+    // 진행률은 leaf(하위를 가지지 않은 작업)만 집계한다 — 하위가 있는 상위 작업은
+    // 자체 status가 진행률에 잡히지 않도록 NOT EXISTS로 제외한다(1단계 계층 규약).
     const rows = (
       db
         .prepare(
           `SELECT p.id, p.name, p.description, p.status, p.status_manual,
                   p.dev_start_date, p.dev_end_date, p.qa_start_date, p.qa_end_date,
                   p.deploy_date, p.deploy_version,
-                  COUNT(t.id) AS task_count,
-                  SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) AS done_task_count
+                  (SELECT COUNT(*) FROM tasks t
+                     WHERE t.project_id = p.id
+                       AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_task_id = t.id)
+                  ) AS task_count,
+                  (SELECT COUNT(*) FROM tasks t
+                     WHERE t.project_id = p.id AND t.status = 'done'
+                       AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_task_id = t.id)
+                  ) AS done_task_count
            FROM projects p
-           LEFT JOIN tasks t ON t.project_id = p.id
            ${where}
-           GROUP BY p.id
            ORDER BY p.dev_start_date DESC`
         )
         .all(...params) as ProjectStatusFields[]
@@ -145,8 +151,14 @@ const getProject = tool(
       return jsonResult({ error: `'${args.query}'에 해당하는 프로젝트를 찾지 못했습니다.` })
     }
     const p = project as { id: number }
+    // parent_task_id로 1단계 계층을 표현한다(NULL=최상위). 최상위→하위 순으로 이해되도록
+    // 최상위 먼저, 각자의 sort_order 순으로 정렬한다.
     const tasks = db
-      .prepare('SELECT id, name, start_date, end_date, status FROM tasks WHERE project_id = ? ORDER BY sort_order, id')
+      .prepare(
+        `SELECT id, name, start_date, end_date, status, parent_task_id
+         FROM tasks WHERE project_id = ?
+         ORDER BY COALESCE(parent_task_id, id), parent_task_id IS NOT NULL, sort_order, id`
+      )
       .all(p.id)
     const documents = db
       .prepare('SELECT id, name, url, type, description FROM documents WHERE project_id = ? ORDER BY sort_order, id')

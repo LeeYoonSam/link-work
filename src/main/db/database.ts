@@ -66,6 +66,9 @@ export function initDatabase(): void {
       end_date TEXT,
       status TEXT DEFAULT 'pending',
       sort_order INTEGER DEFAULT 0,
+      -- 1단계 부모-자식 계층. NULL이면 최상위 작업, 값이 있으면 해당 작업의 하위.
+      -- SQLite ALTER TABLE로는 FK 제약을 못 붙이므로 tasks.id에 대한 논리 FK로만 둔다.
+      parent_task_id INTEGER,
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
@@ -320,6 +323,13 @@ export function initDatabase(): void {
   }
   if (projectColumns.length > 0 && !projectColumnNames.includes('deploy_version')) {
     db.exec("ALTER TABLE projects ADD COLUMN deploy_version TEXT")
+  }
+
+  // 작업 1단계 계층: 부모 작업 참조 컬럼. 기존 행은 자동으로 NULL(최상위)이라 하위 호환.
+  // SQLite ALTER TABLE ADD COLUMN은 FK 제약을 붙일 수 없어 tasks.id에 대한 논리 FK로만 둔다.
+  const taskColumns = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[]
+  if (taskColumns.length > 0 && !taskColumns.map((c) => c.name).includes('parent_task_id')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN parent_task_id INTEGER")
   }
 
   // 회의: 참석 인원(지정 시 화자분리의 클러스터 수를 그 값으로 고정, null이면 자동 추정)

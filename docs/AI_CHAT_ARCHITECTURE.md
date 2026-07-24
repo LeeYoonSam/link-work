@@ -102,6 +102,10 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 )
 ```
 
+> 프로젝트 WBS의 `tasks` 테이블은 `parent_task_id`(NULL=최상위, 깊이 1단계)로 지라식
+> 상위/하위 계층을 표현한다. `get_project`가 이 값을 반환하고, `create_task`/`update_task`가
+> 이를 지정·재배치한다. `list_projects` 진행 요약은 하위가 없는 leaf 작업만 집계한다.
+
 ## 6. 메시지 전송 흐름 (시퀀스)
 
 ```
@@ -163,7 +167,7 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 | 도구 | 용도 |
 |---|---|
 | `list_projects` | 프로젝트 목록 + 태스크 진행 요약 (status/이름 필터) |
-| `get_project` | 프로젝트 상세 + 전체 태스크 + 연결 문서 (ID 또는 이름) |
+| `get_project` | 프로젝트 상세 + 전체 태스크 + 연결 문서 (ID 또는 이름). 각 태스크의 `parent_task_id`를 반환해 상위/하위 1단계 계층을 표현 |
 | `list_todos` | TODO 목록 + 태그 (완료/검색/태그 필터, notes 300자 truncate) |
 | `get_todo` | TODO 상세 (notes 전문 + 알람 설정 — 수정 전 확인용) |
 | `search_memos` | 메모 검색 (내용/카테고리/중요/보관 필터, 1000자 truncate) |

@@ -123,13 +123,13 @@ zod 스키마가 도구 호출 레벨에서 강제한다.
 
 | 도구 | 변경 내용 | 위험도 | 비고 |
 |---|---|---|---|
-| `create_project` | projects 1건 + tasks N건(최대 30, 단일 트랜잭션) | 중 | 논리적 1건(프로젝트+WBS). QA/배포일 미지정 시 자동 계산 |
-| `create_task` | tasks 1건 (기존 프로젝트에 추가, 맨 뒤 순서) | 낮 | project_id 존재 검증, 시작/종료일 역전 거부. 여러 작업 추가 시 작업마다 별도 호출 |
+| `create_project` | projects 1건 + tasks N건(최대 30, 단일 트랜잭션) | 중 | 논리적 1건(프로젝트+WBS). QA/배포일 미지정 시 자동 계산. 각 태스크에 subtasks(최대 20)로 하위 작업 동시 등록 가능 |
+| `create_task` | tasks 1건 (기존 프로젝트에 추가, 맨 뒤 순서) | 낮 | project_id 존재 검증, 시작/종료일 역전 거부. 여러 작업 추가 시 작업마다 별도 호출. parent_task_id로 하위 작업 추가(깊이 1단계) |
 | `create_todo` | todos 1건 (+ 미존재 태그 생성, 최대 5개) | 낮 | `todo_history` 스냅샷 기록 |
 | `create_memo` | memos 1건 (+ 미존재 카테고리 생성) | 낮 | |
 | `create_variable` | variables 1건 | 중 | 동일 key 존재 시 거부(중복/덮어쓰기 방지). secret 생성 가능하나 조회는 항상 마스킹 |
 | `update_project` | projects 1건 부분 수정 | 중 | status 지정 시 `status_manual=1`로 고정. 병합 후 개발→QA→배포 날짜 역전 검증(dev/qa 쌍 + 단계 간 순서) |
-| `update_task` | tasks 1건 부분 수정 | 낮 | status: pending/in_progress/done |
+| `update_task` | tasks 1건 부분 수정 | 낮 | status: pending/in_progress/done. parent_task_id 재배치 가능(하위 보유 작업은 불가) |
 | `update_todo` | todos 1건 부분 수정 (+ 태그 전체 교체, 완료/복원) | 낮 | `todo_history` 스냅샷(실제 완료 전이 시에만 complete/restore). notes 전체 교체. due_date 시각 포함 시 알람(due_reminder) 동기화 |
 | `update_memo` | memos 1건 부분 수정 (+ 카테고리 변경/해제, 보관/해제) | 중 | content는 전체 교체 — 수정 전 `get_memo`로 전문 확인 필수 |
 | `update_variable` | variables 1건 부분 수정 | 중 | key 변경 시 중복 검사. **secret→general 전환은 거부**(마스킹 우회 방지, §5). secret 값 수정 가능하나 승인 카드의 현재 값은 마스킹 |
