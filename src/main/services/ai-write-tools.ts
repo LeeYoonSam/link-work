@@ -27,6 +27,7 @@ import { logAiAudit } from './ai-audit'
 
 export const LINKWORK_WRITE_TOOL_NAMES = [
   'create_project',
+  'create_task',
   'create_todo',
   'create_memo',
   'create_variable',
@@ -321,6 +322,63 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         name: args.name,
         task_count: tasks.length,
         link: `linkwork://project/${projectId}`
+      })
+    }
+  )
+
+  const createTask = tool(
+    'create_task',
+    '기존 프로젝트에 세부 작업(태스크)을 1건 추가한다. project_id는 list_projects/get_project로 확인한다. 새 태스크는 목록 맨 뒤에 추가된다. 여러 작업을 추가할 때는 작업마다 한 번씩 호출한다. 실행 전 사용자 승인이 필요하다.',
+    {
+      project_id: z
+        .number()
+        .int()
+        .positive()
+        .describe('태스크를 추가할 프로젝트 id (조회 도구로 먼저 확인)'),
+      name: z.string().min(1).max(200).describe('세부 작업 이름'),
+      start_date: dateField('작업 시작일').optional(),
+      end_date: dateField('작업 종료일').optional(),
+      status: z.enum(['pending', 'in_progress', 'done']).optional().describe('작업 상태 (기본 pending)')
+    },
+    async (args) => {
+      if (args.start_date && args.end_date && args.start_date > args.end_date) {
+        return jsonResult({ error: '작업 시작일이 종료일보다 늦습니다.' })
+      }
+      const db = getDatabase()
+      const project = db
+        .prepare('SELECT id, name FROM projects WHERE id = ?')
+        .get(args.project_id) as { id: number; name: string } | undefined
+      if (!project) {
+        return jsonResult({
+          error: `프로젝트 id=${args.project_id}를 찾지 못했습니다. list_projects로 프로젝트 id를 확인하세요.`
+        })
+      }
+      const sortRow = db
+        .prepare('SELECT COALESCE(MAX(sort_order) + 1, 0) AS next FROM tasks WHERE project_id = ?')
+        .get(args.project_id) as { next: number }
+      const result = db
+        .prepare(
+          `INSERT INTO tasks (project_id, name, start_date, end_date, status, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          args.project_id,
+          args.name,
+          args.start_date ?? null,
+          args.end_date ?? null,
+          args.status ?? 'pending',
+          sortRow.next
+        )
+      const taskId = result.lastInsertRowid
+      logActivity('task', 'create', taskId, args.name, 'AI 생성')
+      logWriteExecuted('create_task', `id=${taskId}, project_id=${args.project_id}, name=${args.name}`)
+      notifyDataChanged('project')
+      return jsonResult({
+        created: true,
+        task_id: Number(taskId),
+        project_id: args.project_id,
+        name: args.name,
+        link: `linkwork://project/${args.project_id}`
       })
     }
   )
@@ -835,6 +893,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
 
   return [
     createProject,
+    createTask,
     createTodo,
     createMemo,
     createVariable,

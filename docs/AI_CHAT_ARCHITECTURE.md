@@ -6,7 +6,8 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 ## 1. 개요
 
 - 사용자가 자연어로 질문하면 AI가 LinkWork의 실제 데이터(프로젝트/태스크/TODO/메모/
-  문서/변수/활동로그/Google 캘린더)를 도구로 조회해서 답하는 로컬 전용 채팅 기능.
+  문서/변수/활동로그/Google 캘린더)와 연결된 외부 지식(Notion, Atlassian(Jira),
+  웹 페이지)을 도구로 조회해서 답하는 로컬 전용 채팅 기능.
 - 응답은 마크다운으로 렌더링되며, `linkwork://` 링크를 통해 앱 내 화면 이동·문서 열기
   같은 액션을 수행할 수 있다.
 - 채팅 목록/히스토리는 SQLite에 영속화되고, 채팅 재진입 시 AI 세션도 이어진다.
@@ -68,7 +69,7 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 |---|---|
 | `src/main/services/ai-agent.ts` | 쿼리 실행 엔진. 시스템 프롬프트, 스트리밍 중계, 취소, 세션 resume, 진행상태 보관, 동시 실행 상한, 도구 게이트(canUseTool) |
 | `src/main/services/ai-tools.ts` | LinkWork 조회 도구 + 외부 지식 도구(Notion/웹) 정의 (zod 스키마 + SQL) |
-| `src/main/services/ai-write-tools.ts` | 쓰기 도구 9종 (HITL 승인 — 가드레일 문서 7절) |
+| `src/main/services/ai-write-tools.ts` | 쓰기 도구 10종 (생성 5종 `create_project`/`create_task`/`create_todo`/`create_memo`/`create_variable` + 수정 5종, HITL 승인 — 가드레일 문서 7절) |
 | `src/main/services/ai-audit.ts` | 감사 로그 기록 헬퍼 |
 | `src/main/services/notion.ts` | Notion 연동 (토큰 safeStorage 저장, 검색/페이지/DB 조회 API) |
 | `src/main/services/notion-markdown.ts` | Notion 블록 → 마크다운 변환 (순수 함수, 단위 테스트) |
@@ -172,12 +173,13 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 | `get_activity_log` | 기간별 활동 이력 — "이번주 작업 정리" 용 |
 | `get_calendar_events` | Google 캘린더 일정 (기간 지정, 미연동 시 안내 반환) |
 
-### 8.2 외부 지식 (Notion / 웹 링크 — 3종)
+### 8.2 외부 지식 (Notion / Atlassian(Jira) / 웹 링크)
 
 | 도구 | 용도 | 게이트 |
 |---|---|---|
 | `search_notion` | 연동된 Notion 워크스페이스 검색 (제목/ID/URL) | 자동 허용 (사용자 소유 데이터) |
 | `get_notion_page` | Notion 페이지 내용을 마크다운으로 읽기 (URL 또는 ID, DB면 항목 목록) | 자동 허용 |
+| Atlassian(Jira) 커넥터 6종 | Jira 티켓·프로젝트·JQL 검색 + Atlassian 통합 검색/리소스 본문 읽기 (claude.ai 커넥터, `mcp__claude_ai_Atlassian_Rovo__…`) | 자동 허용 (읽기 전용, 커넥터 연결 필요) |
 | `fetch_url` | 일반 웹 페이지를 텍스트로 읽기 (Notion URL은 API로 위임) | **조건부 승인 카드** — 사용자 메시지에 없는 호스트는 HITL |
 
 - **Notion 연동 (2가지 경로)**:
@@ -190,6 +192,15 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
      토큰 등록 (main이 `/users/me`로 검증 후 safeStorage 암호화하여 `app_settings`에
      저장). 블록 트리는 깊이 3 / 500블록 / 15,000자 상한으로 수집한다 (`notion.ts`).
      토큰 등록 시 시스템 프롬프트가 이 경로를 우선 지시한다.
+- **Atlassian(Jira) 연동 (claude.ai 커넥터)**: 구독 계정에 Atlassian 커넥터가 연결돼
+  있으면 SDK 쿼리에 계정 레벨로 자동 로드된다 (Notion 커넥터와 동일한 메커니즘). 앱은
+  읽기 전용 6종(`CLAUDE_AI_ATLASSIAN_READ_TOOLS` —
+  `getAccessibleAtlassianResources`/`getVisibleJiraProjects`/`getJiraIssue`/
+  `searchJiraIssuesUsingJql`/`search`/`fetch`)만 화이트리스트에 허용하고, 쓰기 도구
+  (create/edit/comment/transition 등)는 catch-all 거부한다 (가드레일 문서 8.2절).
+  도구는 ToolSearch 뒤에 지연 로드되므로 `HARNESS_ALLOWED_TOOLS`의 ToolSearch 허용이
+  전제 조건. 앱이 연결 여부를 감지할 수 없어 시스템 프롬프트는 "도구가 있으면 사용,
+  없으면 claude.ai에서 커넥터 연결 안내"로 서술한다.
 - **fetch_url**: http/https만, 로컬호스트/사설망 차단, 리다이렉트 5회(매 단계 재검증),
   2MB/15초/12,000자 상한 (`web-fetch.ts`). 승인 게이트의 근거는 가드레일 문서 8절.
 
