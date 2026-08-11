@@ -616,3 +616,11 @@ export interface RecordingAPI {
   setExpectedSpeakers: (id: number, n: number | null) => Promise<{ success: boolean }>
   onStream: (cb: (e: RecordingStreamEvent) => void) => () => void
 }
+
+export interface ExportAPI {
+  // 저장 다이얼로그를 띄워 마크다운을 .md 파일로 저장한다. 사용자가 취소하면 canceled=true.
+  saveMarkdown: (
+    content: string,
+    defaultFileName: string
+  ) => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
+}

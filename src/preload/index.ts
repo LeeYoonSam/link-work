@@ -185,6 +185,10 @@ const api = {
       ipcRenderer.on('recording:stream', handler)
       return () => ipcRenderer.removeListener('recording:stream', handler)
     }
+  },
+  export: {
+    saveMarkdown: (content: string, defaultFileName: string) =>
+      ipcRenderer.invoke('export:saveMarkdown', content, defaultFileName)
   }
 }
 

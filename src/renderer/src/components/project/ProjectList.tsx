@@ -3,13 +3,28 @@ import { useProjectStore } from '../../stores/projectStore'
 import { format } from 'date-fns'
 import type { Project } from '../../types'
 import MarkdownContent from '../memo/MarkdownContent'
-import { Badge, Card, EmptyState, projectStatus, button } from '../ui'
+import { Badge, Card, EmptyState, projectStatus, button, typo } from '../ui'
 import PhaseHint from './PhaseHint'
+import ProjectExportModal from './ProjectExportModal'
+
+// 상태 필터 옵션 — 'all'(전체) + projectStatus의 진행 순서
+const filterOptions = [
+  'all',
+  'scheduled',
+  'development',
+  'qa_pending',
+  'qa',
+  'deploy_pending',
+  'deploy',
+  'completed',
+  'cancelled'
+]
 
 export default function ProjectList(): React.ReactNode {
   const { projects, fetchProjects, setProjectView, setEditingProject, fetchProject, loading } =
     useProjectStore()
   const [filter, setFilter] = useState<string>('all')
+  const [showExport, setShowExport] = useState(false)
 
   useEffect(() => {
     fetchProjects()
@@ -42,27 +57,39 @@ export default function ProjectList(): React.ReactNode {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex gap-2">
-          {['all', 'scheduled', 'development', 'qa_pending', 'qa', 'deploy_pending', 'deploy', 'completed', 'cancelled'].map((s) => (
-            <button
-              key={s}
-              onClick={() => setFilter(s)}
-              className={`px-3 py-1.5 text-sm ${filter === s ? button.dark : button.subtle}`}
-            >
-              {s === 'all' ? 'All' : projectStatus[s].label}
-            </button>
-          ))}
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <label className="flex items-center gap-2 min-w-0">
+          <span className={typo.microLabel}>Status</span>
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="min-w-0 px-3 py-2 text-sm border border-gray-200 rounded-md bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            title="상태 필터"
+          >
+            {filterOptions.map((s) => (
+              <option key={s} value={s}>
+                {s === 'all' ? 'All' : projectStatus[s].label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setShowExport(true)}
+            className={`px-4 py-2 text-sm ${button.subtle}`}
+          >
+            내보내기
+          </button>
+          <button
+            onClick={() => {
+              setEditingProject(null)
+              setProjectView('form')
+            }}
+            className={`px-4 py-2 text-sm ${button.primary}`}
+          >
+            + New Project
+          </button>
         </div>
-        <button
-          onClick={() => {
-            setEditingProject(null)
-            setProjectView('form')
-          }}
-          className={`px-4 py-2 text-sm ${button.primary}`}
-        >
-          + New Project
-        </button>
       </div>
 
       {loading ? (
@@ -118,6 +145,11 @@ export default function ProjectList(): React.ReactNode {
             </Card>
           ))}
         </div>
+      )}
+
+      {/* 내보내기는 화면 필터와 무관하게 전체 프로젝트를 대상으로 한다 */}
+      {showExport && (
+        <ProjectExportModal projects={sorted} onClose={() => setShowExport(false)} />
       )}
     </div>
   )
