@@ -3,7 +3,7 @@ import { eachDayOfInterval, format, isSameDay, max, min, startOfDay } from 'date
 import type { Project, Task } from '../../types'
 import { filterBusinessDays, isKoreanHoliday, isNewWeekStart, isWeekend } from '../../utils/timeline'
 import { buildTaskTree } from '../../utils/taskTree'
-import { Badge, taskStatus, phase, typo } from '../ui'
+import { Badge, TaskLabel, taskStatus, phase, typo } from '../ui'
 
 interface Props {
   project: Project
@@ -23,18 +23,33 @@ export default function ScheduleTimeline({
   const scrollRef = useRef<HTMLDivElement>(null)
   const isFull = variant === 'full'
   const minCell = isFull ? 28 : 22
-  const rowH = isFull ? 'h-8' : 'h-7'
+  // 작업명 2줄 수용을 위한 행 높이. 좌/중앙/우 3컬럼이 이 값을 공유해야 행이 정렬된다.
+  const rowH = isFull ? 'h-9' : 'h-8'
   const barH = isFull ? 'h-5' : 'h-4'
   const dotSize = isFull ? 'w-3 h-3' : 'w-2.5 h-2.5'
-  const nameColW = isFull ? 'w-44' : 'w-32'
+  // 창을 넓히면 작업명 컬럼도 함께 넓어지도록 고정폭 대신 비율 기준 + 상하한
+  const nameColW = isFull
+    ? 'basis-[28%] min-w-[9rem] max-w-[22rem]'
+    : 'basis-[30%] min-w-[7rem] max-w-[15rem]'
+  // 2줄이 행 높이를 넘지 않도록 기본 line-height(16px)보다 좁힌다
+  const nameLeading = isFull ? 'leading-[15px]' : 'leading-[14px]'
+  // 라벨 박스를 2줄 높이로 고정한다 — 1줄/2줄에 따라 박스 높이가 달라지면
+  // 행 간 시각 간격이 관계가 아니라 글자 수를 반영하게 된다(그룹 내부가 경계보다 넓어지는 역전).
+  const labelBoxH = isFull ? 'h-[30px]' : 'h-7'
+  // 관계가 가까울수록 간격이 좁다 — 그룹 내부(상위-하위, 형제)는 0, 그룹 경계에만 간격을 준다.
+  // 좌/중앙/우 3컬럼에 똑같이 붙여야 간트 바와 상태 배지가 작업명과 어긋나지 않는다.
+  const groupGap = isFull ? 'mt-2.5' : 'mt-2'
 
   // 상위→하위 순으로 평탄화한 렌더 순서. 바/도트 로직은 그대로 재사용하고
   // 행 순서와 이름 라벨 들여쓰기만 계층 기준으로 바꾼다.
+  // isGroupStart는 "앞 그룹과의 경계" 표시라 첫 그룹에는 붙지 않는다.
   const orderedTasks = useMemo(() => {
-    const flat: { task: Task; isChild: boolean }[] = []
+    const flat: { task: Task; isChild: boolean; isGroupStart: boolean }[] = []
     for (const node of buildTaskTree(tasks)) {
-      flat.push({ task: node.task, isChild: false })
-      for (const child of node.children) flat.push({ task: child, isChild: true })
+      flat.push({ task: node.task, isChild: false, isGroupStart: flat.length > 0 })
+      for (const child of node.children) {
+        flat.push({ task: child, isChild: true, isGroupStart: false })
+      }
     }
     return flat
   }, [tasks])
@@ -122,19 +137,39 @@ export default function ScheduleTimeline({
       )}
 
       <div className="flex">
-        {/* Left: task names (fixed) */}
-        <div className={`${nameColW} shrink-0 pr-2`}>
+        {/* Left: task names (flexible) */}
+        <div className={`${nameColW} shrink-0 grow-0 pr-2`}>
           <div className="h-9 flex items-end pb-0.5">
             <span className={typo.microLabel}>Task</span>
           </div>
-          {orderedTasks.map(({ task, isChild }) => (
-            <div key={task.id} className={`${rowH} flex items-center`}>
-              <span
-                className={`text-xs text-gray-800 truncate ${isChild ? 'pl-3 text-gray-500' : ''}`}
-                title={task.name}
-              >
-                {isChild ? `↳ ${task.name}` : task.name}
-              </span>
+          {orderedTasks.map(({ task, isChild, isGroupStart }) => (
+            <div
+              key={task.id}
+              className={`${rowH} flex items-center${isGroupStart ? ` ${groupGap}` : ''}${
+                isChild ? ' pl-3' : ''
+              }`}
+            >
+              {/* 바깥 상자는 2줄분 고정 높이다. 1줄 라벨도 같은 높이를 차지해야
+                  행마다 여백이 달라지지 않는다 — 그러지 않으면 간격이 관계가 아니라
+                  글자 수를 반영해 그룹 경계가 묻힌다. 안에서 중앙 정렬해 간트 바와 맞춘다. */}
+              <div className={`${labelBoxH} flex-1 min-w-0 flex items-center`}>
+                {/* 글리프는 라벨과 한 상자에 묶어 items-start로 첫 줄에 붙인다.
+                    필요한 오프셋이 줄 수에 따라 달라져 고정값으로는 못 맞춘다. */}
+                <div className="min-w-0 flex-1 flex items-start">
+                  {/* 하위 글리프는 TaskLabel 밖에 둔다 — 이름에 섞으면 대괄호 접두사 파싱이 깨진다 */}
+                  {isChild && (
+                    <span className={`shrink-0 mr-0.5 text-xs text-gray-400 ${nameLeading}`}>↳</span>
+                  )}
+                  <TaskLabel
+                    name={task.name}
+                    lines={2}
+                    leading={nameLeading}
+                    className={`min-w-0 text-xs ${
+                      isChild ? 'text-gray-500' : 'font-medium text-gray-800'
+                    }`}
+                  />
+                </div>
+              </div>
             </div>
           ))}
           <div className="h-6 mt-1.5" />
@@ -216,7 +251,7 @@ export default function ScheduleTimeline({
                 />
               )}
 
-              {orderedTasks.map(({ task }) => {
+              {orderedTasks.map(({ task, isGroupStart }) => {
                 const startStr = task.start_date ?? task.end_date
                 const endStr = task.end_date ?? task.start_date
                 let content: React.ReactNode = null
@@ -259,7 +294,11 @@ export default function ScheduleTimeline({
                 }
 
                 return (
-                  <div key={task.id} className={`relative grid ${rowH} items-center`} style={gridTemplate}>
+                  <div
+                    key={task.id}
+                    className={`relative grid ${rowH} items-center${isGroupStart ? ` ${groupGap}` : ''}`}
+                    style={gridTemplate}
+                  >
                     {content}
                   </div>
                 )
@@ -304,8 +343,11 @@ export default function ScheduleTimeline({
           <div className="h-9 flex items-end justify-center pb-0.5">
             <span className={typo.microLabel}>Status</span>
           </div>
-          {orderedTasks.map(({ task }) => (
-            <div key={task.id} className={`${rowH} flex items-center justify-center`}>
+          {orderedTasks.map(({ task, isGroupStart }) => (
+            <div
+              key={task.id}
+              className={`${rowH} flex items-center justify-center${isGroupStart ? ` ${groupGap}` : ''}`}
+            >
               <Badge
                 color={taskStatus[task.status].badge}
                 size="xs"

@@ -72,6 +72,13 @@ export const urgency = {
   late: { bar: 'bg-red-500', text: 'text-red-700', label: 'Late' }
 }
 
+// 작업명 접두사 칩 — Jira 키와 도메인 태그를 시각적으로 구분한다.
+// 좁은 컬럼에서 제목이 쓸 폭을 뺏지 않도록 파스텔 배경만 쓰고 보더는 두지 않는다.
+export const taskTag = {
+  issue: 'bg-indigo-50 text-indigo-600 font-mono',
+  domain: 'bg-slate-100 text-slate-600'
+}
+
 // 타이포그래피
 export const typo = {
   pageTitle: 'text-lg font-semibold text-gray-900',

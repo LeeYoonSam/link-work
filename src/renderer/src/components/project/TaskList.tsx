@@ -9,6 +9,7 @@ import {
   PencilIcon,
   TrashIcon,
   ChevronDownIcon,
+  TaskLabel,
   taskStatus,
   button
 } from '../ui'
@@ -132,14 +133,20 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
         </>
       ) : (
         <>
-          {isChild && <span className="text-gray-300 -ml-4 select-none">↳</span>}
+          {isChild && <span className="text-gray-300 -ml-4 select-none shrink-0">↳</span>}
           <StatusDot color={taskStatus[task.status].dot} />
-          <span className="flex-1 text-sm text-gray-800 truncate" title={task.name}>
-            {task.name}
-          </span>
+          {/* min-w-0이 없으면 긴 작업명이 우측 컨트롤을 밀어낸다 */}
+          <div className="flex-1 min-w-0">
+            {/* 상위는 그룹 머리라 굵기로 강조한다. 계층은 가로축(들여쓰기)으로만 표현해 그룹 경계와 축을 분리한다 */}
+            <TaskLabel
+              name={task.name}
+              lines={2}
+              className={isChild ? 'text-sm text-gray-800' : 'text-sm font-medium text-gray-800'}
+            />
+          </div>
           {formatTaskRange(task.start_date, task.end_date) && (
             <span
-              className="text-xs text-gray-400 tabular-nums"
+              className="text-xs text-gray-400 tabular-nums shrink-0"
               title={`${task.start_date ?? ''} ~ ${task.end_date ?? ''}`}
             >
               {formatTaskRange(task.start_date, task.end_date)}
@@ -147,7 +154,7 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
           )}
           {/* 네이티브 select 화살표를 숨기고 커스텀 셰브론으로 겹침 방지 */}
           <span
-            className={`relative inline-flex items-center rounded-full ${taskStatus[task.status].badge}`}
+            className={`relative inline-flex items-center rounded-full shrink-0 ${taskStatus[task.status].badge}`}
           >
             <select
               value={task.status}
@@ -162,7 +169,7 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
             </select>
             <ChevronDownIcon size={12} className="absolute right-2 pointer-events-none" />
           </span>
-          <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
             {!isChild && (
               <button
                 onClick={() => openChildForm(task.id)}
@@ -248,9 +255,15 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
       {tasks.length === 0 ? (
         <p className="text-sm text-gray-400 mb-3">No tasks yet</p>
       ) : (
-        <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 overflow-hidden mb-4">
-          {tree.map((node) => (
-            <div key={node.task.id} className="divide-y divide-gray-100">
+        // 그룹 경계는 여백(mt-2) + 진한 선(gray-200), 그룹 내부(상위↔하위)는 옅은 선(gray-100).
+        // 선 색 대비만으로는 경계가 읽히지 않아(실측 밝기차 0.039) 간트와 같은 세로축 여백을 함께 쓴다.
+        <div className="border border-gray-200 rounded-lg divide-y divide-gray-200 overflow-hidden mb-4">
+          {tree.map((node, i) => (
+            <div
+              key={node.task.id}
+              // 첫 그룹은 헤더와 붙어야 하므로 여백을 주지 않는다
+              className={i === 0 ? 'divide-y divide-gray-100' : 'mt-2 divide-y divide-gray-100'}
+            >
               {renderTaskRow(node.task, false)}
               {node.children.map((child) => renderTaskRow(child, true))}
               {addingChildFor === node.task.id && renderChildForm(node.task.id)}

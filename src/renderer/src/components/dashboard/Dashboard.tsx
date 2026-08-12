@@ -9,7 +9,7 @@ import MarkdownContent from '../memo/MarkdownContent'
 import { format } from 'date-fns'
 import { formatDateSafe } from '../../utils/date'
 import type { Task, Todo } from '../../types'
-import { Card, EmptyState, SectionTitle, StarIcon, todoPriority } from '../ui'
+import { Card, ClampedText, EmptyState, SectionTitle, StarIcon, todoPriority } from '../ui'
 
 function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
   const { completeTodo, restoreTodo, setSelectedTodoId, setFilterTagId } = useTodoStore()
@@ -41,7 +41,8 @@ function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
           handleSelect()
         }
       }}
-      title="TODO 메뉴에서 보기"
+      // 제목 툴팁이 포커스로 열리지 않으므로(아래 focusable={false}) 행 자체의 title로 전체 제목을 노출한다
+      title={`${todo.title} — TODO 메뉴에서 보기`}
       className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors hover:border-blue-300 hover:bg-blue-50/40 ${
         isCompleted
           ? 'bg-gray-50 border-gray-200'
@@ -78,13 +79,16 @@ function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
         className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${priorityDot}`}
         title={todo.priority}
       />
-      <span
-        className={`text-sm flex-1 truncate ${
-          isCompleted ? 'line-through text-gray-400' : 'text-gray-900'
-        }`}
-      >
-        {todo.title}
-      </span>
+      {/* 좁은 패널이라 1줄로는 제목 대부분이 잘린다. min-w-0이 없으면 태그·마감일을 밀어낸다 */}
+      {/* 행 루트가 role="button"이라 포커스 가능한 자손을 둘 수 없다 — 툴팁 트리거를 탭 순서에서 뺀다 */}
+      <div className="flex-1 min-w-0">
+        <ClampedText
+          text={todo.title}
+          lines={2}
+          focusable={false}
+          className={`text-sm ${isCompleted ? 'line-through text-gray-400' : 'text-gray-900'}`}
+        />
+      </div>
       {todo.tags && todo.tags.length > 0
         ? todo.tags.map((tag) => (
             <span
