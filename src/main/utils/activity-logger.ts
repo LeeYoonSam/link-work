@@ -10,6 +10,7 @@ export type EntityType =
   | 'todo'
   | 'todo_tag'
   | 'meeting'
+  | 'release_note'
 export type ActionType = 'create' | 'update' | 'delete' | 'archive' | 'restore' | 'complete'
 
 export function logActivity(

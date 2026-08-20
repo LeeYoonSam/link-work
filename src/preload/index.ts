@@ -189,6 +189,25 @@ const api = {
   export: {
     saveMarkdown: (content: string, defaultFileName: string) =>
       ipcRenderer.invoke('export:saveMarkdown', content, defaultFileName)
+  },
+  releaseNote: {
+    list: (projectId?: number) => ipcRenderer.invoke('releaseNote:list', projectId),
+    get: (id: number) => ipcRenderer.invoke('releaseNote:get', id),
+    link: (projectId: number, jiraProjectKey: string, version: unknown) =>
+      ipcRenderer.invoke('releaseNote:link', projectId, jiraProjectKey, version),
+    unlink: (id: number) => ipcRenderer.invoke('releaseNote:unlink', id),
+    sync: (id: number) => ipcRenderer.invoke('releaseNote:sync', id),
+    syncAll: () => ipcRenderer.invoke('releaseNote:syncAll')
+  },
+  jira: {
+    status: () => ipcRenderer.invoke('jira:status'),
+    saveCredentials: (input: unknown) => ipcRenderer.invoke('jira:saveCredentials', input),
+    disconnect: () => ipcRenderer.invoke('jira:disconnect'),
+    listProjects: () => ipcRenderer.invoke('jira:listProjects'),
+    listVersions: (projectKey: string) => ipcRenderer.invoke('jira:listVersions', projectKey),
+    setDefaultProject: (projectKey: string | null) =>
+      ipcRenderer.invoke('jira:setDefaultProject', projectKey),
+    openIssue: (issueKey: string) => ipcRenderer.invoke('jira:openIssue', issueKey)
   }
 }
 
