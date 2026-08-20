@@ -65,7 +65,8 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
 
 - 도구 인자: 검색어 `max(200)`, 날짜 `YYYY-MM-DD` 정규식 — zod 스키마 레벨에서 거부
 - SQL은 전부 prepared statement + 바인딩 파라미터 (문자열 조립 금지)
-- 조회 결과 LIMIT (todos/documents 200, memos 100, activity_log 500) + 본문 truncate
+- 조회 결과 LIMIT (todos/documents 200, memos 100, activity_log 500,
+  release_notes/release_note_items 200) + 본문 truncate
 - 사용자 메시지 4,000자 상한 (`ai.ipc.ts`)
 - 동시 실행 쿼리 최대 3개 (`MAX_CONCURRENT_QUERIES`), 채팅당 1개
 - `maxTurns: 30` — 무한 도구 호출 루프 방지
@@ -195,6 +196,8 @@ AI가 쓰기 도구 호출
 
 AI가 앱 밖의 지식(Notion 문서, Atlassian(Jira) 티켓·프로젝트, 웹 페이지, 첨부 이미지)에
 접근하는 경로와 각 게이트. **모두 읽기 전용**이며 외부에 데이터를 쓰는 도구는 없다.
+8.5는 예외적으로 조회 시점에 외부 호출이 없는 경우다 — 외부(Jira)에서 가져왔지만 이미
+로컬 DB에 동기화해 둔 콘텐츠(릴리스 노트)를 읽는 기준이라 같은 절에 둔다.
 
 ### 8.1 Notion 조회 — 자동 허용 (읽기 도구만)
 
@@ -284,6 +287,33 @@ claude.ai **Atlassian 커넥터**(Jira/Confluence)가 연결돼 있으면 헤드
   (`src/main/services/ai-attachments.ts`). 파일명은 main이 생성한다
   (사용자 파일명은 표시용 meta에만 기록).
 - 채팅 삭제 시 해당 채팅의 첨부 파일도 삭제된다.
+
+### 8.5 릴리스 노트 조회 (Jira 동기화 결과 — 로컬 DB만 읽음)
+
+Jira 릴리스(버전)에 묶인 이슈를 앱이 미리 동기화해 둔 결과를 조회하는 도구다
+(설계: [RELEASE_NOTES.md](RELEASE_NOTES.md)). **8.1~8.3과 달리 조회 시점에 외부 호출이
+전혀 없다** — 읽기 전용 로컬 DB(`getAiReadOnlyDatabase`, 1절)만 읽으므로 자동 허용
+화이트리스트(`LINKWORK_TOOL_NAMES`)에 등재한다.
+
+| 도구 | 반환 | 상한 |
+|---|---|---|
+| `list_release_notes` | 프로젝트/버전/출시 여부/릴리스일/항목 수/마지막 동기화 시각 | 200건, 설명 300자 |
+| `get_release_note` | 이슈 키·유형·상태·해결 여부·제목·상위 이슈 키 | 이슈 200건, 제목 각 300자 |
+
+- **AI는 Jira를 직접 호출하지 않는다.** 동기화 시점에 main 프로세스의 `jira.ts`가
+  받아 둔 값만 읽으므로, AI 대화가 네트워크 지연·레이트 리밋·토큰 만료 상태에 끌려가지
+  않는다. 대신 내용이 최신이 아닐 수 있어 도구가 `last_synced_at`/`last_sync_error`를 함께
+  반환하고, 한 번도 동기화하지 않은 릴리스는 안내 힌트(`hints`)를 붙인다.
+- **쓰기 도구는 없다.** 릴리스 연결·해제·동기화는 앱 UI(프로젝트 상세의 릴리스 노트 카드)
+  에서 사용자가 직접 실행하는 경로뿐이다 — AI가 Jira 데이터를 가져오거나 되쓰는 통로는
+  만들지 않는다.
+- **Jira 이슈 제목·상태·버전 설명은 신뢰할 수 없는 외부 입력**이다 (6절·8.2와 동일 취급).
+  도구 결과 안의 지시문을 따르지 않으며, 조회한 값을 외부 URL로 실어 보내지 않는다.
+  항목당 300자·200건 상한으로 컨텍스트를 채워 다른 지시를 밀어내는 것도 제한한다.
+- 조회 전용이라 인젝션이 성공해도 피해 범위는 "잘못된 답변 표시"로 한정된다.
+- Jira API 토큰은 `app_settings`에 **safeStorage 암호화**로 저장되며(`jira_api_token`),
+  renderer와 AI에는 연결 여부·계정 표시명·만료일만 노출된다. 토큰 값은 어떤 도구 결과에도
+  포함되지 않는다 (Notion 토큰과 동일 취급, 8.1.b).
 
 ## 9. 비용 가드레일 (과금 차단)
 

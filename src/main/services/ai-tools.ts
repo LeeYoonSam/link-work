@@ -41,6 +41,9 @@ export const LINKWORK_TOOL_NAMES = [
   'list_variables',
   'get_activity_log',
   'get_calendar_events',
+  // 릴리스 노트는 이미 동기화된 로컬 DB만 읽으므로(Jira 직접 호출 없음) 자동 허용
+  'list_release_notes',
+  'get_release_note',
   // Notion은 사용자 자신의 워크스페이스를 읽기 전용으로 조회하므로 자동 허용
   'search_notion',
   'get_notion_page'
@@ -78,6 +81,20 @@ function truncate(text: string | null, max: number): string | null {
   if (text === null) return null
   return text.length > max ? text.slice(0, max) + TRUNCATION_MARKER : text
 }
+
+// 릴리스 노트 공통 SELECT — 목록/상세가 같은 필드를 보이도록 한 곳에 둔다.
+// item_count는 항목 수만 필요한 목록에서도, 200건 상한 초과 판단이 필요한 상세에서도 쓰인다.
+const RELEASE_NOTE_SELECT = `SELECT r.id, r.project_id, p.name AS project_name,
+          r.jira_project_key, r.jira_version_id, r.version_name, r.description,
+          r.released, r.archived, r.release_date, r.start_date,
+          r.last_synced_at, r.last_sync_error,
+          (SELECT COUNT(*) FROM release_note_items i WHERE i.release_note_id = r.id) AS item_count
+   FROM release_notes r
+   LEFT JOIN projects p ON p.id = r.project_id`
+
+// Jira에서 온 문자열(버전 설명·이슈 제목)은 신뢰할 수 없는 외부 입력이라 길이를 제한한다.
+const RELEASE_NOTE_TEXT_MAX = 300
+const RELEASE_NOTE_ITEM_LIMIT = 200
 
 async function buildServer(): Promise<McpSdkServerConfigWithInstance> {
   // Agent SDK는 ESM 전용이라 CJS로 번들되는 main 프로세스에서 정적 import(require) 불가.
@@ -415,6 +432,103 @@ const getActivityLog = tool(
     }
   )
 
+  // ── 릴리스 노트 (Jira 동기화 결과) — docs/AI_GUARDRAILS.md 8.5절 ──
+  // 조회 시점에 Jira를 호출하지 않고 이미 동기화된 로컬 DB만 읽는다. AI 대화가
+  // 네트워크 지연이나 토큰 만료 상태에 끌려가지 않게 하기 위함이다.
+
+  const listReleaseNotes = tool(
+    'list_release_notes',
+    '프로젝트에 연결된 Jira 릴리스(버전)의 릴리스 노트 목록을 조회한다. 버전 이름, 출시 여부(released), 릴리스일, 포함된 이슈 수(item_count), 마지막 동기화 시각(last_synced_at)을 반환한다. "이번 배포에 뭐가 들어가나", "4.162.0 릴리스 내용" 같은 질문에 사용한다. project로 프로젝트 ID(숫자) 또는 이름 부분 검색이 가능하다. 앱에 동기화된 로컬 데이터를 읽으므로 Jira를 직접 조회하지 않는다 — 내용이 최신인지는 last_synced_at으로 판단하고, 오래됐으면 앱에서 동기화하도록 안내한다.',
+    {
+      project: searchTerm('프로젝트 ID(숫자) 또는 이름 부분 검색어')
+    },
+    async (args) => {
+      const db = getAiReadOnlyDatabase()
+      const filter = args.project?.trim()
+      const byId = !!filter && /^\d+$/.test(filter)
+      const where = filter ? (byId ? 'WHERE r.project_id = ?' : 'WHERE p.name LIKE ?') : ''
+      const params = filter ? [byId ? Number(filter) : `%${filter}%`] : []
+      // 릴리스일이 없는(=아직 날짜가 안 잡힌) 버전이 목록 위로 오도록 먼 미래로 치환해 정렬한다.
+      const rows = db
+        .prepare(
+          `${RELEASE_NOTE_SELECT}
+           ${where}
+           ORDER BY COALESCE(r.release_date, '9999-12-31') DESC, r.id DESC
+           LIMIT ${RELEASE_NOTE_ITEM_LIMIT}`
+        )
+        .all(...params) as { description: string | null; last_sync_error: string | null }[]
+      return jsonResult(
+        rows.map((r) => ({
+          ...r,
+          description: truncate(r.description, RELEASE_NOTE_TEXT_MAX),
+          last_sync_error: truncate(r.last_sync_error, RELEASE_NOTE_TEXT_MAX)
+        }))
+      )
+    }
+  )
+
+  const getReleaseNote = tool(
+    'get_release_note',
+    '릴리스 노트 하나의 상세 내용을 조회한다. 포함된 Jira 이슈의 키(issue_key)·유형(issue_type)·상태(status)·해결 여부(resolution)·제목(summary)과 상위 이슈 키(parent_key)를 Jira 순서대로 반환한다. query에 릴리스 노트 ID(숫자) 또는 버전 이름(부분 일치)을 전달한다. 이슈는 최대 200건까지 반환하며, 앱에 동기화된 로컬 데이터라 Jira를 직접 조회하지 않는다.',
+    {
+      query: z.string().max(200).describe('릴리스 노트 ID 또는 버전 이름 검색어')
+    },
+    async (args) => {
+      const db = getAiReadOnlyDatabase()
+      const q = args.query.trim()
+      const byId = /^\d+$/.test(q)
+      const note = (
+        byId
+          ? db.prepare(`${RELEASE_NOTE_SELECT} WHERE r.id = ?`).get(Number(q))
+          : db
+              .prepare(
+                `${RELEASE_NOTE_SELECT}
+                 WHERE r.version_name LIKE ?
+                 ORDER BY COALESCE(r.release_date, '9999-12-31') DESC, r.id DESC`
+              )
+              .get(`%${q}%`)
+      ) as
+        | {
+            id: number
+            description: string | null
+            last_synced_at: string | null
+            last_sync_error: string | null
+            item_count: number
+          }
+        | undefined
+      if (!note) {
+        return jsonResult({ error: `'${args.query}'에 해당하는 릴리스 노트를 찾지 못했습니다.` })
+      }
+      const items = db
+        .prepare(
+          `SELECT issue_key, issue_type, status, resolution, summary, parent_key
+           FROM release_note_items
+           WHERE release_note_id = ?
+           ORDER BY sort_order, id
+           LIMIT ${RELEASE_NOTE_ITEM_LIMIT}`
+        )
+        .all(note.id) as { summary: string }[]
+      const hints: string[] = []
+      if (note.item_count > RELEASE_NOTE_ITEM_LIMIT) {
+        hints.push(
+          `이슈가 ${note.item_count}건이라 앞의 ${RELEASE_NOTE_ITEM_LIMIT}건만 반환했습니다.`
+        )
+      }
+      if (!note.last_synced_at) {
+        hints.push(
+          '아직 한 번도 동기화하지 않은 릴리스입니다. 프로젝트 상세의 릴리스 노트 카드에서 동기화해야 Jira 이슈가 채워집니다.'
+        )
+      }
+      return jsonResult({
+        ...note,
+        description: truncate(note.description, RELEASE_NOTE_TEXT_MAX),
+        last_sync_error: truncate(note.last_sync_error, RELEASE_NOTE_TEXT_MAX),
+        items: items.map((i) => ({ ...i, summary: truncate(i.summary, RELEASE_NOTE_TEXT_MAX) })),
+        ...(hints.length ? { hints } : {})
+      })
+    }
+  )
+
   // ── 외부 지식 도구 (Notion / 웹 링크) — docs/AI_GUARDRAILS.md 8절 ──
   // 모두 읽기 전용(GET/검색)이며, 반환 내용은 신뢰할 수 없는 데이터로 취급된다
   // (시스템 프롬프트의 인젝션 방어 규칙 적용 대상).
@@ -525,6 +639,8 @@ const getActivityLog = tool(
       listVariables,
       getActivityLog,
       getCalendarEvents,
+      listReleaseNotes,
+      getReleaseNote,
       searchNotionTool,
       getNotionPageTool,
       fetchUrlTool,
