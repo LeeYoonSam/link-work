@@ -438,6 +438,7 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
         'variables',
         'memos',
         'calendar',
+        'releases',
         'reports'
       ] as const
       const target = views.find((v) => v === rest)

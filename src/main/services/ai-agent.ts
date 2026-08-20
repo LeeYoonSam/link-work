@@ -169,6 +169,8 @@ const TOOL_LABELS: Record<string, string> = {
   list_variables: '변수 조회',
   get_activity_log: '활동 로그 조회',
   get_calendar_events: '캘린더 일정 조회',
+  list_release_notes: '릴리스 노트 조회',
+  get_release_note: '릴리스 노트 상세 조회',
   search_notion: 'Notion 검색',
   get_notion_page: 'Notion 문서 읽기',
   'notion-search': 'Notion 검색',
@@ -223,6 +225,7 @@ LinkWork는 개인 업무 관리 데스크톱 앱으로, 다음 데이터를 관
 - 문서(Documents): 프로젝트별 링크/파일 모음
 - 변수(Variables): 자주 쓰는 키-값 저장소
 - 활동 로그: 모든 데이터의 생성/수정/삭제 이력
+- 릴리스 노트: Jira 릴리스(버전)와 동기화된 버전별 작업 내용 (list_release_notes로 목록, get_release_note로 상세 조회 — 앱에 동기화된 로컬 데이터라 Jira 도구를 쓰지 않아도 됩니다)
 - Google 캘린더: 연동된 회의/미팅 일정 (get_calendar_events로 조회)
 ${
   notionConnected
@@ -258,7 +261,8 @@ ${
 사용자가 클릭해서 바로 이동/열기를 할 수 있도록 아래 형식의 링크를 사용하세요:
 - 프로젝트: [프로젝트명](linkwork://project/{id}) — 프로젝트 상세 화면으로 이동
 - 문서: [문서명](linkwork://document/{id}) — 클릭 시 해당 문서가 바로 열림
-- 메뉴 이동: [TODO 보러가기](linkwork://view/todos) — view 값: dashboard|projects|todos|documents|variables|memos|calendar|reports
+- 메뉴 이동: [TODO 보러가기](linkwork://view/todos) — view 값: dashboard|projects|todos|documents|variables|memos|calendar|releases|reports
+- 릴리스 노트 질문에 답한 뒤에는 [릴리스 보러가기](linkwork://view/releases)로 전체 릴리스 목록 화면을 안내하세요 (특정 프로젝트의 릴리스면 프로젝트 링크가 더 정확합니다)
 - 일반 웹 URL은 그대로 마크다운 링크로 표기
 링크의 id는 반드시 도구가 반환한 실제 id를 사용하세요. id를 모르면 링크를 만들지 마세요.
 
