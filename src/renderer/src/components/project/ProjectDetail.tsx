@@ -5,6 +5,7 @@ import { format } from 'date-fns'
 import type { Task } from '../../types'
 import TaskList from './TaskList'
 import ScheduleTimeline from './ScheduleTimeline'
+import ReleaseNotesCard from './ReleaseNotesCard'
 import DocumentForm from '../document/DocumentForm'
 import MarkdownContent from '../memo/MarkdownContent'
 import { Badge, Card, FolderIcon, IconButton, LinkIcon, SectionTitle, TrashIcon, projectStatus, button } from '../ui'
@@ -171,6 +172,8 @@ export default function ProjectDetail(): React.ReactNode {
           </div>
         )}
       </Card>
+
+      <ReleaseNotesCard projectId={currentProject.id} projectName={currentProject.name} />
 
       {showDocForm && (
         <DocumentForm
