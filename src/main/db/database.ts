@@ -290,6 +290,46 @@ export function initDatabase(): void {
       generated_at TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
     );
+
+    -- 릴리스 노트: Jira 릴리스(Version) 미러링.
+    -- 매칭 키는 이름이 아니라 불변 ID(jira_version_id)다 — Jira에서 버전 이름을 바꿔도
+    -- 연결이 끊기지 않아야 하기 때문. version_name 이하는 표시용 캐시라 동기화마다 갱신된다.
+    CREATE TABLE IF NOT EXISTS release_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      jira_project_key TEXT NOT NULL,
+      jira_version_id TEXT NOT NULL,
+      version_name TEXT NOT NULL,
+      description TEXT,
+      released INTEGER NOT NULL DEFAULT 0,
+      archived INTEGER NOT NULL DEFAULT 0,
+      release_date TEXT,
+      start_date TEXT,
+      -- NULL이면 아직 한 번도 동기화하지 않은 상태. 동기화가 실패하면 갱신하지 않아
+      -- 화면의 "마지막 동기화" 시각이 실제 성공 시점을 계속 가리킨다.
+      last_synced_at TEXT,
+      last_sync_error TEXT,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      UNIQUE (project_id, jira_version_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS release_note_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      release_note_id INTEGER NOT NULL,
+      issue_key TEXT NOT NULL,
+      issue_type TEXT,
+      status TEXT,
+      resolution TEXT,
+      summary TEXT NOT NULL,
+      parent_key TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (release_note_id) REFERENCES release_notes(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_release_note_items_note
+      ON release_note_items(release_note_id);
   `)
 
   // Migrations for existing databases

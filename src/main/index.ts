@@ -16,6 +16,7 @@ import { registerTodoTagIpc } from './ipc/todo-tag.ipc'
 import { registerAiIpc } from './ipc/ai.ipc'
 import { registerRecordingIpc } from './ipc/recording.ipc'
 import { registerExportIpc } from './ipc/export.ipc'
+import { registerReleaseNoteIpc } from './ipc/release-note.ipc'
 import { cancelAllAiQueries } from './services/ai-agent'
 import { startNotificationService, stopNotificationService } from './services/notification'
 import { createTrayWidget, destroyTrayWidget } from './services/tray-widget'
@@ -196,6 +197,7 @@ app.whenReady().then(() => {
   registerAiIpc()
   registerRecordingIpc()
   registerExportIpc()
+  registerReleaseNoteIpc()
   startNotificationService()
   createTrayWidget(() => createWindow())
 
