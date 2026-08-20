@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 /// <reference types="react" />
 
-import type { ProjectAPI, TaskAPI, CalendarAPI, TrayAPI, DocumentAPI, VariableAPI, MemoAPI, MemoCategoryAPI, ReportAPI, TodoAPI, TodoTagAPI, AiAPI, RecordingAPI, ExportAPI } from './types'
+import type { ProjectAPI, TaskAPI, CalendarAPI, TrayAPI, DocumentAPI, VariableAPI, MemoAPI, MemoCategoryAPI, ReportAPI, TodoAPI, TodoTagAPI, AiAPI, RecordingAPI, ExportAPI, ReleaseNoteAPI, JiraAPI } from './types'
 
 declare global {
   interface Window {
@@ -20,6 +20,8 @@ declare global {
       ai: AiAPI
       recording: RecordingAPI
       export: ExportAPI
+      releaseNote: ReleaseNoteAPI
+      jira: JiraAPI
     }
   }
 }
