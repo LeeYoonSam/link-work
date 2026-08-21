@@ -173,7 +173,7 @@ export default function ProjectDetail(): React.ReactNode {
         )}
       </Card>
 
-      <ReleaseNotesCard projectId={currentProject.id} projectName={currentProject.name} />
+      <ReleaseNotesCard deployVersion={currentProject.deploy_version} />
 
       {showDocForm && (
         <DocumentForm
