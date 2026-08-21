@@ -74,7 +74,7 @@ vi.mock('../../stores/releaseNoteStore', () => ({
 
 const mod = await import('./ReleaseNoteRow')
 const ReleaseNoteRow = mod.default
-const { ReleaseNoteItemList, groupReleaseNoteItems } = mod
+const { ReleaseNoteItemList, groupReleaseNoteItems, releaseItemStatusTone } = mod
 
 const renderRow = (over: Partial<ReleaseNoteSummary>, mock: Partial<MockState> = {}): string => {
   state = { ...BASE, ...mock }
@@ -203,3 +203,68 @@ describe('ReleaseNoteRow 상태 표시', () => {
   })
 })
 
+// 릴리스에 묶인 이슈는 거의 다 끝난 것이라, 손봐야 할 항목이 색으로 튀어나와야 한다.
+describe('releaseItemStatusTone', () => {
+  const tone = (status: string): string => releaseItemStatusTone(status)
+
+  it('실제 Jira 워크플로의 상태 넷을 각각 다르게 칠한다', () => {
+    // 이 프로젝트에 실제로 들어 있는 값들 — 닫힘 148건, 해결됨 10건, 할 일 1건, 처리중 1건
+    const tones = ['닫힘', '해결됨', '할 일', '처리중'].map(tone)
+    expect(tone('닫힘')).toBe(tone('해결됨'))
+    expect(new Set(tones).size).toBe(3)
+  })
+
+  it('완료 계열은 배경을 한 단계 연하게 써서 뒤로 물러난다', () => {
+    // 대부분이 완료라 진하게 칠하면 화면이 온통 한 색이 된다
+    expect(tone('닫힘')).toContain('bg-green-50')
+    expect(tone('처리중')).toContain('bg-blue-100')
+    expect(tone('할 일')).toContain('bg-amber-100')
+    expect(tone('보류')).toContain('bg-red-100')
+  })
+
+  it('공백과 대소문자를 가리지 않는다', () => {
+    expect(tone('진행 중')).toBe(tone('진행중'))
+    expect(tone('In Progress')).toBe(tone('inprogress'))
+    expect(tone('DONE')).toBe(tone('done'))
+  })
+
+  it('조합된 이름은 키워드로 가려낸다 — Jira 워크플로는 프로젝트마다 다르다', () => {
+    expect(tone('개발 완료')).toBe(tone('완료'))
+    expect(tone('QA 진행중')).toBe(tone('진행중'))
+    expect(tone('개발 보류')).toBe(tone('보류'))
+  })
+
+  it("'완료 대기'는 완료가 아니라 대기다 — 키워드 순서가 뒤집히면 끝난 일로 보인다", () => {
+    expect(tone('완료 대기')).toBe(tone('할 일'))
+  })
+
+  it('모르는 상태에는 색을 지어내지 않는다', () => {
+    expect(tone('알 수 없는 상태')).toContain('bg-gray-100')
+    expect(tone('')).toContain('bg-gray-100')
+  })
+})
+
+describe('ReleaseNoteItemList 상태 뱃지', () => {
+  it('상태에 따라 서로 다른 색으로 낸다', () => {
+    const html = renderToStaticMarkup(
+      <ReleaseNoteItemList
+        items={[
+          { ...item(1, 'ICA-1', 'Story', '끝난 일'), status: '닫힘' },
+          { ...item(2, 'ICA-2', 'Story', '하는 중'), status: '처리중' },
+          { ...item(3, 'ICA-3', 'Story', '아직'), status: '할 일' }
+        ]}
+      />
+    )
+    expect(html).toContain('bg-green-50')
+    expect(html).toContain('bg-blue-100')
+    expect(html).toContain('bg-amber-100')
+  })
+
+  it('상태가 없으면 뱃지 자체를 내지 않는다', () => {
+    const html = renderToStaticMarkup(
+      <ReleaseNoteItemList items={[{ ...item(1, 'ICA-1', 'Story', '상태 없음'), status: null }]} />
+    )
+    expect(html).toContain('ICA-1')
+    expect(html).not.toContain('bg-gray-100 text-gray-600')
+  })
+})

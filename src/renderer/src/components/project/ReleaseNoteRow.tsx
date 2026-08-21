@@ -3,7 +3,15 @@ import { format } from 'date-fns'
 import { useReleaseNoteStore } from '../../stores/releaseNoteStore'
 import { buildReleaseNoteMarkdown } from '../../utils/releaseNoteExport'
 import type { ReleaseNoteItem, ReleaseNoteSummary } from '../../types'
-import { Badge, ChevronDownIcon, EmptyState, button, taskTag, typo } from '../ui'
+import {
+  Badge,
+  ChevronDownIcon,
+  EmptyState,
+  button,
+  releaseItemStatus,
+  taskTag,
+  typo
+} from '../ui'
 
 /** issue_type이 비어 있는 항목이 모이는 그룹 */
 const FALLBACK_TYPE = '기타'
@@ -84,6 +92,66 @@ export function groupReleaseNoteItems(items: ReleaseNoteItem[]): ReleaseItemGrou
   return groups
 }
 
+/**
+ * Jira 상태 이름 → 뱃지 색 계열.
+ *
+ * Jira 워크플로는 프로젝트마다 손댈 수 있어 상태 이름이 고정되어 있지 않다. 그래서 아는 이름을
+ * 정확히 맞춰 보고, 못 맞추면 키워드로 한 번 더 본다 — '개발 완료', 'QA 진행중', '완료 대기'처럼
+ * 수식어가 앞에 붙은 이름이 흔하다.
+ *
+ * 키워드가 여럿 걸리면 **가장 뒤에 있는 것이 이긴다.** 한국어 상태 이름은 앞이 수식어, 뒤가 실제
+ * 상태이기 때문이다: '개발 완료'는 완료지만 '완료 대기'는 대기다. 앞에서부터 훑으면 둘 다
+ * 완료로 보인다. 자리가 같으면 급한 쪽(중단 → 미착수 → 진행 → 완료)을 택한다.
+ *
+ * 아무것도 못 맞추면 회색이다. 모르는 상태에 색을 찍으면 없는 정보를 지어내는 셈이다.
+ */
+export function releaseItemStatusTone(status: string): string {
+  const name = status.replace(/\s+/g, '').toLowerCase()
+  if (!name) return releaseItemStatus.unknown
+
+  // 배열 순서 = 같은 자리에서 부딪혔을 때의 우선순위
+  const groups = [
+    {
+      tone: releaseItemStatus.blocked,
+      exact: ['보류', '차단', '중단', '취소', '취소됨', '반려', '거절', 'blocked', 'onhold', 'cancelled', 'canceled', 'rejected'],
+      keywords: ['보류', '차단', '중단', '취소', '반려', '거절', 'blocked', 'hold', 'cancel', 'reject']
+    },
+    {
+      tone: releaseItemStatus.todo,
+      exact: ['할일', '대기', '접수', '백로그', '신규', 'todo', 'open', 'backlog', 'new', 'created'],
+      keywords: ['할일', '대기', '접수', '백로그', '신규', 'todo', 'backlog']
+    },
+    {
+      tone: releaseItemStatus.progress,
+      exact: ['처리중', '진행중', '개발중', '검토중', '리뷰중', '확인중', '검수중', 'inprogress', 'inreview', 'indevelopment', 'review', 'testing', 'qa'],
+      keywords: ['처리', '진행', '개발', '검토', '리뷰', '확인', '검수', 'progress', 'review', 'develop', 'test']
+    },
+    {
+      tone: releaseItemStatus.done,
+      exact: ['닫힘', '해결됨', '완료', '완료됨', '종료', 'done', 'closed', 'resolved', 'complete', 'completed'],
+      keywords: ['닫힘', '해결', '완료', '종료', 'done', 'close', 'resolve', 'complete']
+    }
+  ]
+
+  for (const group of groups) {
+    if (group.exact.includes(name)) return group.tone
+  }
+
+  let tone = releaseItemStatus.unknown
+  let found = -1
+  for (const group of groups) {
+    for (const keyword of group.keywords) {
+      const at = name.lastIndexOf(keyword)
+      // 같은 자리면 앞선(=더 급한) 그룹이 이미 잡았으므로 더 뒤에 있을 때만 바꾼다
+      if (at > found) {
+        found = at
+        tone = group.tone
+      }
+    }
+  }
+  return tone
+}
+
 // 'YYYY-MM-DD HH:MM:SS'(localtime)는 Safari/Chrome 파싱이 갈려 T를 끼워 넣는다
 export function formatSyncedAt(value: string | null): string | null {
   if (!value) return null
@@ -125,7 +193,7 @@ export function ReleaseNoteItemList({ items }: { items: ReleaseNoteItem[] }): Re
                   {item.summary}
                 </span>
                 {item.status && (
-                  <Badge color="bg-gray-100 text-gray-600" size="xs">
+                  <Badge color={releaseItemStatusTone(item.status)} size="xs">
                     {item.status}
                   </Badge>
                 )}
