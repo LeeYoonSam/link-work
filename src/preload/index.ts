@@ -191,11 +191,9 @@ const api = {
       ipcRenderer.invoke('export:saveMarkdown', content, defaultFileName)
   },
   releaseNote: {
-    list: (projectId?: number) => ipcRenderer.invoke('releaseNote:list', projectId),
+    // deployVersion을 주면 그 배포 버전과 이름이 같은 릴리스만 (프로젝트 상세용)
+    list: (deployVersion?: string) => ipcRenderer.invoke('releaseNote:list', deployVersion),
     get: (id: number) => ipcRenderer.invoke('releaseNote:get', id),
-    link: (projectId: number, jiraProjectKey: string, version: unknown) =>
-      ipcRenderer.invoke('releaseNote:link', projectId, jiraProjectKey, version),
-    unlink: (id: number) => ipcRenderer.invoke('releaseNote:unlink', id),
     sync: (id: number) => ipcRenderer.invoke('releaseNote:sync', id),
     syncAll: () => ipcRenderer.invoke('releaseNote:syncAll')
   },
@@ -204,7 +202,6 @@ const api = {
     saveCredentials: (input: unknown) => ipcRenderer.invoke('jira:saveCredentials', input),
     disconnect: () => ipcRenderer.invoke('jira:disconnect'),
     listProjects: () => ipcRenderer.invoke('jira:listProjects'),
-    listVersions: (projectKey: string) => ipcRenderer.invoke('jira:listVersions', projectKey),
     setDefaultProject: (projectKey: string | null) =>
       ipcRenderer.invoke('jira:setDefaultProject', projectKey),
     openIssue: (issueKey: string) => ipcRenderer.invoke('jira:openIssue', issueKey)

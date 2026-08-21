@@ -3,16 +3,7 @@ import { format } from 'date-fns'
 import { useReleaseNoteStore } from '../../stores/releaseNoteStore'
 import { buildReleaseNoteMarkdown } from '../../utils/releaseNoteExport'
 import type { ReleaseNoteItem, ReleaseNoteSummary } from '../../types'
-import {
-  Badge,
-  ChevronDownIcon,
-  EmptyState,
-  IconButton,
-  TrashIcon,
-  button,
-  taskTag,
-  typo
-} from '../ui'
+import { Badge, ChevronDownIcon, EmptyState, button, taskTag, typo } from '../ui'
 
 /** issue_type이 비어 있는 항목이 모이는 그룹 */
 const FALLBACK_TYPE = '기타'
@@ -149,15 +140,13 @@ export function ReleaseNoteItemList({ items }: { items: ReleaseNoteItem[] }): Re
 
 interface ReleaseNoteRowProps {
   note: ReleaseNoteSummary
-  /** 마크다운 제목과 파일명에 쓴다. 프로젝트 상세는 현재 프로젝트, 전체 목록은 note.project_name */
-  projectName: string
 }
 
 // 릴리스 한 건 — 프로젝트 상세 카드와 Releases 화면이 함께 쓴다.
 // 같은 규칙(0건 명시·실패 표시·상한 안내·계층 들여쓰기)이 두 곳에 복제되면
 // 한쪽만 고쳐져 어긋나므로 행 전체를 여기 한 곳에 둔다.
-export default function ReleaseNoteRow({ note, projectName }: ReleaseNoteRowProps): React.ReactNode {
-  const { details, syncingId, syncResults, syncErrors, fetchDetail, unlinkNote, syncNote } =
+export default function ReleaseNoteRow({ note }: ReleaseNoteRowProps): React.ReactNode {
+  const { details, syncingId, syncResults, syncErrors, fetchDetail, syncNote } =
     useReleaseNoteStore()
 
   const [expanded, setExpanded] = useState(false)
@@ -197,16 +186,6 @@ export default function ReleaseNoteRow({ note, projectName }: ReleaseNoteRowProp
     await syncNote(note.id)
   }
 
-  const handleUnlink = async (): Promise<void> => {
-    if (
-      !window.confirm(`"${note.version_name}" 릴리스 연결을 해제할까요? 가져온 항목도 함께 삭제됩니다.`)
-    ) {
-      return
-    }
-    setExpanded(false)
-    await unlinkNote(note.id)
-  }
-
   const handleExport = async (): Promise<void> => {
     setActionError('')
     setSavedPath(null)
@@ -217,11 +196,8 @@ export default function ReleaseNoteRow({ note, projectName }: ReleaseNoteRowProp
         setActionError('릴리스 노트를 불러오지 못했습니다')
         return
       }
-      const fileName = `${sanitizeFileName(projectName)}-${sanitizeFileName(note.version_name)}-릴리스노트.md`
-      const result = await window.api.export.saveMarkdown(
-        buildReleaseNoteMarkdown(full, projectName),
-        fileName
-      )
+      const fileName = `${sanitizeFileName(note.version_name)}-릴리스노트.md`
+      const result = await window.api.export.saveMarkdown(buildReleaseNoteMarkdown(full), fileName)
       if (result.canceled) return
       if (result.success) {
         setSavedPath(result.path ?? null)
@@ -291,9 +267,6 @@ export default function ReleaseNoteRow({ note, projectName }: ReleaseNoteRowProp
           >
             {exporting ? '내보내는 중…' : '마크다운 내보내기'}
           </button>
-          <IconButton tone="danger" title="연결 해제" onClick={() => void handleUnlink()}>
-            <TrashIcon size={14} />
-          </IconButton>
         </div>
       </div>
 

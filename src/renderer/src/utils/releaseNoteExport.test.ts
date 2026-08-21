@@ -5,7 +5,6 @@ import type { ReleaseNoteItem, ReleaseNoteWithItems } from '../types'
 function note(overrides: Partial<ReleaseNoteWithItems> = {}): ReleaseNoteWithItems {
   return {
     id: 1,
-    project_id: 1,
     jira_project_key: 'ICA',
     jira_version_id: '10042',
     version_name: 'v4.162.0',
@@ -71,13 +70,12 @@ describe('buildReleaseNoteMarkdown', () => {
           }),
           item({ id: 3, issue_key: 'ICA-8681', issue_type: 'Bug', summary: '필터 오작동 수정', sort_order: 2 })
         ]
-      }),
-      '검색 개편'
+      })
     )
 
     expect(markdown).toBe(
       [
-        '# 검색 개편 v4.162.0',
+        '# v4.162.0',
         '',
         '> 검색 개편과 사스테이닝 수정',
         '',
@@ -104,8 +102,7 @@ describe('buildReleaseNoteMarkdown', () => {
           item({ id: 3, issue_key: 'ICA-4', issue_type: 'Task', summary: 't2', sort_order: 3 }),
           item({ id: 4, issue_key: 'ICA-2', issue_type: 'Story', summary: 's1', sort_order: 1 })
         ]
-      }),
-      'P'
+      })
     )
     expect(groupHeadings(markdown)).toEqual(['## Task', '## Story', '## Bug'])
     // 같은 유형의 항목은 한 그룹으로 모인다
@@ -119,8 +116,7 @@ describe('buildReleaseNoteMarkdown', () => {
           item({ id: 1, issue_key: 'ICA-1', issue_type: null, summary: 'a', sort_order: 0 }),
           item({ id: 2, issue_key: 'ICA-2', issue_type: '   ', summary: 'b', sort_order: 1 })
         ]
-      }),
-      'P'
+      })
     )
     expect(groupHeadings(markdown)).toEqual(['## 기타'])
     expect(groupItems(markdown, '## 기타')).toEqual(['- [ICA-1] a', '- [ICA-2] b'])
@@ -148,8 +144,7 @@ describe('buildReleaseNoteMarkdown', () => {
             sort_order: 1
           })
         ]
-      }),
-      'P'
+      })
     )
     expect(groupHeadings(markdown)).toEqual(['## Story'])
     expect(groupItems(markdown, '## Story')).toEqual([
@@ -174,8 +169,7 @@ describe('buildReleaseNoteMarkdown', () => {
           }),
           item({ id: 2, issue_key: 'ICA-10', issue_type: 'Bug', summary: '버그', sort_order: 1 })
         ]
-      }),
-      'P'
+      })
     )
     expect(groupHeadings(markdown)).toEqual(['## Story', '## Bug'])
     expect(groupItems(markdown, '## Story')).toEqual(['- [ICA-9] 고아 스토리'])
@@ -188,17 +182,16 @@ describe('buildReleaseNoteMarkdown', () => {
         items: [
           item({ id: 1, issue_key: 'ICA-1', issue_type: 'Bug', summary: '자기 참조', parent_key: 'ICA-1' })
         ]
-      }),
-      'P'
+      })
     )
     expect(groupItems(markdown, '## Bug')).toEqual(['- [ICA-1] 자기 참조'])
   })
 
   it('항목이 없으면 안내 문구만 남는다', () => {
-    const markdown = buildReleaseNoteMarkdown(note({ items: [] }), '검색 개편')
+    const markdown = buildReleaseNoteMarkdown(note({ items: [] }))
     expect(markdown).toBe(
       [
-        '# 검색 개편 v4.162.0',
+        '# v4.162.0',
         '',
         '- **상태**: 미출시',
         '- **Jira**: ICA',
@@ -215,11 +208,10 @@ describe('buildReleaseNoteMarkdown', () => {
         description: null,
         release_date: null,
         items: [item({ issue_key: 'ICA-1', summary: 'a' })]
-      }),
-      'P'
+      })
     )
     expect(markdown.split('\n').slice(0, 4)).toEqual([
-      '# P v4.162.0',
+      '# v4.162.0',
       '',
       '- **상태**: 미출시',
       '- **Jira**: ICA'
@@ -229,7 +221,7 @@ describe('buildReleaseNoteMarkdown', () => {
   })
 
   it('빈 문자열 description은 인용구를 만들지 않는다', () => {
-    const markdown = buildReleaseNoteMarkdown(note({ description: '  \n ' }), 'P')
+    const markdown = buildReleaseNoteMarkdown(note({ description: '  \n ' }))
     expect(markdown).not.toContain('>')
   })
 
@@ -238,20 +230,19 @@ describe('buildReleaseNoteMarkdown', () => {
       note({
         description: '첫 줄\n둘째 줄',
         items: [item({ issue_key: 'ICA-1', summary: '두 줄\n제목' })]
-      }),
-      'P'
+      })
     )
     expect(markdown).toContain('> 첫 줄 둘째 줄')
     expect(markdown).toContain('- [ICA-1] 두 줄 제목')
   })
 
   it('released 플래그를 한국어 상태로 바꾼다', () => {
-    expect(buildReleaseNoteMarkdown(note({ released: 1 }), 'P')).toContain('- **상태**: 출시됨')
-    expect(buildReleaseNoteMarkdown(note({ released: 0 }), 'P')).toContain('- **상태**: 미출시')
+    expect(buildReleaseNoteMarkdown(note({ released: 1 }))).toContain('- **상태**: 출시됨')
+    expect(buildReleaseNoteMarkdown(note({ released: 0 }))).toContain('- **상태**: 미출시')
   })
 
   it('프로젝트명이 비면 버전 이름만 제목으로 쓴다', () => {
-    expect(buildReleaseNoteMarkdown(note({ version_name: 'v1.0.0' }), '  ').split('\n')[0]).toBe(
+    expect(buildReleaseNoteMarkdown(note({ version_name: 'v1.0.0' })).split('\n')[0]).toBe(
       '# v1.0.0'
     )
   })

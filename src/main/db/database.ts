@@ -36,6 +36,84 @@ export function closeDatabase(): void {
   }
 }
 
+/**
+ * 릴리스 노트에서 project_id를 걷어낸다.
+ *
+ * 릴리스 노트는 Jira 릴리스의 미러라 LinkWork 프로젝트와 이어 둘 이유가 없었는데, 프로젝트마다
+ * 한 행을 만들다 보니 **같은 배포 버전을 쓰는 프로젝트가 셋이면 같은 릴리스가 목록에 세 번** 떴다.
+ * 이제 릴리스 하나당 한 행이고, 프로젝트 화면은 배포 버전으로 찾아 읽기만 한다.
+ *
+ * 남길 행은 **가져온 이슈가 가장 많은 행**이다. 중복 행들은 같은 Jira 릴리스를 가리키므로 내용이
+ * 같아야 하지만, 이슈 조회 상한에 걸려 어떤 행은 메타만 있을 수 있다. 알맹이가 있는 쪽을 남긴다.
+ *
+ * initDatabase 안에 인라인으로 두지 않은 것은 테스트에서 직접 부르기 위해서다 —
+ * 사용자의 릴리스 노트와 이슈를 통째로 옮기는 코드라 조용히 깨지면 데이터가 사라진다.
+ */
+export function migrateReleaseNotesDropProject(db: Database.Database): void {
+  const columns = db.prepare('PRAGMA table_info(release_notes)').all() as { name: string }[]
+  if (!columns.some((c) => c.name === 'project_id')) return
+
+  // FK를 켠 채로 DROP하면 release_note_items가 CASCADE로 함께 지워진다. 반드시 꺼 두고,
+  // PRAGMA는 트랜잭션 안에서 무시되므로 트랜잭션 밖에서 끄고 켠다.
+  db.pragma('foreign_keys = OFF')
+  try {
+    db.exec(`
+      BEGIN;
+
+      -- 같은 릴리스를 가리키는 행 중 이슈가 가장 많은 것 하나만 남긴다
+      CREATE TEMP TABLE release_notes_keep AS
+        SELECT rn.id AS keep_id, rn.jira_project_key AS key, rn.jira_version_id AS version_id
+        FROM release_notes rn
+        WHERE rn.id = (
+          SELECT r2.id FROM release_notes r2
+          WHERE r2.jira_project_key = rn.jira_project_key
+            AND r2.jira_version_id = rn.jira_version_id
+          ORDER BY (SELECT COUNT(*) FROM release_note_items i WHERE i.release_note_id = r2.id) DESC,
+                   r2.last_synced_at IS NULL,
+                   r2.id
+          LIMIT 1
+        );
+
+      -- 남기지 않는 행의 이슈부터 지운다 (FK를 꺼 뒀으므로 CASCADE에 기댈 수 없다)
+      DELETE FROM release_note_items
+      WHERE release_note_id NOT IN (SELECT keep_id FROM release_notes_keep);
+
+      DELETE FROM release_notes
+      WHERE id NOT IN (SELECT keep_id FROM release_notes_keep);
+
+      DROP TABLE release_notes_keep;
+
+      CREATE TABLE release_notes_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        jira_project_key TEXT NOT NULL,
+        jira_version_id TEXT NOT NULL,
+        version_name TEXT NOT NULL,
+        description TEXT,
+        released INTEGER NOT NULL DEFAULT 0,
+        archived INTEGER NOT NULL DEFAULT 0,
+        release_date TEXT,
+        start_date TEXT,
+        last_synced_at TEXT,
+        last_sync_error TEXT,
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+        UNIQUE (jira_project_key, jira_version_id)
+      );
+      INSERT INTO release_notes_new
+        SELECT id, jira_project_key, jira_version_id, version_name, description,
+               released, archived, release_date, start_date, last_synced_at, last_sync_error,
+               created_at, updated_at
+        FROM release_notes;
+      DROP TABLE release_notes;
+      ALTER TABLE release_notes_new RENAME TO release_notes;
+      DROP INDEX IF EXISTS idx_release_notes_unlinked;
+      COMMIT;
+    `)
+  } finally {
+    db.pragma('foreign_keys = ON')
+  }
+}
+
 export function initDatabase(): void {
   const dbPath = join(app.getPath('userData'), 'linkwork.db')
   db = new Database(dbPath)
@@ -294,9 +372,11 @@ export function initDatabase(): void {
     -- 릴리스 노트: Jira 릴리스(Version) 미러링.
     -- 매칭 키는 이름이 아니라 불변 ID(jira_version_id)다 — Jira에서 버전 이름을 바꿔도
     -- 연결이 끊기지 않아야 하기 때문. version_name 이하는 표시용 캐시라 동기화마다 갱신된다.
+    -- 릴리스 노트는 Jira 릴리스의 순수 미러다. LinkWork 프로젝트와는 어떤 연결도 갖지 않는다 —
+    -- 프로젝트에 묶어 두면 같은 배포 버전을 쓰는 프로젝트가 여럿일 때 같은 릴리스가 그 수만큼
+    -- 목록에 중복으로 뜬다. 프로젝트 화면이 필요할 때 배포 버전으로 찾아 읽기만 한다.
     CREATE TABLE IF NOT EXISTS release_notes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL,
       jira_project_key TEXT NOT NULL,
       jira_version_id TEXT NOT NULL,
       version_name TEXT NOT NULL,
@@ -311,8 +391,7 @@ export function initDatabase(): void {
       last_sync_error TEXT,
       created_at TEXT DEFAULT (datetime('now', 'localtime')),
       updated_at TEXT DEFAULT (datetime('now', 'localtime')),
-      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-      UNIQUE (project_id, jira_version_id)
+      UNIQUE (jira_project_key, jira_version_id)
     );
 
     CREATE TABLE IF NOT EXISTS release_note_items (
@@ -399,6 +478,8 @@ export function initDatabase(): void {
   if (segmentColumns.length > 0 && !segmentColumns.map((c) => c.name).includes('text_corrected')) {
     db.exec("ALTER TABLE meeting_segments ADD COLUMN text_corrected INTEGER NOT NULL DEFAULT 0")
   }
+
+  migrateReleaseNotesDropProject(db)
 
   // Seed activity_log from existing data (one-time migration)
   const activityCount = (db.prepare('SELECT COUNT(*) as count FROM activity_log').get() as { count: number }).count

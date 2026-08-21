@@ -629,7 +629,6 @@ export interface ExportAPI {
 
 export interface ReleaseNote {
   id: number
-  project_id: number
   jira_project_key: string
   // 매칭 키는 이름이 아니라 불변 ID다 — Jira에서 버전 이름이 바뀌어도 연결이 끊기지 않는다
   jira_version_id: string
@@ -658,11 +657,9 @@ export interface ReleaseNoteItem {
   sort_order: number
 }
 
-/** 목록용 — 항목 수와 소속 프로젝트명을 덧붙인 형태 */
+/** 목록용 — 가져온 이슈 수를 덧붙인 형태 */
 export interface ReleaseNoteSummary extends ReleaseNote {
   item_count: number
-  /** 전체 목록(Releases 화면)에서 프로젝트별로 묶는 데 쓴다 */
-  project_name: string
 }
 
 /** 상세용 */
@@ -687,27 +684,16 @@ export interface JiraConnectionStatus {
  * 특히 unmatched를 감추면 "동기화했는데 왜 없지" 상태가 된다.
  */
 export interface SyncAllResult {
-  synced: Array<{ projectId: number; projectName: string; version: string; itemCount: number }>
-  /** deploy_version과 같은 이름의 Jira 릴리스를 찾지 못한 프로젝트 */
-  unmatched: Array<{ projectId: number; projectName: string; version: string }>
-  failed: Array<{ projectId: number; projectName: string; version: string; error: string }>
-  /** deploy_version이 비어 있어 대상에서 빠진 프로젝트 수 */
-  skipped: number
+  /** 이슈까지 가져온 릴리스 */
+  synced: Array<{ noteId: number; version: string; itemCount: number }>
+  /** 릴리스는 가져왔지만 이슈 조회는 상한에 걸려 미룬 것 — 행의 동기화 버튼으로 개별로 받는다 */
+  metaOnly: Array<{ noteId: number; version: string }>
+  failed: Array<{ version: string; error: string }>
 }
 
 export interface JiraProjectSummary {
   key: string
   name: string
-}
-
-export interface JiraVersionSummary {
-  id: string
-  name: string
-  description: string | null
-  released: boolean
-  archived: boolean
-  releaseDate: string | null
-  startDate: string | null
 }
 
 export interface JiraCredentialsInput {
@@ -718,19 +704,14 @@ export interface JiraCredentialsInput {
 }
 
 export interface ReleaseNoteAPI {
-  list: (projectId?: number) => Promise<ReleaseNoteSummary[]>
+  /** deployVersion을 주면 그 배포 버전과 이름이 같은 릴리스만 (프로젝트 상세용) */
+  list: (deployVersion?: string) => Promise<ReleaseNoteSummary[]>
   get: (id: number) => Promise<ReleaseNoteWithItems | null>
-  link: (
-    projectId: number,
-    jiraProjectKey: string,
-    version: JiraVersionSummary
-  ) => Promise<{ success: boolean; id?: number; error?: string }>
-  unlink: (id: number) => Promise<{ success: boolean }>
   // 네트워크가 얽혀 있어 throw 대신 결과 객체로 감싼다 — 오류 문구를 그대로 표시해야 한다
   sync: (
     id: number
   ) => Promise<{ success: boolean; itemCount?: number; truncated?: boolean; error?: string }>
-  /** 모든 프로젝트의 deploy_version으로 Jira 릴리스를 찾아 연결·동기화한다. 프로젝트 수만큼 느리다 */
+  /** 기본 Jira 프로젝트의 릴리스 전체를 가져와 동기화한다. 릴리스 수만큼 느리다 */
   syncAll: () => Promise<{ success: boolean; result?: SyncAllResult; error?: string }>
 }
 
@@ -745,9 +726,6 @@ export interface JiraAPI {
     projects?: JiraProjectSummary[]
     error?: string
   }>
-  listVersions: (
-    projectKey: string
-  ) => Promise<{ success: boolean; versions?: JiraVersionSummary[]; error?: string }>
   /** 전체 동기화가 릴리스를 찾을 기준 프로젝트. null이면 해제 */
   setDefaultProject: (projectKey: string | null) => Promise<{ success: boolean; error?: string }>
   openIssue: (issueKey: string) => Promise<{ success: boolean }>

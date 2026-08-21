@@ -5,35 +5,27 @@ import JiraSettingsModal from './JiraSettingsModal'
 import JiraTokenWarning from './JiraTokenWarning'
 import ReleaseNoteRow from './ReleaseNoteRow'
 import SyncAllSummary from './SyncAllSummary'
-import { Badge, Card, EmptyState, SectionTitle, button } from '../ui'
+import { Badge, Card, EmptyState, SearchIcon, XIcon, button } from '../ui'
 
-interface ProjectGroup {
-  projectId: number
-  projectName: string
-  notes: ReleaseNoteSummary[]
+// 검색 — 버전 이름과 Jira 프로젝트 키를 한 상자에서 찾는다.
+// 공백으로 나눈 토큰을 모두 만족(AND)해야 통과한다: "ICA 4.16"처럼 좁혀 가는 게 자연스럽다.
+// 이슈 본문은 대상이 아니다 — 항목은 펼칠 때만 받아오므로 목록만으로는 검색할 수 없다.
+export function filterReleaseNotes(
+  notes: ReleaseNoteSummary[],
+  query: string
+): ReleaseNoteSummary[] {
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (tokens.length === 0) return notes
+  return notes.filter((note) => {
+    const haystack = `${note.version_name} ${note.jira_project_key}`.toLowerCase()
+    return tokens.every((token) => haystack.includes(token))
+  })
 }
 
-// 프로젝트별로 묶되 순서는 main이 준 목록 순서를 그대로 따른다.
-// 이름이 아니라 project_id로 묶어야 동명 프로젝트가 한 덩어리로 합쳐지지 않는다.
-export function groupNotesByProject(notes: ReleaseNoteSummary[]): ProjectGroup[] {
-  const groups: ProjectGroup[] = []
-  const byProject = new Map<number, ProjectGroup>()
-  for (const note of notes) {
-    let group = byProject.get(note.project_id)
-    if (!group) {
-      // project_name은 main이 조인해 내려준다. 비어 있어도 'undefined'가 제목에 뜨지는 않게 둔다.
-      group = { projectId: note.project_id, projectName: note.project_name || '이름 없는 프로젝트', notes: [] }
-      byProject.set(note.project_id, group)
-      groups.push(group)
-    }
-    group.notes.push(note)
-  }
-  return groups
-}
-
-// 사이드바 Releases — 전체 프로젝트의 릴리스 노트를 한 화면에 모은다.
-// 연결이 0건이어도 전체 동기화 버튼이 보여야 한다. 프로젝트를 하나씩 연결하는 건 현실적이지 않고,
-// 버튼이 행 안에만 있으면 "연결이 없어서 버튼도 없는" 막다른 상태가 된다.
+// 사이드바 Releases — 기본 Jira 프로젝트의 릴리스를 버전 내림차순으로 늘어놓는다.
+// LinkWork 프로젝트로 묶지 않는다: 릴리스 노트는 Jira 릴리스의 미러라 릴리스 하나당 한 줄이면
+// 충분하고, 프로젝트로 묶으면 같은 배포 버전을 쓰는 프로젝트 수만큼 같은 버전이 중복으로 뜬다.
+// 릴리스가 0건이어도 전체 동기화 버튼이 보여야 한다 — 버튼이 행 안에만 있으면 막다른 상태가 된다.
 export default function ReleasesView(): React.ReactNode {
   const {
     allNotes,
@@ -48,6 +40,7 @@ export default function ReleasesView(): React.ReactNode {
     clearSyncAllResult
   } = useReleaseNoteStore()
   const [showSettings, setShowSettings] = useState(false)
+  const [query, setQuery] = useState('')
 
   useEffect(() => {
     void fetchJiraStatus()
@@ -64,7 +57,8 @@ export default function ReleasesView(): React.ReactNode {
   const connected = jiraStatus?.connected === true
   const defaultProjectKey = jiraStatus?.defaultProjectKey ?? null
   const canSyncAll = connected && defaultProjectKey !== null
-  const groups = groupNotesByProject(allNotes)
+  const searching = query.trim().length > 0
+  const visibleNotes = filterReleaseNotes(allNotes, query)
 
   return (
     <div>
@@ -101,7 +95,7 @@ export default function ReleasesView(): React.ReactNode {
                 ? 'Jira 연동 설정을 먼저 완료하세요'
                 : !defaultProjectKey
                   ? '기본 Jira 프로젝트를 먼저 선택하세요'
-                  : '모든 프로젝트의 배포 버전으로 Jira 릴리스를 찾아 연결·동기화합니다'
+                  : '기본 Jira 프로젝트의 릴리스를 모두 가져와 동기화합니다'
             }
             className={`px-4 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed ${button.primary}`}
           >
@@ -116,8 +110,8 @@ export default function ReleasesView(): React.ReactNode {
       {syncAllRunning && (
         <div className="mb-4 px-3 py-3 rounded-lg border border-blue-200 bg-blue-50">
           <p className="text-xs text-blue-800">
-            프로젝트마다 Jira에서 릴리스를 찾아 이슈를 가져오는 중입니다. 프로젝트 수에 따라 수십
-            초가 걸릴 수 있습니다.
+            Jira에서 릴리스와 이슈를 가져오는 중입니다. 릴리스 수에 따라 수십 초가 걸릴 수
+            있습니다.
           </p>
           <div className="mt-2 h-1.5 w-full rounded-full bg-blue-100 overflow-hidden">
             <div className="h-full w-1/3 rounded-full bg-blue-500 animate-pulse" />
@@ -137,8 +131,8 @@ export default function ReleasesView(): React.ReactNode {
       {connected && !defaultProjectKey && (
         <div className="mb-4 px-3 py-3 rounded-lg border border-amber-200 bg-amber-50 flex items-center justify-between gap-3">
           <p className="text-xs text-amber-800">
-            기본 Jira 프로젝트를 선택하면 전체 동기화를 쓸 수 있습니다. 각 프로젝트의 배포 버전과
-            이름이 같은 릴리스를 그 프로젝트에서 찾습니다.
+            기본 Jira 프로젝트를 선택하면 전체 동기화를 쓸 수 있습니다. 그 프로젝트의 릴리스를
+            모두 가져옵니다.
           </p>
           <button
             onClick={() => setShowSettings(true)}
@@ -161,12 +155,11 @@ export default function ReleasesView(): React.ReactNode {
         </EmptyState>
       ) : allLoading && allNotes.length === 0 ? (
         <EmptyState compact>불러오는 중입니다…</EmptyState>
-      ) : groups.length === 0 ? (
+      ) : allNotes.length === 0 ? (
         <EmptyState>
-          <p>아직 연결된 릴리스가 없습니다.</p>
+          <p>아직 가져온 릴리스가 없습니다.</p>
           <p className="mt-1 text-xs">
-            전체 동기화를 누르면 각 프로젝트의 배포 버전과 이름이 같은 Jira 릴리스를 자동으로 찾아
-            연결하고 동기화합니다.
+            전체 동기화를 누르면 기본 Jira 프로젝트의 릴리스를 모두 가져옵니다.
           </p>
           <button
             onClick={() => void syncAll()}
@@ -178,19 +171,57 @@ export default function ReleasesView(): React.ReactNode {
         </EmptyState>
       ) : (
         <div className="space-y-4">
-          {groups.map((group) => (
-            <Card key={group.projectId} padding="none">
-              <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
-                <SectionTitle>{group.projectName}</SectionTitle>
-                <span className="text-xs text-gray-400">({group.notes.length})</span>
+          {/* 릴리스가 쌓이면 프로젝트 헤딩을 눈으로 훑기 어렵다 — 버전 번호로 바로 찾을 수 있어야 한다 */}
+          <div className="flex items-center gap-3">
+            <div className="relative flex-1">
+              <SearchIcon
+                size={15}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+              />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="버전 검색 (예: 4.16)..."
+                aria-label="릴리스 검색"
+                className="w-full pl-9 pr-8 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-colors"
+              />
+              {searching && (
+                <button
+                  type="button"
+                  onClick={() => setQuery('')}
+                  title="검색어 지우기"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  <XIcon size={14} />
+                </button>
+              )}
+            </div>
+            {/* 걸러낸 뒤에도 전체가 몇 건인지 함께 보여야 "다 사라졌다"로 읽히지 않는다 */}
+            <span className="shrink-0 text-xs text-gray-400">
+              {searching
+                ? `${visibleNotes.length} / ${allNotes.length}건`
+                : `릴리스 ${allNotes.length}건`}
+            </span>
+          </div>
+
+          {visibleNotes.length === 0 ? (
+            <EmptyState>
+              <div className="flex justify-center mb-3 text-gray-300">
+                <SearchIcon size={28} />
               </div>
+              <div className="text-sm">검색 결과가 없습니다</div>
+              <p className="mt-1 text-xs">버전 이름과 Jira 프로젝트 키로 찾습니다.</p>
+            </EmptyState>
+          ) : (
+            <Card padding="none">
               <div className="px-3 py-3 space-y-2">
-                {group.notes.map((note) => (
-                  <ReleaseNoteRow key={note.id} note={note} projectName={group.projectName} />
+                {visibleNotes.map((note) => (
+                  <ReleaseNoteRow key={note.id} note={note} />
                 ))}
               </div>
             </Card>
-          ))}
+          )}
         </div>
       )}
 

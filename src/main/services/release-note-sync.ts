@@ -8,7 +8,7 @@ import {
   listJiraVersions
 } from './jira'
 import type { JiraIssueSummary, JiraVersionSummary } from './jira'
-import { isSameVersion } from '../utils/version-match'
+import { compareVersionDesc, matchesDeployVersion } from '../utils/version-match'
 
 /**
  * 릴리스 노트 = Jira 릴리스(Version)의 순수 미러다. 앱에서 문구를 편집하지 않으므로
@@ -19,7 +19,6 @@ import { isSameVersion } from '../utils/version-match'
 // (project.ipc.ts의 ProjectRow와 동일한 방식). renderer 쪽 타입은 types/index.ts에 따로 있다.
 export interface ReleaseNoteRow {
   id: number
-  project_id: number
   jira_project_key: string
   jira_version_id: string
   version_name: string
@@ -47,48 +46,57 @@ export interface ReleaseNoteItemRow {
 }
 
 export interface ReleaseNoteSummary extends ReleaseNoteRow {
-  project_name: string
   item_count: number
 }
 
 export interface ReleaseNoteWithItems extends ReleaseNoteRow {
-  project_name: string
   items: ReleaseNoteItemRow[]
 }
 
-export function listReleaseNotes(projectId?: number): ReleaseNoteSummary[] {
+/**
+ * 목록 정렬 — **릴리스일이 아니라 버전 번호 내림차순**이다.
+ *
+ * 릴리스일로 세우면 두 가지가 어긋난다. 날짜가 아직 안 잡힌 버전은 비교할 값이 없어 맨 끝이나
+ * 맨 앞으로 튕기고(실제로 릴리스일이 빈 4.46.0이 목록 최상단에 앉았다), Jira에서 릴리스일을
+ * 나중에 손보면 같은 목록이 다시 흔들린다. 버전 번호는 그런 흔들림이 없다.
+ */
+export function sortReleaseNotes<T extends ReleaseNoteRow>(notes: T[]): T[] {
+  return [...notes].sort((a, b) => {
+    const byVersion = compareVersionDesc(a.version_name, b.version_name)
+    return byVersion !== 0 ? byVersion : b.id - a.id
+  })
+}
+
+/**
+ * @param deployVersion 주면 이 배포 버전과 이름이 같은 릴리스만 돌려준다(프로젝트 상세 화면용).
+ *   `2.8.1 , 4.155.0`처럼 한 칸에 여러 버전이 적힌 경우도 각각 맞춰 본다.
+ *   릴리스 노트는 프로젝트와 저장된 연결을 갖지 않으므로, 이건 **조회 시점의 이름 대조**일 뿐이다.
+ */
+export function listReleaseNotes(deployVersion?: string): ReleaseNoteSummary[] {
   const db = getDatabase()
-  const where = typeof projectId === 'number' ? 'WHERE rn.project_id = ?' : ''
-  // project_id는 NOT NULL + FK CASCADE라 고아 행이 생길 수 없어 INNER JOIN이면 충분하다.
-  //
-  // 정렬은 프로젝트를 먼저 묶는다 — 전체 목록 화면이 프로젝트별로 그룹지어 보여주기 때문.
-  // (project_id를 두 번째 키로 둔 것은 이름이 같은 프로젝트가 둘일 때도 블록이 쪼개지지 않게 하려는 것)
-  // 프로젝트별 조회에서는 앞의 두 키가 상수라 릴리스일 내림차순이라는 기존 순서가 그대로 유지된다.
-  // 릴리스일이 없는 버전(=아직 출시 예정)은 먼 미래 값으로 대체해 위로 올린다.
-  const sql = `
-    SELECT rn.*, p.name AS project_name, COUNT(i.id) AS item_count
-    FROM release_notes rn
-    JOIN projects p ON p.id = rn.project_id
-    LEFT JOIN release_note_items i ON i.release_note_id = rn.id
-    ${where}
-    GROUP BY rn.id
-    ORDER BY p.name, rn.project_id, COALESCE(rn.release_date, '9999-12-31') DESC, rn.id DESC
-  `
-  const stmt = db.prepare(sql)
-  return (typeof projectId === 'number' ? stmt.all(projectId) : stmt.all()) as ReleaseNoteSummary[]
+  // 정렬은 SQL이 아니라 sortReleaseNotes가 한다 — 버전 번호 비교는 마디를 숫자로 갈라
+  // 앞에서부터 재야 해서(4.46.0 < 4.166.0) SQL 문자열 정렬로는 표현할 수 없다.
+  const rows = db
+    .prepare(
+      `SELECT rn.*, COUNT(i.id) AS item_count
+       FROM release_notes rn
+       LEFT JOIN release_note_items i ON i.release_note_id = rn.id
+       GROUP BY rn.id`
+    )
+    .all() as ReleaseNoteSummary[]
+
+  const filtered =
+    deployVersion === undefined
+      ? rows
+      : rows.filter((note) => matchesDeployVersion(deployVersion, note.version_name))
+  return sortReleaseNotes(filtered)
 }
 
 export function getReleaseNote(id: number): ReleaseNoteWithItems | null {
   const db = getDatabase()
-  // 마크다운 내보내기 제목에 프로젝트명이 필요해 함께 돌려준다.
-  const note = db
-    .prepare(
-      `SELECT rn.*, p.name AS project_name
-       FROM release_notes rn
-       JOIN projects p ON p.id = rn.project_id
-       WHERE rn.id = ?`
-    )
-    .get(id) as (ReleaseNoteRow & { project_name: string }) | undefined
+  const note = db.prepare('SELECT * FROM release_notes WHERE id = ?').get(id) as
+    | ReleaseNoteRow
+    | undefined
   if (!note) return null
   const items = db
     .prepare('SELECT * FROM release_note_items WHERE release_note_id = ? ORDER BY sort_order, id')
@@ -96,9 +104,15 @@ export function getReleaseNote(id: number): ReleaseNoteWithItems | null {
   return { ...note, items }
 }
 
+/** 이 Jira 릴리스가 이미 저장돼 있는지 */
+function findReleaseNote(jiraProjectKey: string, versionId: string): { id: number } | undefined {
+  return getDatabase()
+    .prepare('SELECT id FROM release_notes WHERE jira_project_key = ? AND jira_version_id = ?')
+    .get(jiraProjectKey, versionId) as { id: number } | undefined
+}
+
 /** @param options.quiet 일괄 동기화용 — 활동 로그를 호출자가 전체 1건으로 묶어 남긴다 */
 export function linkReleaseNote(
-  projectId: number,
   jiraProjectKey: string,
   version: JiraVersionSummary,
   options: { quiet?: boolean } = {}
@@ -107,22 +121,18 @@ export function linkReleaseNote(
 
   // UNIQUE 제약이 막아주긴 하지만, 그대로 두면 renderer에 SQLITE_CONSTRAINT 원문이 노출된다.
   // 사용자가 이해할 수 있는 문구로 바꾸기 위해 먼저 확인한다.
-  const existing = db
-    .prepare('SELECT id FROM release_notes WHERE project_id = ? AND jira_version_id = ?')
-    .get(projectId, version.id) as { id: number } | undefined
-  if (existing) {
-    throw new Error('이미 이 프로젝트에 연결된 Jira 릴리스입니다.')
+  if (findReleaseNote(jiraProjectKey, version.id)) {
+    throw new Error('이미 목록에 있는 Jira 릴리스입니다.')
   }
 
   const result = db
     .prepare(
       `INSERT INTO release_notes
-         (project_id, jira_project_key, jira_version_id, version_name, description,
+         (jira_project_key, jira_version_id, version_name, description,
           released, archived, release_date, start_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
-      projectId,
       jiraProjectKey,
       version.id,
       version.name,
@@ -138,15 +148,6 @@ export function linkReleaseNote(
     logActivity('release_note', 'create', id, version.name, jiraProjectKey)
   }
   return { id }
-}
-
-export function unlinkReleaseNote(id: number): void {
-  const db = getDatabase()
-  const row = db.prepare('SELECT version_name FROM release_notes WHERE id = ?').get(id) as
-    | { version_name: string }
-    | undefined
-  db.prepare('DELETE FROM release_notes WHERE id = ?').run(id)
-  logActivity('release_note', 'delete', id, row?.version_name)
 }
 
 /**
@@ -251,105 +252,104 @@ export async function syncReleaseNote(
 }
 
 export interface SyncAllResult {
-  synced: Array<{ projectId: number; projectName: string; version: string; itemCount: number }>
-  unmatched: Array<{ projectId: number; projectName: string; version: string }>
-  failed: Array<{ projectId: number; projectName: string; version: string; error: string }>
-  /** deploy_version이 비어 있어 대상에서 빠진 프로젝트 수 */
-  skipped: number
+  /** 이슈까지 가져온 릴리스 */
+  synced: Array<{ noteId: number; version: string; itemCount: number }>
+  /** 릴리스는 가져왔지만 이슈 조회는 상한에 걸려 미룬 것. 행의 동기화 버튼으로 개별로 받을 수 있다 */
+  metaOnly: Array<{ noteId: number; version: string }>
+  failed: Array<{ version: string; error: string }>
 }
 
 /**
- * deploy_version과 이름이 같은 Jira 릴리스를 찾아 연결하고 한 번에 동기화한다.
- * 프로젝트를 하나씩 손으로 연결하지 않아도 되게 하는 것이 목적이다.
+ * 한 번의 전체 동기화에서 이슈까지 받아올 최대 릴리스 수.
+ *
+ * 릴리스 하나당 Jira 호출이 2회(버전 메타 + 이슈 검색)라 전부 받으면 릴리스 수에 비례해
+ * 몇 분씩 걸린다. 버전이 높은 것부터 이만큼만 받고, 나머지는 목록에
+ * "아직 동기화하지 않았습니다"로 남아 행의 동기화 버튼으로 언제든 개별로 받을 수 있다.
+ */
+export const MAX_ISSUE_FETCH_PER_SYNC = 40
+
+/**
+ * 기본 Jira 프로젝트의 릴리스 전체를 가져와 릴리스 노트로 만들고 동기화한다.
+ *
+ * **LinkWork 프로젝트는 전혀 보지 않는다.** 예전에는 프로젝트의 배포 버전에서 출발해 릴리스를
+ * 찾고 프로젝트마다 한 행을 만들었는데, 그러면 (1) 대응 프로젝트가 없는 릴리스는 Jira에 멀쩡히
+ * 있어도 목록에 나타나지 않고, (2) 같은 배포 버전을 쓰는 프로젝트가 셋이면 같은 릴리스가 목록에
+ * 세 번 떴다. 릴리스 노트는 Jira의 미러이므로 릴리스 하나당 한 행이면 충분하다.
  *
  * 동기화 자체는 반드시 syncReleaseNote를 거친다 — 거기에 "조회 완료 후 트랜잭션 쓰기"
  * 안전장치가 들어 있어서, 일괄 처리용 경로를 따로 만들면 그 보장이 조용히 사라진다.
  */
-export async function syncAllByDeployVersion(): Promise<SyncAllResult> {
-  const db = getDatabase()
-
+export async function syncAllReleases(): Promise<SyncAllResult> {
   const defaultKey = getDefaultJiraProjectKey()
   if (!defaultKey) {
     throw new Error('Jira 기본 프로젝트가 설정되지 않았습니다. 연동 설정에서 선택해 주세요.')
   }
 
-  // 버전 목록은 프로젝트 수와 무관하게 한 번만 받는다 — 프로젝트마다 부르면 같은 응답을 20번 받는다.
-  const versions = await listJiraVersions(defaultKey)
+  // 버전 목록은 한 번만 받는다. Jira는 릴리스일 순으로 주지만 여기서 버전 내림차순으로 다시
+  // 세운다 — 아래 이슈 조회 상한이 "가장 높은 버전부터"에 걸려야 목록 위쪽이 비지 않는다.
+  // (릴리스일이 아직 안 잡힌 버전은 Jira 순서에서 어디에 오는지 보장되지 않는다.)
+  const versions = [...(await listJiraVersions(defaultKey))].sort((a, b) =>
+    compareVersionDesc(a.name, b.name)
+  )
 
-  const projects = db
-    .prepare('SELECT id, name, deploy_version FROM projects ORDER BY name')
-    .all() as { id: number; name: string; deploy_version: string | null }[]
-
-  const result: SyncAllResult = { synced: [], unmatched: [], failed: [], skipped: 0 }
+  const result: SyncAllResult = { synced: [], metaOnly: [], failed: [] }
   let linked = 0
+  let fetched = 0
 
-  for (const project of projects) {
-    const deployVersion = project.deploy_version?.trim() ?? ''
-    if (!deployVersion) {
-      result.skipped++
-      continue
-    }
+  for (const version of versions) {
+    const existing = findReleaseNote(defaultKey, version.id)
 
-    const match = versions.find((v) => isSameVersion(deployVersion, v.name))
-    if (!match) {
-      result.unmatched.push({
-        projectId: project.id,
-        projectName: project.name,
-        version: deployVersion
-      })
-      continue
-    }
+    // Jira에서 보관(archive)한 릴리스는 의도적으로 치운 것이라 새로 끌어오지 않는다.
+    // 이미 목록에 있는 것은 사용자가 보고 있을 수 있으므로 그대로 두고 갱신한다.
+    if (!existing && version.archived) continue
 
     try {
-      // 이미 연결돼 있으면 그대로 쓴다. 연결은 이름이 아니라 버전 ID로 저장되므로
-      // 이후 Jira에서 버전 이름이 바뀌어도 추적이 끊기지 않는다 — 이름 매칭은 최초 1회뿐이다.
-      const existing = db
-        .prepare('SELECT id FROM release_notes WHERE project_id = ? AND jira_version_id = ?')
-        .get(project.id, match.id) as { id: number } | undefined
       let noteId: number
       if (existing) {
         noteId = existing.id
       } else {
-        noteId = linkReleaseNote(project.id, defaultKey, match, { quiet: true }).id
+        noteId = linkReleaseNote(defaultKey, version, { quiet: true }).id
         linked++
       }
 
+      // 이미 받아 뒀는지는 상한 계산에 넣지 않는다 — 넣으면 받아 둔 릴리스가 쌓일수록
+      // 전체 동기화가 계속 느려지고, 몇 건을 받을지도 실행할 때마다 달라진다.
+      if (fetched >= MAX_ISSUE_FETCH_PER_SYNC) {
+        result.metaOnly.push({ noteId, version: version.name })
+        continue
+      }
+      fetched++
+
       const { itemCount } = await syncReleaseNote(noteId, { quiet: true })
-      result.synced.push({
-        projectId: project.id,
-        projectName: project.name,
-        version: deployVersion,
-        itemCount
-      })
+      result.synced.push({ noteId, version: version.name, itemCount })
     } catch (err) {
-      // 한 프로젝트의 실패가 나머지를 막지 않는다. 20개 중 1개가 삭제된 버전이라고 해서
-      // 나머지 19개를 못 받아오면 일괄 동기화의 의미가 없다.
+      // 한 릴리스의 실패가 나머지를 막지 않는다. 200개 중 1개가 권한 없는 버전이라고 해서
+      // 나머지를 못 받아오면 일괄 동기화의 의미가 없다.
       result.failed.push({
-        projectId: project.id,
-        projectName: project.name,
-        version: deployVersion,
+        version: version.name,
         error: err instanceof Error ? err.message : String(err)
       })
     }
   }
 
-  // 프로젝트별로 남기면 활동 로그가 한 번에 20건씩 묻히므로 전체 1건으로 요약한다.
+  // 릴리스별로 남기면 활동 로그가 한 번에 수십 건씩 묻히므로 전체 1건으로 요약한다.
   logActivity(
     'release_note',
     'update',
     undefined,
     `Jira 일괄 동기화 (${defaultKey})`,
-    `동기화 ${result.synced.length}건 · 신규 연결 ${linked}건 · 미매칭 ${result.unmatched.length}건 · 실패 ${result.failed.length}건 · 버전 없음 ${result.skipped}건`
+    `동기화 ${result.synced.length}건 · 신규 ${linked}건 · 이슈 보류 ${result.metaOnly.length}건 · 실패 ${result.failed.length}건`
   )
 
-  // 실패해도 last_sync_error가 기록되고 연결 자체는 만들어졌을 수 있어 화면을 갱신해야 한다.
-  if (result.synced.length > 0 || result.failed.length > 0) {
+  // 실패해도 last_sync_error가 기록되고 릴리스 자체는 만들어졌을 수 있어 화면을 갱신해야 한다.
+  if (result.synced.length > 0 || result.metaOnly.length > 0 || result.failed.length > 0) {
     notifyDataChanged()
   }
 
   return result
 }
 
+// 동기화가 끝났음을 열려 있는 창에 알린다 — AI 대화가 돌린 동기화도 화면에 반영돼야 한다.
 function notifyDataChanged(): void {
   // 이미 커밋이 끝난 뒤라 여기서 throw하면 성공한 동기화가 실패로 보고된다.
   try {

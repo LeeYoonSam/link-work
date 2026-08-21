@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import type {
   JiraConnectionStatus,
-  JiraVersionSummary,
   ReleaseNoteSummary,
   ReleaseNoteWithItems,
   SyncAllResult
@@ -19,7 +18,7 @@ interface ActionResult {
 }
 
 interface ReleaseNoteStore {
-  /** 프로젝트 상세 카드용 — 한 프로젝트의 릴리스만 */
+  /** 프로젝트 상세 카드용 — 그 프로젝트의 배포 버전과 이름이 같은 릴리스만 */
   notes: ReleaseNoteSummary[]
   /** Releases 화면용 — 전체 릴리스. 두 화면이 동시에 살아 있어 서로 덮어쓰면 안 된다 */
   allNotes: ReleaseNoteSummary[]
@@ -33,27 +32,21 @@ interface ReleaseNoteStore {
   syncResults: Record<number, SyncOutcome>
   /** 이번 세션에서 난 동기화 실패. last_sync_error가 없어도 사용자에게 보여야 한다 */
   syncErrors: Record<number, string>
-  /** 마지막으로 조회한 프로젝트 — 변경 후 재조회할 대상 */
-  projectId: number | null
+  /** 마지막으로 조회한 배포 버전 — 변경 후 재조회할 대상 */
+  deployVersion: string | null
   /** 전체 목록을 한 번이라도 읽었는지. 안 읽은 목록까지 갱신할 이유는 없다 */
   allLoaded: boolean
-  /** 전체 동기화 진행 중. 프로젝트를 순차 처리해 수십 초 걸릴 수 있다 */
+  /** 전체 동기화 진행 중. 릴리스를 순차 처리해 수십 초 걸릴 수 있다 */
   syncAllRunning: boolean
   /** 마지막 전체 동기화 결과. 다음 전체 동기화 전까지 화면에 남긴다 */
   syncAllResult: SyncAllResult | null
   syncAllError: string
 
   fetchJiraStatus: () => Promise<void>
-  fetchReleaseNotes: (projectId: number) => Promise<void>
+  fetchReleaseNotes: (deployVersion: string) => Promise<void>
   fetchAllReleaseNotes: () => Promise<void>
   /** 내보내기처럼 즉시 항목이 필요한 호출부를 위해 받아온 상세를 그대로 돌려준다 */
   fetchDetail: (id: number) => Promise<ReleaseNoteWithItems | null>
-  linkNote: (
-    projectId: number,
-    jiraProjectKey: string,
-    version: JiraVersionSummary
-  ) => Promise<ActionResult>
-  unlinkNote: (id: number) => Promise<void>
   syncNote: (id: number) => Promise<ActionResult>
   syncAll: () => Promise<void>
   clearSyncAllResult: () => void
@@ -69,7 +62,7 @@ export const useReleaseNoteStore = create<ReleaseNoteStore>((set, get) => ({
   syncingId: null,
   syncResults: {},
   syncErrors: {},
-  projectId: null,
+  deployVersion: null,
   allLoaded: false,
   syncAllRunning: false,
   syncAllResult: null,
@@ -80,9 +73,9 @@ export const useReleaseNoteStore = create<ReleaseNoteStore>((set, get) => ({
     set({ jiraStatus })
   },
 
-  fetchReleaseNotes: async (projectId) => {
-    set({ loading: true, projectId })
-    const notes = await window.api.releaseNote.list(projectId)
+  fetchReleaseNotes: async (deployVersion) => {
+    set({ loading: true, deployVersion })
+    const notes = await window.api.releaseNote.list(deployVersion)
     set({ notes, loading: false })
   },
 
@@ -97,28 +90,6 @@ export const useReleaseNoteStore = create<ReleaseNoteStore>((set, get) => ({
     if (!detail) return null
     set((state) => ({ details: { ...state.details, [id]: detail } }))
     return detail
-  },
-
-  linkNote: async (projectId, jiraProjectKey, version) => {
-    const result = await window.api.releaseNote.link(projectId, jiraProjectKey, version)
-    if (!result.success) return { success: false, error: result.error }
-    await refreshLists(get)
-    // 연결 직후에는 항목이 비어 있다. 곧바로 한 번 당겨와야 "연결했는데 아무것도 없다"로 보이지 않는다
-    if (result.id !== undefined) await get().syncNote(result.id)
-    return { success: true }
-  },
-
-  unlinkNote: async (id) => {
-    await window.api.releaseNote.unlink(id)
-    const { details, syncResults, syncErrors } = get()
-    const nextDetails = { ...details }
-    const nextResults = { ...syncResults }
-    const nextErrors = { ...syncErrors }
-    delete nextDetails[id]
-    delete nextResults[id]
-    delete nextErrors[id]
-    set({ details: nextDetails, syncResults: nextResults, syncErrors: nextErrors })
-    await refreshLists(get)
   },
 
   syncNote: async (id) => {
@@ -174,12 +145,12 @@ export const useReleaseNoteStore = create<ReleaseNoteStore>((set, get) => ({
   clearSyncAllResult: () => set({ syncAllResult: null, syncAllError: '' })
 }))
 
-// 프로젝트 목록과 전체 목록 중 이미 읽은 것만 다시 읽는다.
+// 프로젝트 상세 목록과 전체 목록 중 이미 읽은 것만 다시 읽는다.
 // 두 화면이 동시에 떠 있을 수 있어 한쪽만 갱신하면 다른 쪽이 옛 항목 수를 계속 보여준다.
 async function refreshLists(get: () => ReleaseNoteStore): Promise<void> {
-  const { projectId, allLoaded } = get()
+  const { deployVersion, allLoaded } = get()
   await Promise.all([
-    projectId !== null ? get().fetchReleaseNotes(projectId) : Promise.resolve(),
+    deployVersion !== null ? get().fetchReleaseNotes(deployVersion) : Promise.resolve(),
     allLoaded ? get().fetchAllReleaseNotes() : Promise.resolve()
   ])
 }

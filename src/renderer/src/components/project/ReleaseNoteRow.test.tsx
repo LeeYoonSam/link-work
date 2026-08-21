@@ -28,7 +28,6 @@ const item = (
 
 const note = (over: Partial<ReleaseNoteSummary> = {}): ReleaseNoteSummary => ({
   id: 1,
-  project_id: 1,
   jira_project_key: 'ICA',
   jira_version_id: '10042',
   version_name: 'v1.2.0',
@@ -42,8 +41,7 @@ const note = (over: Partial<ReleaseNoteSummary> = {}): ReleaseNoteSummary => ({
   created_at: '2026-08-01 09:00:00',
   updated_at: '2026-08-19 10:30:00',
   item_count: 0,
-  project_name: '검색 개편',
-  ...over
+    ...over
 })
 
 interface MockState {
@@ -70,8 +68,6 @@ vi.mock('../../stores/releaseNoteStore', () => ({
     fetchReleaseNotes: noop,
     fetchAllReleaseNotes: noop,
     fetchDetail: async () => null,
-    linkNote: async () => ({ success: true }),
-    unlinkNote: noop,
     syncNote: async () => ({ success: true })
   })
 }))
@@ -82,7 +78,7 @@ const { ReleaseNoteItemList, groupReleaseNoteItems } = mod
 
 const renderRow = (over: Partial<ReleaseNoteSummary>, mock: Partial<MockState> = {}): string => {
   state = { ...BASE, ...mock }
-  return renderToStaticMarkup(<ReleaseNoteRow note={note(over)} projectName="검색 개편" />)
+  return renderToStaticMarkup(<ReleaseNoteRow note={note(over)} />)
 }
 
 describe('groupReleaseNoteItems', () => {
@@ -206,3 +202,4 @@ describe('ReleaseNoteRow 상태 표시', () => {
     expect(renderRow({ item_count: 499 })).not.toContain('상한(500건)')
   })
 })
+

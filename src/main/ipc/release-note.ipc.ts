@@ -4,18 +4,15 @@ import {
   getJiraIssueUrl,
   getJiraStatus,
   listJiraProjects,
-  listJiraVersions,
   saveJiraCredentials,
   setDefaultJiraProjectKey
 } from '../services/jira'
-import type { JiraCredentialsInput, JiraVersionSummary } from '../services/jira'
+import type { JiraCredentialsInput } from '../services/jira'
 import {
   getReleaseNote,
-  linkReleaseNote,
   listReleaseNotes,
-  syncAllByDeployVersion,
-  syncReleaseNote,
-  unlinkReleaseNote
+  syncAllReleases,
+  syncReleaseNote
 } from '../services/release-note-sync'
 
 // Jira가 얽힌 채널은 throw하지 않고 { success, error }로 감싼다.
@@ -26,26 +23,13 @@ function toMessage(err: unknown): string {
 }
 
 export function registerReleaseNoteIpc(): void {
-  ipcMain.handle('releaseNote:list', (_event, projectId?: number) => listReleaseNotes(projectId))
-
-  ipcMain.handle('releaseNote:get', (_event, id: number) => getReleaseNote(id))
-
-  ipcMain.handle(
-    'releaseNote:link',
-    (_event, projectId: number, jiraProjectKey: string, version: JiraVersionSummary) => {
-      try {
-        const { id } = linkReleaseNote(projectId, jiraProjectKey, version)
-        return { success: true, id }
-      } catch (err) {
-        return { success: false, error: toMessage(err) }
-      }
-    }
+  // deployVersion을 주면 그 배포 버전과 이름이 같은 릴리스만 — 프로젝트 상세 화면이 쓴다.
+  // 릴리스 노트는 프로젝트와 저장된 연결이 없어 이름 대조가 유일한 통로다.
+  ipcMain.handle('releaseNote:list', (_event, deployVersion?: string) =>
+    listReleaseNotes(deployVersion)
   )
 
-  ipcMain.handle('releaseNote:unlink', (_event, id: number) => {
-    unlinkReleaseNote(id)
-    return { success: true }
-  })
+  ipcMain.handle('releaseNote:get', (_event, id: number) => getReleaseNote(id))
 
   ipcMain.handle('releaseNote:sync', async (_event, id: number) => {
     try {
@@ -59,7 +43,7 @@ export function registerReleaseNoteIpc(): void {
 
   ipcMain.handle('releaseNote:syncAll', async () => {
     try {
-      return { success: true, result: await syncAllByDeployVersion() }
+      return { success: true, result: await syncAllReleases() }
     } catch (err) {
       return { success: false, error: toMessage(err) }
     }
@@ -89,15 +73,6 @@ export function registerReleaseNoteIpc(): void {
     }
   })
 
-  ipcMain.handle('jira:listVersions', async (_event, projectKey: string) => {
-    try {
-      return { success: true, versions: await listJiraVersions(projectKey) }
-    } catch (err) {
-      return { success: false, error: toMessage(err) }
-    }
-  })
-
-  // 키 형식 검증은 setDefaultJiraProjectKey가 하고, 여기서는 그 오류를 문구로 넘긴다.
   ipcMain.handle('jira:setDefaultProject', (_event, projectKey: string | null) => {
     try {
       setDefaultJiraProjectKey(projectKey)

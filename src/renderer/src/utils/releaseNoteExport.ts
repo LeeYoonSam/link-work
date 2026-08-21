@@ -84,12 +84,9 @@ function itemLines(
  * 릴리스 노트 하나를 마크다운으로. Jira 미러링이라 앱에서 문구를 편집하지 않으므로,
  * 내보낸 마크다운이 문구를 다듬는 유일한 경로다 (docs/RELEASE_NOTES.md §1).
  */
-export function buildReleaseNoteMarkdown(
-  note: ReleaseNoteWithItems,
-  projectName: string
-): string {
-  const title = [projectName.trim(), note.version_name.trim()].filter(Boolean).join(' ')
-  const lines: string[] = [`# ${title}`]
+export function buildReleaseNoteMarkdown(note: ReleaseNoteWithItems): string {
+  // 제목은 버전 이름뿐이다 — 릴리스 노트는 Jira 릴리스의 미러라 LinkWork 프로젝트에 속하지 않는다.
+  const lines: string[] = [`# ${note.version_name.trim()}`]
 
   const description = toSingleLine(note.description ?? '')
   if (description) lines.push('', `> ${description}`)

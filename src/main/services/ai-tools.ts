@@ -13,6 +13,8 @@ import {
   searchNotion
 } from './notion'
 import { extractNotionPageId } from './notion-markdown'
+import { sortReleaseNotes } from './release-note-sync'
+import type { ReleaseNoteSummary } from './release-note-sync'
 import { fetchUrlAsText } from './web-fetch'
 
 // LinkWork 데이터 검색 도구.
@@ -84,13 +86,12 @@ function truncate(text: string | null, max: number): string | null {
 
 // 릴리스 노트 공통 SELECT — 목록/상세가 같은 필드를 보이도록 한 곳에 둔다.
 // item_count는 항목 수만 필요한 목록에서도, 200건 상한 초과 판단이 필요한 상세에서도 쓰인다.
-const RELEASE_NOTE_SELECT = `SELECT r.id, r.project_id, p.name AS project_name,
+const RELEASE_NOTE_SELECT = `SELECT r.id,
           r.jira_project_key, r.jira_version_id, r.version_name, r.description,
           r.released, r.archived, r.release_date, r.start_date,
           r.last_synced_at, r.last_sync_error,
           (SELECT COUNT(*) FROM release_note_items i WHERE i.release_note_id = r.id) AS item_count
-   FROM release_notes r
-   LEFT JOIN projects p ON p.id = r.project_id`
+   FROM release_notes r`
 
 // Jira에서 온 문자열(버전 설명·이슈 제목)은 신뢰할 수 없는 외부 입력이라 길이를 제한한다.
 const RELEASE_NOTE_TEXT_MAX = 300
@@ -438,25 +439,21 @@ const getActivityLog = tool(
 
   const listReleaseNotes = tool(
     'list_release_notes',
-    '프로젝트에 연결된 Jira 릴리스(버전)의 릴리스 노트 목록을 조회한다. 버전 이름, 출시 여부(released), 릴리스일, 포함된 이슈 수(item_count), 마지막 동기화 시각(last_synced_at)을 반환한다. "이번 배포에 뭐가 들어가나", "4.162.0 릴리스 내용" 같은 질문에 사용한다. project로 프로젝트 ID(숫자) 또는 이름 부분 검색이 가능하다. 앱에 동기화된 로컬 데이터를 읽으므로 Jira를 직접 조회하지 않는다 — 내용이 최신인지는 last_synced_at으로 판단하고, 오래됐으면 앱에서 동기화하도록 안내한다.',
+    'Jira 릴리스(버전)의 릴리스 노트 목록을 조회한다. 버전 이름, 출시 여부(released), 릴리스일, 포함된 이슈 수(item_count), 마지막 동기화 시각(last_synced_at)을 반환한다. "이번 배포에 뭐가 들어가나", "4.162.0 릴리스 내용" 같은 질문에 사용한다. version으로 버전 이름 부분 검색이 가능하다(예: "4.16"). 릴리스 노트는 Jira 릴리스를 그대로 옮긴 것이라 LinkWork 프로젝트와 연결돼 있지 않다 — 특정 프로젝트의 릴리스를 찾으려면 그 프로젝트의 배포 버전(deploy_version)을 먼저 확인해 version으로 넘긴다. 앱에 동기화된 로컬 데이터를 읽으므로 Jira를 직접 조회하지 않는다 — 내용이 최신인지는 last_synced_at으로 판단하고, 오래됐으면 앱에서 동기화하도록 안내한다.',
     {
-      project: searchTerm('프로젝트 ID(숫자) 또는 이름 부분 검색어')
+      version: searchTerm('버전 이름 부분 검색어 (예: 4.16)')
     },
     async (args) => {
       const db = getAiReadOnlyDatabase()
-      const filter = args.project?.trim()
-      const byId = !!filter && /^\d+$/.test(filter)
-      const where = filter ? (byId ? 'WHERE r.project_id = ?' : 'WHERE p.name LIKE ?') : ''
-      const params = filter ? [byId ? Number(filter) : `%${filter}%`] : []
-      // 릴리스일이 없는(=아직 날짜가 안 잡힌) 버전이 목록 위로 오도록 먼 미래로 치환해 정렬한다.
-      const rows = db
-        .prepare(
-          `${RELEASE_NOTE_SELECT}
-           ${where}
-           ORDER BY COALESCE(r.release_date, '9999-12-31') DESC, r.id DESC
-           LIMIT ${RELEASE_NOTE_ITEM_LIMIT}`
-        )
-        .all(...params) as { description: string | null; last_sync_error: string | null }[]
+      const filter = args.version?.trim()
+      const where = filter ? 'WHERE r.version_name LIKE ?' : ''
+      const params = filter ? [`%${filter}%`] : []
+      // 정렬은 화면 목록과 같은 규칙(버전 번호 내림차순)을 쓴다 — 같은 질문에 화면과 AI가
+      // 다른 순서로 답하면 안 된다. SQL로는 4.46.0과 4.166.0을 제대로 못 세우므로
+      // 상한을 걸기 전에 JS로 정렬한다.
+      const rows = sortReleaseNotes(
+        db.prepare(`${RELEASE_NOTE_SELECT} ${where}`).all(...params) as ReleaseNoteSummary[]
+      ).slice(0, RELEASE_NOTE_ITEM_LIMIT)
       return jsonResult(
         rows.map((r) => ({
           ...r,
@@ -480,13 +477,12 @@ const getActivityLog = tool(
       const note = (
         byId
           ? db.prepare(`${RELEASE_NOTE_SELECT} WHERE r.id = ?`).get(Number(q))
-          : db
-              .prepare(
-                `${RELEASE_NOTE_SELECT}
-                 WHERE r.version_name LIKE ?
-                 ORDER BY COALESCE(r.release_date, '9999-12-31') DESC, r.id DESC`
-              )
-              .get(`%${q}%`)
+          : // 이름이 여럿 걸리면 가장 높은 버전을 고른다 — 화면 목록의 맨 위와 같은 것이어야 한다
+            sortReleaseNotes(
+              db
+                .prepare(`${RELEASE_NOTE_SELECT} WHERE r.version_name LIKE ?`)
+                .all(`%${q}%`) as ReleaseNoteSummary[]
+            )[0]
       ) as
         | {
             id: number

@@ -67,15 +67,20 @@ const jira = vi.hoisted(() => ({
 }))
 vi.mock('./jira', () => jira)
 
-import { closeDatabase, getDatabase, initDatabase } from '../db/database'
+import {
+  closeDatabase,
+  getDatabase,
+  initDatabase,
+  migrateReleaseNotesDropProject
+} from '../db/database'
 import type { JiraIssueSummary, JiraVersionSummary } from './jira'
 import {
+  MAX_ISSUE_FETCH_PER_SYNC,
   getReleaseNote,
   linkReleaseNote,
   listReleaseNotes,
-  syncAllByDeployVersion,
-  syncReleaseNote,
-  unlinkReleaseNote
+  syncAllReleases,
+  syncReleaseNote
 } from './release-note-sync'
 
 function versionOf(overrides: Partial<JiraVersionSummary> = {}): JiraVersionSummary {
@@ -125,10 +130,9 @@ function mockJira(versions: JiraVersionSummary[], defaultKey: string | null = 'I
   jira.listIssuesByFixVersion.mockResolvedValue({ issues: [issueOf('ICA-1')], truncated: false })
 }
 
-/** 프로젝트 + 릴리스 노트 한 건을 만들고 노트 id를 돌려준다 */
+/** 릴리스 노트 한 건을 만들고 노트 id를 돌려준다 */
 function seedNote(): number {
-  const { id } = linkReleaseNote(seedProject('검색 개편'), 'ICA', versionOf())
-  return id
+  return linkReleaseNote('ICA', versionOf()).id
 }
 
 /** 동기화 실패 상황을 만들기 위해 항목을 미리 채워 둔다 */
@@ -157,36 +161,39 @@ beforeEach(() => {
 })
 
 describe('linkReleaseNote', () => {
-  it('연결한 릴리스가 Jira 메타 그대로 저장된다', () => {
+  it('가져온 릴리스가 Jira 메타 그대로 저장된다', () => {
     const id = seedNote()
-    const note = getReleaseNote(id)
-    expect(note).not.toBeNull()
-    expect(note!.jira_version_id).toBe('10042')
-    expect(note!.version_name).toBe('v1.2.0')
-    expect(note!.released).toBe(0)
-    expect(note!.release_date).toBe('2026-09-01')
-    // 아직 동기화 전이므로 비어 있어야 한다
-    expect(note!.last_synced_at).toBeNull()
-    expect(note!.items).toEqual([])
+    const note = getReleaseNote(id)!
+    expect({
+      key: note.jira_project_key,
+      versionId: note.jira_version_id,
+      name: note.version_name,
+      released: note.released,
+      releaseDate: note.release_date
+    }).toEqual({
+      key: 'ICA',
+      versionId: '10042',
+      name: 'v1.2.0',
+      released: 0,
+      releaseDate: '2026-09-01'
+    })
+    // 릴리스 노트는 Jira 릴리스의 미러라 LinkWork 프로젝트를 가리키는 칸이 아예 없다
+    expect(Object.keys(note)).not.toContain('project_id')
   })
 
-  it('같은 프로젝트에 같은 Jira 버전을 두 번 연결할 수 없다', () => {
-    const db = getDatabase()
-    const id = seedNote()
-    const projectId = getReleaseNote(id)!.project_id
-
-    expect(() => linkReleaseNote(projectId, 'ICA', versionOf())).toThrow('이미')
-    const count = db
-      .prepare('SELECT COUNT(*) AS c FROM release_notes WHERE project_id = ?')
-      .get(projectId) as { c: number }
+  it('같은 Jira 버전을 두 번 가져올 수 없다', () => {
+    seedNote()
+    expect(() => linkReleaseNote('ICA', versionOf())).toThrow('이미 목록에 있는 Jira 릴리스입니다.')
+    const count = getDatabase().prepare('SELECT COUNT(*) AS c FROM release_notes').get() as {
+      c: number
+    }
     expect(count.c).toBe(1)
   })
 
-  it('버전 ID가 다르면 같은 프로젝트에도 연결된다', () => {
-    const id = seedNote()
-    const projectId = getReleaseNote(id)!.project_id
-    linkReleaseNote(projectId, 'ICA', versionOf({ id: '10043', name: 'v1.3.0' }))
-    expect(listReleaseNotes(projectId)).toHaveLength(2)
+  it('버전 ID가 다르면 따로 저장된다', () => {
+    seedNote()
+    linkReleaseNote('ICA', versionOf({ id: '10043', name: 'v1.3.0' }))
+    expect(listReleaseNotes()).toHaveLength(2)
   })
 })
 
@@ -331,14 +338,15 @@ describe('syncReleaseNote — 성공 경로', () => {
   })
 })
 
-describe('listReleaseNotes / unlinkReleaseNote', () => {
+describe('listReleaseNotes', () => {
   it('목록에 항목 수가 함께 나온다', async () => {
     const id = seedNote()
-    jira.getJiraVersion.mockResolvedValue(versionOf())
+    mockJira([versionOf()])
     jira.listIssuesByFixVersion.mockResolvedValue({
       issues: [issueOf('ICA-1'), issueOf('ICA-2')],
       truncated: false
     })
+
     await syncReleaseNote(id)
 
     const notes = listReleaseNotes()
@@ -346,170 +354,212 @@ describe('listReleaseNotes / unlinkReleaseNote', () => {
     expect(notes[0].item_count).toBe(2)
   })
 
-  it('다른 프로젝트의 릴리스 노트는 projectId 필터에서 빠진다', () => {
-    const id = seedNote()
-    const projectId = getReleaseNote(id)!.project_id
-    linkReleaseNote(seedProject('다른 프로젝트'), 'OTH', versionOf({ id: '20001' }))
-
-    expect(listReleaseNotes(projectId)).toHaveLength(1)
-    expect(listReleaseNotes()).toHaveLength(2)
-  })
-
-  it('목록과 상세에 프로젝트 이름이 함께 나온다', () => {
-    const id = seedNote()
-
-    expect(listReleaseNotes()[0].project_name).toBe('검색 개편')
-    expect(listReleaseNotes(getReleaseNote(id)!.project_id)[0].project_name).toBe('검색 개편')
-    expect(getReleaseNote(id)!.project_name).toBe('검색 개편')
-  })
-
-  it('전체 목록은 프로젝트별로 묶이고, 프로젝트 안에서는 릴리스일 내림차순을 유지한다', () => {
-    // 이름 순으로 '가 프로젝트' < '나 프로젝트'. 삽입 순서는 일부러 뒤섞는다.
-    const na = seedProject('나 프로젝트')
-    const ga = seedProject('가 프로젝트')
-    linkReleaseNote(na, 'NA', versionOf({ id: '1', name: 'na-old', releaseDate: '2026-01-01' }))
-    linkReleaseNote(ga, 'GA', versionOf({ id: '2', name: 'ga-old', releaseDate: '2026-01-01' }))
-    linkReleaseNote(na, 'NA', versionOf({ id: '3', name: 'na-new', releaseDate: '2026-09-01' }))
-    linkReleaseNote(ga, 'GA', versionOf({ id: '4', name: 'ga-new', releaseDate: '2026-09-01' }))
+  it('버전 번호 내림차순으로 세운다', () => {
+    // 사전순이면 4.46.0이 4.166.0보다 커서 낮은 버전이 꼭대기에 앉는다
+    linkReleaseNote('ICA', versionOf({ id: '1', name: '4.46.0' }))
+    linkReleaseNote('ICA', versionOf({ id: '2', name: '4.166.0' }))
+    linkReleaseNote('ICA', versionOf({ id: '3', name: '4.100.0' }))
 
     expect(listReleaseNotes().map((n) => n.version_name)).toEqual([
-      'ga-new',
-      'ga-old',
-      'na-new',
-      'na-old'
+      '4.166.0',
+      '4.100.0',
+      '4.46.0'
     ])
-    // 프로젝트별 조회는 프로젝트 키가 상수라 기존 순서(릴리스일 내림차순)와 동일하다.
-    expect(listReleaseNotes(na).map((n) => n.version_name)).toEqual(['na-new', 'na-old'])
   })
 
-  it('연결을 끊으면 항목도 함께 사라진다 (unlink)', () => {
-    const db = getDatabase()
-    const id = seedNote()
-    seedItems(id, ['ICA-1', 'ICA-2'])
+  it('릴리스일이 없어도 버전 번호로 제자리에 선다', () => {
+    // 화면 꼭대기에 앉아 있던 4.46.0이 이 경우다 — 릴리스일이 비었다고 목록 맨 위로 튀면 안 된다.
+    const v = (id: string, name: string, releaseDate: string | null): void => {
+      linkReleaseNote('ICA', versionOf({ id, name, releaseDate }))
+    }
+    v('1', '4.166.0', '2026-09-08')
+    v('2', '4.46.0', null)
+    v('3', '4.100.0', '2026-01-01')
 
-    unlinkReleaseNote(id)
+    expect(listReleaseNotes().map((n) => n.version_name)).toEqual([
+      '4.166.0',
+      '4.100.0',
+      '4.46.0'
+    ])
+  })
 
-    expect(getReleaseNote(id)).toBeNull()
-    const left = db
-      .prepare('SELECT COUNT(*) AS c FROM release_note_items WHERE release_note_id = ?')
-      .get(id) as { c: number }
-    expect(left.c).toBe(0)
+  it('배포 버전을 주면 이름이 같은 릴리스만 돌려준다', () => {
+    linkReleaseNote('ICA', versionOf({ id: '1', name: '4.164.0' }))
+    linkReleaseNote('ICA', versionOf({ id: '2', name: '4.155.0' }))
+
+    expect(listReleaseNotes('4.155.0').map((n) => n.version_name)).toEqual(['4.155.0'])
+    expect(listReleaseNotes('9.9.9')).toEqual([])
+  })
+
+  it('배포 버전 한 칸에 여러 버전이 적혀 있어도 각각 찾는다', () => {
+    // 실제 데이터의 '2.8.1 , 4.155.0' — 통째로 비교하면 어느 쪽과도 맞지 않았다
+    linkReleaseNote('ICA', versionOf({ id: '1', name: '4.155.0' }))
+    linkReleaseNote('ICA', versionOf({ id: '2', name: '2.8.1' }))
+    linkReleaseNote('ICA', versionOf({ id: '3', name: '4.164.0' }))
+
+    expect(listReleaseNotes('2.8.1 , 4.155.0').map((n) => n.version_name)).toEqual([
+      '4.155.0',
+      '2.8.1'
+    ])
+  })
+
+  it('같은 배포 버전을 쓰는 프로젝트가 여럿이어도 릴리스는 한 줄이다', () => {
+    // 이 파일의 핵심 — 예전에는 프로젝트마다 한 행을 만들어 같은 버전이 목록에 세 번 떴다
+    seedProject('가 프로젝트', '4.155.0')
+    seedProject('나 프로젝트', '4.155.0')
+    seedProject('다 프로젝트', '4.155.0')
+    linkReleaseNote('ICA', versionOf({ id: '1', name: '4.155.0' }))
+
+    expect(listReleaseNotes()).toHaveLength(1)
+    expect(listReleaseNotes('4.155.0')).toHaveLength(1)
+  })
+
+  it('프로젝트를 지워도 릴리스 노트는 남는다 — 프로젝트에 딸린 데이터가 아니다', () => {
+    const projectId = seedProject('가 프로젝트', '4.155.0')
+    const id = linkReleaseNote('ICA', versionOf({ id: '1', name: '4.155.0' })).id
+    seedItems(id, ['ICA-1'])
+
+    getDatabase().prepare('DELETE FROM projects WHERE id = ?').run(projectId)
+
+    expect(listReleaseNotes()).toHaveLength(1)
+    expect(getReleaseNote(id)!.items).toHaveLength(1)
   })
 })
 
-describe('syncAllByDeployVersion', () => {
-  const V_164 = versionOf({ id: '100', name: '4.164.0' })
-  const V_163 = versionOf({ id: '101', name: '4.163.0' })
+describe('syncAllReleases — Jira 릴리스 전체를 가져온다', () => {
+  const V_164 = versionOf({ id: '100', name: '4.164.0', releaseDate: '2026-08-25' })
+  const V_163 = versionOf({ id: '101', name: '4.163.0', releaseDate: '2026-08-20' })
 
-  it('deploy_version이 일치하는 프로젝트를 자동 연결하고 동기화한다', async () => {
-    const projectId = seedProject('가 프로젝트', '4.164.0')
+  it('Jira의 릴리스를 모두 가져와 동기화한다', async () => {
     mockJira([V_164, V_163])
 
-    const result = await syncAllByDeployVersion()
+    const result = await syncAllReleases()
 
-    expect(result.synced).toEqual([
-      { projectId, projectName: '가 프로젝트', version: '4.164.0', itemCount: 1 }
+    expect(result.synced.map((s) => [s.version, s.itemCount])).toEqual([
+      ['4.164.0', 1],
+      ['4.163.0', 1]
     ])
-    // 연결은 이름이 아니라 버전 ID로 저장돼야 이후 이름이 바뀌어도 추적이 끊기지 않는다.
-    const note = listReleaseNotes(projectId)[0]
+    const note = listReleaseNotes()[0]
     expect(note.jira_version_id).toBe('100')
     expect(note.jira_project_key).toBe('ICA')
     expect(note.last_synced_at).not.toBeNull()
     expect(getReleaseNote(note.id)!.items.map((i) => i.issue_key)).toEqual(['ICA-1'])
   })
 
-  it('매칭되는 Jira 릴리스가 없으면 unmatched에 담고 연결하지 않는다', async () => {
-    const projectId = seedProject('작가앱', '2.8.2')
+  it('LinkWork 프로젝트를 전혀 보지 않는다 — 프로젝트가 없어도 다 가져온다', async () => {
     mockJira([V_164, V_163])
 
-    const result = await syncAllByDeployVersion()
+    await syncAllReleases()
 
-    expect(result.unmatched).toEqual([
-      { projectId, projectName: '작가앱', version: '2.8.2' }
-    ])
-    expect(result.synced).toEqual([])
-    expect(listReleaseNotes()).toEqual([])
+    expect(listReleaseNotes().map((n) => n.version_name)).toEqual(['4.164.0', '4.163.0'])
   })
 
-  it('deploy_version이 비어 있으면 skipped로 센다', async () => {
-    seedProject('버전 없음', undefined)
-    seedProject('공백만', '   ')
+  it('같은 배포 버전의 프로젝트가 여럿이어도 릴리스는 한 줄만 만든다', async () => {
+    seedProject('가 프로젝트', '4.164.0')
+    seedProject('나 프로젝트', '4.164.0')
     mockJira([V_164])
 
-    const result = await syncAllByDeployVersion()
+    await syncAllReleases()
 
-    expect(result.skipped).toBe(2)
-    expect(result.synced).toEqual([])
-    expect(result.unmatched).toEqual([])
+    expect(listReleaseNotes()).toHaveLength(1)
   })
 
-  it('한 프로젝트가 실패해도 나머지는 계속 진행되고 failed에 사유가 담긴다', async () => {
-    const okId = seedProject('가 프로젝트', '4.164.0')
-    const badId = seedProject('나 프로젝트', '4.163.0')
+  it('다시 동기화해도 중복으로 생기지 않는다', async () => {
+    mockJira([V_164])
+
+    await syncAllReleases()
+    const firstId = listReleaseNotes()[0].id
+    const second = await syncAllReleases()
+
+    expect(listReleaseNotes()).toHaveLength(1)
+    expect(listReleaseNotes()[0].id).toBe(firstId)
+    expect(second.synced).toHaveLength(1)
+  })
+
+  it('Jira에서 보관한 릴리스는 새로 가져오지 않는다', async () => {
+    mockJira([versionOf({ id: '200', name: '4.100.0', archived: true })])
+
+    const result = await syncAllReleases()
+
+    expect(listReleaseNotes()).toEqual([])
+    expect(result.synced).toEqual([])
+  })
+
+  it('한 릴리스가 실패해도 나머지는 계속 진행되고 failed에 사유가 담긴다', async () => {
     mockJira([V_164, V_163])
     jira.listIssuesByFixVersion.mockImplementation(async (versionId: string) => {
       if (versionId === '101') throw new Error('해당 Jira 프로젝트에 접근할 권한이 없습니다.')
       return { issues: [issueOf('ICA-1')], truncated: false }
     })
 
-    const result = await syncAllByDeployVersion()
+    const result = await syncAllReleases()
 
-    expect(result.synced.map((s) => s.projectId)).toEqual([okId])
+    expect(result.synced.map((s) => s.version)).toEqual(['4.164.0'])
     expect(result.failed).toEqual([
       {
-        projectId: badId,
-        projectName: '나 프로젝트',
         version: '4.163.0',
         error: '해당 Jira 프로젝트에 접근할 권한이 없습니다.'
       }
     ])
-    // 실패한 쪽도 연결과 실패 사유는 남아 사용자가 원인을 볼 수 있어야 한다.
-    expect(listReleaseNotes(badId)[0].last_sync_error).toBe(
-      '해당 Jira 프로젝트에 접근할 권한이 없습니다.'
-    )
-    expect(listReleaseNotes(badId)[0].last_synced_at).toBeNull()
+    // 실패한 쪽도 릴리스와 실패 사유는 남아 사용자가 원인을 볼 수 있어야 한다.
+    const failed = listReleaseNotes().find((n) => n.version_name === '4.163.0')!
+    expect(failed.last_sync_error).toBe('해당 Jira 프로젝트에 접근할 권한이 없습니다.')
+    expect(failed.last_synced_at).toBeNull()
   })
 
-  it('이미 연결된 릴리스는 다시 연결하지 않고 동기화만 한다', async () => {
-    const projectId = seedProject('가 프로젝트', '4.164.0')
-    mockJira([V_164])
+  it('버전이 높은 것부터 상한까지만 이슈를 받고 나머지는 metaOnly로 미룬다', async () => {
+    const many = Array.from({ length: MAX_ISSUE_FETCH_PER_SYNC + 3 }, (_, i) =>
+      versionOf({ id: String(500 + i), name: `9.${100 - i}.0` })
+    )
+    mockJira(many)
 
-    await syncAllByDeployVersion()
-    const firstId = listReleaseNotes(projectId)[0].id
+    const result = await syncAllReleases()
 
-    const second = await syncAllByDeployVersion()
+    expect(result.synced).toHaveLength(MAX_ISSUE_FETCH_PER_SYNC)
+    expect(result.metaOnly).toHaveLength(3)
+    // 미룬 것도 목록에는 들어간다 — 릴리스 자체가 빠지면 원래 문제로 돌아간다
+    expect(listReleaseNotes()).toHaveLength(MAX_ISSUE_FETCH_PER_SYNC + 3)
+    // 이슈를 미룬 릴리스는 "아직 동기화하지 않았습니다" 상태로 남아 개별 동기화가 가능하다
+    const pending = listReleaseNotes().filter((n) => n.last_synced_at === null)
+    expect(pending.map((n) => n.version_name)).toEqual(result.metaOnly.map((m) => m.version))
+    // 미룬 것은 버전이 가장 낮은 쪽이어야 한다
+    expect(result.synced[0].version).toBe('9.100.0')
+  })
 
-    expect(listReleaseNotes(projectId)).toHaveLength(1)
-    expect(listReleaseNotes(projectId)[0].id).toBe(firstId)
-    expect(second.synced).toHaveLength(1)
+  it('상한은 다시 실행해도 같다 — 받아 둔 릴리스가 쌓여도 느려지지 않는다', async () => {
+    const many = Array.from({ length: MAX_ISSUE_FETCH_PER_SYNC + 2 }, (_, i) =>
+      versionOf({ id: String(800 + i), name: `8.${100 - i}.0` })
+    )
+    mockJira(many)
+
+    await syncAllReleases()
+    jira.listIssuesByFixVersion.mockClear()
+    const second = await syncAllReleases()
+
+    expect(second.synced).toHaveLength(MAX_ISSUE_FETCH_PER_SYNC)
+    expect(second.metaOnly).toHaveLength(2)
+    expect(jira.listIssuesByFixVersion).toHaveBeenCalledTimes(MAX_ISSUE_FETCH_PER_SYNC)
   })
 
   it('기본 프로젝트가 설정되지 않았으면 네트워크를 타지 않고 throw한다', async () => {
-    seedProject('가 프로젝트', '4.164.0')
     mockJira([V_164], null)
 
-    await expect(syncAllByDeployVersion()).rejects.toThrow('기본 프로젝트가 설정되지 않았습니다')
+    await expect(syncAllReleases()).rejects.toThrow('기본 프로젝트가 설정되지 않았습니다')
     expect(jira.listJiraVersions).not.toHaveBeenCalled()
   })
 
-  it('버전 목록은 프로젝트 수와 무관하게 1회만 조회한다', async () => {
-    seedProject('가 프로젝트', '4.164.0')
-    seedProject('나 프로젝트', '4.163.0')
-    seedProject('다 프로젝트', '4.164.0')
+  it('버전 목록은 릴리스 수와 무관하게 1회만 조회한다', async () => {
     mockJira([V_164, V_163])
 
-    const result = await syncAllByDeployVersion()
+    await syncAllReleases()
 
-    expect(result.synced).toHaveLength(3)
     expect(jira.listJiraVersions).toHaveBeenCalledTimes(1)
   })
 
-  it('활동 로그는 프로젝트별이 아니라 전체 1건으로만 남는다', async () => {
-    seedProject('가 프로젝트', '4.164.0')
-    seedProject('나 프로젝트', '4.163.0')
+  it('활동 로그는 릴리스별이 아니라 전체 1건으로만 남는다', async () => {
     mockJira([V_164, V_163])
 
-    await syncAllByDeployVersion()
+    await syncAllReleases()
 
     const logs = getDatabase()
       .prepare("SELECT entity_name, details FROM activity_log WHERE entity_type = 'release_note'")
@@ -517,5 +567,111 @@ describe('syncAllByDeployVersion', () => {
     expect(logs).toHaveLength(1)
     expect(logs[0].entity_name).toContain('일괄 동기화')
     expect(logs[0].details).toContain('동기화 2건')
+  })
+})
+
+// 기존 사용자의 DB는 릴리스 노트가 프로젝트에 묶여 있었다. 이 마이그레이션은 중복 행을 합치고
+// 테이블을 다시 만들므로, 조용히 깨지면 사용자가 쌓아 둔 릴리스 노트와 이슈가 사라진다.
+describe('migrateReleaseNotesDropProject', () => {
+  /** 마이그레이션 이전 스키마(project_id 있음)로 되돌려 놓는다 */
+  function seedLegacySchema(): void {
+    const db = getDatabase()
+    db.pragma('foreign_keys = OFF')
+    db.exec(`
+      DROP TABLE IF EXISTS release_notes;
+      CREATE TABLE release_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER,
+        jira_project_key TEXT NOT NULL,
+        jira_version_id TEXT NOT NULL,
+        version_name TEXT NOT NULL,
+        description TEXT,
+        released INTEGER NOT NULL DEFAULT 0,
+        archived INTEGER NOT NULL DEFAULT 0,
+        release_date TEXT,
+        start_date TEXT,
+        last_synced_at TEXT,
+        last_sync_error TEXT,
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        UNIQUE (project_id, jira_version_id)
+      );
+    `)
+    db.pragma('foreign_keys = ON')
+  }
+
+  /** 구 스키마에 릴리스 노트 한 행을 직접 넣는다 */
+  function insertLegacyNote(id: number, projectId: number | null, syncedAt: string | null): void {
+    getDatabase()
+      .prepare(
+        `INSERT INTO release_notes (id, project_id, jira_project_key, jira_version_id, version_name,
+                                    release_date, last_synced_at)
+         VALUES (?, ?, 'ICA', '100', '4.164.0', '2026-08-25', ?)`
+      )
+      .run(id, projectId, syncedAt)
+  }
+
+  it('릴리스 노트와 이슈를 하나도 잃지 않고 옮긴다', () => {
+    const db = getDatabase()
+    seedLegacySchema()
+    insertLegacyNote(7, seedProject('검색 개편', '4.164.0'), '2026-08-25 10:00:00')
+    seedItems(7, ['ICA-1', 'ICA-2', 'ICA-3'])
+
+    migrateReleaseNotesDropProject(db)
+
+    const note = getReleaseNote(7)!
+    expect(note.version_name).toBe('4.164.0')
+    expect(note.last_synced_at).toBe('2026-08-25 10:00:00')
+    // DROP TABLE이 CASCADE로 이슈를 쓸어 가지 않아야 한다 — 여기가 이 마이그레이션의 급소다
+    expect(note.items.map((i) => i.issue_key)).toEqual(['ICA-1', 'ICA-2', 'ICA-3'])
+  })
+
+  it('같은 릴리스를 가리키던 여러 행을 한 줄로 합친다', () => {
+    const db = getDatabase()
+    seedLegacySchema()
+    insertLegacyNote(1, seedProject('가 프로젝트', '4.164.0'), '2026-08-25 10:00:00')
+    insertLegacyNote(2, seedProject('나 프로젝트', '4.164.0'), '2026-08-25 10:00:00')
+    insertLegacyNote(3, seedProject('다 프로젝트', '4.164.0'), null)
+    seedItems(1, ['ICA-1'])
+    seedItems(2, ['ICA-1', 'ICA-2', 'ICA-3'])
+
+    migrateReleaseNotesDropProject(db)
+
+    const notes = listReleaseNotes()
+    expect(notes).toHaveLength(1)
+    // 이슈가 가장 많은 행을 남긴다 — 상한에 걸려 메타만 있는 행이 이기면 알맹이를 잃는다
+    expect(notes[0].id).toBe(2)
+    expect(getReleaseNote(2)!.items.map((i) => i.issue_key)).toEqual(['ICA-1', 'ICA-2', 'ICA-3'])
+    // 버려진 행의 이슈도 함께 정리돼 고아로 남지 않아야 한다
+    const orphans = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM release_note_items i
+         WHERE NOT EXISTS (SELECT 1 FROM release_notes r WHERE r.id = i.release_note_id)`
+      )
+      .get() as { c: number }
+    expect(orphans.c).toBe(0)
+  })
+
+  it('마이그레이션 뒤에는 같은 릴리스를 두 번 넣을 수 없다', () => {
+    const db = getDatabase()
+    seedLegacySchema()
+
+    migrateReleaseNotesDropProject(db)
+
+    linkReleaseNote('ICA', versionOf({ id: '101', name: '4.163.0' }))
+    expect(() => linkReleaseNote('ICA', versionOf({ id: '101', name: '4.163.0' }))).toThrow(
+      '이미 목록에 있는 Jira 릴리스입니다.'
+    )
+  })
+
+  it('이미 옮겨졌으면 아무것도 하지 않는다 (두 번 실행해도 안전)', () => {
+    const db = getDatabase()
+    const { id } = linkReleaseNote('ICA', versionOf())
+
+    migrateReleaseNotesDropProject(db)
+    migrateReleaseNotesDropProject(db)
+
+    expect(getReleaseNote(id)!.version_name).toBe('v1.2.0')
   })
 })
