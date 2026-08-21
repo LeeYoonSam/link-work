@@ -79,6 +79,22 @@ export const taskTag = {
   domain: 'bg-slate-100 text-slate-600'
 }
 
+// 릴리스 노트에 담긴 Jira 이슈의 상태 뱃지.
+//
+// 색은 "얼마나 눈에 띄어야 하는가" 순으로 골랐다. 릴리스에 묶인 이슈는 거의 다 끝난 것이라
+// (실측 160건 중 148건이 '닫힘') 완료를 진하게 칠하면 화면이 온통 한 색이 되고 정작 손봐야 할
+// 항목이 묻힌다. 그래서 완료만 배경을 한 단계 연하게(50) 써서 뒤로 물리고,
+// 아직 안 끝난 것일수록 앞으로 끌어낸다: 완료(연한 초록) < 진행(파랑) < 미착수(앰버) < 중단(빨강).
+//
+// 워크플로를 모르는 상태는 색을 입히지 않는다 — 뜻을 모른 채 칠한 색은 잘못된 정보를 준다.
+export const releaseItemStatus = {
+  done: 'bg-green-50 text-green-700',
+  progress: 'bg-blue-100 text-blue-700',
+  todo: 'bg-amber-100 text-amber-700',
+  blocked: 'bg-red-100 text-red-700',
+  unknown: 'bg-gray-100 text-gray-600'
+}
+
 // 타이포그래피
 export const typo = {
   pageTitle: 'text-lg font-semibold text-gray-900',
