@@ -281,10 +281,20 @@ export default function ReleaseNoteRow({ note }: ReleaseNoteRowProps): React.Rea
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 transition-colors">
+      {/* 행 어디를 눌러도 펼쳐진다 — 화살표만 누를 수 있으면 과녁이 14px짜리 아이콘 하나뿐이다.
+          화살표 버튼은 그대로 남긴다: 키보드로 이 행을 여닫는 유일한 통로이고,
+          펼침/접힘 상태를 눈으로 알려주는 표시이기도 하다. */}
+      <div
+        onClick={() => void toggleExpand()}
+        className="flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 transition-colors cursor-pointer"
+      >
+        {/* 부모가 이미 같은 일을 한다 — 막지 않으면 화살표를 누를 때만 두 번 토글돼 제자리로 돌아온다 */}
         <button
           type="button"
-          onClick={() => void toggleExpand()}
+          onClick={(e) => {
+            e.stopPropagation()
+            void toggleExpand()
+          }}
           title={expanded ? '접기' : '이슈 보기'}
           className="shrink-0 text-gray-400 hover:text-gray-600 transition-colors"
         >
@@ -320,16 +330,23 @@ export default function ReleaseNoteRow({ note }: ReleaseNoteRowProps): React.Rea
           </div>
         </div>
 
+        {/* 동기화·내보내기는 행을 여닫는 것과 별개의 동작이라 클릭이 위로 새면 안 된다 */}
         <div className="flex items-center gap-1 shrink-0">
           <button
-            onClick={() => void handleSync()}
+            onClick={(e) => {
+              e.stopPropagation()
+              void handleSync()
+            }}
             disabled={syncing}
             className={`px-2.5 py-1 text-xs disabled:opacity-40 ${button.subtle}`}
           >
             {syncing ? '동기화 중…' : '동기화'}
           </button>
           <button
-            onClick={() => void handleExport()}
+            onClick={(e) => {
+              e.stopPropagation()
+              void handleExport()
+            }}
             disabled={exporting}
             className={`px-2.5 py-1 text-xs disabled:opacity-40 ${button.subtle}`}
           >
