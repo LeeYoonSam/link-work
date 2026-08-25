@@ -1,4 +1,4 @@
-// 녹음 처리 파이프라인(회의·면접 공통): STT → VAD → Diarization → merge → DB 저장
+// 녹음 처리 파이프라인(회의·면접 공통): compact → STT → VAD → Diarization → merge → DB 저장
 // SSOT: docs/MEETING_RECORDING.md §5
 import { app } from 'electron'
 import { join } from 'path'
@@ -11,9 +11,18 @@ import { getVadAdapter } from './vad/index'
 import { diarizeWithFallback } from './diarization/index'
 import { ensureDiarizationModels } from './diarization/model-manager'
 import { cleanSegments } from './transcript-cleaner'
+import { applyGlossary } from './stt/glossary-correct'
+import { compactRecording } from './audio-compaction'
+import { mapMsToCompacted, type Region } from './stt/audio-compactor'
+import { loadPromptContext, type PromptContext } from './recognition-aids'
 import { wavDurationMs } from './wav-util'
 import { postprocessTurns } from './diarization/postprocess'
 import { beginPipeline, endPipeline, PipelineCancelledError } from './pipeline-abort'
+
+// 현재 파이프라인 버전. 2 = 무음 컷편집 + 용어집 후보정/프롬프트 힌트 + 참석자 힌트.
+// 파이프라인 동작이 결과에 영향을 줄 만큼 바뀌면 올린다. meetings.pipeline_version에 기록해,
+// 옛 버전으로 처리된 녹음을 골라 다시 돌릴 수 있게 한다(0 = 이 컬럼이 생기기 전 처리분).
+export const CURRENT_PIPELINE_VERSION = 2
 
 // 화자 색상 팔레트 (순환) — 수동 화자 추가(recording.ipc)에서도 사용
 export const SPEAKER_COLORS = [
@@ -40,6 +49,12 @@ interface MeetingRow {
   expected_speakers: number | null
   project_id: number | null
   calendar_event_title: string | null
+  // 무음 컷편집 관련 (녹음 시작 시 선택 / 멱등 가드 / 컷편집 전 길이)
+  compact_audio: number
+  audio_compacted: number
+  original_duration_ms: number | null
+  // 이 녹음을 처리한 파이프라인 버전 (0 = 이 컬럼 도입 전 처리분)
+  pipeline_version: number
 }
 
 /**
@@ -140,6 +155,90 @@ function loadSpeakerNames(db: ReturnType<typeof getDatabase>, meetingId: number)
 }
 
 /**
+ * 인식 보조 컨텍스트(용어집·참석자)를 로드한다. 계약상 throw하지 않지만, 이 정보가 없다고
+ * 전사가 실패하면 안 되므로 한 겹 더 막는다.
+ */
+function loadAids(db: ReturnType<typeof getDatabase>, meetingId: number): PromptContext {
+  try {
+    return loadPromptContext(db, meetingId)
+  } catch {
+    return { glossary: [], rules: [], attendees: [] }
+  }
+}
+
+/** ms를 "12분 34초" 형태로. 컷편집 결과 안내 문구용. */
+function formatDurationKo(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000))
+  const min = Math.floor(total / 60)
+  const sec = total % 60
+  return min > 0 ? `${min}분 ${sec}초` : `${sec}초`
+}
+
+/**
+ * 컷편집으로 오디오 타임라인이 바뀌었으니 이미 저장돼 있던 시각들도 같이 옮긴다.
+ *
+ * 정상 경로에서는 merge 트랜잭션이 segments/cuts를 어차피 지우고 다시 넣지만, 컷편집 직후
+ * 취소되면 그 트랜잭션이 실행되지 않는다. 그때 옛 타임라인이 남아 있으면 재생 위치가 통째로
+ * 어긋나므로(과거 duration_ms ×10 오염과 같은 부류의 버그) 여기서 미리 맞춰 둔다.
+ * 면접 요약의 질문 점프 위치(qa_pairs[].start_ms)도 같은 이유로 옮긴다.
+ * 실패는 비치명적이다.
+ */
+function remapExistingTimelines(
+  db: ReturnType<typeof getDatabase>,
+  meetingId: number,
+  keep: Region[]
+): void {
+  const map = (ms: number): number => mapMsToCompacted(ms, keep)
+
+  try {
+    const segments = db
+      .prepare('SELECT id, start_ms, end_ms FROM meeting_segments WHERE meeting_id = ?')
+      .all(meetingId) as { id: number; start_ms: number; end_ms: number }[]
+    const cuts = db
+      .prepare('SELECT id, start_ms, end_ms FROM meeting_cuts WHERE meeting_id = ?')
+      .all(meetingId) as { id: number; start_ms: number; end_ms: number }[]
+
+    db.transaction(() => {
+      const updateSeg = db.prepare('UPDATE meeting_segments SET start_ms = ?, end_ms = ? WHERE id = ?')
+      for (const s of segments) {
+        updateSeg.run(map(s.start_ms), Math.max(map(s.start_ms), map(s.end_ms)), s.id)
+      }
+      // 컷(침묵 구간)은 대부분 잘려나가 길이가 0이 된다 — 남겨두면 플레이어가 헛돌므로 지운다.
+      const updateCut = db.prepare('UPDATE meeting_cuts SET start_ms = ?, end_ms = ? WHERE id = ?')
+      const deleteCut = db.prepare('DELETE FROM meeting_cuts WHERE id = ?')
+      for (const c of cuts) {
+        const start = map(c.start_ms)
+        const end = map(c.end_ms)
+        if (end > start) updateCut.run(start, end, c.id)
+        else deleteCut.run(c.id)
+      }
+    })()
+  } catch {
+    // 무시 — 정상 경로라면 merge가 곧 전부 다시 쓴다.
+  }
+
+  try {
+    const row = db
+      .prepare('SELECT qa_pairs FROM meeting_summaries WHERE meeting_id = ?')
+      .get(meetingId) as { qa_pairs: string | null } | undefined
+    if (!row?.qa_pairs) return
+
+    const pairs = JSON.parse(row.qa_pairs) as Array<{ start_ms?: number | null }>
+    if (!Array.isArray(pairs) || pairs.length === 0) return
+
+    const mapped = pairs.map((p) =>
+      typeof p.start_ms === 'number' ? { ...p, start_ms: map(p.start_ms) } : p
+    )
+    db.prepare('UPDATE meeting_summaries SET qa_pairs = ? WHERE meeting_id = ?').run(
+      JSON.stringify(mapped),
+      meetingId
+    )
+  } catch {
+    // 무시 — 요약 본문은 그대로 유효하다.
+  }
+}
+
+/**
  * 취소 시 status 복원. merge DB 트랜잭션은 파이프라인 마지막에 단 한 번만 실행되므로,
  * 그 전에 취소되면 기존에 저장돼 있던 데이터(segments/summaries)는 무손상이다.
  * 따라서 현재 DB에 이미 존재하는 이전 처리 결과로 되돌릴 status를 결정한다.
@@ -220,7 +319,79 @@ export async function runMeetingPipeline(
 
   const audioPath = join(app.getPath('userData'), 'recordings', meeting.audio_path)
 
+  // 인식 보조(용어집·참석자). initial_prompt 힌트와 전사 후 결정론적 후보정에 함께 쓴다.
+  const aids = loadAids(db, meetingId)
+
   try {
+    // ── 1.5 무음 컷편집 (compact) ──
+    // 처리 전에 긴 침묵을 잘라내 whisper 청크 수·화자분리 입력 길이·파일 크기를 함께 줄인다.
+    // 컷편집된 파일이 그 녹음의 파일이 되므로(원본 별도 보관 없음) 한 번만 적용한다.
+    //  - skipTranscribe(빠른 재적용)에서는 절대 하지 않는다 — 기존 세그먼트 타임스탬프가 어긋난다.
+    //  - 이미 컷편집된 회의(재처리)도 건너뛴다(audio_compacted 멱등 가드).
+    //  - 16k/mono/16bit WAV가 아니면 audio-compaction이 알아서 applied:false로 돌아온다.
+    let speechRegionsMs: Region[] | undefined
+    const isWav =
+      /wav/i.test(meeting.audio_mime ?? '') || /\.wav$/i.test(meeting.audio_path ?? '')
+
+    if (
+      !opts?.skipTranscribe &&
+      meeting.compact_audio === 1 &&
+      meeting.audio_compacted === 0 &&
+      isWav
+    ) {
+      send({ meetingId, phase: 'compact', progress: 0, message: '무음 구간 정리 중…' })
+      const compaction = await compactRecording(audioPath, {
+        signal,
+        onMessage: (m) => send({ meetingId, phase: 'compact', message: m }),
+        onProgress: (p) => send({ meetingId, phase: 'compact', progress: p })
+      })
+
+      if (compaction.applied && compaction.keep) {
+        // 파일이 이미 교체됐으므로 취소 여부와 무관하게 DB를 먼저 맞춘다.
+        db.prepare(
+          `UPDATE meetings
+             SET audio_compacted = 1, original_duration_ms = ?, duration_ms = ?,
+                 updated_at = datetime('now','localtime')
+           WHERE id = ?`
+        ).run(compaction.originalMs, compaction.compactedMs, meetingId)
+        meeting.duration_ms = compaction.compactedMs
+        meeting.audio_compacted = 1
+        meeting.original_duration_ms = compaction.originalMs
+
+        // 이미 저장된 세그먼트·컷·요약 점프 위치를 새 타임라인으로 옮긴다
+        // (정상 경로면 merge가 다시 쓰지만, 여기서 취소되면 이게 유일한 방어선이다).
+        remapExistingTimelines(db, meetingId, compaction.keep)
+
+        const ratio =
+          compaction.originalMs > 0
+            ? Math.round((compaction.removedMs / compaction.originalMs) * 100)
+            : 0
+        send({
+          meetingId,
+          phase: 'compact',
+          progress: 1,
+          message: `무음 ${formatDurationKo(compaction.removedMs)} 제거 (${ratio}% 단축)`
+        })
+      } else {
+        // speechRegions가 null이면 발화 구간을 못 구한 것(포맷 불일치·VAD 실패)이고,
+        // 있으면 잘라낼 만한 침묵이 없었던 것이다.
+        send({
+          meetingId,
+          phase: 'compact',
+          progress: 1,
+          message: compaction.speechRegions
+            ? '무음 제거 생략 (절감 3% 미만)'
+            : '무음 제거 생략 (발화 구간 검출 불가)'
+        })
+      }
+
+      // 컷편집 단계가 이미 VAD를 돌렸으므로 그 결과를 STT에 넘겨 중복 실행을 막는다.
+      // applied=false여도 원본 타임라인 기준이라 그대로 유효하다.
+      speechRegionsMs = compaction.speechRegions ?? undefined
+    }
+
+    if (signal.aborted) throw new PipelineCancelledError()
+
     // ── 2. STT 전사 (또는 기존 전사 재사용) ──
     send({
       meetingId,
@@ -265,7 +436,7 @@ export async function runMeetingPipeline(
       const sttAdapter = await getSttAdapter()
       sttName = sttAdapter.name
 
-      // whisper initial_prompt: 회의 도메인 컨텍스트(주제·프로젝트·참석자 실명)를 주입해
+      // whisper initial_prompt: 회의 도메인 컨텍스트(주제·프로젝트·참석자 실명·용어집)를 주입해
       // 고유명사 오인식을 줄인다. 재전사가 실제로 실행되는 이 경로에서만 조립하므로
       // 빠른 재적용(skipTranscribe) 경로에는 영향이 없다. 조회 실패는 무해하게 생략된다.
       const prompt = buildInitialPrompt({
@@ -274,13 +445,16 @@ export async function runMeetingPipeline(
         title: meeting.title,
         projectName: loadProjectName(db, meeting.project_id),
         calendarEventTitle: meeting.calendar_event_title,
-        speakerNames: loadSpeakerNames(db, meetingId)
+        // 이전 처리에서 지정한 화자 실명 + 이 회의에 지정된 참석자(구성원) 이름.
+        speakerNames: [...loadSpeakerNames(db, meetingId), ...aids.attendees.map((a) => a.name)],
+        glossaryTerms: aids.glossary.map((g) => g.term)
       })
 
       rawSegments = await sttAdapter.transcribe(audioPath, {
         language: meeting.language || 'ko',
         prompt,
         signal,
+        speechRegionsMs,
         onProgress: (p) => {
           send({ meetingId, phase: 'transcribe', progress: p })
         },
@@ -303,6 +477,18 @@ export async function runMeetingPipeline(
         meetingId,
         phase: 'transcribe',
         message: `정제 완료 (${beforeClean} → ${rawSegments.length} segment)`
+      })
+    }
+
+    // 용어집 후보정 — 사용자가 등록한 오인식 표기를 정답 표기로 결정론적으로 치환한다.
+    // 정제의 일부이므로 빠른 재적용(skipTranscribe) 경로에도 적용된다.
+    const corrected = applyGlossary(rawSegments, aids.rules)
+    rawSegments = corrected.segments
+    if (corrected.replacements > 0) {
+      send({
+        meetingId,
+        phase: 'transcribe',
+        message: `용어집 후보정 ${corrected.replacements}건`
       })
     }
 
@@ -499,12 +685,25 @@ export async function runMeetingPipeline(
         rawSegments.length > 0 ? Math.max(...rawSegments.map((s) => s.end_ms)) : 0
       const duration = wavMs ?? (lastSegEnd > 0 ? lastSegEnd : meeting.duration_ms)
 
-      db.prepare(
-        `UPDATE meetings
-         SET status = 'transcribed', duration_ms = ?, error = NULL,
-             updated_at = datetime('now','localtime')
-         WHERE id = ?`
-      ).run(duration, meetingId)
+      // 파이프라인 버전은 전체 처리 경로에서만 기록한다. 빠른 재적용(skipTranscribe)은
+      // 컷편집도 재전사도 하지 않아 결과가 옛 파이프라인 산출물 그대로이므로, 여기서 버전을
+      // 올려버리면 "새 파이프라인으로 처리됨"으로 잘못 표시되어 재처리 대상에서 빠진다.
+      if (opts?.skipTranscribe) {
+        db.prepare(
+          `UPDATE meetings
+           SET status = 'transcribed', duration_ms = ?, error = NULL,
+               updated_at = datetime('now','localtime')
+           WHERE id = ?`
+        ).run(duration, meetingId)
+      } else {
+        db.prepare(
+          `UPDATE meetings
+           SET status = 'transcribed', duration_ms = ?, error = NULL,
+               pipeline_version = ?,
+               updated_at = datetime('now','localtime')
+           WHERE id = ?`
+        ).run(duration, CURRENT_PIPELINE_VERSION, meetingId)
+      }
     })
 
     // merge 트랜잭션 직전 마지막 취소 체크. 이 트랜잭션이 기존 데이터를 DELETE 후 재삽입하는

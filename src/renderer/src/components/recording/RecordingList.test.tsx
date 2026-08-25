@@ -39,6 +39,10 @@ const meeting = (id: number, title: string, kind: Meeting['kind']): Meeting => (
   calendar_event_id: null,
   calendar_event_title: null,
   error: null,
+  compact_audio: 1,
+  audio_compacted: 0,
+  original_duration_ms: null,
+  pipeline_version: 2,
   started_at: '2026-07-22 10:00:00',
   created_at: '2026-07-22 10:00:00',
   updated_at: '2026-07-22 10:00:00'

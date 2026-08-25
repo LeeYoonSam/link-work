@@ -6,13 +6,12 @@ import type {
   RecordingStreamEvent
 } from '../types'
 import { blobToWav16kMono } from '../utils/audio'
+import { mergeProcessingEvent } from '../utils/processing-progress'
+import type { ProcessingState } from '../utils/processing-progress'
 
-interface ProcessingState {
-  meetingId: number
-  phase: string
-  progress?: number
-  message?: string
-}
+// 진행 상태의 형태와 이벤트 병합 규칙은 utils/processing-progress.ts가 갖는다.
+// 화면들이 스토어를 통해 그대로 쓸 수 있도록 다시 내보낸다.
+export type { ProcessingState }
 
 // 목록 필터 — 'all'이면 회의·면접을 함께 본다
 export type KindFilter = 'all' | MeetingKind
@@ -45,6 +44,10 @@ interface RecordingStore {
     kind?: MeetingKind
     // 참석 인원(화자분리 클러스터 수). 미지정 시 면접=2, 회의=자동 추정.
     expected_speakers?: number | null
+    // 참석자로 지정할 구성원 id. 전사 힌트·화자 이름 프리셋·요약 참석자에 쓰인다.
+    attendee_ids?: number[]
+    // 처리 전 긴 침묵을 잘라낼지 여부(기본 true)
+    compact_audio?: boolean
   }) => Promise<number>
   saveAndProcess: (meetingId: number, blob: Blob, durationMs: number, mime: string) => Promise<void>
   summarizeMeeting: (id: number) => Promise<void>
@@ -68,6 +71,8 @@ interface RecordingStore {
   actionItemToTodo: (meetingId: number, index: number) => Promise<void>
   linkProject: (id: number, projectId: number | null) => Promise<void>
   setExpectedSpeakers: (id: number, n: number | null) => Promise<void>
+  // 회의 참석자(구성원 id 목록)를 통째로 교체한다
+  setAttendees: (meetingId: number, memberIds: number[]) => Promise<void>
 
   // 처리 진행률 스트림 구독
   subscribeStream: () => () => void
@@ -127,7 +132,9 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
       title: input.title,
       source: input.source,
       kind: input.kind,
-      expected_speakers: input.expected_speakers
+      expected_speakers: input.expected_speakers,
+      attendee_ids: input.attendee_ids,
+      compact_audio: input.compact_audio
     })
     await get().fetchMeetings()
     return result.id
@@ -235,6 +242,15 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
       await get().refreshCurrent()
     } catch (err) {
       console.error('[recordingStore] setExpectedSpeakers error:', err)
+    }
+  },
+
+  setAttendees: async (meetingId, memberIds) => {
+    try {
+      await window.api.recording.setAttendees(meetingId, memberIds)
+      await get().refreshCurrent()
+    } catch (err) {
+      console.error('[recordingStore] setAttendees error:', err)
     }
   },
 
@@ -359,16 +375,14 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
         return
       }
 
-      // 해당 회의 슬롯만 갱신
+      // 해당 회의 슬롯만 갱신.
+      // 이벤트를 통째로 덮지 않고 직전 상태에 합친다 — 진행률 없는 메시지 전용 이벤트가
+      // 진행 바를 0%로 되돌리지 않게 하기 위해서다(mergeProcessingEvent 주석 참고).
+      const now = Date.now()
       set((state) => ({
         processing: {
           ...state.processing,
-          [e.meetingId]: {
-            meetingId: e.meetingId,
-            phase: e.phase,
-            progress: e.progress,
-            message: e.message
-          }
+          [e.meetingId]: mergeProcessingEvent(state.processing[e.meetingId], e, now)
         }
       }))
 

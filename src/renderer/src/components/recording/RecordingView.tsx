@@ -4,6 +4,7 @@ import { useRecordingStore } from '../../stores/recordingStore'
 import { useRecorderStore } from '../../stores/recorderStore'
 import RecordingList from './RecordingList'
 import RecorderControls from './RecorderControls'
+import RecognitionAidsPanel from './RecognitionAidsPanel'
 import MeetingDetailView from './MeetingDetail'
 import { button } from '../ui'
 
@@ -25,6 +26,8 @@ export default function RecordingView(): React.ReactNode {
     subscribeStream
   } = useRecordingStore()
   const [showRecorder, setShowRecorder] = useState(false)
+  // 용어집·구성원 관리 패널. 녹음 컨트롤과 같은 자리(목록 위 인라인 드롭다운)에 편다.
+  const [showAids, setShowAids] = useState(false)
   // 다른 메뉴에 다녀와도 녹음이 진행 중이면 컨트롤 패널을 다시 펼쳐서 보여준다.
   const recorderActive = useRecorderStore((s) => s.state !== 'idle')
 
@@ -48,18 +51,38 @@ export default function RecordingView(): React.ReactNode {
         {/* 헤더 */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
           <span className="text-sm font-semibold text-gray-800">녹음</span>
-          <button
-            onClick={() => setShowRecorder(true)}
-            className={`px-3 py-1.5 text-xs font-medium ${button.primary} flex items-center gap-1.5`}
-          >
-            <MicDotIcon />새 녹음
-          </button>
+          <div className="flex items-center gap-1.5">
+            {/* 용어집·구성원 — 전사 정확도를 올리는 입력이라 녹음 시작 옆에 둔다 */}
+            <button
+              type="button"
+              onClick={() => setShowAids((v) => !v)}
+              title="사내 용어와 구성원을 등록해 전사·요약 정확도를 높입니다"
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                showAids ? 'bg-gray-900 text-white' : button.subtle
+              }`}
+            >
+              인식 보조
+            </button>
+            <button
+              onClick={() => setShowRecorder(true)}
+              className={`px-3 py-1.5 text-xs font-medium ${button.primary} flex items-center gap-1.5`}
+            >
+              <MicDotIcon />새 녹음
+            </button>
+          </div>
         </div>
 
         {/* 녹음 컨트롤 (인라인 드롭다운) */}
         {(showRecorder || recorderActive) && (
           <div className="border-b border-gray-100 bg-gray-50">
             <RecorderControls onDone={() => setShowRecorder(false)} />
+          </div>
+        )}
+
+        {/* 인식 보조 (인라인 드롭다운) */}
+        {showAids && (
+          <div className="border-b border-gray-100 bg-gray-50">
+            <RecognitionAidsPanel onClose={() => setShowAids(false)} />
           </div>
         )}
 

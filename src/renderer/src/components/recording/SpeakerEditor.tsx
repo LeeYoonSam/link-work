@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
-import type { MeetingKind, MeetingSpeaker } from '../../types'
+import type { Attendee, MeetingKind, MeetingSpeaker } from '../../types'
 import { IconButton, TrashIcon } from '../ui'
 
 interface Props {
   speakers: MeetingSpeaker[]
   meetingId: number
   kind?: MeetingKind
+  /** 이 회의의 참석자. 화자 이름 프리셋으로 쓴다. */
+  attendees?: Attendee[]
 }
 
 const PRESET_COLORS = [
@@ -29,11 +31,36 @@ export function nextPresetName(base: string, usedNames: string[]): string {
   }
 }
 
-export default function SpeakerEditor({ speakers, meetingId, kind }: Props): React.ReactNode {
+// 한 화자 행에 붙일 프리셋 버튼 상한. 참석자를 많이 지정한 회의에서 이름 버튼이
+// 행을 밀어내고 실명 입력칸을 잡아먹지 않도록 자른다.
+const MAX_NAME_PRESETS = 8
+
+// 면접은 기존 역할 프리셋 뒤에 참석자 이름을 붙이고, 회의는 참석자 이름만 쓴다.
+export function buildNamePresets(kind: MeetingKind | undefined, attendees: Attendee[]): string[] {
+  const base = kind === 'interview' ? INTERVIEW_NAME_PRESETS : []
+  const names = attendees.map((a) => a.name.trim()).filter(Boolean)
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const n of [...base, ...names]) {
+    if (seen.has(n)) continue
+    seen.add(n)
+    out.push(n)
+  }
+  return out.slice(0, MAX_NAME_PRESETS)
+}
+
+export default function SpeakerEditor({
+  speakers,
+  meetingId,
+  kind,
+  attendees
+}: Props): React.ReactNode {
   const { updateSpeaker, mergeSpeakers, refreshCurrent } = useRecordingStore()
   const [mergeFrom, setMergeFrom] = useState<number | null>(null)
   const [mergeBusy, setMergeBusy] = useState(false)
   const [mergeError, setMergeError] = useState<string | null>(null)
+
+  const namePresets = buildNamePresets(kind, attendees ?? [])
 
   if (speakers.length === 0) {
     return (
@@ -62,18 +89,22 @@ export default function SpeakerEditor({ speakers, meetingId, kind }: Props): Rea
     <div className="space-y-3">
       <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">화자 보정</p>
 
-      {kind === 'interview' && (
+      {kind === 'interview' ? (
         <p className="text-[11px] text-gray-400">
           화자 이름을 지정하면 질문·답변 정리가 더 정확해집니다
         </p>
-      )}
+      ) : namePresets.length > 0 ? (
+        <p className="text-[11px] text-gray-400">
+          참석자 이름을 눌러 화자를 바로 지정할 수 있습니다
+        </p>
+      ) : null}
 
       <ul className="space-y-2">
         {speakers.map((spk) => (
           <SpeakerRow
             key={spk.id}
             speaker={spk}
-            namePresets={kind === 'interview' ? INTERVIEW_NAME_PRESETS : []}
+            namePresets={namePresets}
             usedNames={speakers
               .filter((s) => s.id !== spk.id)
               .map((s) => s.display_name ?? '')

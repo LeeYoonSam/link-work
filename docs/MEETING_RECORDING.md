@@ -29,8 +29,10 @@ RecordingView ── recordingStore ──IPC──► recording.ipc.ts
                                                    userData/recordings/<id>.webm
                                                           │
                           recording:process ──► meeting-pipeline.ts
+                                                   0) compact (audio-compaction.ts) → 긴 침묵 제거한 WAV로 교체 (§11)
                                                    1) (필요시) webm→16k mono wav
-                                                   2) STT  (stt/)        → raw segments
+                                                   2) STT  (stt/)        → raw segments (VAD 구간은 0)에서 재사용)
+                                                      → cleanSegments → applyGlossary (용어집 후보정, §12)
                                                    3) VAD  (vad/)        → cuts[] (silence/filler)
                                                    4) Diar (diarization/)→ speaker turns
                                                    5) merge → segments[] + speakers[]
@@ -43,8 +45,8 @@ RecordingView ── recordingStore ──IPC──► recording.ipc.ts
 ```
 
 **설계 원칙 (리서치 기반)**
-1. **비파괴(non-destructive)**: 원본 오디오는 불변. 침묵/필러 컷은 `cuts[]` 메타데이터로만 저장(`enabled` 토글). 화자 보정은 `segments`/`speakers`에 반영하되 원본 시간축(`start_ms`)은 보존.
-2. **시간은 항상 원본 절대 ms**. (whisper.cpp 타임스탬프 재배치 함정 회피)
+1. **처리 후 비파괴(non-destructive after compaction)**: 녹음 파일은 첫 처리 직전 **무음 컷편집을 정확히 1회** 거쳐 교체되고(§11, 사용자 결정: 컷편집본을 그 녹음의 파일로 사용), 그 이후로는 불변이다. 제거한 구간은 `<id>.compaction.json` 사이드카에 남긴다. 짧은 침묵/필러 컷은 여전히 `cuts[]` 메타데이터로만 저장(`enabled` 토글). 화자 보정은 `segments`/`speakers`에 반영하되 시간축(`start_ms`)은 보존.
+2. **시간은 항상 (컷편집된) 파일의 절대 ms**. (whisper.cpp 타임스탬프 재배치 함정 회피)
 3. **어댑터 패턴**: STT/Diarization/VAD는 인터페이스로 추상화. 네이티브 엔진 미설치 시 **폴백 어댑터**로 graceful degrade (앱은 항상 빌드·동작).
 4. **화자 자동분리는 "초안"**. 수동 보정 도구를 1급 기능으로.
 
@@ -63,6 +65,11 @@ CREATE TABLE IF NOT EXISTS meetings (
   duration_ms INTEGER DEFAULT 0,
   language TEXT DEFAULT 'ko',
   source TEXT DEFAULT 'mic',                  -- mic|mic+system
+  expected_speakers INTEGER,                  -- 참석 인원(화자분리 클러스터 수). NULL=자동
+  compact_audio INTEGER NOT NULL DEFAULT 1,   -- 처리 시 무음 컷편집 수행 여부(녹음 시작 시 선택, §11)
+  audio_compacted INTEGER NOT NULL DEFAULT 0, -- 컷편집이 실제 적용됐는지(멱등 가드)
+  original_duration_ms INTEGER,               -- 컷편집 전 길이(NULL=미적용)
+  pipeline_version INTEGER NOT NULL DEFAULT 0,-- 처리 파이프라인 버전(0=구/미처리, 2=컷편집·용어집·참석자). 전체 처리 시 기록(§13)
   project_id INTEGER,                         -- (선택) 프로젝트 귀속
   calendar_event_id TEXT,                     -- (선택) 매칭된 캘린더 이벤트
   calendar_event_title TEXT,
@@ -128,6 +135,39 @@ CREATE TABLE IF NOT EXISTS meeting_summaries (
   generated_at TEXT DEFAULT (datetime('now','localtime')),
   FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
 );
+
+-- ── 인식 보조 장치 (§12): 사용자가 직접 입력하는 용어집·구성원. 로컬 DB에만 저장 ──
+CREATE TABLE IF NOT EXISTS stt_glossary (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  term TEXT NOT NULL,                         -- 정답 표기
+  aliases TEXT NOT NULL DEFAULT '[]',         -- JSON string[] 오인식/변형 표기
+  note TEXT,                                  -- 설명(요약 프롬프트 힌트, 선택)
+  priority INTEGER NOT NULL DEFAULT 0,        -- 높을수록 initial_prompt에 먼저
+  enabled INTEGER NOT NULL DEFAULT 1,
+  project_id INTEGER,                         -- NULL=전역, 지정 시 그 프로젝트 회의에만
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  updated_at TEXT DEFAULT (datetime('now','localtime')),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS meeting_members (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  aliases TEXT NOT NULL DEFAULT '[]',         -- JSON string[] 호칭/영문명
+  role TEXT,                                  -- 직책/팀(선택)
+  enabled INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS meeting_attendees (  -- 회의별 참석자(구성원 중 선택)
+  meeting_id INTEGER NOT NULL,
+  member_id INTEGER NOT NULL,
+  PRIMARY KEY (meeting_id, member_id),
+  FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+  FOREIGN KEY (member_id) REFERENCES meeting_members(id) ON DELETE CASCADE
+);
 ```
 
 마이그레이션은 기존 패턴(다른 테이블 영향 없으니 `CREATE IF NOT EXISTS`만으로 충분, 추가 컬럼 시 `PRAGMA table_info` 체크).
@@ -154,9 +194,52 @@ export interface Meeting {
   calendar_event_id: string | null
   calendar_event_title: string | null
   error: string | null
+  expected_speakers: number | null
+  compact_audio: number          // 1=처리 시 무음 컷편집
+  audio_compacted: number        // 1=컷편집 적용 완료(멱등)
+  original_duration_ms: number | null
+  pipeline_version: number       // 0=구 파이프라인, 2=현재(§13). 요약 재생성 분기 기준
   started_at: string
   created_at: string
   updated_at: string
+}
+
+// ── 인식 보조 장치 (§12) ──
+export interface GlossaryEntry {
+  id: number
+  term: string
+  aliases: string[]
+  note: string | null
+  priority: number
+  enabled: number
+  project_id: number | null
+  created_at: string
+  updated_at: string
+}
+export interface Member {
+  id: number
+  name: string
+  aliases: string[]
+  role: string | null
+  enabled: number
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+export interface Attendee {
+  member_id: number
+  name: string
+  role: string | null
+}
+export interface RecognitionAidsAPI {
+  listGlossary: () => Promise<GlossaryEntry[]>
+  upsertGlossary: (input: { id?: number; term: string; aliases?: string[]; note?: string | null; priority?: number; enabled?: boolean; project_id?: number | null }) => Promise<{ id: number }>
+  removeGlossary: (id: number) => Promise<{ success: boolean }>
+  /** 줄 형식 `정답 | 별칭1, 별칭2 | 메모` (`#` 주석, 파이프 없이 정답만도 허용) */
+  importGlossaryText: (text: string) => Promise<{ added: number; updated: number; skipped: number }>
+  listMembers: () => Promise<Member[]>
+  upsertMember: (input: { id?: number; name: string; aliases?: string[]; role?: string | null; enabled?: boolean; sort_order?: number }) => Promise<{ id: number }>
+  removeMember: (id: number) => Promise<{ success: boolean }>
 }
 
 export interface MeetingSpeaker {
@@ -239,14 +322,15 @@ export interface MeetingDetail {
   speakers: MeetingSpeaker[]
   segments: MeetingSegment[]
   cuts: MeetingCut[]
+  attendees: Attendee[]
   summary: MeetingSummary | null
 }
 
 /** 처리 진행률 스트림 (recording:stream) */
 export interface RecordingStreamEvent {
   meetingId: number
-  // 'cancelled' — 사용자 취소로 파이프라인이 중단됨(에러와 구분되는 중립 종료)
-  phase: 'transcribe' | 'diarize' | 'vad' | 'merge' | 'summarize' | 'done' | 'error' | 'cancelled'
+  // 'compact' — 무음 컷편집(§11). 'cancelled' — 사용자 취소로 파이프라인이 중단됨(에러와 구분되는 중립 종료)
+  phase: 'compact' | 'transcribe' | 'diarize' | 'vad' | 'merge' | 'summarize' | 'done' | 'error' | 'cancelled'
   progress?: number          // 0..1
   message?: string
   error?: string
@@ -260,7 +344,11 @@ export interface RecordingAPI {
     source?: MeetingSource
     kind?: MeetingKind
     expected_speakers?: number | null  // 참석 인원(화자분리 클러스터 수). 미지정 시 면접=2, 회의=자동(null)
+    attendee_ids?: number[]            // 참석자(meeting_members.id) — 프롬프트 힌트·화자 프리셋·요약 담당자 매칭
+    compact_audio?: boolean            // 처리 시 무음 컷편집(기본 true)
   }) => Promise<{ id: number }>
+  /** 참석자 지정/변경 (meeting_attendees 교체) */
+  setAttendees: (meetingId: number, memberIds: number[]) => Promise<{ success: boolean }>
   /** 오디오 바이트 저장 (ArrayBuffer). 저장 후 duration/경로 메타 갱신 */
   saveAudio: (id: number, bytes: ArrayBuffer, meta: { mime: string; durationMs: number }) => Promise<{ path: string }>
   /** 전사+화자분리+VAD 파이프라인 실행 (진행률은 onStream) */
@@ -287,7 +375,7 @@ export interface RecordingAPI {
 }
 ```
 
-`env.d.ts`의 `Window.api`에 `recording: RecordingAPI` 추가.
+`env.d.ts`의 `Window.api`에 `recording: RecordingAPI`, `recognitionAids: RecognitionAidsAPI` 추가.
 
 ## 4. IPC 채널 계약 (recording.ipc.ts → preload)
 
@@ -295,7 +383,8 @@ export interface RecordingAPI {
 |---|---|---|
 | `recording:list` | — | `Meeting[]` |
 | `recording:get` | `id` | `MeetingDetail \| null` |
-| `recording:createDraft` | `{title?, source?, kind?, expected_speakers?}` | `{id}` |
+| `recording:createDraft` | `{title?, source?, kind?, expected_speakers?, attendee_ids?, compact_audio?}` | `{id}` |
+| `recording:setAttendees` | `meetingId, memberIds[]` | `{success}` |
 | `recording:saveAudio` | `id, ArrayBuffer, {mime,durationMs}` | `{path}` |
 | `recording:process` | `id` | `{success, error?}` |
 | `recording:cancel` | `id` | `{success}` (활성 파이프라인 abort, 완료는 stream phase:`cancelled`) |
@@ -311,6 +400,20 @@ export interface RecordingAPI {
 | `recording:linkCalendar` | `id, eventId, eventTitle` | `{success}` |
 | 이벤트 `recording:stream` | (main→renderer) `RecordingStreamEvent` | — |
 
+`recording:get`은 `attendees: Attendee[]`를 함께 반환한다. `recording:remove`는 오디오·`<id>.channels.json`·`<id>.compaction.json`을 모두 지운다.
+
+인식 보조 장치 IPC (`recognition-aids.ipc.ts` → preload `window.api.recognitionAids`):
+
+| 채널 | 인자 | 반환 |
+|---|---|---|
+| `recognitionAids:listGlossary` | — | `GlossaryEntry[]` |
+| `recognitionAids:upsertGlossary` | `input` | `{id}` |
+| `recognitionAids:removeGlossary` | `id` | `{success}` |
+| `recognitionAids:importGlossaryText` | `text` | `{added, updated, skipped}` |
+| `recognitionAids:listMembers` | — | `Member[]` |
+| `recognitionAids:upsertMember` | `input` | `{id}` |
+| `recognitionAids:removeMember` | `id` | `{success}` |
+
 preload: 다른 API와 동일하게 `ipcRenderer.invoke`, `onStream`은 `ipcRenderer.on('recording:stream', ...)` + cleanup 반환.
 
 ## 5. 어댑터 인터페이스 (main/services)
@@ -323,7 +426,8 @@ export interface SttSegment { start_ms: number; end_ms: number; text: string; co
 export interface SttAdapter {
   readonly name: string
   isAvailable(): Promise<boolean>
-  transcribe(wavPath: string, opts: { language: string; prompt?: string; signal?: AbortSignal; onProgress?: (p: number) => void }): Promise<SttSegment[]>
+  // speechRegionsMs: 컷편집 단계(§11)가 이미 검출한 발화 구간. 주어지면 어댑터는 VAD를 다시 돌리지 않는다.
+  transcribe(wavPath: string, opts: { language: string; prompt?: string; speechRegionsMs?: { startMs: number; endMs: number }[]; signal?: AbortSignal; onProgress?: (p: number) => void }): Promise<SttSegment[]>
 }
 // 구현: whisper-adapter (lazy import '@fugood/whisper.node', optionalDependency),
 //        manual-adapter (폴백: 빈 결과 + '수동 입력 필요' — 앱이 항상 동작)
@@ -349,8 +453,9 @@ export interface VadAdapter {
 ```
 
 **파이프라인(meeting-pipeline.ts)**: `process(id)`
+0. **compact** (phase:compact, §11): `!skipTranscribe && compact_audio=1 && audio_compacted=0 && WAV`일 때만 `compactRecording` → 적용되면 파일 교체 + `duration_ms`/`original_duration_ms`/`audio_compacted=1` 갱신 + 기존 면접 요약의 `qa_pairs[].start_ms` 재매핑. 실패/미적용은 비치명적(원본으로 계속). 검출한 발화 구간은 2)에 `speechRegionsMs`로 전달.
 1. 오디오 로드 → (필요시) 16k mono wav 변환. ffmpeg 없으면 원본 사용 시도, 실패 시 명확한 에러.
-2. `stt.transcribe` → raw segments (phase:transcribe, progress)
+2. `stt.transcribe` → raw segments (phase:transcribe, progress) → `cleanSegments` → `applyGlossary`(§12, `skipTranscribe` 경로에도 적용) → WAV 길이 클램프
 3. `vad.detectSilence` → cuts[] (phase:vad)
 4. `diar.diarize` → turns (phase:diarize). 폴백은 채널 기반.
 5. **merge**: 각 STT segment를 겹치는 diar turn의 speaker_key에 귀속. speakers[] 생성(중복 key 통합, 색상/라벨 부여). (phase:merge)
@@ -363,7 +468,7 @@ export interface VadAdapter {
 
 `ai-agent.ts`의 인프라(SDK lazy load, `findClaudeExecutable`, `sanitizedEnv`, `settingSources:[]`, `cwd`)를 **재사용**하되, MCP 도구 없이 단순 텍스트→JSON query. 회의 요약은 데이터 조회가 아니라 변환이므로 `allowedTools:[]`, `mcpServers` 없음.
 
-- 입력: 전사본을 `[mm:ss] 화자명: 텍스트` 라인들로 직렬화(긴 회의는 청크/길이 가드 — 너무 길면 앞부분 우선 + 길이 상한).
+- 입력: 전사본을 `[mm:ss] 화자명: 텍스트` 라인들로 직렬화(긴 회의는 청크/길이 가드 — 너무 길면 앞부분 우선 + 길이 상한). 앞에 `buildSummaryContextBlock(loadPromptContext(db, meetingId))`의 `[참고 정보]` 블록(참석자·용어집, §12)을 붙인다 — 비어 있으면 생략. `SummarySpec.buildPrompt(transcript, contextBlock)`.
 - 시스템 프롬프트: "회의록을 분석해 한국어로 JSON만 출력. 키: tldr(string), key_points(string[]), decisions(string[]), action_items({text, assignee?, due?}[]), next_steps(string[]). 추측 금지, 회의에 없는 내용 생성 금지."
 - 출력 파싱: 응답에서 JSON 블록 추출(코드펜스 허용) → zod 검증(`zod`는 이미 의존성) → `meeting_summaries` upsert.
 - 진행률: phase:summarize, 완료 시 phase:done. 실패 시 friendly error(`toFriendlyError` 패턴 재사용 — 미로그인/미설치 안내).
@@ -401,9 +506,11 @@ export interface VadAdapter {
 ```
 hooks/useRecorder.ts          # 캡처 상태머신: idle|recording|paused|stopped
 stores/recordingStore.ts      # 목록/상세/처리상태/스트림 구독
+stores/recognitionAidsStore.ts# 용어집·구성원 CRUD (§12)
 components/recording/
-  RecordingView.tsx           # 좌: 목록 + 종류 필터(전체/회의/면접), 우: 상세
-  RecorderControls.tsx        # 종류(회의/면접) + 소스 선택, 시작/일시정지/종료 + 레벨미터
+  RecordingView.tsx           # 좌: 목록 + 종류 필터(전체/회의/면접) + "인식 보조" 패널 토글, 우: 상세
+  RecognitionAidsPanel.tsx    # 용어집/구성원 탭 편집 + 텍스트 가져오기 (§12)
+  RecorderControls.tsx        # 종류(회의/면접) + 소스 선택 + 참석자 칩 + 무음 제거 체크, 시작/일시정지/종료 + 레벨미터
   RecordingList.tsx           # 녹음 카드 목록(상태 pill, 면접 배지), kindFilter 적용
   MeetingDetail.tsx           # 헤더(제목/날짜/상태) + 탭(타임라인/요약), kind별 패널 분기
   SpeakerTimeline.tsx         # 시간대별 화자 발언 (클릭→오디오 점프), 컷 토글
@@ -432,3 +539,48 @@ components/recording/
 - `npm run typecheck` (node+web) 통과.
 - `npm run build` 통과.
 - 폴백 경로로 전체 플로우가 런타임 에러 없이 도달(전사 없으면 "수동 입력/엔진 설치 안내" 상태로 graceful).
+
+## 11. 무음 컷편집 (audio compaction)
+
+**목적**: 처리 전에 긴 침묵을 잘라 (a) whisper 청크 수(28초 창에 발화가 더 촘촘히) (b) sherpa 화자분리 입력 길이 (c) 파일 크기를 줄이고, 재생 시 침묵 스킵이 필요 없게 한다. **컷편집본이 그 녹음의 파일이 된다**(사용자 결정, 원본 별도 보관 없음). 제거한 구간은 `<id>.compaction.json` 사이드카(`{version, originalMs, compactedMs, removed[], params, compactedAt}`)에 남긴다.
+
+**구성**
+- `stt/audio-compactor.ts` — 순수 함수(단위 테스트 대상): `planCompaction(speech, audioMs, opts)`, `compactPcm16(wav, dataRange, keep)`, `remapChannelEnergy(env, keep)`, `mapMsToCompacted(ms, keep)`, `speechRegionsToCompacted(speech, keep)`. 기본 파라미터는 `DEFAULT_COMPACTION_OPTIONS` 한곳에 둔다.
+- `stt/vad-detect.ts` — whisper.node silero VAD 검출 공용 함수 `detectSpeechRegions(audioPath, dataRange, opts)` (컷편집·STT 공용). **반드시 `useGpu:false`**(Metal에서 ggml_abort로 앱 즉사 이력) + `.vad-crash-guard` 센티널 유지. **`initWhisperVad`는 반드시 `nThreads: 1`을 명시한다** — 기본값이 hardware_concurrency(12)인데 silero는 0.88MB 초소형 그래프라 프레임마다 12스레드를 동기화하는 비용이 연산을 압도해 사실상 멈춘다(실측 5초 오디오: nThreads 1=33ms, 2=43ms, 4=229ms, 기본값=60초 초과 미완료·CPU 480%. 97분 녹음이 9분 걸리고 진행률 0%로 보이던 원인). nThreads 1이면 전체 파일 검출이 길이에 선형으로 약 224× 실시간(8분 2.1초, 54분 14.6초, 98분 26초). **검출은 파일 전체를 한 번에 넣는다(`detectSpeechFile`)** — 청크 분할·병렬(`detectSpeechData`)은 3배 더 빠르지만 청크 경계마다 전체 검출 대비 발화 ~0.2초씩(98분에 총 ~4초)이 어긋나고 컷편집은 되돌릴 수 없으므로 채택하지 않았다(2026-08-25 실측 후 제거). 네이티브 호출 중에는 진행률을 얻을 수 없어 `estimateVadProgress(elapsedMs, audioMs, 200×)`(실측 224×보다 약간 보수적, 0.95 상한)를 1초 티커로 보고하고 완료 시 1.0으로 마감한다. 호출 중간 취소는 불가(최대 수십 초), 호출 전후에만 취소를 확인한다.
+- `audio-compaction.ts` — I/O: VAD → plan → `.tmp`에 쓰고 검증 후 `rename`(원자적) → `<id>.channels.json` 재매핑 → 사이드카 기록. 어떤 실패도 `applied:false`로 흡수(취소만 전파).
+
+**정책** (기본값 — 리서치 근거: faster-whisper VAD 기본 `min_silence_duration_ms=2000`, 편집 도구 관행, pyannote 경계 불연속 리스크)
+- 침묵 판정은 VAD 발화 구간의 여집합. `padMs`(발화 앞뒤 여유, 200) 밖의 침묵 중 `minRemovableGapMs`(2000) 이상만 제거 대상이며, 제거 시 `keepGapMs`(600 — 화자분리 안정성을 위해 ≥0.5s)만큼의 **실제 오디오**(앞 절반은 직전 발화 뒤, 뒤 절반은 다음 발화 앞)를 남겨 룸톤을 유지한다. 디지털 무음(0)을 끼워 넣지 않는다 — whisper 환각·경계 클릭 방지. 접합부마다 `fadeMs`(8) 선형 fade-out/in을 건다(갭 길이보다 클릭이 더 위험). 파일 맨 앞/뒤 침묵은 `edgeMs`(300)만 남긴다.
+- 라우드니스 정규화·하이패스·노이즈 억제는 **하지 않는다**. whisper는 [-1,1] 범위 안의 음량 차이에 대체로 불변이고, 노이즈 억제는 large 계열에서 WER을 오히려 높이며 pyannote DER도 악화시킨다는 보고가 있다(SciTePress 2024, arXiv 2603.04710, pyannote-audio #1053).
+- 절감이 `minSavingsRatio` 미만이면 파일을 다시 쓰지 않는다(`applied:false`).
+- 컷편집은 **첫 전체 처리에서 정확히 1회**(`audio_compacted` 멱등 가드). "빠른 재적용"(`skipTranscribe`)은 기존 세그먼트 타임스탬프를 재사용하므로 절대 컷편집하지 않는다. 이미 요약(면접 `qa_pairs.start_ms`)이 있는 회의를 전체 재처리하며 컷편집이 적용되면 그 시각을 `mapMsToCompacted`로 재매핑한다.
+- 녹음 시작 화면의 "무음 구간 자동 제거"(`compact_audio`, 기본 on)로 회의별 opt-out 가능. 상세 화면은 `original_duration_ms`로 "무음 −mm:ss (n%)" 배지를 보여준다.
+- `mic+system`의 채널 에너지 envelope(`<id>.channels.json`, 100ms hop)도 같은 keep 구간으로 재매핑해 화자 귀속이 어긋나지 않게 한다.
+
+**진행률 표시**: main은 phase별 0~1을 보낸다(compact: VAD 0→0.85, 쓰기 0.95, 사이드카 1.0 / transcribe: 어댑터가 직접 VAD를 돌리면 0→0.08 뒤 전사 0.08→1). 렌더러 `utils/processing-progress.ts`가 phase 가중치(compact .10 / transcribe .55 / vad .02 / diarize .25 / merge .03 / summarize .05)로 **전체 진행률**을 계산해 바에 표시하고, phase 경과 시간을 함께 보여준다. 메시지 전용 스트림 이벤트(`progress` 없음)는 직전 진행률을 유지한다(`mergeProcessingEvent`) — 예전엔 이 이벤트가 진행률을 0으로 되돌렸다.
+
+## 12. 인식 보조 장치 (용어집 · 구성원)
+
+회사 기밀을 코드에 두지 않는다. 구조만 제공하고 내용은 사용자가 입력하며, **로컬 SQLite에만** 저장된다. whisper initial_prompt는 로컬 추론에만 쓰이고, 요약 단계에서는 참석자 이름·용어가 전사록과 함께 Claude로 전송된다(전사록이 이미 가는 경로와 동일).
+
+| 보조 장치 | 저장 | 사용처 |
+|---|---|---|
+| 용어집 `stt_glossary` (정답 표기 · 오인식 표기 aliases · 메모 · 우선순위 · 프로젝트 범위) | 로컬 DB | ① `buildInitialPrompt({glossaryTerms})` — 프롬프트 **끝**에 ` 용어: A, B, C.`(최대 15개·120자, 전체 360자; whisper는 마지막 224토큰만 반영하므로 끝이 가장 중요, alias는 넣지 않는다) ② `applyGlossary(segments, rules)` 결정론적 후보정 ③ 요약 `[참고 정보]` 블록 |
+| 구성원 `meeting_members` (이름 · 호칭/별칭 · 역할) + 회의별 참석자 `meeting_attendees` | 로컬 DB | ① 프롬프트 참석자 힌트(`speakerNames`에 합류) ② 녹음 시작 시 참석 인원 자동 제안 ③ `SpeakerEditor` 이름 프리셋 ④ 요약 `[참고 정보]`의 담당자 매칭 |
+
+**후보정 규칙(`stt/glossary-correct.ts`)** — 오치환 방지가 우선: alias 2자 이상, term과 동일한 alias 제외, 긴 alias 우선. 라틴/숫자 alias는 대소문자 무시 + 양쪽 영숫자 경계. 한글 포함 alias는 경계 없음(조사 결합 허용: "링크워크를"→"LinkWork를"), 3자 이상이면 문자 사이 공백 0~1개 허용("링크 워크"). 이미 정답 표기인 부분은 재치환하지 않는다. 사용자 수정 플래그 `text_corrected`는 건드리지 않는다.
+
+**서비스(`recognition-aids.ts`)**: `listGlossary/upsertGlossary/removeGlossary/importGlossaryText(parseGlossaryText)/listMembers/upsertMember/removeMember/setAttendees/listAttendees/loadPromptContext/buildSummaryContextBlock`. `loadPromptContext(db, meetingId)`는 `meetings.project_id`로 범위 필터(전역 + 해당 프로젝트), `priority DESC, updated_at DESC`, 실패 시 빈 컨텍스트(throw 금지).
+
+**UI**: 녹음 목록 헤더 "인식 보조" → `RecognitionAidsPanel`(용어집/구성원 탭, 텍스트 가져오기 `정답 | 별칭1, 별칭2 | 메모`). 녹음 시작 화면 참석자 칩, 상세 화면 참석자 칩 편집.
+
+**향후 후보(미구현)**: whisper.cpp는 hotword/keyword boosting이 없어 prompt·후보정으로만 대응한다. LLM 후보정 패스(요약 시 표기 교정 목록 회수), 오디오 정규화는 근거가 확인되면 §11 파이프라인에 추가한다.
+
+## 13. 파이프라인 버전과 요약 재생성
+
+전체 처리(`!skipTranscribe`)가 merge 트랜잭션에서 `meetings.pipeline_version = CURRENT_PIPELINE_VERSION`(meeting-pipeline.ts, 현재 **2** = 무음 컷편집 + 용어집 후보정/프롬프트 힌트 + 참석자 힌트)을 기록한다. 빠른 재적용은 컷편집·재전사를 하지 않으므로 값을 유지한다. 파이프라인 동작이 결과에 영향을 줄 만큼 바뀌면 이 상수를 올린다.
+
+상세 화면의 "AI 요약 다시 생성"(면접: "면접 기록 다시 정리")은 `needsFullReanalysis(meeting)`(= `pipeline_version < 2`, MeetingDetail.tsx)로 분기한다:
+- **구 파이프라인 회의** → "다시 분석 후 요약 생성": 전체 재처리(컷편집 → 용어집·참석자 힌트로 재전사 → 후보정 → 화자분리) 후 자동 요약. 수동으로 고친 발언·화자 지정은 초기화된다(merge가 세그먼트를 재생성).
+- **현재 파이프라인 회의** → 요약만 재생성(전사·수동 수정 보존, `[참고 정보]` 블록은 항상 반영).
+"전체 다시 처리"는 버전과 무관하게 항상 재전사 + 요약 재생성이다(`recordingStore.reprocessMeeting`이 성공·전사 시 `summarizeMeeting`을 호출).

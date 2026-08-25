@@ -7,6 +7,7 @@ import { runMeetingPipeline, SPEAKER_COLORS } from '../services/meeting-pipeline
 import { runMeetingSummary } from '../services/meeting-summary'
 import { wavDurationMs } from '../services/wav-util'
 import { cancelPipeline } from '../services/pipeline-abort'
+import { setAttendees, listAttendees } from '../services/recognition-aids'
 import type {
   RecordingStreamEvent,
   SendStream,
@@ -23,6 +24,13 @@ function recordingsDir(): string {
 // 화자분리용 채널 에너지 envelope 파일 경로 ({id}.channels.json)
 function channelEnergyPath(id: number): string {
   return join(recordingsDir(), `${id}.channels.json`)
+}
+
+// 무음 컷편집 내역 사이드카 파일 경로 ({id}.compaction.json).
+// 컷편집은 WAV를 제자리에서 갈아끼우므로 원본 파일이 남지 않는다. 무엇을 얼마나 뺐는지는
+// 이 파일에만 남으니, 녹음을 지울 때 함께 지워야 고아 파일이 되지 않는다.
+function compactionPath(id: number): string {
+  return join(recordingsDir(), `${id}.compaction.json`)
 }
 
 interface SummaryRow {
@@ -146,14 +154,21 @@ export function registerRecordingIpc(): void {
         | SummaryRow
         | undefined
     )
-    return { meeting, speakers, segments, cuts, summary }
+    return { meeting, speakers, segments, cuts, summary, attendees: listAttendees(db, id) }
   })
 
   ipcMain.handle(
     'recording:createDraft',
     (
       _e,
-      input: { title?: string; source?: string; kind?: string; expected_speakers?: number | null }
+      input: {
+        title?: string
+        source?: string
+        kind?: string
+        expected_speakers?: number | null
+        attendee_ids?: number[]
+        compact_audio?: boolean
+      }
     ) => {
       const kind = input?.kind === 'interview' ? 'interview' : 'meeting'
       const title =
@@ -168,12 +183,17 @@ export function registerRecordingIpc(): void {
           ? Math.min(20, Math.round(raw))
           : null
       const expectedSpeakers = requested ?? (kind === 'interview' ? 2 : null)
+      // 무음 컷편집은 기본 on. 명시적으로 false를 준 경우에만 끈다.
+      const compactAudio = input?.compact_audio === false ? 0 : 1
       const result = db
         .prepare(
-          "INSERT INTO meetings (title, kind, status, source, expected_speakers) VALUES (?, ?, 'recording', ?, ?)"
+          "INSERT INTO meetings (title, kind, status, source, expected_speakers, compact_audio) VALUES (?, ?, 'recording', ?, ?, ?)"
         )
-        .run(title, kind, source, expectedSpeakers)
+        .run(title, kind, source, expectedSpeakers, compactAudio)
       const id = Number(result.lastInsertRowid)
+      if (Array.isArray(input?.attendee_ids) && input.attendee_ids.length > 0) {
+        setAttendees(db, id, input.attendee_ids)
+      }
       logActivity('meeting', 'create', id, title)
       return { id }
     }
@@ -291,6 +311,11 @@ export function registerRecordingIpc(): void {
       await unlink(channelEnergyPath(id))
     } catch {
       // 채널 에너지 파일이 없으면 무시
+    }
+    try {
+      await unlink(compactionPath(id))
+    } catch {
+      // 컷편집 내역 파일이 없으면 무시 (컷편집을 하지 않은 녹음)
     }
     db.prepare('DELETE FROM meetings WHERE id = ?').run(id) // CASCADE로 하위 정리
     logActivity('meeting', 'delete', id)
@@ -429,6 +454,13 @@ export function registerRecordingIpc(): void {
     db.prepare(
       "UPDATE meetings SET project_id = ?, updated_at = datetime('now','localtime') WHERE id = ?"
     ).run(projectId, id)
+    return { success: true }
+  })
+
+  // ── 참석자(구성원) 지정 — 전사 힌트/화자 이름 프리셋/요약 담당자 매칭에 쓰인다 ──
+  // 참석 '인원 수'(expected_speakers)와는 별개다: 이쪽은 누가 들어왔는지의 명단이다.
+  ipcMain.handle('recording:setAttendees', (_e, meetingId: number, memberIds: number[]) => {
+    setAttendees(db, meetingId, Array.isArray(memberIds) ? memberIds : [])
     return { success: true }
   })
 

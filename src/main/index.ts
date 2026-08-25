@@ -15,6 +15,7 @@ import { registerTodoIpc } from './ipc/todo.ipc'
 import { registerTodoTagIpc } from './ipc/todo-tag.ipc'
 import { registerAiIpc } from './ipc/ai.ipc'
 import { registerRecordingIpc } from './ipc/recording.ipc'
+import { registerRecognitionAidsIpc } from './ipc/recognition-aids.ipc'
 import { registerExportIpc } from './ipc/export.ipc'
 import { registerReleaseNoteIpc } from './ipc/release-note.ipc'
 import { cancelAllAiQueries } from './services/ai-agent'
@@ -196,6 +197,7 @@ app.whenReady().then(() => {
   registerTodoTagIpc()
   registerAiIpc()
   registerRecordingIpc()
+  registerRecognitionAidsIpc()
   registerExportIpc()
   registerReleaseNoteIpc()
   startNotificationService()

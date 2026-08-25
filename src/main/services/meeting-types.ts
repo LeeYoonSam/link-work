@@ -4,8 +4,18 @@
 
 export interface RecordingStreamEvent {
   meetingId: number
+  // 'compact': 전사 전에 녹음에서 긴 침묵을 잘라내는 무음 컷편집 단계.
   // 'cancelled': 사용자가 처리를 취소해 이전 상태로 복원됨 (일반 'error'와 구분).
-  phase: 'transcribe' | 'diarize' | 'vad' | 'merge' | 'summarize' | 'done' | 'error' | 'cancelled'
+  phase:
+    | 'compact'
+    | 'transcribe'
+    | 'diarize'
+    | 'vad'
+    | 'merge'
+    | 'summarize'
+    | 'done'
+    | 'error'
+    | 'cancelled'
   progress?: number
   message?: string
   error?: string
@@ -35,6 +45,9 @@ export interface SttAdapter {
       onMessage?: (m: string) => void
       // 취소 신호. 어댑터는 aborted 시 실행 중인 whisper 프로세스를 가능한 한 빨리 중단해야 한다.
       signal?: AbortSignal
+      // 이미 검출된 발화 구간(ms, 전사 대상 파일의 타임라인 기준). 무음 컷편집 단계가 VAD를
+      // 먼저 돌리므로 그 결과를 넘겨 어댑터가 VAD를 중복 실행하지 않게 한다.
+      speechRegionsMs?: Array<{ startMs: number; endMs: number }>
     }
   ): Promise<SttSegment[]>
 }
