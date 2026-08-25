@@ -124,8 +124,8 @@ function persist(
 
 export const INTERVIEW_SPEC: SummarySpec<InterviewSummaryResult> = {
   systemPrompt: SYSTEM_PROMPT,
-  buildPrompt: (transcript) =>
-    `다음 면접 전사록을 분석해 JSON으로 정리하세요:\n\n${transcript}`,
+  buildPrompt: (transcript, contextBlock) =>
+    `${contextBlock ? `${contextBlock}\n\n` : ''}다음 면접 전사록을 분석해 JSON으로 정리하세요:\n\n${transcript}`,
   progressMessage: 'AI 면접 기록 정리 중…',
   validate,
   persist

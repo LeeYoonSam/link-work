@@ -147,6 +147,10 @@ const api = {
       source?: string
       kind?: string
       expected_speakers?: number | null
+      // 회의 참석자로 지정할 구성원 id (전사 힌트/요약 담당자 매칭에 쓰인다)
+      attendee_ids?: number[]
+      // 처리 시 무음 구간을 잘라낼지 (기본 true)
+      compact_audio?: boolean
     }) => ipcRenderer.invoke('recording:createDraft', input),
     saveAudio: (
       id: number,
@@ -180,11 +184,39 @@ const api = {
       ipcRenderer.invoke('recording:linkProject', id, projectId),
     setExpectedSpeakers: (id: number, n: number | null) =>
       ipcRenderer.invoke('recording:setExpectedSpeakers', id, n),
+    setAttendees: (meetingId: number, memberIds: number[]) =>
+      ipcRenderer.invoke('recording:setAttendees', meetingId, memberIds),
     onStream: (callback: (event: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => callback(data)
       ipcRenderer.on('recording:stream', handler)
       return () => ipcRenderer.removeListener('recording:stream', handler)
     }
+  },
+  // 인식 보조 장치(용어집·구성원) — 로컬 DB에만 저장되며 전사 힌트/후보정/요약 프롬프트에 쓰인다
+  recognitionAids: {
+    listGlossary: () => ipcRenderer.invoke('recognitionAids:listGlossary'),
+    upsertGlossary: (input: {
+      id?: number
+      term: string
+      aliases?: string[]
+      note?: string | null
+      priority?: number
+      enabled?: boolean
+      project_id?: number | null
+    }) => ipcRenderer.invoke('recognitionAids:upsertGlossary', input),
+    removeGlossary: (id: number) => ipcRenderer.invoke('recognitionAids:removeGlossary', id),
+    importGlossaryText: (text: string) =>
+      ipcRenderer.invoke('recognitionAids:importGlossaryText', text),
+    listMembers: () => ipcRenderer.invoke('recognitionAids:listMembers'),
+    upsertMember: (input: {
+      id?: number
+      name: string
+      aliases?: string[]
+      role?: string | null
+      enabled?: boolean
+      sort_order?: number
+    }) => ipcRenderer.invoke('recognitionAids:upsertMember', input),
+    removeMember: (id: number) => ipcRenderer.invoke('recognitionAids:removeMember', id)
   },
   export: {
     saveMarkdown: (content: string, defaultFileName: string) =>

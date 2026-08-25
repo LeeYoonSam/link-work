@@ -428,6 +428,74 @@ export interface AiAPI {
   onDataChanged: (callback: (data: { entity: string }) => void) => () => void
 }
 
+// ── 인식 보조 장치 (용어집 · 구성원) — docs/MEETING_RECORDING.md ──
+// 사용자가 직접 입력하는 값만 담는다. 이 기기의 로컬 DB에만 저장되며
+// 전사 힌트(whisper initial_prompt) · 전사 후 표기 교정 · AI 요약 프롬프트에 쓰인다.
+
+export interface GlossaryEntry {
+  id: number
+  // 정답 표기
+  term: string
+  // 오인식/변형 표기 — 전사 후 term으로 되돌리는 데 쓰인다
+  aliases: string[]
+  // 설명(요약 프롬프트 힌트). 선택
+  note: string | null
+  // 높을수록 initial_prompt에 먼저 들어간다
+  priority: number
+  enabled: number
+  // null이면 전역, 값이 있으면 그 프로젝트의 회의에서만 쓰인다
+  project_id: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface Member {
+  id: number
+  name: string
+  // 호칭/영문명 등
+  aliases: string[]
+  role: string | null
+  enabled: number
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+// 회의에 지정된 참석자 (meeting_attendees JOIN meeting_members)
+export interface Attendee {
+  member_id: number
+  name: string
+  role: string | null
+}
+
+export interface RecognitionAidsAPI {
+  listGlossary: () => Promise<GlossaryEntry[]>
+  upsertGlossary: (input: {
+    id?: number
+    term: string
+    aliases?: string[]
+    note?: string | null
+    priority?: number
+    enabled?: boolean
+    project_id?: number | null
+  }) => Promise<{ id: number }>
+  removeGlossary: (id: number) => Promise<{ success: boolean }>
+  // "정답 | 별칭1, 별칭2 | 메모" 줄 형식 일괄 가져오기
+  importGlossaryText: (
+    text: string
+  ) => Promise<{ added: number; updated: number; skipped: number }>
+  listMembers: () => Promise<Member[]>
+  upsertMember: (input: {
+    id?: number
+    name: string
+    aliases?: string[]
+    role?: string | null
+    enabled?: boolean
+    sort_order?: number
+  }) => Promise<{ id: number }>
+  removeMember: (id: number) => Promise<{ success: boolean }>
+}
+
 // ── 회의 녹음 (Meeting Recording) — docs/MEETING_RECORDING.md ──
 
 export type MeetingStatus =
@@ -451,6 +519,16 @@ export interface Meeting {
   language: string
   source: MeetingSource
   expected_speakers: number | null
+  // 무음 컷편집: 처리 시 수행할지(녹음 시작 시 선택)
+  compact_audio: number
+  // 컷편집이 실제로 적용됐는지 (1이면 audio_path의 WAV가 이미 잘린 파일)
+  audio_compacted: number
+  // 컷편집 전 길이. audio_compacted=0이면 null
+  original_duration_ms: number | null
+  // 이 회의를 처리한 파이프라인 버전. 0=구 파이프라인/미처리,
+  // 2=무음 컷편집·용어집·참석자 힌트 파이프라인.
+  // 요약 재생성 시 "새 파이프라인으로 재분석할지"를 이 값으로 판단한다.
+  pipeline_version: number
   project_id: number | null
   calendar_event_id: string | null
   calendar_event_title: string | null
@@ -544,12 +622,15 @@ export interface MeetingDetail {
   segments: MeetingSegment[]
   cuts: MeetingCut[]
   summary: MeetingSummary | null
+  attendees: Attendee[]
 }
 
 export interface RecordingStreamEvent {
   meetingId: number
   // 'cancelled' — 사용자 취소로 파이프라인이 중단됨(에러와 구분되는 중립 종료)
   phase:
+    // 'compact' — 전사 전에 긴 무음 구간을 잘라내는 단계
+    | 'compact'
     | 'transcribe'
     | 'diarize'
     | 'vad'
@@ -579,6 +660,10 @@ export interface RecordingAPI {
     kind?: MeetingKind
     // 참석 인원(화자분리 클러스터 수). 미지정 시 면접=2, 회의=자동 추정(null).
     expected_speakers?: number | null
+    // 참석자로 지정할 구성원 id 목록 (인원 수와 별개인 '누가' 들어왔는지의 명단)
+    attendee_ids?: number[]
+    // 처리 시 무음 구간 자동 제거 (기본 true)
+    compact_audio?: boolean
   }) => Promise<{ id: number }>
   saveAudio: (
     id: number,
@@ -614,6 +699,7 @@ export interface RecordingAPI {
   actionItemToTodo: (meetingId: number, index: number) => Promise<{ todo_id: number }>
   linkProject: (id: number, projectId: number | null) => Promise<{ success: boolean }>
   setExpectedSpeakers: (id: number, n: number | null) => Promise<{ success: boolean }>
+  setAttendees: (meetingId: number, memberIds: number[]) => Promise<{ success: boolean }>
   onStream: (cb: (e: RecordingStreamEvent) => void) => () => void
 }
 

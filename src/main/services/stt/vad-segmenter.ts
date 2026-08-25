@@ -134,6 +134,29 @@ export function mapSegmentsToAbsolute(segments: SttSegment[], regionStartMs: num
   }))
 }
 
+/**
+ * VAD 검출의 예상 진행률(0~0.95)을 경과 시간으로 추정한다.
+ *
+ * 네이티브 detectSpeechFile은 파일 전체를 한 번에 처리하고 중간 진행 콜백이 없다.
+ * 그래서 실제 진행률 대신 "이 정도 걸릴 것"이라는 추정으로 바를 움직인다.
+ * 상한을 0.95로 두는 이유: 추정이 빗나가 먼저 100%에 닿으면 바가 다 찬 채로 멈춰
+ * 오히려 멈춘 것처럼 보인다. 마지막 5%는 실제 완료 시점에 채운다.
+ *
+ * realtimeFactor 기본값 200은 실측(M2 Pro, nThreads=1에서 224배속)보다 조금 보수적으로 잡은 값이다.
+ * 너무 느리게 잡으면 바가 상한(0.95)에 먼저 닿아 거기서 오래 머무르고, 너무 빠르게 잡으면
+ * 초반이 굼떠 보인다. 실측 바로 아래가 그 둘 사이의 균형점이다.
+ */
+export function estimateVadProgress(
+  elapsedMs: number,
+  audioMs: number,
+  realtimeFactor = 200
+): number {
+  if (!(audioMs > 0) || !(realtimeFactor > 0)) return 0
+  const expectedMs = audioMs / realtimeFactor
+  if (!(expectedMs > 0)) return 0
+  return Math.max(0, Math.min(0.95, elapsedMs / expectedMs))
+}
+
 export interface WavDataRange {
   // 'data' 청크 본문이 시작하는 바이트 오프셋
   dataOffset: number

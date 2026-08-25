@@ -10,6 +10,7 @@ import { join } from 'path'
 import { z } from 'zod'
 import { getDatabase } from '../db/database'
 import { INTERVIEW_SPEC } from './interview-summary'
+import { buildSummaryContextBlock, loadPromptContext } from './recognition-aids'
 import type { SendStream, MeetingSummaryResult } from './meeting-types'
 import type { SummarySpec } from './summary-spec'
 
@@ -122,8 +123,8 @@ const MEETING_SPEC: SummarySpec<MeetingSummaryResult> = {
 회의에 없는 내용 생성 금지, 불확실하면 해당 배열을 비워두세요.
 코드펜스 없이 순수 JSON만 출력하세요.`,
 
-  buildPrompt: (transcript) =>
-    `다음 회의 전사록을 분석해 JSON으로 요약하세요:\n\n${transcript}`,
+  buildPrompt: (transcript, contextBlock) =>
+    `${contextBlock ? `${contextBlock}\n\n` : ''}다음 회의 전사록을 분석해 JSON으로 요약하세요:\n\n${transcript}`,
 
   progressMessage: 'AI 요약 생성 중…',
 
@@ -250,7 +251,10 @@ export async function runMeetingSummary(
   send({ meetingId, phase: 'summarize', progress: 0, message: spec.progressMessage })
 
   const systemPrompt = spec.systemPrompt
-  const prompt = spec.buildPrompt(transcript)
+  // 사용자가 등록한 참석자·용어를 전사록 앞에 [참고 정보]로 붙인다. 표기 통일과 담당자
+  // 매칭에만 쓰이며, 없으면 ''이라 프롬프트가 그대로다.
+  // (프라이버시: 이 단계에서 참석자 이름과 용어가 전사록과 함께 Claude로 전송된다.)
+  const prompt = spec.buildPrompt(transcript, buildSummaryContextBlock(loadPromptContext(db, meetingId)))
 
   const claudePath = findClaudeExecutable()
 

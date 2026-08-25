@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
+import { RECOGNITION_AIDS_SCHEMA } from '../services/recognition-aids'
 
 let db: Database.Database | null = null
 let aiReadOnlyDb: Database.Database | null = null
@@ -302,6 +303,15 @@ export function initDatabase(): void {
       language TEXT DEFAULT 'ko',
       source TEXT DEFAULT 'mic',
       expected_speakers INTEGER,
+      -- 무음 컷편집: compact_audio=처리 시 수행 여부(녹음 시작 시 선택),
+      -- audio_compacted=실제 적용됐는지(재처리 멱등 가드), original_duration_ms=컷편집 전 길이
+      compact_audio INTEGER NOT NULL DEFAULT 1,
+      audio_compacted INTEGER NOT NULL DEFAULT 0,
+      original_duration_ms INTEGER,
+      -- 처리 파이프라인 버전. 0=구 파이프라인/미처리,
+      -- 2=무음 컷편집·용어집·참석자 힌트 파이프라인(전체 처리 시 meeting-pipeline이 기록).
+      -- 요약 재생성 UI가 재분석 필요 여부 판단에 사용.
+      pipeline_version INTEGER NOT NULL DEFAULT 0,
       project_id INTEGER,
       calendar_event_id TEXT,
       calendar_event_title TEXT,
@@ -411,6 +421,11 @@ export function initDatabase(): void {
       ON release_note_items(release_note_id);
   `)
 
+  // 인식 보조 장치(용어집·구성원·회의 참석자). DDL은 이 테이블을 읽고 쓰는 서비스와
+  // 한 곳에서 관리한다(services/recognition-aids.ts) — 테스트도 같은 정의를 본다.
+  // meeting_attendees가 meetings/meeting_members를 참조하므로 위 DDL 뒤에 실행한다.
+  db.exec(RECOGNITION_AIDS_SCHEMA)
+
   // Migrations for existing databases
   const memoColumns = db.prepare("PRAGMA table_info(memos)").all() as { name: string }[]
   const memoColumnNames = memoColumns.map((c) => c.name)
@@ -460,6 +475,22 @@ export function initDatabase(): void {
   // 녹음 종류: 기존 녹음은 전부 회의로 간주(DEFAULT 'meeting')
   if (meetingColumns.length > 0 && !meetingColumnNames.includes('kind')) {
     db.exec("ALTER TABLE meetings ADD COLUMN kind TEXT NOT NULL DEFAULT 'meeting'")
+  }
+  // 무음 컷편집(compaction). 기존 녹음은 컷편집을 거치지 않았으므로 audio_compacted=0,
+  // original_duration_ms=NULL로 시작한다. compact_audio는 앞으로의 처리에만 영향을 준다.
+  if (meetingColumns.length > 0 && !meetingColumnNames.includes('compact_audio')) {
+    db.exec('ALTER TABLE meetings ADD COLUMN compact_audio INTEGER NOT NULL DEFAULT 1')
+  }
+  if (meetingColumns.length > 0 && !meetingColumnNames.includes('audio_compacted')) {
+    db.exec('ALTER TABLE meetings ADD COLUMN audio_compacted INTEGER NOT NULL DEFAULT 0')
+  }
+  if (meetingColumns.length > 0 && !meetingColumnNames.includes('original_duration_ms')) {
+    db.exec('ALTER TABLE meetings ADD COLUMN original_duration_ms INTEGER')
+  }
+  // 처리 파이프라인 버전. 기존 행은 0(=구 파이프라인)으로 남아, 요약 재생성 시
+  // "새 파이프라인으로 재분석이 필요한 녹음"으로 식별된다.
+  if (meetingColumns.length > 0 && !meetingColumnNames.includes('pipeline_version')) {
+    db.exec('ALTER TABLE meetings ADD COLUMN pipeline_version INTEGER NOT NULL DEFAULT 0')
   }
 
   // 면접 요약 4분류 (회의 요약 행에서는 NULL로 남는다)

@@ -4,14 +4,13 @@
 //
 // VAD 선분할: 무음·잡음 구간에서 Whisper가 문장을 지어내는 환각을 억제하기 위해,
 // VAD 모델로 발화 구간만 검출해 구간별 raw PCM을 잘라 전사하고 절대시간으로 복원한다.
-// VAD 모델/초기화/검출 실패나 WAV 포맷 불일치 시에는 기존 전체 파일 전사로 폴백한다.
+// 검출 자체는 stt/vad-detect.ts가 담당하며(무음 컷편집 단계와 공유), opts.speechRegionsMs로
+// 이미 검출된 구간을 받으면 VAD를 생략한다. VAD 실패나 WAV 포맷 불일치 시에는 전체 파일 전사로 폴백한다.
 import { readFile } from 'fs/promises'
-import { existsSync, writeFileSync, unlinkSync } from 'fs'
-import { join } from 'path'
 import type { SttAdapter, SttSegment } from '../meeting-types'
-import { ensureModel, VAD_MODEL, modelsDir } from './model-manager'
+import { ensureModel } from './model-manager'
+import { detectSpeechRegions, consumeVadCrashGuard } from './vad-detect'
 import {
-  vadSegmentsToRegions,
   coalesceRegions,
   sliceSampleRange,
   mapSegmentsToAbsolute,
@@ -48,25 +47,8 @@ interface WhisperContextLike {
   ): { stop: () => Promise<void>; promise: Promise<WhisperTranscribeResult> }
   release(): Promise<void>
 }
-// VadSegment의 t0/t1은 센티초(cs)다 — vad-segmenter의 vadSegmentsToRegions가 ×10 변환한다.
-interface VadDetectOptions {
-  threshold?: number
-  minSpeechDurationMs?: number
-  minSilenceDurationMs?: number
-  maxSpeechDurationS?: number
-  speechPadMs?: number
-  samplesOverlap?: number
-}
-interface WhisperVadContextLike {
-  detectSpeechFile(
-    filePath: string,
-    options?: VadDetectOptions
-  ): Promise<Array<{ t0: number; t1: number }>>
-  release(): Promise<void>
-}
 interface WhisperModuleLike {
   initWhisper(options: { filePath: string; useGpu?: boolean }): Promise<WhisperContextLike>
-  initWhisperVad(options: { filePath: string; useGpu?: boolean }): Promise<WhisperVadContextLike>
   // 플랫폼 네이티브 바이너리 로드 (가용성 정밀 판정용)
   loadWhisperModule(variant?: string): Promise<unknown>
 }
@@ -78,6 +60,9 @@ type TranscribeOpts = {
   onMessage?: (m: string) => void
   // 취소 신호. abort 시 진행 중인 네이티브 전사를 stop()으로 중단하고 AbortError를 throw한다.
   signal?: AbortSignal
+  // 이미 검출된 발화 구간(ms, 이 오디오 파일의 타임라인 기준). 무음 컷편집 단계가 VAD를 먼저
+  // 돌리므로 그 결과를 넘겨받아 여기서는 VAD를 생략한다(한 처리에서 VAD 2회 실행 방지).
+  speechRegionsMs?: Region[]
 }
 
 let mod: WhisperModuleLike | null = null
@@ -106,40 +91,16 @@ function abortError(): Error {
   return e
 }
 
-// VAD 크래시 가드 센티널.
-// silero VAD 네이티브 초기화/검출은 실패 시 ggml_abort로 프로세스를 즉사시켜 JS try/catch로 못 잡는다
-// (크래시 리포트 2026-07-23). 그래서 VAD 진입 직전 이 파일을 남기고, 검출을 무사히 통과하면 지운다.
-// 다음 transcribe 시작 때 파일이 남아 있으면 = 직전 실행이 VAD 도중 죽었다는 뜻이므로, 그 1회만
-// VAD를 건너뛰어 크래시 루프 대신 품질 저하(전체 전사)로 강등한다. 영구 비활성화가 아니라 1회 스킵이며,
-// 소비 시 파일을 지워 다음 실행에선 VAD를 다시 시도한다.
-function vadCrashGuardPath(): string {
-  return join(modelsDir(), '.vad-crash-guard')
-}
+// VAD 선분할 결과를 전사 청크로 뭉치는 파라미터.
+// 발화 구간을 그대로 전사하면 자연스러운 쉼마다 쪼개져 초소형 구간이 폭발한다(호출 수백 회
+// → 전체 전사보다 수 배 느림 + 문맥 상실로 품질 저하). 그래서 인접 구간을 침묵째 전사 청크로
+// 뭉쳐 넘긴다(간격 2초 이하 병합, 청크 타임라인 28초에서 절단 — coalesceRegions 참고).
+const COALESCE_OPTIONS = { joinGapMs: 2000, maxChunkMs: 28000 }
 
-function writeVadCrashGuard(): void {
-  try {
-    // 네이티브 abort 직전 확실히 디스크에 남도록 동기 기록(타임스탬프).
-    writeFileSync(vadCrashGuardPath(), new Date().toISOString())
-  } catch {
-    // 센티널 기록 실패는 무시 — 가드가 없을 뿐 정상 경로엔 영향 없다.
-  }
-}
-
-function clearVadCrashGuard(): void {
-  try {
-    unlinkSync(vadCrashGuardPath())
-  } catch {
-    // 이미 없거나 삭제 실패 — 무시.
-  }
-}
-
-// .vad-crash-guard 검사 지점: 센티널이 있으면 직전 VAD가 비정상 종료된 것.
-// true를 반환하고 파일을 지워 다음 실행부턴 VAD를 재시도하게 한다(1회 스킵).
-function consumeVadCrashGuard(): boolean {
-  const existed = existsSync(vadCrashGuardPath())
-  if (existed) clearVadCrashGuard()
-  return existed
-}
+// 어댑터가 직접 VAD를 돌리는 경로에서 VAD에 배분하는 진행률 몫.
+// (컷편집 단계가 VAD를 이미 돌려 speechRegionsMs를 넘겨준 경로에는 적용하지 않는다 —
+//  그쪽은 compact 단계가 자기 진행률을 따로 보고하므로 전사는 0→1을 그대로 쓴다.)
+const VAD_PROGRESS_SHARE = 0.08
 
 export class WhisperAdapter implements SttAdapter {
   readonly name = 'whisper'
@@ -164,6 +125,8 @@ export class WhisperAdapter implements SttAdapter {
 
     // 직전 실행이 VAD 도중 네이티브 abort로 죽었으면 .vad-crash-guard 센티널이 남아 있다.
     // 이 경우 이번 1회는 VAD를 건너뛰어 크래시 루프를 피한다(센티널은 소비 시 지워지므로 다음엔 재시도).
+    // ⚠️ 센티널 소비는 한 처리에서 여기 한 곳뿐이다. 컷편집 단계는 isVadCrashGuardSet()으로
+    //    보기만 하고 지우지 않으므로, 컷편집이 VAD를 건너뛴 실행에서도 이 스킵이 유효하다.
     const skipVadAfterCrash = consumeVadCrashGuard()
 
     // 본 모델 확보 — 최초 1회 다운로드(약 874MB). 진행률을 UI 메시지로 노출.
@@ -183,24 +146,45 @@ export class WhisperAdapter implements SttAdapter {
     opts.onMessage?.('음성 인식 중…')
     const ctx = await whisper.initWhisper({ filePath: modelPath, useGpu: true })
     try {
-      if (skipVadAfterCrash) {
+      // 컷편집 단계에서 이미 검출된 발화 구간이 있으면 VAD를 다시 돌리지 않는다.
+      // dataRange가 없으면(포맷 불일치) 애초에 raw 슬라이스가 불가하므로 폴백.
+      let regions: Region[] | null = null
+      // 이 호출에서 VAD를 직접 돌렸는지 — 진행률 구간 배분에 쓴다.
+      let ranVad = false
+      if (opts.speechRegionsMs) {
+        regions = dataRange ? coalesceRegions(opts.speechRegionsMs, COALESCE_OPTIONS) : null
+      } else if (skipVadAfterCrash) {
         // 직전 실행이 VAD 도중 비정상 종료 → 이번엔 발화 구간 검출을 생략하고 전체 전사로 강등한다.
         opts.onMessage?.('이전 실행에서 VAD가 비정상 종료되어 이번에는 발화 구간 검출 없이 전사합니다.')
         return await this.transcribeWholeFile(ctx, audioPath, opts)
+      } else if (dataRange) {
+        ranVad = true
+        const detected = await detectSpeechRegions(audioPath, dataRange, {
+          ...opts,
+          onProgress: (p) => opts.onProgress?.(clamp01(p) * VAD_PROGRESS_SHARE)
+        })
+        regions = detected ? coalesceRegions(detected.regions, COALESCE_OPTIONS) : null
       }
-      // VAD 선분할 시도. dataRange가 없으면(포맷 불일치) 애초에 raw 슬라이스가 불가하므로 폴백.
-      const regions = dataRange ? await this.detectRegions(whisper, audioPath, dataRange, opts) : null
+
+      // VAD를 직접 돌린 경우 전사 진행률을 그 뒤 구간(0.08~1)으로 밀어 단조 증가를 유지한다.
+      const scoped: TranscribeOpts = ranVad
+        ? {
+            ...opts,
+            onProgress: (p) =>
+              opts.onProgress?.(VAD_PROGRESS_SHARE + (1 - VAD_PROGRESS_SHARE) * clamp01(p))
+          }
+        : opts
 
       if (!dataRange || regions === null) {
         // VAD 모델/초기화/검출 실패 또는 WAV 포맷 불일치 → 기존 전체 파일 전사 경로.
-        return await this.transcribeWholeFile(ctx, audioPath, opts)
+        return await this.transcribeWholeFile(ctx, audioPath, scoped)
       }
       if (regions.length === 0) {
         // VAD가 발화 0건 → 진짜 무음. 지어내지 않는 게 목적이므로 빈 배열.
         opts.onProgress?.(1)
         return []
       }
-      return await this.transcribeRegions(ctx, wavBuf, dataRange, regions, opts)
+      return await this.transcribeRegions(ctx, wavBuf, dataRange, regions, scoped)
     } finally {
       await ctx.release()
     }
@@ -231,66 +215,6 @@ export class WhisperAdapter implements SttAdapter {
         text: s.text.trim()
       }))
       .filter((s) => s.text.length > 0)
-  }
-
-  /**
-   * VAD 모델로 발화 구간을 검출해 절대시간 Region 목록으로 반환한다.
-   * VAD 모델 다운로드/초기화/검출 중 어떤 실패든 null을 반환해 호출측이 전체 전사로 폴백하게 한다.
-   */
-  private async detectRegions(
-    whisper: WhisperModuleLike,
-    audioPath: string,
-    dataRange: WavDataRange,
-    opts: TranscribeOpts
-  ): Promise<Region[] | null> {
-    try {
-      if (opts.signal?.aborted) throw abortError()
-      opts.onMessage?.('발화 구간 검출 준비 중…')
-      const vadModelPath = await ensureModel(
-        (info) => {
-          opts.onMessage?.(`VAD 모델 다운로드 중 ${Math.round(info.ratio * 100)}%`)
-        },
-        VAD_MODEL,
-        opts.signal
-      )
-
-      if (opts.signal?.aborted) throw abortError()
-      opts.onMessage?.('발화 구간 검출 중…')
-      // .vad-crash-guard 기록 지점: initWhisperVad/detectSpeechFile은 실패 시 catch 불가한
-      // 네이티브 abort로 프로세스를 죽일 수 있으므로, 진입 직전 센티널을 남긴다.
-      writeVadCrashGuard()
-      // silero VAD는 Metal(useGpu:true) 스케줄러에서 ggml_abort로 앱을 즉사시킨 이력이 있어 CPU로 초기화한다
-      // (크래시 리포트 2026-07-23: whisper_vad_init_with_params → ggml_backend_sched_alloc_graph → ggml_abort).
-      // 865KB silero 그래프는 수 초 오디오 기준 CPU로도 즉시 끝나 성능 영향이 없다. 본 전사 컨텍스트는 그대로 GPU 유지.
-      const vadCtx = await whisper.initWhisperVad({ filePath: vadModelPath, useGpu: false })
-      try {
-        const segments = await vadCtx.detectSpeechFile(audioPath, {
-          threshold: 0.5,
-          minSpeechDurationMs: 250,
-          minSilenceDurationMs: 300,
-          speechPadMs: 150
-        })
-        // 검출까지 무사 통과 — 네이티브 위험 구간을 벗어났으므로 센티널 제거(다음 실행이 VAD를 스킵하지 않게).
-        clearVadCrashGuard()
-        if (opts.signal?.aborted) throw abortError()
-        // data 바이트 수로 오디오 길이(ms)를 구한다: dataBytes / byteRate * 1000.
-        const byteRate = (dataRange.sampleRate * dataRange.channels * dataRange.bitsPerSample) / 8
-        const audioMs = Math.round((dataRange.dataBytes / byteRate) * 1000)
-        // 발화 구간을 그대로 전사하면 자연스러운 쉼마다 쪼개져 초소형 구간이 폭발한다(호출 수백 회
-        // → 전체 전사보다 수 배 느림 + 문맥 상실로 품질 저하). 그래서 인접 구간을 침묵째 전사 청크로
-        // 뭉쳐 넘긴다(간격 2초 이하 병합, 청크 타임라인 28초에서 절단 — coalesceRegions 참고).
-        return coalesceRegions(vadSegmentsToRegions(segments, audioMs), {
-          joinGapMs: 2000,
-          maxChunkMs: 28000
-        })
-      } finally {
-        await vadCtx.release()
-      }
-    } catch {
-      // 취소는 전체 전사 폴백으로 삼키지 않고 그대로 전파한다(취소가 정상 전사로 오인되면 안 됨).
-      if (opts.signal?.aborted) throw abortError()
-      return null
-    }
   }
 
   /**

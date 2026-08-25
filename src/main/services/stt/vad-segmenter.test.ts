@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  estimateVadProgress,
   vadSegmentsToRegions,
   coalesceRegions,
   sliceSampleRange,
@@ -215,5 +216,58 @@ describe('findWavDataRange', () => {
 
   it('RIFF/WAVE 매직이 없으면 null을 반환한다', () => {
     expect(findWavDataRange(Buffer.alloc(44))).toBeNull()
+  })
+})
+
+describe('estimateVadProgress', () => {
+  // 기본 200배속 기준이므로 60초 오디오의 예상 소요는 300ms.
+  const AUDIO_MS = 60_000
+
+  it('경과 시간을 예상 소요(길이/배속)로 나눈 값을 돌려준다', () => {
+    expect(estimateVadProgress(0, AUDIO_MS)).toBe(0)
+    expect(estimateVadProgress(75, AUDIO_MS)).toBeCloseTo(0.25, 5)
+    expect(estimateVadProgress(150, AUDIO_MS)).toBeCloseTo(0.5, 5)
+  })
+
+  it('0.95를 넘지 않는다 — 다 찬 바가 멈춘 것처럼 보이지 않게 한다', () => {
+    expect(estimateVadProgress(300, AUDIO_MS)).toBe(0.95)
+    expect(estimateVadProgress(10_000_000, AUDIO_MS)).toBe(0.95)
+  })
+
+  it('단조 증가한다', () => {
+    let prev = -1
+    for (let ms = 0; ms <= 1000; ms += 37) {
+      const v = estimateVadProgress(ms, AUDIO_MS)
+      expect(v).toBeGreaterThanOrEqual(prev)
+      prev = v
+    }
+  })
+
+  it('오디오 길이를 모르면(0 이하) 0을 돌려준다', () => {
+    expect(estimateVadProgress(5000, 0)).toBe(0)
+    expect(estimateVadProgress(5000, -1)).toBe(0)
+  })
+
+  it('배속이 0 이하면 0을 돌려준다(0으로 나눠 즉시 95%가 되는 것 방지)', () => {
+    expect(estimateVadProgress(5000, AUDIO_MS, 0)).toBe(0)
+    expect(estimateVadProgress(5000, AUDIO_MS, -10)).toBe(0)
+  })
+
+  it('배속을 바꾸면 그만큼 느리게/빠르게 찬다', () => {
+    // 400배속이면 예상 소요가 절반이므로 같은 경과에서 두 배로 찬다.
+    expect(estimateVadProgress(75, AUDIO_MS, 400)).toBeCloseTo(0.5, 5)
+    expect(estimateVadProgress(75, AUDIO_MS, 100)).toBeCloseTo(0.125, 5)
+  })
+
+  it('경과가 음수여도 음수 진행률을 내지 않는다', () => {
+    expect(estimateVadProgress(-100, AUDIO_MS)).toBe(0)
+  })
+
+  it('98분 녹음이면 기본 배속에서 약 29초를 예상한다', () => {
+    // 98 × 60000 / 200 = 29,400ms 예상. 실측(224배속)이 26초였으니 그보다 조금 넉넉하다.
+    const audioMs = 98 * 60_000
+    expect(estimateVadProgress(15_000, audioMs)).toBeCloseTo(0.5102, 3)
+    // 예상 소요에 근접하면 상한(0.95)에 걸린다.
+    expect(estimateVadProgress(29_000, audioMs)).toBe(0.95)
   })
 })

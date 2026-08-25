@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { formatElapsed, useRecorderStore } from '../../stores/recorderStore'
 import { useRecordingStore } from '../../stores/recordingStore'
+import { useRecognitionAidsStore } from '../../stores/recognitionAidsStore'
 import type { MeetingKind, MeetingSource } from '../../types'
 import { button } from '../ui'
 
@@ -34,12 +35,28 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
     setSaveError
   } = useRecorderStore()
 
+  const { members, fetchAll } = useRecognitionAidsStore()
+
   const [source, setSource] = useState<MeetingSource>('mic')
   const [kind, setKind] = useState<MeetingKind>('meeting')
   // 참석 인원(화자분리 클러스터 수). 빈 값이면 자동 추정. 면접 기본 2, 회의 기본 자동.
   const [speakerCount, setSpeakerCount] = useState('')
+  // 참석 인원 입력에 우리가 마지막으로 자동으로 넣은 값.
+  // 사용자가 직접 고쳐 넣은 숫자는 참석자를 더 골라도 덮지 않기 위해 구분한다.
+  const [autoFilledCount, setAutoFilledCount] = useState('')
+  // 참석자로 지정할 구성원 id
+  const [attendeeIds, setAttendeeIds] = useState<number[]>([])
+  // 처리 전 긴 침묵을 잘라낼지. 기본 on — 전사·화자분리 시간이 눈에 띄게 줄어든다.
+  const [compactAudio, setCompactAudio] = useState(true)
   // 면접 녹음은 지원자 동의가 전제다. 고지를 확인해야만 시작 버튼이 활성화된다.
   const [consent, setConsent] = useState(false)
+
+  // 참석자 칩에 쓸 구성원 목록. 인식 보조 패널에서 방금 추가했을 수도 있으니 열 때마다 읽는다.
+  useEffect(() => {
+    void fetchAll()
+  }, [])
+
+  const enabledMembers = members.filter((m) => m.enabled === 1)
 
   // 레벨 미터 바 개수
   const BAR_COUNT = 20
@@ -48,9 +65,29 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
   const isInterview = kind === 'interview'
 
   // 종류를 바꾸면 참석 인원 기본값도 리셋한다(면접=2, 회의=자동).
+  // 이 기본값도 "우리가 넣은 값"이므로, 뒤이어 참석자를 고르면 그 수로 덮인다.
   const handleKindChange = (k: MeetingKind): void => {
     setKind(k)
-    setSpeakerCount(k === 'interview' ? '2' : '')
+    const preset = k === 'interview' ? '2' : ''
+    setSpeakerCount(preset)
+    setAutoFilledCount(preset)
+  }
+
+  // 참석자를 고르면 참석 인원을 그 수로 제안한다.
+  // 단 사용자가 직접 입력한 숫자(= 우리가 넣은 값과 다른 숫자)는 건드리지 않는다.
+  const toggleAttendee = (memberId: number): void => {
+    const next = attendeeIds.includes(memberId)
+      ? attendeeIds.filter((id) => id !== memberId)
+      : [...attendeeIds, memberId]
+    setAttendeeIds(next)
+
+    const untouched = speakerCount.trim() === '' || speakerCount === autoFilledCount
+    if (!untouched) return
+    // 참석자를 모두 해제하면 종류별 기본값으로 되돌린다(면접=2, 회의=자동).
+    const fallback = kind === 'interview' ? '2' : ''
+    const suggested = next.length > 0 ? String(next.length) : fallback
+    setSpeakerCount(suggested)
+    setAutoFilledCount(suggested)
   }
 
   const handleStart = async (): Promise<void> => {
@@ -58,7 +95,13 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
     try {
       const parsed = speakerCount.trim() === '' ? NaN : parseInt(speakerCount, 10)
       const expected_speakers = Number.isNaN(parsed) ? null : parsed
-      const id = await createDraft({ source, kind, expected_speakers })
+      const id = await createDraft({
+        source,
+        kind,
+        expected_speakers,
+        attendee_ids: attendeeIds,
+        compact_audio: compactAudio
+      })
       await start({ source, draftId: id })
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : '녹음 시작 실패')
@@ -134,6 +177,35 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
             </div>
           </div>
 
+          {/* 참석자 — 전사 힌트·화자 이름 프리셋·요약 담당자 매칭에 함께 쓰인다 */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-gray-500 shrink-0">참석자</span>
+            {enabledMembers.length === 0 ? (
+              <span className="text-[10px] text-gray-400">
+                구성원을 등록하면 참석자를 고를 수 있습니다
+              </span>
+            ) : (
+              enabledMembers.map((m) => {
+                const selected = attendeeIds.includes(m.id)
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => toggleAttendee(m.id)}
+                    title={m.role ? `${m.name} · ${m.role}` : m.name}
+                    className={`px-2 py-0.5 text-[11px] rounded-full border transition-colors ${
+                      selected
+                        ? 'bg-blue-50 border-blue-200 text-blue-600 font-medium'
+                        : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    {m.name}
+                  </button>
+                )
+              })
+            )}
+          </div>
+
           {/* 참석 인원 — 화자분리 클러스터 수. 비우면 자동 추정 (MeetingDetail 재분리 입력과 동일 규약) */}
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-gray-500">참석 인원</span>
@@ -150,6 +222,20 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
             <span className="text-[11px] text-gray-400">명</span>
             <span className="text-[10px] text-gray-400">비우면 자동 추정</span>
           </div>
+
+          {/* 무음 컷편집 — 처리 전에 긴 침묵을 잘라 전사·화자분리 입력을 줄인다 */}
+          <label className="flex items-center gap-1.5 cursor-pointer w-fit">
+            <input
+              type="checkbox"
+              checked={compactAudio}
+              onChange={(e) => setCompactAudio(e.target.checked)}
+              className="accent-blue-600"
+            />
+            <span className="text-xs text-gray-500">무음 구간 자동 제거</span>
+            <span className="text-[10px] text-gray-400">
+              긴 침묵을 잘라 전사·화자 분리를 빠르게 (녹음 파일이 그만큼 짧아집니다)
+            </span>
+          </label>
 
           {/* 면접: 동의 고지 (개인정보보호법상 사전 동의 필요) */}
           {isInterview && (

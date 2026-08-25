@@ -100,10 +100,15 @@ function MeetingCard({ meeting }: { meeting: Meeting }): React.ReactNode {
       {/* 처리 중 미니 프로그레스 + 취소 */}
       {isProcessing && (
         <div className="mt-2 flex items-center gap-2">
-          <div className="flex-1 bg-gray-200 rounded-full h-0.5">
+          {/* 단계 진행률이 아니라 전체 진행률 — 단계마다 0%로 되돌아가면 카드만 봐서는
+              얼마나 남았는지 알 수 없다 (상세 화면의 진행 바와 같은 값). */}
+          <div
+            className="flex-1 bg-gray-200 rounded-full h-0.5"
+            title={`전체 ${Math.round(proc.overall * 100)}%`}
+          >
             <div
               className="h-0.5 rounded-full bg-blue-500 transition-all duration-500"
-              style={{ width: `${Math.round((proc.progress ?? 0) * 100)}%` }}
+              style={{ width: `${Math.round(proc.overall * 100)}%` }}
             />
           </div>
           <button
