@@ -19,3 +19,6 @@ scripts/eval/out/*
 !scripts/eval/out/.gitkeep
 scripts/eval/.venv/
 scripts/eval/**/__pycache__/
+
+# macOS
+.DS_Store

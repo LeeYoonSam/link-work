@@ -1,6 +1,9 @@
+import { useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
 import { formatElapsed, useRecorderStore } from '../../stores/recorderStore'
 import MenuIcon, { MenuIconName } from '../icons/MenuIcon'
+import { ArchiveIcon } from '../ui'
+import BackupModal from './BackupModal'
 
 const navItems = [
   { id: 'dashboard' as const, label: 'Dashboard', icon: 'dashboard' as MenuIconName },
@@ -22,6 +25,7 @@ export default function Sidebar(): React.ReactNode {
   // 초 단위로만 구독해 리렌더를 1초에 한 번으로 제한
   const elapsedSec = useRecorderStore((s) => Math.floor(s.elapsedMs / 1000))
   const isRecording = recorderState === 'recording' || recorderState === 'paused'
+  const [backupOpen, setBackupOpen] = useState(false)
 
   return (
     <aside className="w-56 bg-gray-900 text-white flex flex-col h-screen">
@@ -57,6 +61,19 @@ export default function Sidebar(): React.ReactNode {
           </button>
         ))}
       </nav>
+
+      {/* 하루에 한 번 쓸 일도 없는 기능이라 nav 목록에 섞지 않고 하단에 따로 둔다 */}
+      <div className="mt-auto border-t border-gray-700">
+        <button
+          onClick={() => setBackupOpen(true)}
+          className="w-full text-left px-4 py-3 flex items-center gap-3 text-sm text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
+        >
+          <ArchiveIcon size={18} className="shrink-0" />
+          데이터 백업 · 복원
+        </button>
+      </div>
+
+      {backupOpen && <BackupModal onClose={() => setBackupOpen(false)} />}
     </aside>
   )
 }
