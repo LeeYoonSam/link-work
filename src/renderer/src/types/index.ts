@@ -816,3 +816,62 @@ export interface JiraAPI {
   setDefaultProject: (projectKey: string | null) => Promise<{ success: boolean; error?: string }>
   openIssue: (issueKey: string) => Promise<{ success: boolean }>
 }
+
+// ── 앱 데이터 백업 · 복원 (docs/DATA_BACKUP.md) ──
+// 백업 한 벌은 단일 .zip 파일이다(안에 manifest.json · linkwork.db · recordings/ · ai-attachments/).
+// main의 services/backup-service.ts가 만드는 manifest.json과 같은 모양이라
+// 한쪽만 바꾸면 복원 화면이 조용히 빈 값을 그린다 — 둘을 함께 고칠 것.
+
+export interface BackupManifest {
+  format: 'linkwork-backup'
+  formatVersion: number
+  appVersion: string
+  /** ISO 문자열 */
+  createdAt: string
+  platform: string
+  db: { bytes: number; tables: Record<string, number> }
+  files: {
+    recordings: { count: number; bytes: number }
+    attachments: { count: number; bytes: number }
+  }
+  /** 백업에서 실제로 제거된 기기 종속 시크릿 — 'auth_tokens' | 'app_settings:notion_token' */
+  excluded: string[]
+}
+
+export interface BackupProgress {
+  phase: 'db' | 'files' | 'done' | 'error'
+  /** 0~1 */
+  progress: number
+  message?: string
+}
+
+/** 복원 전 확인 결과. 치명적 문제는 에러로 오고, 여기 warnings는 "알고 진행"할 것들이다. */
+export interface BackupSummary {
+  /** 고른 백업 .zip 파일의 전체 경로 */
+  path: string
+  manifest: BackupManifest
+  warnings: string[]
+}
+
+export interface BackupAPI {
+  /** 저장 다이얼로그 → .zip 하나로 내보내기. 취소하면 canceled=true */
+  exportToFile: () => Promise<{
+    success: boolean
+    canceled?: boolean
+    /** 만들어진 백업 .zip의 전체 경로 */
+    path?: string
+    manifest?: BackupManifest
+    error?: string
+  }>
+  /** 파일 선택 다이얼로그 → manifest 확인만 (복원하지 않는다) */
+  pickBackup: () => Promise<{
+    success: boolean
+    canceled?: boolean
+    summary?: BackupSummary
+    error?: string
+  }>
+  /** 현재 데이터를 백업으로 **대체**하고 앱을 재시작한다. 성공 응답 뒤 1초 후 재시작. */
+  importBackup: (path: string) => Promise<{ success: boolean; error?: string }>
+  /** 진행률 구독. 반환 함수를 호출하면 해제된다. */
+  onProgress: (cb: (p: BackupProgress) => void) => () => void
+}

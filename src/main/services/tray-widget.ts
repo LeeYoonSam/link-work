@@ -322,13 +322,25 @@ export function createTrayWidget(onOpenApp: () => void): void {
   })
 
   // Auto-refresh tooltip
+  //
+  // 반드시 try/catch로 감싼다. 이 콜백은 async라 안에서 throw하면 아무도 받지 않는
+  // rejected promise가 되고, unhandledRejection으로 **메인 프로세스가 통째로 죽는다.**
+  // 실제로 그럴 수 있는 창이 있다: 데이터 복원(services/backup-service.ts)은 DB 핸들을
+  // 닫고 파일을 갈아치우는데, 그 사이에 5분 타이머가 돌면 getActiveProjects()가
+  // "Database not initialized"로 throw한다. 하필 DB를 교체한 뒤 녹음을 복사하는 중에
+  // 죽으면 반만 복원된 상태로 남는다.
+  // 툴팁 갱신은 다음 주기에 다시 하면 그만이라 조용히 넘긴다.
   updateInterval = setInterval(async () => {
-    const projects = getActiveProjects()
-    const urgent = projects.filter((p) => p.daysLeft <= 3)
-    const tooltip = urgent.length > 0
-      ? `LinkWork - ${urgent.length} urgent`
-      : `LinkWork - ${projects.length} active`
-    tray?.setToolTip(tooltip)
+    try {
+      const projects = getActiveProjects()
+      const urgent = projects.filter((p) => p.daysLeft <= 3)
+      const tooltip = urgent.length > 0
+        ? `LinkWork - ${urgent.length} urgent`
+        : `LinkWork - ${projects.length} active`
+      tray?.setToolTip(tooltip)
+    } catch {
+      // DB가 닫혀 있거나 트레이가 이미 정리된 상태 — 다음 주기에 다시 시도한다
+    }
   }, 5 * 60 * 1000)
 }
 

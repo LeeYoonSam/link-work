@@ -237,6 +237,19 @@ const api = {
     setDefaultProject: (projectKey: string | null) =>
       ipcRenderer.invoke('jira:setDefaultProject', projectKey),
     openIssue: (issueKey: string) => ipcRenderer.invoke('jira:openIssue', issueKey)
+  },
+  backup: {
+    // 저장 위치를 고르면 LinkWork-backup-<시각>.zip 파일 하나를 만든다
+    exportToFile: () => ipcRenderer.invoke('backup:export'),
+    // 백업 .zip을 골라 manifest만 확인한다 (복원은 별도 확인 후)
+    pickBackup: () => ipcRenderer.invoke('backup:pick'),
+    // 성공하면 main이 1초 뒤 앱을 재시작한다 — 이 promise 이후 렌더러 상태는 의미가 없다
+    importBackup: (path: string) => ipcRenderer.invoke('backup:import', path),
+    onProgress: (callback: (p: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, p: unknown): void => callback(p)
+      ipcRenderer.on('backup:progress', handler)
+      return () => ipcRenderer.removeListener('backup:progress', handler)
+    }
   }
 }
 
