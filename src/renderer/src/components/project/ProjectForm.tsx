@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
 import type { ProjectInput, ProjectPriority } from '../../types'
-import { validateProjectDraft } from '../../utils/projectFormValidation'
-import { SectionTitle, button, projectPriority } from '../ui'
+import {
+  AUTO_STATUS,
+  statusSelectionPatch,
+  validateProjectDraft
+} from '../../utils/projectFormValidation'
+import { SectionTitle, button, projectPriority, projectStatus } from '../ui'
 
 // 셀렉트 표시 순서 — 미지정이 기본값이라 맨 앞에 둔다.
 const PRIORITY_OPTIONS: (ProjectPriority | null)[] = [null, 'now', 'next', 'later']
@@ -240,23 +244,18 @@ export default function ProjectForm(): React.ReactNode {
             <label className={labelClass}>Status</label>
             <div className="flex items-center gap-3">
               <select
-                value={form.status_manual ? form.status : 'auto'}
-                onChange={(e) => {
-                  if (e.target.value === 'auto') {
-                    setForm({ ...form, status_manual: 0 })
-                  } else {
-                    setForm({ ...form, status: e.target.value, status_manual: 1 })
-                  }
-                }}
+                value={form.status_manual ? form.status : AUTO_STATUS}
+                onChange={(e) => setForm({ ...form, ...statusSelectionPatch(e.target.value) })}
                 className={inputClass}
               >
-                <option value="auto">Auto (날짜 기반 자동)</option>
+                <option value={AUTO_STATUS}>Auto (날짜 기반 자동)</option>
                 <option value="scheduled">Scheduled</option>
                 <option value="development">Development</option>
                 <option value="qa_pending">QA Pending</option>
                 <option value="qa">QA</option>
                 <option value="deploy_pending">Deploy Pending</option>
                 <option value="deploy">Deploy</option>
+                <option value="on_hold">{projectStatus.on_hold.label}</option>
                 <option value="completed">Completed</option>
                 <option value="cancelled">Cancelled</option>
               </select>

@@ -599,11 +599,14 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
           'qa',
           'deploy_pending',
           'deploy',
+          'on_hold',
           'completed',
           'cancelled'
         ])
         .optional()
-        .describe('프로젝트 상태 — 지정 시 수동 상태로 고정됨')
+        .describe(
+          '프로젝트 상태 — 지정 시 수동 상태로 고정됨(status_manual=1). on_hold는 진행을 중단해 두는 상태로 대시보드·트레이의 진행 중 목록에서 빠진다.'
+        )
     },
     async (args) => {
       const db = getDatabase()

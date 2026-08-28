@@ -16,6 +16,13 @@ export interface ProjectDateFields {
 }
 
 /**
+ * 날짜만 보고 상태를 정한다. 여기서 나올 수 있는 값은 scheduled·development·qa_pending·
+ * qa·deploy_pending·deploy·completed 일곱 가지다.
+ *
+ * 'on_hold'(중단)와 'cancelled'는 **절대 반환하지 않는다** — 사람이 status_manual=1로
+ * 고정할 때만 들어가는 수동 전용 상태이고, applyProjectAutoStatus가 수동 상태를 덮어쓰지
+ * 않으므로 중단해 둔 프로젝트가 날짜 때문에 슬그머니 진행 중으로 되살아나지 않는다.
+ *
  * @param today 기준일(YYYY-MM-DD). 생략하면 오늘(UTC). 테스트가 시점을 고정하려고 넣는다.
  */
 export function calculateProjectStatus(

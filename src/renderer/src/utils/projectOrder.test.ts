@@ -69,7 +69,7 @@ describe('compareProjects', () => {
     expect(orderedNames(list)).toEqual(['개발', 'QA', '취소'])
   })
 
-  it('상태 순위는 development → qa → qa_pending → deploy_pending → deploy → scheduled → completed → cancelled', () => {
+  it('상태 순위는 development → qa → qa_pending → deploy_pending → deploy → scheduled → on_hold → completed → cancelled', () => {
     const statuses = [
       'development',
       'qa',
@@ -77,6 +77,7 @@ describe('compareProjects', () => {
       'deploy_pending',
       'deploy',
       'scheduled',
+      'on_hold',
       'completed',
       'cancelled'
     ]
@@ -110,12 +111,42 @@ describe('compareProjects', () => {
   })
 })
 
+describe('on_hold (중단)', () => {
+  it('진행 중인 상태 뒤, completed·cancelled 앞에 놓인다', () => {
+    expect(STATUS_RANK.on_hold).toBeGreaterThan(STATUS_RANK.scheduled)
+    expect(STATUS_RANK.on_hold).toBeLessThan(STATUS_RANK.completed)
+    expect(STATUS_RANK.on_hold).toBeLessThan(STATUS_RANK.cancelled)
+  })
+
+  it('가장 늦은 액티브 상태보다 뒤로 정렬된다', () => {
+    const list = [
+      project({ name: '중단', status: 'on_hold' }),
+      project({ name: '완료', status: 'completed' }),
+      project({ name: '예정', status: 'scheduled' })
+    ]
+    expect(orderedNames(list)).toEqual(['예정', '중단', '완료'])
+  })
+
+  it('우선순위가 붙어 있으면 중단이어도 그 그룹 안에 남는다', () => {
+    // 중단해도 우선순위 자체는 지워지지 않는다 — 상태는 그룹 안에서만 순서를 가른다.
+    const list = [
+      project({ name: 'now-중단', priority: 'now', status: 'on_hold' }),
+      project({ name: '미지정-개발', priority: null, status: 'development' })
+    ]
+    expect(orderedNames(list)).toEqual(['now-중단', '미지정-개발'])
+  })
+})
+
 describe('ACTIVE_STATUSES', () => {
-  it('완료·취소를 뺀 나머지 상태를 모두 담는다', () => {
+  it('완료·취소·중단을 뺀 나머지 상태를 모두 담는다', () => {
     expect([...ACTIVE_STATUSES].sort()).toEqual(
       Object.keys(STATUS_RANK)
-        .filter((s) => s !== 'completed' && s !== 'cancelled')
+        .filter((s) => s !== 'completed' && s !== 'cancelled' && s !== 'on_hold')
         .sort()
     )
+  })
+
+  it('on_hold를 포함하지 않는다 — 중단 프로젝트는 대시보드·트레이에서 빠진다', () => {
+    expect([...ACTIVE_STATUSES]).not.toContain('on_hold')
   })
 })

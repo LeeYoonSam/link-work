@@ -37,6 +37,8 @@ const statusCardBg: Record<string, string> = {
   deploy_pending: 'bg-amber-50 border-amber-200',
   deploy: 'bg-red-50 border-red-200',
   completed: 'bg-blue-50 border-blue-200',
+  // 중단은 되돌아올 수 있는 상태다 — 끝난 취소(회색 실선)와 달리 점선으로 "멈춰 있음"을 낸다
+  on_hold: 'bg-zinc-50 border-zinc-300 border-dashed',
   cancelled: 'bg-gray-50 border-gray-200'
 }
 

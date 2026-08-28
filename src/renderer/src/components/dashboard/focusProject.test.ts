@@ -34,6 +34,15 @@ describe('sortActiveProjects', () => {
     expect(sorted.map((x) => x.name)).toEqual(['지금', '다음', '나중'])
   })
 
+  it('중단(on_hold)은 우선순위가 있어도 대시보드 목록에서 빠진다', () => {
+    const sorted = sortActiveProjects([
+      p('중단됨', 'on_hold', 'now'),
+      p('중단됐지만 미지정', 'on_hold', null),
+      p('진행 중', 'development', 'later')
+    ])
+    expect(sorted.map((x) => x.name)).toEqual(['진행 중'])
+  })
+
   it('우선순위가 같으면 수동 순서(sort_order)를 따른다', () => {
     const sorted = sortActiveProjects([
       p('B', 'development', 'now', { sort_order: 1 }),
@@ -86,6 +95,21 @@ describe('selectFocus', () => {
       p('D', 'scheduled', null)
     ])
     expect(unprioritizedDevCount).toBe(2)
+  })
+
+  it('진행 중이 아닌 상태는 애초에 입력에 없다 — 파이프라인 전체로 확인', () => {
+    // selectFocus는 "진행 중 목록"을 받는 계약이라 상태를 스스로 거르지 않는다.
+    // 대시보드가 실제로 쓰는 조합(sortActiveProjects → selectFocus)으로 검증한다.
+    const { focus, upNext, unprioritizedDevCount } = selectFocus(
+      sortActiveProjects([
+        p('중단됨', 'on_hold', 'now'),
+        p('완료됨', 'completed', 'now'),
+        p('진행 중', 'development', 'later')
+      ])
+    )
+    expect(focus?.name).toBe('진행 중')
+    expect(upNext).toEqual([])
+    expect(unprioritizedDevCount).toBe(0)
   })
 
   it('입력 배열을 변형하지 않는다', () => {

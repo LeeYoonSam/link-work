@@ -97,6 +97,15 @@ describe('ProjectList 우선순위 그룹', () => {
     expect(html).toContain('⠿')
   })
 
+  // 필터 목록을 손으로 적어두면 상태가 늘 때 한쪽만 고쳐진다. STATUS_RANK에서 파생시켜
+  // 두면 새 상태가 자동으로 따라 들어온다.
+  it('상태 필터는 정렬 순위표에서 파생돼 중단까지 포함한다', () => {
+    const html = render([project({ id: 1, name: 'Now 프로젝트', priority: 'now' })])
+    expect(html).toContain('value="on_hold"')
+    expect(html).toContain('value="development"')
+    expect(html).toContain('value="cancelled"')
+  })
+
   it('프로젝트가 없으면 빈 상태만 보인다', () => {
     const html = render([])
     expect(html).toContain('No projects found')
