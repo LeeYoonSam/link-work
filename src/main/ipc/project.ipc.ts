@@ -14,6 +14,8 @@ interface ProjectInput {
   deploy_version?: string
   status?: string
   status_manual?: number
+  priority?: string | null
+  sort_order?: number
 }
 
 interface ProjectRow {
@@ -27,6 +29,8 @@ interface ProjectRow {
   deploy_date: string
   status: string
   status_manual: number
+  priority: string | null
+  sort_order: number
   created_at: string
   updated_at: string
 }
@@ -37,8 +41,8 @@ export function registerProjectIpc(): void {
   ipcMain.handle('project:create', (_event, input: ProjectInput) => {
     const defaults = calculateQaDates(input.dev_end_date)
     const stmt = db.prepare(`
-      INSERT INTO projects (name, description, dev_start_date, dev_end_date, qa_start_date, qa_end_date, deploy_date, deploy_version, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO projects (name, description, dev_start_date, dev_end_date, qa_start_date, qa_end_date, deploy_date, deploy_version, status, priority)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     const result = stmt.run(
       input.name,
@@ -49,7 +53,8 @@ export function registerProjectIpc(): void {
       input.qa_end_date || defaults.qaEnd,
       input.deploy_date || defaults.deployDate,
       input.deploy_version || null,
-      input.status || 'scheduled'
+      input.status || 'scheduled',
+      input.priority || null
     )
     logActivity('project', 'create', result.lastInsertRowid, input.name)
     return { id: result.lastInsertRowid }
@@ -78,7 +83,8 @@ export function registerProjectIpc(): void {
 
   const ALLOWED_PROJECT_FIELDS = new Set([
     'name', 'description', 'dev_start_date', 'dev_end_date',
-    'qa_start_date', 'qa_end_date', 'deploy_date', 'deploy_version', 'status', 'status_manual'
+    'qa_start_date', 'qa_end_date', 'deploy_date', 'deploy_version', 'status', 'status_manual',
+    'priority', 'sort_order'
   ])
 
   ipcMain.handle('project:update', (_event, id: number, input: Partial<ProjectInput>) => {
@@ -97,6 +103,17 @@ export function registerProjectIpc(): void {
     const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow
     logActivity('project', 'update', id, row.name, Object.keys(input).join(', '))
     return applyProjectAutoStatus(row)
+  })
+
+  ipcMain.handle('project:reorder', (_event, items: { id: number; sort_order: number }[]) => {
+    const stmt = db.prepare('UPDATE projects SET sort_order = ? WHERE id = ?')
+    const transaction = db.transaction((list: { id: number; sort_order: number }[]) => {
+      for (const item of list) {
+        stmt.run(item.sort_order, item.id)
+      }
+    })
+    transaction(items)
+    return { success: true }
   })
 
   ipcMain.handle('project:delete', (_event, id: number) => {

@@ -28,6 +28,27 @@ export const projectStatus: Record<string, StatusStyle> = {
   cancelled: { label: 'Cancelled', badge: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' }
 }
 
+// 프로젝트 우선순위 (now/next/later, 미지정은 none)
+//
+// 색만으로 세 레벨을 구분하면 적록색약에서 Now(빨강)와 Next(앰버)가 거의 같은 색으로 보인다.
+// 그래서 각 레벨에 도트 개수(●●● / ●● / ●)를 함께 실어, 색을 못 읽어도 순위가 읽히게 한다.
+// 미지정은 채운 배경 대신 흰 바탕 + 외곽선이라 "아직 정하지 않음"이 칠해진 레벨과 구분된다.
+export interface PriorityStyle extends StatusStyle {
+  marks: string // 색과 독립적으로 레벨을 나타내는 기호
+}
+
+export const projectPriority: Record<string, PriorityStyle> = {
+  now: { label: 'Now', badge: 'bg-red-100 text-red-700', dot: 'bg-red-500', marks: '●●●' },
+  next: { label: 'Next', badge: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500', marks: '●●' },
+  later: { label: 'Later', badge: 'bg-blue-100 text-blue-700', dot: 'bg-blue-500', marks: '●' },
+  none: {
+    label: '우선순위 없음',
+    badge: 'bg-white text-gray-500 border border-gray-300',
+    dot: 'bg-gray-300',
+    marks: '○'
+  }
+}
+
 // 태스크 상태 (ScheduleTimeline의 바/도트 문법 포함)
 export const taskStatus: Record<string, StatusStyle & { bar: string }> = {
   pending: {

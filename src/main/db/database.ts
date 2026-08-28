@@ -133,6 +133,10 @@ export function initDatabase(): void {
       qa_end_date TEXT NOT NULL,
       deploy_date TEXT NOT NULL,
       status TEXT DEFAULT 'active',
+      -- 우선순위 'now' | 'next' | 'later'. NULL이면 미지정이고 상태 순으로만 정렬된다.
+      priority TEXT,
+      -- 같은 우선순위 레벨 안에서의 수동 순서 (renderer/src/utils/projectOrder.ts)
+      sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
@@ -457,6 +461,14 @@ export function initDatabase(): void {
   }
   if (projectColumns.length > 0 && !projectColumnNames.includes('deploy_version')) {
     db.exec("ALTER TABLE projects ADD COLUMN deploy_version TEXT")
+  }
+  // 우선순위(now/next/later)와 레벨 내 수동 순서. 기존 프로젝트는 전부 미지정(NULL)으로
+  // 시작해 예전과 같은 상태 순 정렬을 유지한다.
+  if (projectColumns.length > 0 && !projectColumnNames.includes('priority')) {
+    db.exec("ALTER TABLE projects ADD COLUMN priority TEXT")
+  }
+  if (projectColumns.length > 0 && !projectColumnNames.includes('sort_order')) {
+    db.exec("ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
   }
 
   // 작업 1단계 계층: 부모 작업 참조 컬럼. 기존 행은 자동으로 NULL(최상위)이라 하위 호환.

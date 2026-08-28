@@ -4,13 +4,19 @@ import { getDatabase } from '../db/database'
 import { getTodayEvents, CalendarEvent } from './google-calendar'
 import { differenceInCalendarDays, format } from 'date-fns'
 import { is } from '@electron-toolkit/utils'
+import {
+  ACTIVE_STATUSES,
+  compareProjects,
+  type OrderableProject
+} from '../../renderer/src/utils/projectOrder'
+import { applyProjectAutoStatus } from '../utils/project-dates'
 
 let tray: Tray | null = null
 let panelWindow: BrowserWindow | null = null
 let panelReady = false
 let updateInterval: ReturnType<typeof setInterval> | null = null
 
-interface TrayProject {
+interface TrayProject extends OrderableProject {
   name: string
   status: string
   dev_start_date: string
@@ -36,57 +42,25 @@ interface TrayData {
 
 /**
  * 위젯 필터 정책: 대시보드와 동일하게 적용
- * - scheduled, development, qa_pending, qa, deploy_pending, deploy 상태만 표시
- * - completed, cancelled 상태는 제외
+ * - ACTIVE_STATUSES(진행 중) 상태만 표시하고 completed, cancelled는 제외
  * - 상태는 날짜 기반 자동 계산 (status_manual=0) 또는 수동 설정값 사용
  *
- * 정책 변경 시 Dashboard.tsx의 필터도 함께 수정할 것
+ * 필터 목록과 정렬 규칙은 renderer/src/utils/projectOrder.ts 한 곳에서 온다 —
+ * 대시보드·프로젝트 목록과 같은 순서를 보장하기 위함이다.
  */
-const VISIBLE_STATUSES = new Set([
-  'scheduled',
-  'development',
-  'qa_pending',
-  'qa',
-  'deploy_pending',
-  'deploy'
-])
-
-const STATUS_PRIORITY: Record<string, number> = {
-  development: 0,
-  qa: 1,
-  qa_pending: 2,
-  deploy_pending: 3,
-  deploy: 4,
-  scheduled: 5
-}
-
-function calculateAutoStatus(project: { dev_start_date: string; dev_end_date: string; qa_start_date: string; qa_end_date: string; deploy_date: string }): string {
-  const today = new Date().toISOString().split('T')[0]
-  if (today < project.dev_start_date) return 'scheduled'
-  if (today > project.deploy_date) return 'completed'
-  if (today === project.deploy_date) return 'deploy'
-  if (today >= project.qa_start_date && today <= project.qa_end_date) return 'qa'
-  // QA 종료 ~ 배포일 사이의 공백 구간은 배포대기 상태.
-  if (today > project.qa_end_date) return 'deploy_pending'
-  // 개발 종료 ~ QA 시작 사이의 공백 구간은 QA대기 상태.
-  if (today > project.dev_end_date) return 'qa_pending'
-  return 'development'
-}
+const VISIBLE_STATUSES = new Set<string>(ACTIVE_STATUSES)
 
 function getActiveProjects(): TrayProject[] {
   const db = getDatabase()
   const projects = db
     .prepare(
-      'SELECT id, name, dev_start_date, dev_end_date, qa_start_date, qa_end_date, deploy_date, status, status_manual FROM projects ORDER BY deploy_date ASC'
+      'SELECT id, name, dev_start_date, dev_end_date, qa_start_date, qa_end_date, deploy_date, status, status_manual, priority, sort_order, created_at FROM projects ORDER BY deploy_date ASC'
     )
-    .all() as { id: number; name: string; dev_start_date: string; dev_end_date: string; qa_start_date: string; qa_end_date: string; deploy_date: string; status: string; status_manual: number }[]
+    .all() as { id: number; name: string; dev_start_date: string; dev_end_date: string; qa_start_date: string; qa_end_date: string; deploy_date: string; status: string; status_manual: number; priority: TrayProject['priority']; sort_order: number; created_at: string }[]
 
   const today = new Date()
   return projects
-    .map((p) => {
-      const status = p.status_manual === 0 ? calculateAutoStatus(p) : p.status
-      return { ...p, status }
-    })
+    .map(applyProjectAutoStatus)
     .filter((p) => VISIBLE_STATUSES.has(p.status))
     .map((p) => {
       // 상태별 마감일 기준 D-day. 위젯 표시는 renderer의 getPhaseHint가 담당하고,
@@ -118,10 +92,13 @@ function getActiveProjects(): TrayProject[] {
         qa_start_date: p.qa_start_date,
         qa_end_date: p.qa_end_date,
         deploy_date: p.deploy_date,
+        priority: p.priority,
+        sort_order: p.sort_order,
+        created_at: p.created_at,
         daysLeft
       }
     })
-    .sort((a, b) => (STATUS_PRIORITY[a.status] ?? 99) - (STATUS_PRIORITY[b.status] ?? 99))
+    .sort(compareProjects)
 }
 
 function hasTime(dueDate: string): boolean {

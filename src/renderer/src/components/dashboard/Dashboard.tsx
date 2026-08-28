@@ -6,10 +6,21 @@ import { useTodoStore } from '../../stores/todoStore'
 import ProjectProgress from './ProjectProgress'
 import TodaySchedule from './TodaySchedule'
 import MarkdownContent from '../memo/MarkdownContent'
+import PriorityBadge from '../project/PriorityBadge'
+import { selectFocus, sortActiveProjects, type FocusSelection } from './focusProject'
 import { format } from 'date-fns'
 import { formatDateSafe } from '../../utils/date'
-import type { Task, Todo } from '../../types'
-import { Card, ClampedText, EmptyState, SectionTitle, StarIcon, todoPriority } from '../ui'
+import type { Project, Task, Todo } from '../../types'
+import {
+  Badge,
+  Card,
+  ClampedText,
+  EmptyState,
+  SectionTitle,
+  StarIcon,
+  projectStatus,
+  todoPriority
+} from '../ui'
 
 function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
   const { completeTodo, restoreTodo, setSelectedTodoId, setFilterTagId } = useTodoStore()
@@ -113,6 +124,66 @@ function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
   )
 }
 
+// 대시보드 최상단의 "지금 할 일". 후보를 나열하면 매번 다시 고민하게 되므로
+// 1등 하나만 크게 두고, 뒷순위는 이름 한 줄로만 흘린다.
+function FocusCard({
+  selection,
+  onOpenProjects
+}: {
+  selection: FocusSelection<Project>
+  onOpenProjects: () => void
+}): React.ReactNode {
+  const { focus, upNext, unprioritizedDevCount } = selection
+  const status = focus ? (projectStatus[focus.status] ?? projectStatus.cancelled) : null
+
+  return (
+    <div className="flex-shrink-0 min-w-0">
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <SectionTitle variant="page">지금 할 일</SectionTitle>
+        {unprioritizedDevCount > 0 ? (
+          <Badge
+            color="bg-amber-100 text-amber-700"
+            onClick={onOpenProjects}
+            title="개발 중인데 우선순위가 지정되지 않은 프로젝트입니다. 프로젝트 목록에서 지정하세요."
+          >
+            우선순위 미지정 {unprioritizedDevCount}건
+          </Badge>
+        ) : null}
+      </div>
+
+      {focus && status ? (
+        <Card
+          hover
+          onClick={onOpenProjects}
+          className="cursor-pointer border-l-4 border-l-blue-500"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <PriorityBadge priority={focus.priority ?? null} />
+            <h2 className="text-2xl font-bold text-gray-900 truncate min-w-0">{focus.name}</h2>
+            <Badge color={status.badge}>{status.label}</Badge>
+          </div>
+          <div className="text-xs text-gray-500 mt-2">
+            Dev {formatDateSafe(focus.dev_start_date, 'MM/dd')} ~{' '}
+            {formatDateSafe(focus.dev_end_date, 'MM/dd')} · Deploy{' '}
+            {formatDateSafe(focus.deploy_date, 'MM/dd')}
+          </div>
+          {upNext.length > 0 ? (
+            <div className="text-xs text-gray-400 mt-3 truncate">
+              다음: {upNext.map((p) => p.name).join(', ')}
+            </div>
+          ) : null}
+        </Card>
+      ) : (
+        <Card>
+          <EmptyState compact>
+            우선순위를 지정하면 지금 할 일이 여기에 표시됩니다
+          </EmptyState>
+        </Card>
+      )}
+    </div>
+  )
+}
+
 export default function Dashboard(): React.ReactNode {
   const { projects, fetchProjects, setView } = useProjectStore()
   const { status, fetchEvents, fetchStatus } = useCalendarStore()
@@ -168,24 +239,9 @@ export default function Dashboard(): React.ReactNode {
 
   const pendingTodos = activeTodos.filter((t) => t.is_completed === 0)
   const todayCompletedTodos = activeTodos.filter((t) => t.is_completed === 1)
-  const activeProjects = useMemo(() => {
-    const statusPriority: Record<string, number> = {
-      development: 0,
-      qa: 1,
-      qa_pending: 2,
-      deploy_pending: 3,
-      deploy: 4,
-      scheduled: 5
-    }
-    return projects
-      .filter((p) =>
-        ['scheduled', 'development', 'qa_pending', 'qa', 'deploy_pending', 'deploy'].includes(
-          p.status
-        )
-      )
-      .slice()
-      .sort((a, b) => (statusPriority[a.status] ?? 99) - (statusPriority[b.status] ?? 99))
-  }, [projects])
+  // 정렬·필터 규칙은 utils/projectOrder.ts 한 곳에만 둔다 (목록·트레이 위젯과 같은 순서)
+  const activeProjects = useMemo(() => sortActiveProjects(projects), [projects])
+  const focusSelection = useMemo(() => selectFocus(activeProjects), [activeProjects])
 
   // 프로젝트 id 집합이 실제로 바뀔 때만 배치 로드가 재실행되도록 문자열 키로 안정화
   const activeProjectIdsKey = useMemo(
@@ -236,6 +292,8 @@ export default function Dashboard(): React.ReactNode {
       <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
         {/* 좌측: Project + Schedule */}
         <div className="flex-1 flex flex-col min-h-0 space-y-6 min-w-0">
+          <FocusCard selection={focusSelection} onOpenProjects={() => setView('projects')} />
+
           <div className="flex flex-col min-h-0 min-w-0">
             <SectionTitle variant="page" className="mb-4 flex-shrink-0">
               Active Projects

@@ -1,4 +1,14 @@
 import { addBusinessDays } from 'date-fns'
+import {
+  calculateProjectStatus,
+  type ProjectDateFields
+} from '../../renderer/src/utils/projectStatus'
+
+// 상태 계산 규칙 자체는 renderer/src/utils/projectStatus.ts에 있다 — 렌더러 폼 미리보기와
+// 같은 함수를 써야 "어디서 보든 같은 상태"가 성립하기 때문이다. main 쪽 호출부가 계속
+// 이 모듈에서 가져다 쓸 수 있도록 여기서 다시 내보낸다.
+export { calculateProjectStatus }
+export type { ProjectDateFields }
 
 // 개발 종료일 기준 QA/배포 기본 일정 계산.
 // renderer 폼(project:calculateDates)과 AI 쓰기 도구(create_project)가 공용으로 사용한다.
@@ -23,31 +33,10 @@ export function calculateQaDates(devEndDate: string): {
   }
 }
 
-// 자동 상태 계산에 필요한 프로젝트 필드.
-export interface ProjectStatusFields {
+// 자동 상태 계산에 필요한 프로젝트 필드 — 날짜 5종에 저장된 상태·수동 여부를 더한 것.
+export interface ProjectStatusFields extends ProjectDateFields {
   status: string
   status_manual: number
-  dev_start_date: string
-  dev_end_date: string
-  qa_start_date: string
-  qa_end_date: string
-  deploy_date: string
-}
-
-// 오늘 날짜를 기준으로 프로젝트의 진행 단계를 계산한다.
-// project.ipc(메뉴), AI 조회 도구, 승인 카드 미리보기가 공용으로 사용해
-// "어디서 보든 같은 상태"를 보장한다.
-export function calculateProjectStatus(p: ProjectStatusFields): string {
-  const today = new Date().toISOString().split('T')[0]
-  if (today < p.dev_start_date) return 'scheduled'
-  if (today > p.deploy_date) return 'completed'
-  if (today === p.deploy_date) return 'deploy'
-  if (today >= p.qa_start_date && today <= p.qa_end_date) return 'qa'
-  // QA 종료 ~ 배포일 사이의 공백 구간(예: QA 26일 종료, 배포 30일)은 배포대기 상태.
-  if (today > p.qa_end_date) return 'deploy_pending'
-  // 개발 종료 ~ QA 시작 사이의 공백 구간(예: 개발 24일 종료, QA 26일 시작)은 QA대기 상태.
-  if (today > p.dev_end_date) return 'qa_pending'
-  return 'development'
 }
 
 // status_manual=0(자동)인 프로젝트만 계산된 상태로 덮어쓴다. 수동 상태는 그대로 둔다.

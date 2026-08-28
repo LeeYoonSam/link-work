@@ -19,6 +19,7 @@ interface ProjectStore {
   createProject: (input: ProjectInput) => Promise<void>
   updateProject: (id: number, input: Partial<ProjectInput>) => Promise<void>
   deleteProject: (id: number) => Promise<void>
+  reorderProjects: (items: { id: number; sort_order: number }[]) => Promise<void>
 
   fetchTasks: (projectId: number) => Promise<void>
   createTask: (input: TaskInput) => Promise<void>
@@ -67,6 +68,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     await window.api.project.delete(id)
     await get().fetchProjects()
     set({ currentProject: null, projectView: 'list' })
+  },
+
+  // 드래그로 정한 우선순위 그룹 내 순서를 저장한다. 정렬은 서버가 준 목록 순서가 아니라
+  // sort_order로 결정되므로, 저장 후 재조회로 모든 화면이 같은 순서를 보게 한다.
+  reorderProjects: async (items) => {
+    await window.api.project.reorder(items)
+    await get().fetchProjects()
   },
 
   fetchTasks: async (projectId) => {
