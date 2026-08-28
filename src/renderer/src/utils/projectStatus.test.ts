@@ -42,6 +42,16 @@ describe('calculateProjectStatus', () => {
     expect(calculateProjectStatus(around)).toBe(calculateProjectStatus(around, today))
   })
 
+  it('어떤 날짜에도 수동 전용 상태(on_hold·cancelled)는 반환하지 않는다', () => {
+    // 프로젝트 일정 앞뒤로 넉넉히 훑어 자동 계산이 수동 상태를 침범하지 않는지 확인한다.
+    const seen = new Set<string>()
+    for (let day = 1; day <= 31; day++) {
+      seen.add(calculateProjectStatus(dates, `2026-03-${String(day).padStart(2, '0')}`))
+    }
+    expect(seen).not.toContain('on_hold')
+    expect(seen).not.toContain('cancelled')
+  })
+
   it('날짜 5종 외의 필드가 붙어 있어도 그대로 동작한다', () => {
     const row = { ...dates, id: 7, name: '프로젝트', status: 'cancelled', status_manual: 1 }
     expect(calculateProjectStatus(row, '2026-03-14')).toBe('qa')

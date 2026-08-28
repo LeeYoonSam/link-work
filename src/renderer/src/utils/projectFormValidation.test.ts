@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
+  AUTO_STATUS,
   PRIORITY_REQUIRED_MESSAGE,
   resolveEffectiveStatus,
+  statusSelectionPatch,
   validateProjectDraft,
   type ProjectDraft
 } from './projectFormValidation'
@@ -39,6 +41,27 @@ describe('resolveEffectiveStatus', () => {
   })
 })
 
+describe('statusSelectionPatch', () => {
+  it('중단을 고르면 상태를 수동으로 고정한다', () => {
+    expect(statusSelectionPatch('on_hold')).toEqual({ status: 'on_hold', status_manual: 1 })
+  })
+
+  it('다른 수동 상태도 같은 경로를 탄다', () => {
+    expect(statusSelectionPatch('development')).toEqual({
+      status: 'development',
+      status_manual: 1
+    })
+  })
+
+  // 재개는 "중단 직전 상태로 되돌리기"가 아니라 "자동 계산 다시 켜기"다.
+  // status를 패치에 넣지 않아야 main이 그 컬럼을 건드리지 않는다.
+  it('auto를 고르면 status는 건드리지 않고 수동 고정만 푼다', () => {
+    const patch = statusSelectionPatch(AUTO_STATUS)
+    expect(patch).toEqual({ status_manual: 0 })
+    expect('status' in patch).toBe(false)
+  })
+})
+
 describe('validateProjectDraft', () => {
   it('자동 계산 결과가 개발 중인데 우선순위가 없으면 저장을 막는다', () => {
     expect(validateProjectDraft(draft(), TODAY)).toBe(PRIORITY_REQUIRED_MESSAGE)
@@ -57,6 +80,20 @@ describe('validateProjectDraft', () => {
     const scheduled = draft({ dev_start_date: '2026-04-01', dev_end_date: '2026-04-20' })
     expect(resolveEffectiveStatus(scheduled, TODAY)).toBe('scheduled')
     expect(validateProjectDraft(scheduled, TODAY)).toBeNull()
+  })
+
+  // 중단은 날짜상 개발 기간 한복판이어도 우선순위 필수 대상이 아니다.
+  // 멈춰 세운 프로젝트에까지 순위를 요구하면 중단 자체가 번거로워진다.
+  it('중단 상태는 우선순위가 없어도 저장할 수 있다', () => {
+    const held = draft({ ...statusSelectionPatch('on_hold'), priority: null })
+    expect(resolveEffectiveStatus(held, TODAY)).toBe('on_hold')
+    expect(validateProjectDraft(held, TODAY)).toBeNull()
+  })
+
+  it('중단을 풀어 자동으로 되돌리면 다시 우선순위를 요구한다', () => {
+    const resumed = draft({ ...statusSelectionPatch(AUTO_STATUS), priority: null })
+    expect(resolveEffectiveStatus(resumed, TODAY)).toBe('development')
+    expect(validateProjectDraft(resumed, TODAY)).toBe(PRIORITY_REQUIRED_MESSAGE)
   })
 
   it('날짜가 덜 채워진 중간 상태를 개발 중으로 오인해 막지 않는다', () => {

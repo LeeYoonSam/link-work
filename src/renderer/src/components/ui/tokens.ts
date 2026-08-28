@@ -24,6 +24,9 @@ export const projectStatus: Record<string, StatusStyle> = {
     dot: 'bg-amber-500'
   },
   deploy: { label: 'Deploy', badge: 'bg-red-100 text-red-700', dot: 'bg-red-500' },
+  // 중단은 "끝남"이 아니라 "멈춤"이다. 취소(gray-100/400)보다 한 단계 진하고 예정(slate-100)과도
+  // 갈리는 zinc를 써서, 색만 봐도 끝난 상태 둘과 구분된다.
+  on_hold: { label: '중단', badge: 'bg-zinc-200 text-zinc-700', dot: 'bg-zinc-500' },
   completed: { label: 'Completed', badge: 'bg-blue-100 text-blue-700', dot: 'bg-blue-500' },
   cancelled: { label: 'Cancelled', badge: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' }
 }

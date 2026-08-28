@@ -20,6 +20,7 @@ interface ProjectStore {
   updateProject: (id: number, input: Partial<ProjectInput>) => Promise<void>
   deleteProject: (id: number) => Promise<void>
   reorderProjects: (items: { id: number; sort_order: number }[]) => Promise<void>
+  patchProject: (id: number, input: Partial<ProjectInput>) => Promise<void>
 
   fetchTasks: (projectId: number) => Promise<void>
   createTask: (input: TaskInput) => Promise<void>
@@ -68,6 +69,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     await window.api.project.delete(id)
     await get().fetchProjects()
     set({ currentProject: null, projectView: 'list' })
+  },
+
+  // 상세 화면에 머문 채로 프로젝트 일부 필드만 고친다(중단/재개 토글 등).
+  // updateProject는 폼 저장용이라 끝나면 목록으로 되돌리는데, 헤더 버튼은 누른 자리에
+  // 그대로 있어야 하므로 뷰를 건드리지 않고 목록과 현재 프로젝트만 다시 읽는다.
+  patchProject: async (id, input) => {
+    await window.api.project.update(id, input)
+    await get().fetchProjects()
+    if (get().currentProject?.id === id) await get().fetchProject(id)
   },
 
   // 드래그로 정한 우선순위 그룹 내 순서를 저장한다. 정렬은 서버가 준 목록 순서가 아니라

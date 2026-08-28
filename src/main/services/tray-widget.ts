@@ -42,7 +42,7 @@ interface TrayData {
 
 /**
  * 위젯 필터 정책: 대시보드와 동일하게 적용
- * - ACTIVE_STATUSES(진행 중) 상태만 표시하고 completed, cancelled는 제외
+ * - ACTIVE_STATUSES(진행 중) 상태만 표시하고 on_hold, completed, cancelled는 제외
  * - 상태는 날짜 기반 자동 계산 (status_manual=0) 또는 수동 설정값 사용
  *
  * 필터 목록과 정렬 규칙은 renderer/src/utils/projectOrder.ts 한 곳에서 온다 —

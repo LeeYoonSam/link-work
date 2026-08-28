@@ -25,11 +25,17 @@ export const STATUS_RANK: Record<string, number> = {
   deploy_pending: 3,
   deploy: 4,
   scheduled: 5,
-  completed: 6,
-  cancelled: 7
+  // 중단(수동 전용)은 진행 중인 상태 뒤, 끝난 상태(completed/cancelled) 앞에 온다 —
+  // 손을 놓은 것이지 끝난 것은 아니라 다시 집어들 후보로 먼저 눈에 띄어야 한다.
+  on_hold: 6,
+  completed: 7,
+  cancelled: 8
 }
 
-/** 진행 중으로 간주해 대시보드·트레이 위젯에 노출하는 상태 */
+/**
+ * 진행 중으로 간주해 대시보드·트레이 위젯에 노출하는 상태.
+ * on_hold는 의도적으로 빠져 있다 — 중단한 프로젝트는 진행 중 화면에서 사라진다.
+ */
 export const ACTIVE_STATUSES = [
   'development',
   'qa',

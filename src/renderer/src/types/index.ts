@@ -1,6 +1,25 @@
 // 프로젝트 우선순위. null(미지정)이면 우선순위 그룹 밖으로 밀려 상태 순으로만 정렬된다.
 export type ProjectPriority = 'now' | 'next' | 'later'
 
+/**
+ * 프로젝트 진행 상태.
+ *
+ * 'on_hold'(중단)만 수동 전용이다 — 날짜 기반 자동 계산(utils/projectStatus.ts)은 이 값을
+ * 절대 반환하지 않고, status_manual=1로 고정할 때만 들어간다. 재개는 status_manual=0으로
+ * 되돌려 자동 계산에 다시 맡긴다. 진행 중 목록에서는 빠진다(utils/projectOrder.ts의
+ * ACTIVE_STATUSES 미포함).
+ */
+export type ProjectStatus =
+  | 'scheduled'
+  | 'development'
+  | 'qa_pending'
+  | 'qa'
+  | 'deploy_pending'
+  | 'deploy'
+  | 'on_hold'
+  | 'completed'
+  | 'cancelled'
+
 export interface Project {
   id: number
   name: string
@@ -11,15 +30,7 @@ export interface Project {
   qa_end_date: string
   deploy_date: string
   deploy_version: string | null
-  status:
-    | 'scheduled'
-    | 'development'
-    | 'qa_pending'
-    | 'qa'
-    | 'deploy_pending'
-    | 'deploy'
-    | 'completed'
-    | 'cancelled'
+  status: ProjectStatus
   status_manual: number
   // 우선순위와 같은 레벨 안에서의 수동 순서. 구버전 DB·테스트 픽스처가 값을 갖지
   // 않을 수 있어 옵셔널이다 — 정렬은 utils/projectOrder.ts가 미지정을 흡수한다.

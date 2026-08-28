@@ -2,24 +2,19 @@ import { useEffect, useRef, useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
 import { format } from 'date-fns'
 import type { Project, ProjectPriority } from '../../types'
-import { compareProjects } from '../../utils/projectOrder'
+import { STATUS_RANK, compareProjects } from '../../utils/projectOrder'
 import MarkdownContent from '../memo/MarkdownContent'
 import { Badge, Card, EmptyState, projectStatus, projectPriority, button, typo } from '../ui'
 import PhaseHint from './PhaseHint'
 import PriorityBadge from './PriorityBadge'
 import ProjectExportModal from './ProjectExportModal'
 
-// 상태 필터 옵션 — 'all'(전체) + projectStatus의 진행 순서
+// 상태 필터 옵션 — 'all'(전체) + STATUS_RANK의 진행 순서.
+// 목록에 손으로 적어두면 상태가 늘 때마다 한쪽만 고쳐져 필터에서 빠진다(on_hold가 그랬다).
+// 정렬 순위표에서 파생시켜 두면 상태가 추가되는 순간 필터에도 제자리로 들어온다.
 const filterOptions = [
   'all',
-  'scheduled',
-  'development',
-  'qa_pending',
-  'qa',
-  'deploy_pending',
-  'deploy',
-  'completed',
-  'cancelled'
+  ...Object.keys(STATUS_RANK).sort((a, b) => STATUS_RANK[a] - STATUS_RANK[b])
 ]
 
 // 우선순위 그룹의 표시 순서. 미지정('none')은 항상 맨 뒤다.
@@ -203,9 +198,10 @@ export default function ProjectList(): React.ReactNode {
           </select>
         </label>
         <div className="flex items-center gap-2 shrink-0">
+          {/* 한글 라벨은 글자 단위로 개행된다 — nowrap 없이 두면 좁은 창에서 세로로 깨진다 */}
           <button
             onClick={() => setShowExport(true)}
-            className={`px-4 py-2 text-sm ${button.subtle}`}
+            className={`px-4 py-2 text-sm whitespace-nowrap ${button.subtle}`}
           >
             내보내기
           </button>
@@ -214,7 +210,7 @@ export default function ProjectList(): React.ReactNode {
               setEditingProject(null)
               setProjectView('form')
             }}
-            className={`px-4 py-2 text-sm ${button.primary}`}
+            className={`px-4 py-2 text-sm whitespace-nowrap ${button.primary}`}
           >
             + New Project
           </button>
@@ -234,7 +230,7 @@ export default function ProjectList(): React.ReactNode {
               <section key={key} className={key === 'none' ? 'opacity-60' : ''}>
                 <div className="mb-2 flex items-center gap-2 px-1">
                   <span className={`inline-block h-2 w-2 rounded-full ${style.dot}`} />
-                  <span className={typo.microLabel}>{style.label}</span>
+                  <span className={`${typo.microLabel} whitespace-nowrap`}>{style.label}</span>
                   <span className="text-xs text-gray-400">({items.length})</span>
                 </div>
                 <div className="grid gap-4">

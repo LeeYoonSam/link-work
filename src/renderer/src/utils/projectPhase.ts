@@ -44,7 +44,7 @@ export type PhaseHint =
 // 현재 상태 기준 보조 정보.
 // - development / qa: 지정 기간 중 며칠째인지 'N/M일차' (주말/공휴일 제외한 영업일 기준)
 // - qa_pending / deploy_pending / scheduled: 다음 단계까지 'D-N'
-// 그 외(completed/cancelled/deploy)는 null.
+// 그 외(completed/cancelled/deploy/on_hold)는 null — 끝났거나 멈춰 있어 남은 일수가 뜻이 없다.
 export function getPhaseHint(project: PhaseFields, todayStr?: string): PhaseHint | null {
   const today = todayStr ?? new Date().toISOString().split('T')[0]
 

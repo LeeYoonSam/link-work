@@ -8,6 +8,7 @@ import { placeTooltip, TOOLTIP_MARGIN } from '../../utils/tooltipPosition'
 
 export * from './tokens'
 export * from './icons'
+export * from './DropdownMenu'
 
 // 아이콘 전용 버튼 — hover 시에만 색이 드러나는 조용한 액션
 export function IconButton({

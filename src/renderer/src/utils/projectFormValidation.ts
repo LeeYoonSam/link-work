@@ -2,12 +2,28 @@ import type { ProjectPriority } from '../types'
 import { calculateProjectStatus, type ProjectDateFields } from './projectStatus'
 
 /**
- * 프로젝트 폼 저장 전 검증 규칙.
+ * 프로젝트 상태·우선순위를 저장하기 전에 거치는 규칙들.
  *
  * "개발 중인 프로젝트는 우선순위가 반드시 있어야 한다"는 규칙은 저장 **결과** 상태를 보고
  * 판정해야 한다. 상태를 수동으로 골랐으면 그 값이, 자동(status_manual=0)이면 날짜에서
  * 계산된 값이 결과 상태다.
  */
+
+/** 상태를 날짜 기반 자동 계산에 맡긴다는 뜻의 선택값. 실제 상태 이름이 아니다. */
+export const AUTO_STATUS = 'auto'
+
+/**
+ * 상태 선택값을 프로젝트 저장 패치로 바꾼다.
+ *
+ * 'auto'만 자동 계산으로 돌아가고 나머지는 전부 수동 고정이다. 폼의 상태 select와
+ * 상세 화면의 중단/재개 버튼이 같은 함수를 써야 "재개 = status_manual 0으로 복귀"라는
+ * 뜻이 두 곳에서 갈라지지 않는다. status를 빼고 보내면 main의 project:update가 그 컬럼을
+ * 건드리지 않으므로, 재개는 마지막 상태를 그대로 두고 자동 계산만 다시 켠다.
+ */
+export function statusSelectionPatch(value: string): { status?: string; status_manual: number } {
+  if (value === AUTO_STATUS) return { status_manual: 0 }
+  return { status: value, status_manual: 1 }
+}
 
 /** 우선순위가 필수인 상태. 지금은 개발 중 하나뿐이다. */
 export const PRIORITY_REQUIRED_STATUS = 'development'
