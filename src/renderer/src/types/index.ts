@@ -1,3 +1,6 @@
+// 프로젝트 우선순위. null(미지정)이면 우선순위 그룹 밖으로 밀려 상태 순으로만 정렬된다.
+export type ProjectPriority = 'now' | 'next' | 'later'
+
 export interface Project {
   id: number
   name: string
@@ -18,6 +21,10 @@ export interface Project {
     | 'completed'
     | 'cancelled'
   status_manual: number
+  // 우선순위와 같은 레벨 안에서의 수동 순서. 구버전 DB·테스트 픽스처가 값을 갖지
+  // 않을 수 있어 옵셔널이다 — 정렬은 utils/projectOrder.ts가 미지정을 흡수한다.
+  priority?: ProjectPriority | null
+  sort_order?: number
   created_at: string
   updated_at: string
 }
@@ -46,6 +53,8 @@ export interface ProjectInput {
   deploy_version?: string
   status?: string
   status_manual?: number
+  priority?: ProjectPriority | null
+  sort_order?: number
 }
 
 export interface TaskInput {
@@ -72,6 +81,7 @@ export interface ProjectAPI {
   delete: (id: number) => Promise<{ success: boolean }>
   calculateDates: (devEndDate: string) => Promise<CalculatedDates>
   lastDates: () => Promise<{ devStartDate: string; devEndDate: string } | null>
+  reorder: (items: { id: number; sort_order: number }[]) => Promise<{ success: boolean }>
 }
 
 export interface TaskAPI {

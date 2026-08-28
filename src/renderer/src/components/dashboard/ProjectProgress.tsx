@@ -4,6 +4,7 @@ import { differenceInCalendarDays, format } from 'date-fns'
 import ScheduleTimeline from '../project/ScheduleTimeline'
 import { Badge, ProgressBar, projectStatus, urgency } from '../ui'
 import PhaseHint from '../project/PhaseHint'
+import PriorityBadge from '../project/PriorityBadge'
 import { countLeafProgress } from '../../utils/taskTree'
 
 type UrgencyLevel = 'early' | 'mid' | 'late'
@@ -94,6 +95,8 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
                 <span className="text-gray-400 text-xs">{expanded ? '▼' : '▶'}</span>
               )}
               <h4 className="font-semibold text-gray-900">{project.name}</h4>
+              {/* 카드가 overflow-hidden이라 드롭다운이 잘린다 — 변경은 프로젝트 목록에서 한다 */}
+              <PriorityBadge priority={project.priority ?? null} size="xs" />
             </div>
             <div className="flex gap-3 text-xs text-gray-500 mt-1 ml-5">
               <span>

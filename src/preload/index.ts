@@ -9,7 +9,9 @@ const api = {
     update: (id: number, input: Record<string, unknown>) => ipcRenderer.invoke('project:update', id, input),
     delete: (id: number) => ipcRenderer.invoke('project:delete', id),
     calculateDates: (devEndDate: string) => ipcRenderer.invoke('project:calculateDates', devEndDate),
-    lastDates: () => ipcRenderer.invoke('project:lastDates')
+    lastDates: () => ipcRenderer.invoke('project:lastDates'),
+    reorder: (items: { id: number; sort_order: number }[]) =>
+      ipcRenderer.invoke('project:reorder', items)
   },
   task: {
     create: (input: Record<string, unknown>) => ipcRenderer.invoke('task:create', input),

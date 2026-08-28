@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
-import type { ProjectInput } from '../../types'
-import { SectionTitle, button } from '../ui'
+import type { ProjectInput, ProjectPriority } from '../../types'
+import { validateProjectDraft } from '../../utils/projectFormValidation'
+import { SectionTitle, button, projectPriority } from '../ui'
+
+// 셀렉트 표시 순서 — 미지정이 기본값이라 맨 앞에 둔다.
+const PRIORITY_OPTIONS: (ProjectPriority | null)[] = [null, 'now', 'next', 'later']
 
 export default function ProjectForm(): React.ReactNode {
   const { editingProject, createProject, updateProject, setProjectView } = useProjectStore()
@@ -16,8 +20,10 @@ export default function ProjectForm(): React.ReactNode {
     deploy_date: '',
     deploy_version: '',
     status: 'scheduled',
-    status_manual: 0
+    status_manual: 0,
+    priority: null
   })
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (editingProject) {
@@ -31,7 +37,8 @@ export default function ProjectForm(): React.ReactNode {
         deploy_date: editingProject.deploy_date,
         deploy_version: editingProject.deploy_version || '',
         status: editingProject.status,
-        status_manual: editingProject.status_manual
+        status_manual: editingProject.status_manual,
+        priority: editingProject.priority ?? null
       })
     } else {
       window.api.project.lastDates().then(async (last) => {
@@ -67,6 +74,23 @@ export default function ProjectForm(): React.ReactNode {
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault()
     if (!form.name || !form.dev_start_date || !form.dev_end_date) return
+
+    // 개발 중으로 저장될 프로젝트는 우선순위 없이 목록에 들어가면 어디에도 정렬되지 않는다.
+    const message = validateProjectDraft({
+      status: form.status ?? 'scheduled',
+      status_manual: form.status_manual ?? 0,
+      dev_start_date: form.dev_start_date,
+      dev_end_date: form.dev_end_date,
+      qa_start_date: form.qa_start_date ?? '',
+      qa_end_date: form.qa_end_date ?? '',
+      deploy_date: form.deploy_date ?? '',
+      priority: form.priority ?? null
+    })
+    if (message) {
+      setError(message)
+      return
+    }
+    setError(null)
 
     if (editingProject) {
       await updateProject(editingProject.id, form)
@@ -187,6 +211,28 @@ export default function ProjectForm(): React.ReactNode {
             className={inputClass}
             placeholder="e.g. 4.142.0"
           />
+        </div>
+
+        <div>
+          <label className={labelClass}>
+            Priority <span className="text-gray-400 text-xs">(개발 중이면 필수)</span>
+          </label>
+          <select
+            value={form.priority ?? 'none'}
+            onChange={(e) => {
+              const value = e.target.value
+              setForm({ ...form, priority: value === 'none' ? null : (value as ProjectPriority) })
+              setError(null)
+            }}
+            className={inputClass}
+          >
+            {PRIORITY_OPTIONS.map((option) => (
+              <option key={option ?? 'none'} value={option ?? 'none'}>
+                {projectPriority[option ?? 'none'].label}
+              </option>
+            ))}
+          </select>
+          {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
         </div>
 
         {editingProject && (
