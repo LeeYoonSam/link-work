@@ -4,6 +4,7 @@ import { useProjectStore } from '../../stores/projectStore'
 import { useTodoStore } from '../../stores/todoStore'
 import { useMemoStore } from '../../stores/memoStore'
 import { useVariableStore } from '../../stores/variableStore'
+import { useDocumentStore } from '../../stores/documentStore'
 import MarkdownContent from '../memo/MarkdownContent'
 import type {
   AiApprovalRequest,
@@ -103,6 +104,16 @@ export default function AiChatView(): React.ReactNode {
         void memoStore.fetchCategories()
       } else if (entity === 'variable') {
         void useVariableStore.getState().fetchVariables()
+      } else if (entity === 'document') {
+        // 문서 목록 store는 전체 목록과 프로젝트별 목록이 공유하므로,
+        // 프로젝트 상세가 열려 있으면 그 프로젝트 문서만 다시 읽는다.
+        const projectStore = useProjectStore.getState()
+        const documentStore = useDocumentStore.getState()
+        if (projectStore.projectView === 'detail' && projectStore.currentProject) {
+          void documentStore.fetchDocuments(projectStore.currentProject.id)
+        } else {
+          void documentStore.fetchAllDocuments()
+        }
       }
     })
     return () => {
