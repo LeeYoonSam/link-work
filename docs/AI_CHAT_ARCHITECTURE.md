@@ -69,7 +69,7 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 |---|---|
 | `src/main/services/ai-agent.ts` | 쿼리 실행 엔진. 시스템 프롬프트, 스트리밍 중계, 취소, 세션 resume, 진행상태 보관, 동시 실행 상한, 도구 게이트(canUseTool) |
 | `src/main/services/ai-tools.ts` | LinkWork 조회 도구 + 외부 지식 도구(Notion/웹) 정의 (zod 스키마 + SQL) |
-| `src/main/services/ai-write-tools.ts` | 쓰기 도구 10종 (생성 5종 `create_project`/`create_task`/`create_todo`/`create_memo`/`create_variable` + 수정 5종, HITL 승인 — 가드레일 문서 7절) |
+| `src/main/services/ai-write-tools.ts` | 쓰기 도구 12종 (생성 6종 `create_project`/`create_task`/`create_todo`/`create_memo`/`create_variable`/`create_document` + 수정 6종, HITL 승인 — 가드레일 문서 7절) |
 | `src/main/services/ai-audit.ts` | 감사 로그 기록 헬퍼 |
 | `src/main/services/notion.ts` | Notion 연동 (토큰 safeStorage 저장, 검색/페이지/DB 조회 API) |
 | `src/main/services/notion-markdown.ts` | Notion 블록 → 마크다운 변환 (순수 함수, 단위 테스트) |

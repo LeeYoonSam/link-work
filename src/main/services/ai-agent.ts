@@ -189,11 +189,13 @@ const TOOL_LABELS: Record<string, string> = {
   create_todo: 'TODO 생성',
   create_memo: '메모 생성',
   create_variable: '변수 생성',
+  create_document: '문서 링크 생성',
   update_project: '프로젝트 수정',
   update_task: '태스크 수정',
   update_todo: 'TODO 수정',
   update_memo: '메모 수정',
-  update_variable: '변수 수정'
+  update_variable: '변수 수정',
+  update_document: '문서 링크 수정'
 }
 
 // 패키징된 GUI 앱은 셸 PATH를 물려받지 못하므로 시스템에 설치된
@@ -250,7 +252,7 @@ ${
       ? 'get_notion_page / search_notion을 사용하세요 (fetch_url 금지 — 로그인 페이지만 보입니다)'
       : 'mcp__claude_ai_Notion__notion-fetch / notion-search를 사용하세요 (fetch_url 금지 — 로그인 페이지만 보입니다)'
   }.
-3. Jira 티켓 키(예: ABC-123)나 atlassian.net 링크에 관한 질문은 getJiraIssue(단건)/searchJiraIssuesUsingJql(검색)을 사용하세요. 하위 작업(서브태스크)은 JQL \`parent = <티켓키>\`로 조회하세요. fetch_url로 atlassian.net을 읽지 마세요 (로그인 페이지만 보입니다). 티켓 정보를 새 프로젝트로 만들 때는 조회 결과를 근거로 create_project를, 기존 프로젝트에 작업으로 추가할 때는 create_task를 사용하세요. 지라의 상위/하위 계층은 그대로 보존하세요 — 지라 상위 티켓은 상위 작업으로, 서브태스크는 해당 작업의 하위 작업(create_task의 parent_task_id로 연결)으로 만듭니다.
+3. Jira 티켓 키(예: ABC-123)나 atlassian.net 링크에 관한 질문은 getJiraIssue(단건)/searchJiraIssuesUsingJql(검색)을 사용하세요. 하위 작업(서브태스크)은 JQL \`parent = <티켓키>\`로 조회하세요. fetch_url로 atlassian.net을 읽지 마세요 (로그인 페이지만 보입니다). 티켓 정보를 새 프로젝트로 만들 때는 조회 결과를 근거로 create_project를, 기존 프로젝트에 작업으로 추가할 때는 create_task를 사용하세요. 지라의 상위/하위 계층은 그대로 보존하세요 — 지라 상위 티켓은 상위 작업으로, 서브태스크는 해당 작업의 하위 작업(create_task의 parent_task_id로 연결)으로 만듭니다. 티켓이나 관련 문서에서 참고 문서 URL(컨플루언스 페이지, 지라 티켓/에픽, 스펙 문서 등)을 발견하면 create_document로 해당 프로젝트에 문서 링크도 함께 만드세요 (아래 "데이터 작성 규칙" 참고 — 쓰기 도구가 활성일 때만 가능합니다).
 4. 사용자가 언급하지 않은 주소를 fetch_url로 읽으려 하면 사용자 승인 카드가 표시됩니다. 거절되면 같은 주소로 다시 시도하지 마세요.
 5. 읽은 내용을 근거로 답할 때는 출처 URL을 마크다운 링크로 함께 표기하세요.
 
@@ -269,8 +271,8 @@ ${
 ${
   writeMode !== 'readonly'
     ? `## 데이터 작성 규칙 (쓰기 도구 활성${writeMode === 'auto' ? ' — 자동 승인 모드' : ''})
-- 생성: create_project / create_task / create_todo / create_memo / create_variable
-- 수정: update_project / update_task / update_todo / update_memo / update_variable
+- 생성: create_project / create_task / create_todo / create_memo / create_variable / create_document
+- 수정: update_project / update_task / update_todo / update_memo / update_variable / update_document
 위 도구로 데이터를 **생성·수정**할 수 있습니다.
 1. ${
         writeMode === 'auto'
@@ -280,11 +282,12 @@ ${
 2. 사용자가 거절하면 같은 내용으로 다시 시도하지 말고, 무엇을 바꿀지 물어보세요.
 3. 쓰기 전에 조회 도구로 맥락을 먼저 확인하세요. 특히 수정은 반드시 조회 도구로 대상 id와 현재 값을 확인한 뒤, **변경할 필드만** 전달하세요.
 4. 기존 프로젝트에 세부 작업을 추가할 때는 create_task를 사용하세요 (작업마다 1회 호출, project_id는 list_projects/get_project로 확인). 새 프로젝트가 필요할 때만 create_project를 사용하세요. 특정 작업의 하위 작업(1단계)으로 넣을 때는 create_task에 parent_task_id를 지정하며, 상위 작업 id는 get_project로 확인하세요.
-5. 메모 content와 TODO notes는 **전체 교체**됩니다. 부분 수정 시 반드시 get_memo / get_todo로 전문을 조회한 뒤, 수정 사항을 반영한 전체 내용을 전달하세요 (목록 도구의 잘린 내용을 그대로 쓰면 데이터가 유실됩니다).
-6. 여러 항목을 바꿀 때는 항목마다 도구를 한 번씩 호출하세요 (한 호출 = 한 항목).${writeMode === 'ask' ? ' 호출마다 승인을 받습니다.' : ''}
-7. 사용자가 형식을 지정하지 않으면 데이터 성격에 맞게 정리해서 작성하세요 (메모는 마크다운 구조화, TODO 제목은 간결한 행동 단위, 프로젝트는 WBS 세부 작업 분해).
-8. 삭제는 지원하지 않습니다 — 요청 시 해당 메뉴에서 직접 작업하도록 안내하세요. (메모 보관 처리, TODO 완료/복원은 update 도구로 가능합니다)
-9. 생성/수정 후에는 linkwork:// 링크로 해당 항목을 안내하세요.`
+5. 지라 티켓 기반으로 프로젝트를 생성하거나 작업을 추가할 때, 티켓과 관련 문서에서 참고 문서 URL(컨플루언스, 지라 티켓, 스펙 문서 등)을 발견하면 create_document로 해당 프로젝트에 문서 링크를 함께 생성하세요 (문서마다 1회 호출, name은 문서 제목, project_id 지정). 참고 문서 URL을 프로젝트 설명(description)이나 작업 이름에 적지 마세요 — 문서 링크는 반드시 create_document로만 등록해야 프로젝트 상세 하단의 Documents 영역에 표시됩니다. 같은 URL을 중복 생성하지 마세요 — list_documents로 기존 문서를 확인하세요.
+6. 메모 content와 TODO notes는 **전체 교체**됩니다. 부분 수정 시 반드시 get_memo / get_todo로 전문을 조회한 뒤, 수정 사항을 반영한 전체 내용을 전달하세요 (목록 도구의 잘린 내용을 그대로 쓰면 데이터가 유실됩니다).
+7. 여러 항목을 바꿀 때는 항목마다 도구를 한 번씩 호출하세요 (한 호출 = 한 항목).${writeMode === 'ask' ? ' 호출마다 승인을 받습니다.' : ''}
+8. 사용자가 형식을 지정하지 않으면 데이터 성격에 맞게 정리해서 작성하세요 (메모는 마크다운 구조화, TODO 제목은 간결한 행동 단위, 프로젝트는 WBS 세부 작업 분해).
+9. 삭제는 지원하지 않습니다 — 요청 시 해당 메뉴에서 직접 작업하도록 안내하세요. (메모 보관 처리, TODO 완료/복원은 update 도구로 가능합니다)
+10. 생성/수정 후에는 linkwork:// 링크로 해당 항목을 안내하세요.`
     : `## 데이터 작성 안내
 이 채팅은 읽기 전용 모드라 당신은 데이터를 생성·수정할 수 없습니다. 사용자가 데이터 추가/수정을 요청하면,
 채팅 상단의 데이터 작성 모드를 "승인 후 쓰기"나 "자동 쓰기"로 바꾸면 AI가 직접 생성·수정할 수 있다고 안내하거나 해당 메뉴에서 직접 작업하도록 안내하세요.

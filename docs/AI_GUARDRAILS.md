@@ -115,7 +115,7 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
    기본 모드(ask)에서는 모든 쓰기가 건별 승인을 거친다
 6. 이 문서에 도구별 위험도와 승인 흐름을 먼저 추가한 뒤 구현
 
-### 7.1 현재 구현 — 생성(create) 5종 + 수정(update) 5종
+### 7.1 현재 구현 — 생성(create) 6종 + 수정(update) 6종
 
 `src/main/services/ai-write-tools.ts`. **생성과 수정만 지원**하며 delete 도구는 없다
 (삭제 요청 시 해당 메뉴로 안내. 단 메모 보관/TODO 완료 같은 **가역적 상태 변경**은
@@ -129,11 +129,13 @@ zod 스키마가 도구 호출 레벨에서 강제한다.
 | `create_todo` | todos 1건 (+ 미존재 태그 생성, 최대 5개) | 낮 | `todo_history` 스냅샷 기록 |
 | `create_memo` | memos 1건 (+ 미존재 카테고리 생성) | 낮 | |
 | `create_variable` | variables 1건 | 중 | 동일 key 존재 시 거부(중복/덮어쓰기 방지). secret 생성 가능하나 조회는 항상 마스킹 |
+| `create_document` | documents 1건 (type=link) | 낮 | url은 **http/https만 허용**(javascript:/file: 등 차단 — 셸로 열리는 값이므로). project_id 존재 검증, 같은 소속에 같은 url이 있으면 거부(중복 링크 방지). 여러 문서는 문서마다 별도 호출 |
 | `update_project` | projects 1건 부분 수정 | 중 | status 지정 시 `status_manual=1`로 고정. 병합 후 개발→QA→배포 날짜 역전 검증(dev/qa 쌍 + 단계 간 순서) |
 | `update_task` | tasks 1건 부분 수정 | 낮 | status: pending/in_progress/done. parent_task_id 재배치 가능(하위 보유 작업은 불가) |
 | `update_todo` | todos 1건 부분 수정 (+ 태그 전체 교체, 완료/복원) | 낮 | `todo_history` 스냅샷(실제 완료 전이 시에만 complete/restore). notes 전체 교체. due_date 시각 포함 시 알람(due_reminder) 동기화 |
 | `update_memo` | memos 1건 부분 수정 (+ 카테고리 변경/해제, 보관/해제) | 중 | content는 전체 교체 — 수정 전 `get_memo`로 전문 확인 필수 |
 | `update_variable` | variables 1건 부분 수정 | 중 | key 변경 시 중복 검사. **secret→general 전환은 거부**(마스킹 우회 방지, §5). secret 값 수정 가능하나 승인 카드의 현재 값은 마스킹 |
+| `update_document` | documents 1건 부분 수정 | 낮 | url 변경 시 http/https 검증. project_id에 null을 전달하면 프로젝트 연결 해제(문서 자체는 유지) |
 
 수정 도구 공통 규칙:
 

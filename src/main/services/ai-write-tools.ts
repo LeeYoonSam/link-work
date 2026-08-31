@@ -31,11 +31,13 @@ export const LINKWORK_WRITE_TOOL_NAMES = [
   'create_todo',
   'create_memo',
   'create_variable',
+  'create_document',
   'update_project',
   'update_task',
   'update_todo',
   'update_memo',
-  'update_variable'
+  'update_variable',
+  'update_document'
 ].map((name) => `mcp__linkwork__${name}`)
 
 const dateField = (desc: string): z.ZodString =>
@@ -105,7 +107,7 @@ function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] 
 }
 
 // AI가 데이터를 생성하면 열려 있는 화면(store)이 갱신되도록 renderer에 알린다.
-function notifyDataChanged(entity: 'project' | 'todo' | 'memo' | 'variable'): void {
+function notifyDataChanged(entity: 'project' | 'todo' | 'memo' | 'variable' | 'document'): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send('ai:dataChanged', { entity })
@@ -133,6 +135,32 @@ function buildSetClause(
     }
   }
   return { set, values, keys }
+}
+
+// 문서 링크 URL 검증 — http/https만 허용한다.
+// javascript:/file: 등 다른 스킴은 셸로 열릴 때 위험하므로 쓰기 단계에서 차단한다.
+// 위반이면 한국어 오류 문자열을, 통과면 null을 반환한다 (create_document/update_document 공용).
+function validateDocumentUrl(url: string): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return `url '${url.slice(0, 100)}'을(를) 해석하지 못했습니다. http:// 또는 https://로 시작하는 전체 주소를 전달하세요.`
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return `url은 http 또는 https 주소만 허용됩니다 (전달된 스킴: ${parsed.protocol}).`
+  }
+  return null
+}
+
+// 문서를 연결할 프로젝트가 존재하는지 확인 (create_document/update_document 공용).
+function validateDocumentProject(db: Database.Database, projectId: number): string | null {
+  const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId) as
+    | { id: number }
+    | undefined
+  return project
+    ? null
+    : `프로젝트 id=${projectId}를 찾지 못했습니다. list_projects로 프로젝트 id를 확인하세요.`
 }
 
 // 1단계 태스크 계층 규약 검증 — 부모 후보가 (a) 존재하고 (b) 같은 프로젝트이며 (c) 최상위(parent_task_id IS NULL)인지 확인한다.
@@ -263,6 +291,12 @@ export function getUpdatePreview(
         if (!row) return null
         return maskSecretVariable(row)
       }
+      case 'update_document': {
+        const row = db
+          .prepare('SELECT id, name, url, type, description, project_id FROM documents WHERE id = ?')
+          .get(args.document_id) as Record<string, unknown> | undefined
+        return row ?? null
+      }
       default:
         return null
     }
@@ -280,7 +314,11 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
     '새 프로젝트를 생성한다. tasks로 세부 작업(WBS)을 함께 등록할 수 있다. QA/배포 일정을 생략하면 개발 종료일 기준으로 자동 계산된다(QA: 개발종료 다음날부터 영업일 2일, 배포: QA 종료 다음날). 실행 전 사용자 승인이 필요하다.',
     {
       name: z.string().min(1).max(200).describe('프로젝트 이름'),
-      description: z.string().max(2000).optional().describe('프로젝트 설명'),
+      description: z
+        .string()
+        .max(2000)
+        .optional()
+        .describe('프로젝트 설명 — 참고 문서 URL은 여기에 넣지 말고 create_document로 등록'),
       dev_start_date: dateField('개발 시작일'),
       dev_end_date: dateField('개발 종료일'),
       qa_start_date: dateField('QA 시작일 (생략 시 자동 계산)').optional(),
@@ -572,6 +610,59 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         variable_id: Number(result.lastInsertRowid),
         key: args.key,
         link: 'linkwork://view/variables'
+      })
+    }
+  )
+
+  const createDocument = tool(
+    'create_document',
+    '새 문서 링크를 1건 생성한다. 지라 티켓·컨플루언스 페이지 같은 참고 문서를 프로젝트에 연결할 때 사용한다. project_id를 지정하면 해당 프로젝트의 문서로 등록되고, 생략하면 프로젝트에 속하지 않는 문서가 된다. 같은 프로젝트에 같은 url이 이미 있으면 생성하지 않고 오류를 반환한다. 여러 문서를 등록할 때는 문서마다 한 번씩 호출한다. 실행 전 사용자 승인이 필요하다.',
+    {
+      name: z.string().min(1).max(200).describe('문서 이름 (예: 티켓 제목, 페이지 제목)'),
+      url: z.string().min(1).max(2000).describe('문서 주소 — http:// 또는 https:// 전체 주소만 허용'),
+      description: z.string().max(500).optional().describe('문서 설명'),
+      project_id: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('문서를 연결할 프로젝트 id (조회 도구로 먼저 확인). 생략하면 프로젝트에 연결하지 않음')
+    },
+    async (args) => {
+      const urlError = validateDocumentUrl(args.url)
+      if (urlError) return jsonResult({ error: urlError })
+      const db = getDatabase()
+      const projectId = args.project_id ?? null
+      if (projectId !== null) {
+        const projectError = validateDocumentProject(db, projectId)
+        if (projectError) return jsonResult({ error: projectError })
+      }
+      // 같은 소속(프로젝트 또는 미지정) 안에서 url이 겹치면 중복 등록하지 않는다.
+      // project_id가 NULL일 수 있으므로 = 대신 IS로 비교한다.
+      const existing = db
+        .prepare('SELECT id, name FROM documents WHERE url = ? AND project_id IS ?')
+        .get(args.url, projectId) as { id: number; name: string } | undefined
+      if (existing) {
+        return jsonResult({
+          error: `같은 url의 문서가 이미 있습니다(id=${existing.id}, name=${existing.name}). 내용을 바꾸려면 update_document 도구로 수정하세요.`
+        })
+      }
+      const result = db
+        .prepare(
+          `INSERT INTO documents (name, url, type, description, project_id, sort_order)
+           VALUES (?, ?, 'link', ?, ?, 0)`
+        )
+        .run(args.name, args.url, args.description ?? null, projectId)
+      const documentId = result.lastInsertRowid
+      logActivity('document', 'create', documentId, args.name, 'AI 생성')
+      logWriteExecuted('create_document', `id=${documentId}, project_id=${projectId}, name=${args.name}`)
+      notifyDataChanged('document')
+      return jsonResult({
+        created: true,
+        document_id: Number(documentId),
+        name: args.name,
+        project_id: projectId,
+        link: `linkwork://document/${documentId}`
       })
     }
   )
@@ -985,16 +1076,73 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
     }
   )
 
+  const updateDocument = tool(
+    'update_document',
+    '기존 문서 링크를 수정한다. document_id로 대상을 지정하고 변경할 필드만 전달한다 (전달하지 않은 필드는 유지). project_id를 null로 전달하면 프로젝트 연결이 해제된다. 실행 전 사용자 승인이 필요하다.',
+    {
+      document_id: z.number().int().positive().describe('수정할 문서 id (조회 도구로 먼저 확인)'),
+      name: z.string().min(1).max(200).optional().describe('문서 이름'),
+      url: z
+        .string()
+        .min(1)
+        .max(2000)
+        .optional()
+        .describe('문서 주소 — http:// 또는 https:// 전체 주소만 허용'),
+      description: z.string().max(500).nullable().optional().describe('문서 설명 (null이면 비움)'),
+      project_id: z
+        .number()
+        .int()
+        .positive()
+        .nullable()
+        .optional()
+        .describe('연결할 프로젝트 id (null이면 프로젝트 연결 해제)')
+    },
+    async (args) => {
+      if (args.url !== undefined) {
+        const urlError = validateDocumentUrl(args.url)
+        if (urlError) return jsonResult({ error: urlError })
+      }
+      const db = getDatabase()
+      const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(args.document_id) as
+        | { name: string }
+        | undefined
+      if (!row) {
+        return jsonResult({
+          error: `문서 id=${args.document_id}를 찾지 못했습니다. 조회 도구로 id를 확인하세요.`
+        })
+      }
+      if (args.project_id != null) {
+        const projectError = validateDocumentProject(db, args.project_id)
+        if (projectError) return jsonResult({ error: projectError })
+      }
+      const { set, values, keys } = buildSetClause(args, ['name', 'url', 'description', 'project_id'])
+      if (set.length === 0) return jsonResult({ error: '변경할 필드가 없습니다.' })
+      set.push("updated_at = datetime('now')")
+      db.prepare(`UPDATE documents SET ${set.join(', ')} WHERE id = ?`).run(...values, args.document_id)
+      logActivity('document', 'update', args.document_id, args.name ?? row.name, `AI 수정: ${keys.join(', ')}`)
+      logWriteExecuted('update_document', `id=${args.document_id}, fields=${keys.join(',')}`)
+      notifyDataChanged('document')
+      return jsonResult({
+        updated: true,
+        document_id: args.document_id,
+        updated_fields: keys,
+        link: `linkwork://document/${args.document_id}`
+      })
+    }
+  )
+
   return [
     createProject,
     createTask,
     createTodo,
     createMemo,
     createVariable,
+    createDocument,
     updateProject,
     updateTask,
     updateTodo,
     updateMemo,
-    updateVariable
+    updateVariable,
+    updateDocument
   ]
 }
