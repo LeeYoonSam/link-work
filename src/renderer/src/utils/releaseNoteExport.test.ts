@@ -59,16 +59,16 @@ describe('buildReleaseNoteMarkdown', () => {
         released: 1,
         release_date: '2026-09-01',
         items: [
-          item({ id: 1, issue_key: 'PROJ-8678', issue_type: 'Story', summary: '검색홈 개편', sort_order: 0 }),
+          item({ id: 1, issue_key: 'PROJ-1678', issue_type: 'Story', summary: '검색홈 개편', sort_order: 0 }),
           item({
             id: 2,
-            issue_key: 'PROJ-8679',
+            issue_key: 'PROJ-1679',
             issue_type: 'Sub-task',
             summary: '검색 필터 UI',
-            parent_key: 'PROJ-8678',
+            parent_key: 'PROJ-1678',
             sort_order: 1
           }),
-          item({ id: 3, issue_key: 'PROJ-8681', issue_type: 'Bug', summary: '필터 오작동 수정', sort_order: 2 })
+          item({ id: 3, issue_key: 'PROJ-1681', issue_type: 'Bug', summary: '필터 오작동 수정', sort_order: 2 })
         ]
       })
     )
@@ -84,11 +84,11 @@ describe('buildReleaseNoteMarkdown', () => {
         '- **Jira**: PROJ',
         '',
         '## Story',
-        '- [PROJ-8678] 검색홈 개편',
-        '  - [PROJ-8679] 검색 필터 UI',
+        '- [PROJ-1678] 검색홈 개편',
+        '  - [PROJ-1679] 검색 필터 UI',
         '',
         '## Bug',
-        '- [PROJ-8681] 필터 오작동 수정'
+        '- [PROJ-1681] 필터 오작동 수정'
       ].join('\n')
     )
   })

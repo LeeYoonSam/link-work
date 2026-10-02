@@ -140,7 +140,7 @@ function stripMarkers(line: string): string {
   return out
 }
 
-// 링크 라벨 정리. 중첩 대괄호(`[PROJ-8672]`)는 링크 구문을 깨므로 제거하고,
+// 링크 라벨 정리. 중첩 대괄호(`[PROJ-1672]`)는 링크 구문을 깨므로 제거하고,
 // 라벨이 비면 URL 자체를 라벨로 쓴다.
 function cleanLinkLabel(raw: string, fallbackUrl: string): string {
   const label = raw

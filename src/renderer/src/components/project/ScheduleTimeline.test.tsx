@@ -27,9 +27,9 @@ const PROJECT: Project = {
   updated_at: day(0)
 }
 
-const LONG_NAME = '[PROJ-8636] 바이럴 작품 상세 잔여 Rx 제거 + UpdateFavoriteUseCase dual-track 신설'
+const LONG_NAME = '[PROJ-1636] 바이럴 작품 상세 잔여 Rx 제거 + UpdateFavoriteUseCase dual-track 신설'
 const LONG_TITLE = '바이럴 작품 상세 잔여 Rx 제거 + UpdateFavoriteUseCase dual-track 신설'
-const CHILD_NAME = '[PROJ-9001] 하위 작업 상세 구현'
+const CHILD_NAME = '[PROJ-2001] 하위 작업 상세 구현'
 const CHILD_TITLE = '하위 작업 상세 구현'
 
 const task = (over: Partial<Task> & Pick<Task, 'id' | 'name'>): Task => ({
@@ -56,7 +56,7 @@ const TASKS: Task[] = [
     end_date: day(2)
   }),
   task({ id: 3, name: '[검색홈] 하위 두 번째 작업', parent_task_id: 1, status: 'pending' }),
-  task({ id: 4, name: '[PROJ-8633] 두 번째 그룹 상위 작업', status: 'in_progress' }),
+  task({ id: 4, name: '[PROJ-1633] 두 번째 그룹 상위 작업', status: 'in_progress' }),
   task({ id: 5, name: '두 번째 그룹의 하위 작업', parent_task_id: 4, status: 'pending' }),
   task({ id: 6, name: '하위 없는 독립 상위 작업', status: 'pending', start_date: day(5), end_date: day(5) })
 ]
@@ -126,7 +126,7 @@ describe.each([
     const html = render(variant)
     expect(html).toContain(LONG_TITLE)
     // 대괄호 접두사는 칩으로 분리되므로 키 자체도 함께 노출된다
-    expect(html).toContain('PROJ-8636')
+    expect(html).toContain('PROJ-1636')
   })
 
   it('좌/중앙/우 3컬럼이 같은 행 높이를 쓴다', () => {
@@ -161,7 +161,7 @@ describe.each([
     const { left } = columns(render(variant))
     expect(left).toContain('↳')
     expect(left).toContain(CHILD_TITLE)
-    expect(left).toContain('PROJ-9001')
+    expect(left).toContain('PROJ-2001')
     // 하위 들여쓰기와 흐린 색 유지
     expect(left).toContain('pl-3')
     expect(left).toContain('text-gray-500')

@@ -22,14 +22,14 @@ const mk = (id: number, name: string, parent: number | null = null): Task => ({
 
 // 최상위 3개 + 하위 혼재 — 그룹 경계가 2곳 나와야 개수 검증이 의미를 갖는다.
 const TASKS: Task[] = [
-  mk(1, '[PROJ-8534] 상위A 스프린트 26-07'),
-  mk(2, '[PROJ-8611] 하위A1 성능 측정용 Macrobenchmark 모듈 신설', 1),
-  mk(3, '[PROJ-8634] 하위A2 자동 티켓 생성 검증', 1),
-  mk(4, '[PROJ-8633] 상위B RxJava to Coroutine Phase1'),
-  mk(5, '[PROJ-8635] 하위B1 랜딩페이지 화면 전환', 4),
-  mk(6, '[PROJ-8636] 하위B2 작품 상세 잔여 Rx 제거', 4),
-  mk(7, '[PROJ-8672] 상위C 스프린트 26-08'),
-  mk(8, '[PROJ-8671] 하위C1 하단 네비게이션바 아이콘 변경', 7)
+  mk(1, '[PROJ-1534] 상위A 스프린트 26-07'),
+  mk(2, '[PROJ-1611] 하위A1 성능 측정용 Macrobenchmark 모듈 신설', 1),
+  mk(3, '[PROJ-1634] 하위A2 자동 티켓 생성 검증', 1),
+  mk(4, '[PROJ-1633] 상위B RxJava to Coroutine Phase1'),
+  mk(5, '[PROJ-1635] 하위B1 랜딩페이지 화면 전환', 4),
+  mk(6, '[PROJ-1636] 하위B2 작품 상세 잔여 Rx 제거', 4),
+  mk(7, '[PROJ-1672] 상위C 스프린트 26-08'),
+  mk(8, '[PROJ-1671] 하위C1 하단 네비게이션바 아이콘 변경', 7)
 ]
 
 // 픽스처에서 파생한다 — 손으로 맞추는 목록이 늘면 갱신 누락으로 검증이 헐거워진다.

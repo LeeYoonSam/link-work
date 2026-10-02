@@ -11,7 +11,7 @@ export interface ParsedTaskLabel {
 
 // 대괄호 안이 20자를 넘으면 태그가 아니라 문장의 일부로 본다.
 const LEADING_TAG = /^\s*\[([^\]]{1,20})\]\s*/
-// `[PROJ-8681] [검색홈]`처럼 이중 접두사까지가 실 데이터의 한계였다.
+// `[PROJ-1681] [검색홈]`처럼 이중 접두사까지가 실 데이터의 한계였다.
 const MAX_TAGS = 3
 const ISSUE_KEY = /^[A-Z][A-Z0-9]*-\d+$/
 
@@ -37,7 +37,7 @@ export function parseTaskLabel(name: string): ParsedTaskLabel {
   return { tags, title }
 }
 
-/** 태그가 Jira 이슈 키 형태인지 (예: PROJ-8678) */
+/** 태그가 Jira 이슈 키 형태인지 (예: PROJ-1678) */
 export function isIssueKey(tag: string): boolean {
   return ISSUE_KEY.test(tag)
 }

@@ -17,7 +17,38 @@ function getSettings(): { clientId: string; clientSecret: string } | null {
     .get() as { value: string } | undefined
 
   if (!clientId || !clientSecret) return null
-  return { clientId: clientId.value, clientSecret: clientSecret.value }
+  const secret = readClientSecret(clientSecret.value)
+  if (secret === null) return null
+  return { clientId: clientId.value, clientSecret: secret }
+}
+
+/** base64로 저장된 safeStorage 암호문인지 — macOS 암호문은 'v10'/'v11' 버전 접두어 바이트로 시작한다. */
+function isSafeStorageBlob(stored: string): boolean {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(stored)) return false
+  return /^v1\d/.test(Buffer.from(stored, 'base64').subarray(0, 3).toString('latin1'))
+}
+
+/**
+ * client_secret은 safeStorage로 암호화해 저장한다 (client_id는 공개값이라 평문).
+ * - 암호문: 복호화해 쓴다. 복호화에 실패하면(키체인 거부, 재서명으로 ACL 불일치, 다른 기기 DB) 행을 건드리지 않고
+ *   null → hasCredentials() false → 캘린더 설정에서 다시 입력. 암호문을 다시 암호화해 덮어쓰면 영구 복구 불가가 된다.
+ * - 암호문이 아닌 값: 구버전이 남긴 평문 행이므로 그대로 쓰고, 읽는 김에 암호문으로 바꿔 둔다.
+ */
+function readClientSecret(stored: string): string | null {
+  if (isSafeStorageBlob(stored)) {
+    if (!safeStorage.isEncryptionAvailable()) return null
+    try {
+      return safeStorage.decryptString(Buffer.from(stored, 'base64'))
+    } catch {
+      return null
+    }
+  }
+  if (safeStorage.isEncryptionAvailable()) {
+    getDatabase()
+      .prepare("UPDATE app_settings SET value = ?, updated_at = datetime('now') WHERE key = 'google_client_secret'")
+      .run(encrypt(stored))
+  }
+  return stored
 }
 
 function getOAuth2Client(): OAuth2Client | null {
@@ -34,7 +65,7 @@ export function saveSettings(clientId: string, clientSecret: string): void {
     "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))"
   )
   stmt.run('google_client_id', clientId)
-  stmt.run('google_client_secret', clientSecret)
+  stmt.run('google_client_secret', encrypt(clientSecret))
   oauth2Client = null
 }
 
@@ -92,7 +123,9 @@ export async function authenticate(): Promise<boolean> {
       reject(new Error(`OAuth server failed to start: ${err.message}`))
     })
 
-    server.listen(8945, () => {
+    // 콜백은 같은 기기의 브라우저 창에서만 온다 — 모든 인터페이스가 아닌 루프백에만 바인딩한다.
+    // redirect URI(http://localhost:8945/callback)는 Google 콘솔 등록값이라 그대로 둔다.
+    server.listen(8945, '127.0.0.1', () => {
       authWindow.loadURL(authUrl)
     })
 

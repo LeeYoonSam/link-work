@@ -373,7 +373,7 @@ export function ClampedText({
   )
 }
 
-// 작업명 선두의 `[PROJ-8681] [검색홈]` 같은 접두사를 칩으로 떼어내 제목이 쓸 폭을 넓힌다.
+// 작업명 선두의 `[PROJ-1681] [검색홈]` 같은 접두사를 칩으로 떼어내 제목이 쓸 폭을 넓힌다.
 // 칩은 inline-flex라야 제목과 한 흐름에 놓여 line-clamp가 전체에 걸린다.
 export function TaskLabel({
   name,

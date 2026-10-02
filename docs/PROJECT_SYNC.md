@@ -19,13 +19,13 @@ Jira에서 **내게 할당된 `할 일` 상태 이슈**를 읽어 LinkWork 프�
 | 기존 데이터 | **삭제 없음.** 기본은 추가·전진만이고, 기존 프로젝트를 덮어쓰는 것은 사용자가 확인한 강제 업데이트(R10)뿐이다 |
 | 대상 | 기본 Jira 프로젝트(app_settings `jira_default_project_key`) 하나 |
 
-### 1.1 실제 Jira 데이터 형태 (acme.atlassian.net, 프로젝트 PROJ)
+### 1.1 Jira 데이터 형태 (예시)
 
 - 이슈 타입: `에픽` / `작업` / `하위 작업`(`issuetype.subtask=true`). 계층은 에픽 → 작업 → 하위 작업.
 - 상태 이름: `백로그`, `할 일`, `처리중`, 완료 계열. `statusCategory.key`는 `new`(백로그·할 일) / `indeterminate` / `done`.
-- Sustain 에픽 예: `[Android/Sus] Sprint 10` (PROJ-8892) — 그 아래 `작업`들이 Sustain 작업.
-- QA 에픽 예: `안드로이드QA-2099` (PROJ-8054) — 하위 예: `안드로이드 앱 v1.0.0 QA`.
-- 일반 에픽 예: `알림센터 신설` (PROJ-8855) — 에픽은 `처리중`이지만 하위에 `할 일` 작업이 있다.
+- Sustain 에픽 예: `[Android/Sus] Sprint 10` (PROJ-1892) — 그 아래 `작업`들이 Sustain 작업.
+- QA 에픽 예: `안드로이드QA-2099` (PROJ-1054) — 하위 예: `안드로이드 앱 v1.0.0 QA`.
+- 일반 에픽 예: `알림센터 개편` (PROJ-1855) — 에픽은 `처리중`이지만 하위에 `할 일` 작업이 있다.
 - 에픽 없는 `작업`도 있다(대부분 백로그).
 
 ---

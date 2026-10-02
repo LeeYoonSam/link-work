@@ -14,16 +14,16 @@ import { TaskLabel, ClampedText, Tooltip } from './index'
 const textOf = (html: string): string => html.replace(/<[^>]*>/g, '')
 
 const JIRA_NAME =
-  '[PROJ-8636] 바이럴 작품 상세 잔여 Rx 제거 + UpdateFavoriteUseCase dual-track 신설'
+  '[PROJ-1636] 바이럴 작품 상세 잔여 Rx 제거 + UpdateFavoriteUseCase dual-track 신설'
 const JIRA_TITLE = '바이럴 작품 상세 잔여 Rx 제거 + UpdateFavoriteUseCase dual-track 신설'
-const DOUBLE_TAG_NAME = '[PROJ-8681] [검색홈] 트렌드 검색어 가로 스크롤 크래시 수정'
+const DOUBLE_TAG_NAME = '[PROJ-1681] [검색홈] 트렌드 검색어 가로 스크롤 크래시 수정'
 const PLAIN_NAME = 'd+즉시할인 - 적립금 전환 관련 PRD 리뷰'
 
 describe('TaskLabel', () => {
   it('Jira 키가 붙은 작업명의 원문을 한 글자도 잃지 않는다', () => {
     const text = textOf(renderToStaticMarkup(<TaskLabel name={JIRA_NAME} />))
     // 접두사는 칩으로, 제목은 본문으로 — 둘을 합치면 원문의 모든 글자가 남는다
-    expect(text).toContain('PROJ-8636')
+    expect(text).toContain('PROJ-1636')
     expect(text).toContain(JIRA_TITLE)
     // JS 절단의 흔적(말줄임표)이 DOM에 들어가지 않는다
     expect(text).not.toContain('…')
@@ -32,11 +32,11 @@ describe('TaskLabel', () => {
 
   it('접두사가 두 개여도 각각 칩으로 분리하고 제목을 보존한다', () => {
     const text = textOf(renderToStaticMarkup(<TaskLabel name={DOUBLE_TAG_NAME} />))
-    expect(text).toContain('PROJ-8681')
+    expect(text).toContain('PROJ-1681')
     expect(text).toContain('검색홈')
     expect(text).toContain('트렌드 검색어 가로 스크롤 크래시 수정')
     // 대괄호는 칩 배경이 대신하므로 텍스트로 남기지 않는다
-    expect(text).not.toContain('[PROJ-8681]')
+    expect(text).not.toContain('[PROJ-1681]')
   })
 
   it('1줄 말줄임(truncate)을 쓰지 않는다', () => {
@@ -64,7 +64,7 @@ describe('TaskLabel', () => {
   })
 
   it('Jira 키 칩과 도메인 태그 칩의 스타일을 구분한다', () => {
-    const jira = renderToStaticMarkup(<TaskLabel name="[PROJ-8681] 수정" />)
+    const jira = renderToStaticMarkup(<TaskLabel name="[PROJ-1681] 수정" />)
     const domain = renderToStaticMarkup(<TaskLabel name="[검색홈] 수정" />)
     expect(jira).toContain('font-mono')
     expect(domain).not.toContain('font-mono')

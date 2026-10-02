@@ -407,7 +407,7 @@ describe('마크다운 description', () => {
     '4.162.0 배포 타겟의 Sustaining 개선 작업 모음.',
     '',
     '## 참조',
-    '- 상위 에픽: [PROJ-8672] Android/Sus Sprint 08 — https://acme.atlassian.net/browse/PROJ-8672'
+    '- 상위 에픽: [PROJ-1672] Android/Sus Sprint 08 — https://acme.atlassian.net/browse/PROJ-1672'
   ].join('\n')
 
   it('헤딩 줄은 본문에서 버리고 첫 본문 줄을 인용구로 쓴다', () => {
@@ -426,7 +426,7 @@ describe('마크다운 description', () => {
   it('description 속 Jira 링크가 Ticket 슬롯으로 올라간다', () => {
     expect(sectionBody(exportOne({ description: susDescription }), '## 링크')).toEqual([
       '- **PRD**:',
-      '- **Ticket (Epic/상위 작업)**: [상위 에픽: PROJ-8672 Android/Sus Sprint 08](https://acme.atlassian.net/browse/PROJ-8672)',
+      '- **Ticket (Epic/상위 작업)**: [상위 에픽: PROJ-1672 Android/Sus Sprint 08](https://acme.atlassian.net/browse/PROJ-1672)',
       '- **API Interface**:',
       '- **Figma**:',
       '- **WBS**:'

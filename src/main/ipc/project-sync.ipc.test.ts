@@ -51,7 +51,7 @@ beforeEach(() => {
 
 describe('projectSync:apply 입력 검증', () => {
   it('올바른 선택은 그대로 서비스에 넘기고 결과를 감싼다', async () => {
-    const selection = [{ jiraKey: 'PROJ-8855', force: true, projectId: 12 }]
+    const selection = [{ jiraKey: 'PROJ-1855', force: true, projectId: 12 }]
     expect(await invoke('projectSync:apply', selection)).toEqual({ success: true, result: RESULT })
     expect(service.applyProjectSync).toHaveBeenCalledWith(selection)
   })

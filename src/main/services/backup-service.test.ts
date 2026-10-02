@@ -334,6 +334,7 @@ describe('stripSecrets', () => {
       INSERT INTO app_settings (key, value) VALUES ('jira_api_token', 'enc-jira');
       INSERT INTO app_settings (key, value) VALUES ('jira_site_url', 'https://x.atlassian.net');
       INSERT INTO app_settings (key, value) VALUES ('google_client_id', 'plain-id');
+      INSERT INTO app_settings (key, value) VALUES ('google_client_secret', 'enc-google-secret');
       INSERT INTO auth_tokens (id, provider, access_token) VALUES (1, 'google', 'enc-token');
     `)
 
@@ -342,6 +343,7 @@ describe('stripSecrets', () => {
     expect(removed).toContain('auth_tokens')
     expect(removed).toContain('app_settings:notion_token')
     expect(removed).toContain('app_settings:jira_api_token')
+    expect(removed).toContain('app_settings:google_client_secret')
 
     const keys = (
       db.prepare('SELECT key FROM app_settings ORDER BY key').all() as { key: string }[]
@@ -416,6 +418,7 @@ describe('export → inspect → import 라운드트립 (.zip)', () => {
       INSERT INTO app_settings (key, value) VALUES ('notion_token', 'enc-notion');
       INSERT INTO app_settings (key, value) VALUES ('jira_api_token', 'enc-jira');
       INSERT INTO app_settings (key, value) VALUES ('google_client_id', 'plain-client-id');
+      INSERT INTO app_settings (key, value) VALUES ('google_client_secret', 'enc-google-secret');
       INSERT INTO auth_tokens (id, provider, access_token) VALUES (1, 'google', 'enc-access');
       INSERT INTO meetings (title, status, audio_path) VALUES ('회의', 'done', 'rec-1.wav');
     `)

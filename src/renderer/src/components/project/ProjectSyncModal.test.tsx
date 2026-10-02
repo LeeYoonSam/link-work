@@ -42,11 +42,11 @@ const ProjectSyncModal = (await import('./ProjectSyncModal')).default
 const { defaultSelectedKeys } = await import('../../stores/projectSyncStore')
 
 const item = (over: Partial<ProjectSyncPlanItem> & Pick<ProjectSyncPlanItem, 'jiraKey'>) => ({
-  summary: '알림센터 신설',
+  summary: '알림센터 개편',
   kind: 'epic' as const,
   action: 'create' as const,
   projectId: null,
-  projectName: '알림센터 신설',
+  projectName: '알림센터 개편',
   matchedBy: null,
   newTasks: 0,
   updatedTasks: 0,
@@ -80,9 +80,9 @@ const render = (over: Partial<typeof state>): string => {
 const checkboxTag = (html: string, key: string): string | null =>
   html.match(new RegExp(`<input[^>]*aria-label="${key} 선택"[^>]*>`))?.[0] ?? null
 
-const NEW_ITEM = item({ jiraKey: 'PROJ-8855', newTasks: 4, newDocuments: 2 })
+const NEW_ITEM = item({ jiraKey: 'PROJ-1855', newTasks: 4, newDocuments: 2 })
 const EXISTING_ITEM = item({
-  jiraKey: 'PROJ-8889',
+  jiraKey: 'PROJ-1889',
   summary: '결제 오류 수정',
   kind: 'sustain',
   action: 'update',
@@ -98,7 +98,7 @@ const EXISTING_ITEM = item({
   ]
 })
 const UNCHANGED_ITEM = item({
-  jiraKey: 'PROJ-9000',
+  jiraKey: 'PROJ-2000',
   summary: '정산 개편',
   action: 'unchanged',
   projectId: 9,
@@ -126,7 +126,7 @@ describe('ProjectSyncModal', () => {
     expect(html).toContain('새 프로젝트')
     expect(html).toContain('이미 있는 프로젝트')
     expect(html).not.toContain('변경 없음')
-    expect(html).toContain('PROJ-8855')
+    expect(html).toContain('PROJ-1855')
     expect(html).toContain('작업 추가 4')
     expect(html).toContain('문서 추가 2')
     expect(html).toContain('[Sus] 결제 오류 수정')
@@ -143,9 +143,9 @@ describe('ProjectSyncModal', () => {
       phase: 'preview',
       plan: plan({ items: [NEW_ITEM, EXISTING_ITEM, UNCHANGED_ITEM] })
     })
-    expect(checkboxTag(html, 'PROJ-8855')).toContain('checked=""')
-    expect(checkboxTag(html, 'PROJ-8889')).not.toContain('checked=""')
-    expect(checkboxTag(html, 'PROJ-9000')).not.toContain('checked=""')
+    expect(checkboxTag(html, 'PROJ-1855')).toContain('checked=""')
+    expect(checkboxTag(html, 'PROJ-1889')).not.toContain('checked=""')
+    expect(checkboxTag(html, 'PROJ-2000')).not.toContain('checked=""')
     // 기존 프로젝트 2건(update·unchanged 모두)에 경고가 붙는다
     expect(html.split('이미 추가된 프로젝트입니다').length - 1).toBe(2)
     expect(html).toContain('opacity-60')
@@ -160,10 +160,10 @@ describe('ProjectSyncModal', () => {
     const html = render({
       phase: 'preview',
       plan: plan({ items: [NEW_ITEM, EXISTING_ITEM] }),
-      selectedKeys: ['PROJ-8889']
+      selectedKeys: ['PROJ-1889']
     })
-    expect(checkboxTag(html, 'PROJ-8855')).not.toContain('checked=""')
-    expect(checkboxTag(html, 'PROJ-8889')).toContain('checked=""')
+    expect(checkboxTag(html, 'PROJ-1855')).not.toContain('checked=""')
+    expect(checkboxTag(html, 'PROJ-1889')).toContain('checked=""')
     expect(html).toContain('강제 업데이트')
     expect(html).toContain('적용 (선택 1건)')
   })
@@ -172,7 +172,7 @@ describe('ProjectSyncModal', () => {
     const html = render({
       phase: 'preview',
       plan: plan({ items: [NEW_ITEM, EXISTING_ITEM] }),
-      pendingForceKey: 'PROJ-8889'
+      pendingForceKey: 'PROJ-1889'
     })
     expect(html).toContain('role="alertdialog"')
     expect(html).toContain('기존 프로젝트 덮어쓰기')
@@ -194,7 +194,7 @@ describe('ProjectSyncModal', () => {
     const html = render({
       phase: 'preview',
       plan: plan({ items: [UNCHANGED_ITEM] }),
-      pendingForceKey: 'PROJ-9000'
+      pendingForceKey: 'PROJ-2000'
     })
     expect(html).toContain('role="alertdialog"')
     expect(html).not.toContain('덮어써질 항목')
@@ -209,7 +209,7 @@ describe('ProjectSyncModal', () => {
 
   it('건너뛴 이슈는 사유별 라벨로 나열한다', () => {
     const skipped: ProjectSyncSkipped[] = [
-      { jiraKey: 'PROJ-8054', summary: '안드로이드QA-2099', reason: 'qa', detail: null },
+      { jiraKey: 'PROJ-1054', summary: '안드로이드QA-2099', reason: 'qa', detail: null },
       { jiraKey: 'PROJ-100', summary: '에픽 없는 작업', reason: 'no_epic', detail: null },
       {
         jiraKey: 'PROJ-200',
@@ -259,9 +259,9 @@ describe('ProjectSyncModal', () => {
   it('적용 중에는 적용 버튼과 체크박스를 잠근다', () => {
     const html = render({
       phase: 'applying',
-      plan: plan({ items: [item({ jiraKey: 'PROJ-8855', newTasks: 1 })] })
+      plan: plan({ items: [item({ jiraKey: 'PROJ-1855', newTasks: 1 })] })
     })
-    expect(checkboxTag(html, 'PROJ-8855')).toContain('disabled=""')
+    expect(checkboxTag(html, 'PROJ-1855')).toContain('disabled=""')
     expect(applyButtonTag(html)).toContain('disabled=""')
     expect(html).toContain('적용 중…')
   })
@@ -276,7 +276,7 @@ describe('ProjectSyncModal', () => {
         tasksAdded: 7,
         tasksUpdated: 4,
         documentsAdded: 5,
-        skipped: [{ jiraKey: 'PROJ-8054', summary: 'QA', reason: 'qa', detail: null }]
+        skipped: [{ jiraKey: 'PROJ-1054', summary: 'QA', reason: 'qa', detail: null }]
       }
     })
     expect(html).toContain('싱크업을 적용했습니다')
@@ -349,64 +349,64 @@ describe('projectSyncStore', () => {
 
   it('미리보기는 기본 선택을 새 프로젝트로 잡고, 다시 부르면 선택을 기본값으로 되돌린다', async () => {
     const store = await previewed([NEW_ITEM, EXISTING_ITEM])
-    expect(store.getState().selectedKeys).toEqual(['PROJ-8855'])
-    store.getState().toggle('PROJ-8855')
-    store.getState().toggle('PROJ-8889')
+    expect(store.getState().selectedKeys).toEqual(['PROJ-1855'])
+    store.getState().toggle('PROJ-1855')
+    store.getState().toggle('PROJ-1889')
     store.getState().confirmForce()
-    expect(store.getState().selectedKeys).toEqual(['PROJ-8889'])
+    expect(store.getState().selectedKeys).toEqual(['PROJ-1889'])
     await store.getState().preview()
-    expect(store.getState().selectedKeys).toEqual(['PROJ-8855'])
+    expect(store.getState().selectedKeys).toEqual(['PROJ-1855'])
     expect(store.getState().pendingForceKey).toBeNull()
   })
 
   it('기존 프로젝트를 켜면 확인 대기만 하고, 확인하면 선택된다', async () => {
     const store = await previewed([NEW_ITEM, EXISTING_ITEM])
-    store.getState().toggle('PROJ-8889')
-    expect(store.getState().pendingForceKey).toBe('PROJ-8889')
-    expect(store.getState().selectedKeys).not.toContain('PROJ-8889')
+    store.getState().toggle('PROJ-1889')
+    expect(store.getState().pendingForceKey).toBe('PROJ-1889')
+    expect(store.getState().selectedKeys).not.toContain('PROJ-1889')
     store.getState().confirmForce()
     expect(store.getState().pendingForceKey).toBeNull()
-    expect(store.getState().selectedKeys).toContain('PROJ-8889')
+    expect(store.getState().selectedKeys).toContain('PROJ-1889')
     // 해제는 확인 없이 바로
-    store.getState().toggle('PROJ-8889')
+    store.getState().toggle('PROJ-1889')
     expect(store.getState().pendingForceKey).toBeNull()
-    expect(store.getState().selectedKeys).not.toContain('PROJ-8889')
+    expect(store.getState().selectedKeys).not.toContain('PROJ-1889')
   })
 
   it('확인을 취소하면 선택되지 않는다', async () => {
     const store = await previewed([NEW_ITEM, EXISTING_ITEM])
-    store.getState().toggle('PROJ-8889')
+    store.getState().toggle('PROJ-1889')
     store.getState().cancelForce()
     expect(store.getState().pendingForceKey).toBeNull()
-    expect(store.getState().selectedKeys).toEqual(['PROJ-8855'])
+    expect(store.getState().selectedKeys).toEqual(['PROJ-1855'])
   })
 
   it('새 프로젝트는 확인 없이 바로 토글되고, 전체 선택은 기존 프로젝트를 건드리지 않는다', async () => {
-    const other = item({ jiraKey: 'PROJ-8856' })
+    const other = item({ jiraKey: 'PROJ-1856' })
     const store = await previewed([NEW_ITEM, other, EXISTING_ITEM])
-    store.getState().toggle('PROJ-8855')
+    store.getState().toggle('PROJ-1855')
     expect(store.getState().pendingForceKey).toBeNull()
-    expect(store.getState().selectedKeys).toEqual(['PROJ-8856'])
+    expect(store.getState().selectedKeys).toEqual(['PROJ-1856'])
     store.getState().setAllNew(false)
     expect(store.getState().selectedKeys).toEqual([])
-    store.getState().toggle('PROJ-8889')
+    store.getState().toggle('PROJ-1889')
     store.getState().confirmForce()
     store.getState().setAllNew(true)
-    expect([...store.getState().selectedKeys].sort()).toEqual(['PROJ-8855', 'PROJ-8856', 'PROJ-8889'])
+    expect([...store.getState().selectedKeys].sort()).toEqual(['PROJ-1855', 'PROJ-1856', 'PROJ-1889'])
     store.getState().setAllNew(false)
-    expect(store.getState().selectedKeys).toEqual(['PROJ-8889'])
+    expect(store.getState().selectedKeys).toEqual(['PROJ-1889'])
   })
 
   it('apply에는 선택한 항목만, 새 프로젝트는 force=false·기존 프로젝트는 force=true로, 미리보기 projectId와 함께 넘긴다', async () => {
-    const store = await previewed([NEW_ITEM, item({ jiraKey: 'PROJ-8856' }), EXISTING_ITEM, UNCHANGED_ITEM])
-    store.getState().toggle('PROJ-8856') // 새 프로젝트 하나 해제
-    store.getState().toggle('PROJ-9000') // 기존(변경 없음) 하나 확인 후 선택
+    const store = await previewed([NEW_ITEM, item({ jiraKey: 'PROJ-1856' }), EXISTING_ITEM, UNCHANGED_ITEM])
+    store.getState().toggle('PROJ-1856') // 새 프로젝트 하나 해제
+    store.getState().toggle('PROJ-2000') // 기존(변경 없음) 하나 확인 후 선택
     store.getState().confirmForce()
     apply.mockResolvedValue({ success: false, error: 'x' })
     await store.getState().apply()
     expect(apply).toHaveBeenCalledWith([
-      { jiraKey: 'PROJ-8855', force: false, projectId: null },
-      { jiraKey: 'PROJ-9000', force: true, projectId: 9 }
+      { jiraKey: 'PROJ-1855', force: false, projectId: null },
+      { jiraKey: 'PROJ-2000', force: true, projectId: 9 }
     ])
   })
 

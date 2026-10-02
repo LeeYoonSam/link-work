@@ -14,11 +14,11 @@
 | `ai-attachments/` (AI 대화 이미지) | **포함** | |
 | `models/` (whisper·silero·sherpa, 1.4GB) | 제외 | 첫 실행 시 자동 다운로드 |
 | `Cache`, `GPUCache`, `Cookies`, `Session Storage` … | 제외 | Electron 캐시 |
-| `auth_tokens`(Google OAuth), `app_settings`의 `notion_token`·`jira_api_token` 등 `safeStorage` 암호문 | **제외** | macOS 키체인 키로 암호화돼 다른 기기에서 복호화 불가 → 새 PC에서 다시 연결 |
+| `auth_tokens`(Google OAuth), `app_settings`의 `notion_token`·`jira_api_token`·`google_client_secret` 등 `safeStorage` 암호문 | **제외** | macOS 키체인 키로 암호화돼 다른 기기에서 복호화 불가 → 새 PC에서 다시 연결 |
 
 Claude Code 구독 OAuth(AI 요약·AI 대화)는 앱 데이터가 아니라 `~/.claude`에 있으므로 새 PC에 Claude Code를 설치·로그인해야 한다.
 
-⚠️ 백업 파일에는 평문 설정(`google_client_id`/`google_client_secret`, Jira 사이트·이메일 등)과 회의 전사·요약 전문이 들어 있다. 공유 드라이브·메신저 등 남이 볼 수 있는 곳에 두지 말고, 이전이 끝나면 삭제하는 것이 좋다.
+⚠️ 백업 파일에는 평문 설정(`google_client_id`, Jira 사이트·이메일 등)과 회의 전사·요약 전문이 들어 있다. (`google_client_secret`은 키체인 암호문으로 저장하므로 백업에서 빠진다.) 공유 드라이브·메신저 등 남이 볼 수 있는 곳에 두지 말고, 이전이 끝나면 삭제하는 것이 좋다.
 
 ## 2. 백업 파일 형식 (zip)
 
@@ -62,4 +62,5 @@ LinkWork-backup-YYYYMMDD-HHmmss.zip
 2. 새 PC: 소스 clone → `npm install` → `npm run deploy` → 앱 실행(첫 실행 시 빈 DB 생성)
 3. 앱에서 **가져오기** → 백업 zip 선택 → 확인 → 자동 재시작
 4. Google 캘린더·Notion·Jira 다시 연결, Claude Code 로그인, 마이크/시스템 오디오 권한 허용
+   - Google 캘린더: client secret이 백업에서 빠지므로 캘린더 설정 화면에 Client ID·Client Secret 입력 폼이 다시 나온다. Google Cloud 콘솔의 OAuth 클라이언트 값을 다시 입력한 뒤 연결한다.
 5. 회의 처리 시 음성 모델은 자동 다운로드(약 1.4GB)

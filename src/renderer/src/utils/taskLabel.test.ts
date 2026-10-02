@@ -3,15 +3,15 @@ import { parseTaskLabel, isIssueKey } from './taskLabel'
 
 describe('parseTaskLabel', () => {
   it('Jira 키 접두사 하나를 분리한다', () => {
-    expect(parseTaskLabel('[PROJ-8678] 위젯 공통 기반 구축 (디자인 토큰·공통 부품·상태 규칙)')).toEqual({
-      tags: ['PROJ-8678'],
+    expect(parseTaskLabel('[PROJ-1678] 위젯 공통 기반 구축 (디자인 토큰·공통 부품·상태 규칙)')).toEqual({
+      tags: ['PROJ-1678'],
       title: '위젯 공통 기반 구축 (디자인 토큰·공통 부품·상태 규칙)'
     })
   })
 
   it('이중 접두사(Jira 키 + 도메인 태그)를 순서대로 분리한다', () => {
-    expect(parseTaskLabel('[PROJ-8681] [검색홈] 트렌드 검색어 가로 스크롤 크래시 수정')).toEqual({
-      tags: ['PROJ-8681', '검색홈'],
+    expect(parseTaskLabel('[PROJ-1681] [검색홈] 트렌드 검색어 가로 스크롤 크래시 수정')).toEqual({
+      tags: ['PROJ-1681', '검색홈'],
       title: '트렌드 검색어 가로 스크롤 크래시 수정'
     })
   })
@@ -78,8 +78,8 @@ describe('parseTaskLabel', () => {
   })
 
   it('선두 공백과 태그 사이 공백을 흡수한다', () => {
-    expect(parseTaskLabel('  [PROJ-8678]   위젯 개편  ')).toEqual({
-      tags: ['PROJ-8678'],
+    expect(parseTaskLabel('  [PROJ-1678]   위젯 개편  ')).toEqual({
+      tags: ['PROJ-1678'],
       title: '위젯 개편'
     })
   })
@@ -93,8 +93,8 @@ describe('parseTaskLabel', () => {
 
   it('태그와 제목을 합치면 원문의 의미 있는 내용이 모두 남는다', () => {
     const names = [
-      '[PROJ-8678] 위젯 공통 기반 구축',
-      '[PROJ-8681] [검색홈] 트렌드 검색어 가로 스크롤 크래시 수정',
+      '[PROJ-1678] 위젯 공통 기반 구축',
+      '[PROJ-1681] [검색홈] 트렌드 검색어 가로 스크롤 크래시 수정',
       '[커뮤니티] 영상(clip) 유닛 추가',
       'd+즉시할인 - 적립금 전환 관련 PRD 리뷰',
       '[PDP]'
@@ -109,7 +109,7 @@ describe('parseTaskLabel', () => {
 
 describe('isIssueKey', () => {
   it('Jira 이슈 키 형태를 판정한다', () => {
-    expect(isIssueKey('PROJ-8678')).toBe(true)
+    expect(isIssueKey('PROJ-1678')).toBe(true)
     expect(isIssueKey('검색홈')).toBe(false)
     expect(isIssueKey('PDP')).toBe(false)
   })
@@ -119,7 +119,7 @@ describe('isIssueKey', () => {
   })
 
   it('소문자·숫자 누락·번호 없음은 이슈 키가 아니다', () => {
-    expect(isIssueKey('ica-8678')).toBe(false)
+    expect(isIssueKey('proj-1678')).toBe(false)
     expect(isIssueKey('PROJ-')).toBe(false)
     expect(isIssueKey('-123')).toBe(false)
     expect(isIssueKey('')).toBe(false)

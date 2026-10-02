@@ -2,7 +2,7 @@
   "issues": [
     {
       "id": "10861",
-      "key": "PROJ-8861",
+      "key": "PROJ-1861",
       "fields": {
         "summary": "화면 바인딩",
         "status": {
@@ -12,7 +12,7 @@
         "issuetype": { "id": "10003", "name": "하위 작업", "subtask": true, "hierarchyLevel": -1 },
         "parent": {
           "id": "10856",
-          "key": "PROJ-8856",
+          "key": "PROJ-1856",
           "fields": { "summary": "알림센터 API 연동" }
         },
         "assignee": { "accountId": "acc-me", "displayName": "홍길동" },
@@ -27,21 +27,21 @@
           {
             "id": "1",
             "type": { "name": "Blocks", "inward": "is blocked by", "outward": "blocks" },
-            "outwardIssue": { "key": "PROJ-8870", "fields": { "summary": "알림센터 오픈" } }
+            "outwardIssue": { "key": "PROJ-1870", "fields": { "summary": "알림센터 오픈" } }
           },
           {
             "id": "2",
             "type": { "name": "Relates", "inward": "relates to", "outward": "relates to" },
-            "inwardIssue": { "key": "PROJ-8700", "fields": { "summary": "알림 기획" } }
+            "inwardIssue": { "key": "PROJ-1700", "fields": { "summary": "알림 기획" } }
           }
         ]
       }
     },
     {
       "id": "10855",
-      "key": "PROJ-8855",
+      "key": "PROJ-1855",
       "fields": {
-        "summary": "알림센터 신설",
+        "summary": "알림센터 개편",
         "status": {
           "name": "처리중",
           "statusCategory": { "id": 4, "key": "indeterminate", "name": "진행 중" }

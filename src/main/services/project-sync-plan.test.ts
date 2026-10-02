@@ -149,11 +149,11 @@ describe('R1 에픽 = 프로젝트', () => {
     const epicItems = c.plan.items.filter((i) => i.kind === 'epic')
     expect(epicItems).toHaveLength(1)
     expect(epicItems[0]).toMatchObject({
-      jiraKey: 'PROJ-8855',
-      summary: '알림센터 신설',
+      jiraKey: 'PROJ-1855',
+      summary: '알림센터 개편',
       action: 'create',
       projectId: null,
-      projectName: '알림센터 신설',
+      projectName: '알림센터 개편',
       matchedBy: null
     })
   })
@@ -170,9 +170,9 @@ describe('R2 Sustain 작업 = 개별 프로젝트', () => {
   it('R2: Sustain 에픽 아래 할 일 작업 각각이 프로젝트가 되고 에픽 자체는 아무것도 만들지 않는다', () => {
     const c = plan(projSnapshot())
     const sustain = c.plan.items.filter((i) => i.kind === 'sustain').map((i) => i.jiraKey)
-    expect(sustain).toEqual(['PROJ-8893', 'PROJ-8895'])
-    expect(c.plan.items.some((i) => i.jiraKey === 'PROJ-8892')).toBe(false)
-    expect(c.plan.skipped.some((s) => s.jiraKey === 'PROJ-8892')).toBe(false)
+    expect(sustain).toEqual(['PROJ-1893', 'PROJ-1895'])
+    expect(c.plan.items.some((i) => i.jiraKey === 'PROJ-1892')).toBe(false)
+    expect(c.plan.skipped.some((s) => s.jiraKey === 'PROJ-1892')).toBe(false)
   })
 
   it('R2: Sustain 작업의 하위 작업이 트리거면 부모 작업이 프로젝트가 된다', () => {
@@ -201,15 +201,15 @@ describe('R3 QA 제외', () => {
     const c = plan(projSnapshot())
     const qa = c.plan.skipped.filter((s) => s.reason === 'qa').map((s) => s.jiraKey)
     // PROJ-8101은 QA 에픽 아래 하위 작업이라 제외되지만 미리보기에는 프로젝트 단위만 보고한다
-    expect(qa).toEqual(['PROJ-9001'])
-    expect(c.plan.items.some((i) => i.jiraKey === 'PROJ-8054')).toBe(false)
+    expect(qa).toEqual(['PROJ-2001'])
+    expect(c.plan.items.some((i) => i.jiraKey === 'PROJ-1054')).toBe(false)
   })
 
   it('R3: QA 라벨 작업과 그 하위 작업은 제외하고, 요약만 QA인 작업은 가져온다', () => {
     const c = plan(projSnapshot())
-    const keys = opFor(c, 'PROJ-8855').newTasks.map((t) => t.jiraKey)
-    expect(keys).toContain('PROJ-8859') // [포인트] 셀프 QA — 일반 작업
-    expect(keys).not.toContain('PROJ-8862') // labels: qa
+    const keys = opFor(c, 'PROJ-1855').newTasks.map((t) => t.jiraKey)
+    expect(keys).toContain('PROJ-1859') // [포인트] 셀프 QA — 일반 작업
+    expect(keys).not.toContain('PROJ-1862') // labels: qa
 
     const issues = [
       issue('PROJ-30', '결제 개편', 'epic', 'doing'),
@@ -233,7 +233,7 @@ describe('에픽 없는 작업', () => {
   it('에픽 없는 비-Sustain 트리거 작업은 skipped(no_epic)', () => {
     const c = plan(projSnapshot())
     expect(c.plan.skipped.filter((s) => s.reason === 'no_epic').map((s) => s.jiraKey)).toEqual([
-      'PROJ-9000'
+      'PROJ-2000'
     ])
   })
 })
@@ -283,7 +283,7 @@ describe('R4 수동 프로젝트 보존', () => {
       projects: [
         {
           id: 1,
-          name: '[알림] 알림센터 신설',
+          name: '[알림] 알림센터 개편',
           description: '내 메모',
           jira_issue_key: null,
           status: 'in_progress'
@@ -294,7 +294,7 @@ describe('R4 수동 프로젝트 보존', () => {
           id: 10,
           project_id: 1,
           parent_task_id: null,
-          name: '내가 고친 이름 (PROJ-8856)',
+          name: '내가 고친 이름 (PROJ-1856)',
           status: 'pending',
           sort_order: 3,
           jira_issue_key: null,
@@ -304,12 +304,12 @@ describe('R4 수동 프로젝트 보존', () => {
       documents: []
     }
     const c = plan(projSnapshot(), db)
-    const op = opFor(c, 'PROJ-8855')
+    const op = opFor(c, 'PROJ-1855')
     expect(op.project).toEqual({ kind: 'existing', id: 1, backfillKey: true, description: null })
     const after = applyInMemory(db, c)
-    expect(after.projects[0].name).toBe('[알림] 알림센터 신설')
+    expect(after.projects[0].name).toBe('[알림] 알림센터 개편')
     expect(after.projects[0].description).toBe('내 메모')
-    expect(after.tasks.find((t) => t.id === 10)?.name).toBe('내가 고친 이름 (PROJ-8856)')
+    expect(after.tasks.find((t) => t.id === 10)?.name).toBe('내가 고친 이름 (PROJ-1856)')
   })
 })
 
@@ -326,13 +326,13 @@ describe('R5 기존 프로젝트 매칭', () => {
   it('R5: jira_issue_key 일치가 문서 URL·이름보다 우선한다', () => {
     const db: DbSyncState = {
       projects: [
-        base({ id: 1, name: '알림센터 신설' }),
-        base({ id: 2, name: '무관한 이름', jira_issue_key: 'PROJ-8855' })
+        base({ id: 1, name: '알림센터 개편' }),
+        base({ id: 2, name: '무관한 이름', jira_issue_key: 'PROJ-1855' })
       ],
       tasks: [],
       documents: []
     }
-    const item = opFor(plan(projSnapshot(), db), 'PROJ-8855').item
+    const item = opFor(plan(projSnapshot(), db), 'PROJ-1855').item
     expect(item).toMatchObject({ action: 'update', projectId: 2, matchedBy: 'jira_key' })
     expect(item.projectName).toBe('무관한 이름')
   })
@@ -343,30 +343,30 @@ describe('R5 기존 프로젝트 매칭', () => {
       tasks: [],
       documents: [
         // 접두사만 같은 다른 키 — 매칭되면 안 된다
-        { id: 1, project_id: 1, name: 'x', url: `${SITE_URL}/browse/PROJ-88551`, sort_order: 0 },
+        { id: 1, project_id: 1, name: 'x', url: `${SITE_URL}/browse/PROJ-18551`, sort_order: 0 },
         {
           id: 2,
           project_id: 2,
-          name: 'Epic (PROJ-8855) 알림센터 신설',
-          url: `${SITE_URL}/browse/PROJ-8855?focusedCommentId=1#c`,
+          name: 'Epic (PROJ-1855) 알림센터 개편',
+          url: `${SITE_URL}/browse/PROJ-1855?focusedCommentId=1#c`,
           sort_order: 0
         }
       ]
     }
-    const op = opFor(plan(projSnapshot(), db), 'PROJ-8855')
+    const op = opFor(plan(projSnapshot(), db), 'PROJ-1855')
     expect(op.item).toMatchObject({ projectId: 2, matchedBy: 'document_url', action: 'update' })
     expect(op.project).toMatchObject({ kind: 'existing', backfillKey: true })
-    expect(browseKeyOf(`${SITE_URL}/browse/PROJ-8855/`)).toBe('PROJ-8855')
+    expect(browseKeyOf(`${SITE_URL}/browse/PROJ-1855/`)).toBe('PROJ-1855')
   })
 
   it('R5: 이름은 선두 [태그] 제거·대소문자·공백을 정규화해 비교한다', () => {
-    expect(normalizeProjectName('[Android] [알림]  알림센터   신설 ')).toBe('알림센터 신설')
+    expect(normalizeProjectName('[Android] [알림]  알림센터   개편 ')).toBe('알림센터 개편')
     const db: DbSyncState = {
-      projects: [base({ id: 7, name: '[Android]  알림센터   신설' })],
+      projects: [base({ id: 7, name: '[Android]  알림센터   개편' })],
       tasks: [],
       documents: []
     }
-    expect(opFor(plan(projSnapshot(), db), 'PROJ-8855').item).toMatchObject({
+    expect(opFor(plan(projSnapshot(), db), 'PROJ-1855').item).toMatchObject({
       projectId: 7,
       matchedBy: 'name'
     })
@@ -374,22 +374,22 @@ describe('R5 기존 프로젝트 매칭', () => {
 
   it('R5: 다른 키가 이미 묶인 프로젝트는 이름이 같아도 매칭하지 않는다', () => {
     const db: DbSyncState = {
-      projects: [base({ id: 1, name: '알림센터 신설', jira_issue_key: 'PROJ-1' })],
+      projects: [base({ id: 1, name: '알림센터 개편', jira_issue_key: 'PROJ-1' })],
       tasks: [],
       documents: []
     }
-    expect(opFor(plan(projSnapshot(), db), 'PROJ-8855').item.action).toBe('create')
+    expect(opFor(plan(projSnapshot(), db), 'PROJ-1855').item.action).toBe('create')
   })
 
   it('R5: 설명은 비어 있을 때만 채운다', () => {
     const db: DbSyncState = {
-      projects: [base({ id: 1, name: '알림센터 신설', description: '  ' })],
+      projects: [base({ id: 1, name: '알림센터 개편', description: '  ' })],
       tasks: [],
       documents: []
     }
-    const op = opFor(plan(projSnapshot(), db), 'PROJ-8855')
+    const op = opFor(plan(projSnapshot(), db), 'PROJ-1855')
     expect(op.project.kind === 'existing' && op.project.description).toContain(
-      '알림센터을 신설한다.'
+      '알림센터를 개편한다.'
     )
   })
 
@@ -401,7 +401,7 @@ describe('R5 기존 프로젝트 매칭', () => {
           id: 30,
           project_id: 3,
           parent_task_id: null,
-          name: '로그 개선 (PROJ-8895)',
+          name: '로그 개선 (PROJ-1895)',
           status: 'pending',
           sort_order: 0,
           jira_issue_key: null,
@@ -411,7 +411,7 @@ describe('R5 기존 프로젝트 매칭', () => {
           id: 31,
           project_id: 3,
           parent_task_id: null,
-          name: '[PROJ-8893] 크래시',
+          name: '[PROJ-1893] 크래시',
           status: 'pending',
           sort_order: 1,
           jira_issue_key: null,
@@ -425,13 +425,13 @@ describe('R5 기존 프로젝트 매칭', () => {
     const tracked = c.plan.skipped.filter((s) => s.reason === 'tracked_in_project')
     expect(tracked).toEqual([
       {
-        jiraKey: 'PROJ-8893',
+        jiraKey: 'PROJ-1893',
         summary: '상품 상세 크래시 수정',
         reason: 'tracked_in_project',
         detail: 'Android Sus 26-10'
       },
       {
-        jiraKey: 'PROJ-8895',
+        jiraKey: 'PROJ-1895',
         summary: '로그 개선',
         reason: 'tracked_in_project',
         detail: 'Android Sus 26-10'
@@ -442,18 +442,18 @@ describe('R5 기존 프로젝트 매칭', () => {
 
 describe('R6 작업·문서·링크 가져오기', () => {
   it('R6: 에픽의 작업(내게 할당+미할당)과 그 하위 작업을 계층으로 가져온다', () => {
-    const op = opFor(plan(projSnapshot()), 'PROJ-8855')
+    const op = opFor(plan(projSnapshot()), 'PROJ-1855')
     expect(
       op.newTasks.map((t) => [t.jiraKey, t.name, t.status, t.parentJiraKey, t.endDate])
     ).toEqual([
-      ['PROJ-8856', '알림센터 API 연동 (PROJ-8856)', 'pending', null, null],
-      ['PROJ-8860', 'API 모델 정의 (PROJ-8860)', 'done', 'PROJ-8856', null],
-      ['PROJ-8861', '화면 바인딩 (PROJ-8861)', 'pending', 'PROJ-8856', '2026-10-20'],
-      ['PROJ-8857', '알림센터 UI (PROJ-8857)', 'in_progress', null, null],
-      ['PROJ-8859', '[포인트] 셀프 QA (PROJ-8859)', 'pending', null, null]
+      ['PROJ-1856', '알림센터 API 연동 (PROJ-1856)', 'pending', null, null],
+      ['PROJ-1860', 'API 모델 정의 (PROJ-1860)', 'done', 'PROJ-1856', null],
+      ['PROJ-1861', '화면 바인딩 (PROJ-1861)', 'pending', 'PROJ-1856', '2026-10-20'],
+      ['PROJ-1857', '알림센터 UI (PROJ-1857)', 'in_progress', null, null],
+      ['PROJ-1859', '[포인트] 셀프 QA (PROJ-1859)', 'pending', null, null]
     ])
-    // 남에게 할당된 작업(PROJ-8858)은 가져오지 않는다
-    expect(op.newTasks.some((t) => t.jiraKey === 'PROJ-8858')).toBe(false)
+    // 남에게 할당된 작업(PROJ-1858)은 가져오지 않는다
+    expect(op.newTasks.some((t) => t.jiraKey === 'PROJ-1858')).toBe(false)
   })
 
   it('R6: 남의 작업이라도 그 아래 내 트리거 하위 작업이 있으면 부모로 함께 가져온다', () => {
@@ -473,22 +473,22 @@ describe('R6 작업·문서·링크 가져오기', () => {
   })
 
   it('R6: Sustain 프로젝트는 작업의 하위 작업을 최상위 작업으로 가져온다', () => {
-    const op = opFor(plan(projSnapshot()), 'PROJ-8893')
+    const op = opFor(plan(projSnapshot()), 'PROJ-1893')
     expect(op.newTasks.map((t) => [t.jiraKey, t.status, t.parentJiraKey, t.parentTaskId])).toEqual([
-      ['PROJ-8894', 'done', null, null],
-      ['PROJ-8896', 'pending', null, null]
+      ['PROJ-1894', 'done', null, null],
+      ['PROJ-1896', 'pending', null, null]
     ])
     expect(op.newDocuments).toEqual([
-      { name: 'Jira 티켓 (PROJ-8893)', url: `${SITE_URL}/browse/PROJ-8893`, sortOrder: 0 }
+      { name: 'Jira 티켓 (PROJ-1893)', url: `${SITE_URL}/browse/PROJ-1893`, sortOrder: 0 }
     ])
   })
 
   it('R6: 문서는 이슈 자신·원격 링크·이슈 링크·설명 속 URL을 모으고 URL 끝 슬래시로 중복을 거른다', () => {
-    const op = opFor(plan(projSnapshot()), 'PROJ-8855')
+    const op = opFor(plan(projSnapshot()), 'PROJ-1855')
     expect(op.newDocuments.map((d) => [d.name, d.url])).toEqual([
-      ['Epic (PROJ-8855) 알림센터 신설', `${SITE_URL}/browse/PROJ-8855`],
+      ['Epic (PROJ-1855) 알림센터 개편', `${SITE_URL}/browse/PROJ-1855`],
       ['알림센터 PRD', 'https://www.notion.so/acme/notice-prd'],
-      ['Relates (PROJ-8700) 알림 기획', `${SITE_URL}/browse/PROJ-8700`],
+      ['Relates (PROJ-1700) 알림 기획', `${SITE_URL}/browse/PROJ-1700`],
       ['기획서', 'https://www.notion.so/acme/notice-spec'],
       ['Figma', 'https://www.figma.com/design/abc123/Notice'],
       ['Google 문서', 'https://docs.google.com/document/d/xyz/edit'],
@@ -501,9 +501,9 @@ describe('R6 작업·문서·링크 가져오기', () => {
       projects: [
         {
           id: 1,
-          name: '알림센터 신설',
+          name: '알림센터 개편',
           description: null,
-          jira_issue_key: 'PROJ-8855',
+          jira_issue_key: 'PROJ-1855',
           status: 'in_progress'
         }
       ],
@@ -513,7 +513,7 @@ describe('R6 작업·문서·링크 가져오기', () => {
           id: 10,
           project_id: 1,
           parent_task_id: null,
-          name: 'API 모델 (PROJ-8860)',
+          name: 'API 모델 (PROJ-1860)',
           status: 'pending',
           sort_order: 0,
           jira_issue_key: null,
@@ -527,7 +527,7 @@ describe('R6 작업·문서·링크 가져오기', () => {
           name: 'UI',
           status: 'done',
           sort_order: 1,
-          jira_issue_key: 'PROJ-8857',
+          jira_issue_key: 'PROJ-1857',
           end_date: null
         },
         // 선두 대괄호 형태도 매칭
@@ -535,7 +535,7 @@ describe('R6 작업·문서·링크 가져오기', () => {
           id: 12,
           project_id: 1,
           parent_task_id: null,
-          name: '[PROJ-8856] 연동',
+          name: '[PROJ-1856] 연동',
           status: 'in_progress',
           sort_order: 2,
           jira_issue_key: null,
@@ -543,20 +543,20 @@ describe('R6 작업·문서·링크 가져오기', () => {
         }
       ],
       documents: [
-        { id: 1, project_id: 1, name: '에픽', url: `${SITE_URL}/browse/PROJ-8855/`, sort_order: 5 }
+        { id: 1, project_id: 1, name: '에픽', url: `${SITE_URL}/browse/PROJ-1855/`, sort_order: 5 }
       ]
     }
-    const op = opFor(plan(projSnapshot(), db), 'PROJ-8855')
+    const op = opFor(plan(projSnapshot(), db), 'PROJ-1855')
     expect(op.taskUpdates).toEqual([
-      { taskId: 12, jiraKey: 'PROJ-8856', status: null, backfillKey: true },
-      { taskId: 10, jiraKey: 'PROJ-8860', status: 'done', backfillKey: true }
+      { taskId: 12, jiraKey: 'PROJ-1856', status: null, backfillKey: true },
+      { taskId: 10, jiraKey: 'PROJ-1860', status: 'done', backfillKey: true }
     ])
-    // 기존 상위(PROJ-8856=12) 아래로 새 하위 작업을 붙이고 정렬은 기존 최대 뒤로
-    const sub = op.newTasks.find((t) => t.jiraKey === 'PROJ-8861')
+    // 기존 상위(PROJ-1856=12) 아래로 새 하위 작업을 붙이고 정렬은 기존 최대 뒤로
+    const sub = op.newTasks.find((t) => t.jiraKey === 'PROJ-1861')
     expect(sub).toMatchObject({ parentTaskId: 12, parentJiraKey: null })
     expect(op.newTasks.map((t) => t.sortOrder)).toEqual([3, 4])
     // 에픽 browse 문서는 끝 슬래시만 달라 이미 있는 것으로 본다
-    expect(op.newDocuments.some((d) => d.url === `${SITE_URL}/browse/PROJ-8855`)).toBe(false)
+    expect(op.newDocuments.some((d) => d.url === `${SITE_URL}/browse/PROJ-1855`)).toBe(false)
     expect(op.newDocuments[0].sortOrder).toBe(6)
     expect(op.item).toMatchObject({ action: 'update', updatedTasks: 2, newTasks: 2 })
   })
@@ -564,18 +564,18 @@ describe('R6 작업·문서·링크 가져오기', () => {
 
 describe('R7 신규 프로젝트 기본값', () => {
   it('R7: 이름=요약, 설명=ADF 평문, 키, 개발 시작=오늘, 종료=미래 duedate, 상태 scheduled', () => {
-    const op = opFor(plan(projSnapshot()), 'PROJ-8855')
+    const op = opFor(plan(projSnapshot()), 'PROJ-1855')
     expect(op.project.kind).toBe('create')
     if (op.project.kind !== 'create') return
     expect(op.project.values).toMatchObject({
-      name: '알림센터 신설',
-      jira_issue_key: 'PROJ-8855',
+      name: '알림센터 개편',
+      jira_issue_key: 'PROJ-1855',
       dev_start_date: TODAY,
       dev_end_date: '2099-12-31',
       status: 'scheduled',
       priority: null
     })
-    expect(op.project.values.description).toContain('알림센터을 신설한다.')
+    expect(op.project.values.description).toContain('알림센터를 개편한다.')
     expect(op.project.values.qa_start_date > op.project.values.dev_end_date).toBe(true)
   })
 
@@ -614,7 +614,7 @@ describe('R8 멱등성', () => {
       projects: [
         {
           id: 1,
-          name: '알림센터 신설',
+          name: '알림센터 개편',
           description: 'x',
           jira_issue_key: null,
           status: 'in_progress'
@@ -625,7 +625,7 @@ describe('R8 멱등성', () => {
           id: 10,
           project_id: 1,
           parent_task_id: null,
-          name: '연동 (PROJ-8856)',
+          name: '연동 (PROJ-1856)',
           status: 'pending',
           sort_order: 0,
           jira_issue_key: null,
@@ -637,7 +637,7 @@ describe('R8 멱등성', () => {
     const snapshot = projSnapshot()
     const once = applyInMemory(db, plan(snapshot, db))
     const again = plan(snapshot, once)
-    expect(opFor(again, 'PROJ-8855').item).toMatchObject({
+    expect(opFor(again, 'PROJ-1855').item).toMatchObject({
       action: 'unchanged',
       matchedBy: 'jira_key',
       newTasks: 0,
@@ -650,7 +650,7 @@ describe('R8 멱등성', () => {
 describe('ADF 해석', () => {
   it('평문으로 바꾸고 비어 있으면 null', () => {
     const text = adfToPlainText(NOTICE_DESCRIPTION)
-    expect(text?.split('\n')[0]).toBe('알림센터을 신설한다.')
+    expect(text?.split('\n')[0]).toBe('알림센터를 개편한다.')
     expect(text).toContain('기획서 / 디자인 https://www.figma.com/design/abc123/Notice')
     expect(adfToPlainText(null)).toBeNull()
     expect(
@@ -859,16 +859,16 @@ describe('R9 선택 적용', () => {
   it('R9: 선택한 항목의 op만 남고, 선택 안 된 항목은 계획 순서에서 빠진다', () => {
     const c = plan(projSnapshot())
     const selected = selectProjectSyncOps(c, [
-      { jiraKey: 'PROJ-8895', force: false, projectId: null },
-      { jiraKey: 'PROJ-8855', force: false, projectId: null }
+      { jiraKey: 'PROJ-1895', force: false, projectId: null },
+      { jiraKey: 'PROJ-1855', force: false, projectId: null }
     ])
     // 쓰기 순서는 선택 순서가 아니라 계획 순서
-    expect(selected.map((s) => s.op.item.jiraKey)).toEqual(['PROJ-8855', 'PROJ-8895'])
+    expect(selected.map((s) => s.op.item.jiraKey)).toEqual(['PROJ-1855', 'PROJ-1895'])
 
     const after = applyInMemory(emptyDb(), c, [
-      { jiraKey: 'PROJ-8893', force: false, projectId: null }
+      { jiraKey: 'PROJ-1893', force: false, projectId: null }
     ])
-    expect(after.projects.map((p) => p.jira_issue_key)).toEqual(['PROJ-8893'])
+    expect(after.projects.map((p) => p.jira_issue_key)).toEqual(['PROJ-1893'])
   })
 
   it('R9: 선택 안 된 기존 프로젝트 항목은 키 백필도 하지 않는다', () => {
@@ -876,7 +876,7 @@ describe('R9 선택 적용', () => {
       projects: [
         {
           id: 1,
-          name: '알림센터 신설',
+          name: '알림센터 개편',
           description: null,
           jira_issue_key: null,
           status: 'development'
@@ -886,8 +886,8 @@ describe('R9 선택 적용', () => {
       documents: []
     }
     const c = plan(projSnapshot(), db)
-    expect(opFor(c, 'PROJ-8855').item.projectId).toBe(1)
-    const after = applyInMemory(db, c, [{ jiraKey: 'PROJ-8893', force: false, projectId: null }])
+    expect(opFor(c, 'PROJ-1855').item.projectId).toBe(1)
+    const after = applyInMemory(db, c, [{ jiraKey: 'PROJ-1893', force: false, projectId: null }])
     expect(after.projects[0]).toEqual(db.projects[0])
   })
 
@@ -896,7 +896,7 @@ describe('R9 선택 적용', () => {
     expect(() => selectProjectSyncOps(c, [])).toThrow(EMPTY_SELECTION_MESSAGE)
     // PROJ-9000은 스냅샷에 있지만 항목이 아니다(no_epic)
     expect(() =>
-      selectProjectSyncOps(c, [{ jiraKey: 'PROJ-9000', force: false, projectId: null }])
+      selectProjectSyncOps(c, [{ jiraKey: 'PROJ-2000', force: false, projectId: null }])
     ).toThrow(UNKNOWN_SELECTION_MESSAGE)
   })
 
@@ -919,7 +919,7 @@ describe('R9 선택 적용', () => {
       { jiraKey: 'PROJ-1', force: false },
       [null],
       ['PROJ-1'],
-      [{ jiraKey: 'ica-1', force: false }],
+      [{ jiraKey: 'proj-1', force: false }],
       [{ jiraKey: 'PROJ-1) OR project = X', force: false }],
       [{ jiraKey: 'PROJ-1', force: 'true' }],
       [{ jiraKey: 'PROJ-1' }]
@@ -939,7 +939,7 @@ describe('R10 기존 프로젝트 강제 업데이트', () => {
       projects: [
         {
           id: 1,
-          name: '[알림] 알림센터 신설',
+          name: '[알림] 알림센터 개편',
           description: '내 메모',
           jira_issue_key: null,
           status: 'development'
@@ -951,7 +951,7 @@ describe('R10 기존 프로젝트 강제 업데이트', () => {
           id: 10,
           project_id: 1,
           parent_task_id: null,
-          name: '내가 고친 이름 (PROJ-8856)',
+          name: '내가 고친 이름 (PROJ-1856)',
           status: 'done',
           sort_order: 0,
           jira_issue_key: null,
@@ -962,10 +962,10 @@ describe('R10 기존 프로젝트 강제 업데이트', () => {
           id: 11,
           project_id: 1,
           parent_task_id: 10,
-          name: '화면 바인딩 (PROJ-8861)',
+          name: '화면 바인딩 (PROJ-1861)',
           status: 'pending',
           sort_order: 1,
-          jira_issue_key: 'PROJ-8861',
+          jira_issue_key: 'PROJ-1861',
           end_date: '2026-01-01'
         },
         // 이름만 다름. Jira에 마감일이 없으니 end_date는 유지
@@ -973,7 +973,7 @@ describe('R10 기존 프로젝트 강제 업데이트', () => {
           id: 12,
           project_id: 1,
           parent_task_id: null,
-          name: '[PROJ-8857] UI',
+          name: '[PROJ-1857] UI',
           status: 'in_progress',
           sort_order: 2,
           jira_issue_key: null,
@@ -996,30 +996,30 @@ describe('R10 기존 프로젝트 강제 업데이트', () => {
   }
 
   it('R10: 덮어쓸 대상과 forceChanges를 계산한다 (상태 역행 허용, 마감일은 있을 때만)', () => {
-    const op = opFor(plan(projSnapshot(), forcedDb()), 'PROJ-8855')
-    expect(op.force?.name).toBe('알림센터 신설')
-    expect(op.force?.description).toContain('알림센터을 신설한다.')
+    const op = opFor(plan(projSnapshot(), forcedDb()), 'PROJ-1855')
+    expect(op.force?.name).toBe('알림센터 개편')
+    expect(op.force?.description).toContain('알림센터를 개편한다.')
     expect(op.force?.taskOverwrites).toEqual([
       {
         taskId: 10,
-        jiraKey: 'PROJ-8856',
-        name: '알림센터 API 연동 (PROJ-8856)',
+        jiraKey: 'PROJ-1856',
+        name: '알림센터 API 연동 (PROJ-1856)',
         status: 'pending',
         endDate: null,
         backfillKey: true
       },
       {
         taskId: 11,
-        jiraKey: 'PROJ-8861',
-        name: '화면 바인딩 (PROJ-8861)',
+        jiraKey: 'PROJ-1861',
+        name: '화면 바인딩 (PROJ-1861)',
         status: 'pending',
         endDate: '2026-10-20',
         backfillKey: false
       },
       {
         taskId: 12,
-        jiraKey: 'PROJ-8857',
-        name: '알림센터 UI (PROJ-8857)',
+        jiraKey: 'PROJ-1857',
+        name: '알림센터 UI (PROJ-1857)',
         status: 'in_progress',
         endDate: null,
         backfillKey: true
@@ -1029,9 +1029,9 @@ describe('R10 기존 프로젝트 강제 업데이트', () => {
     // — 11은 마감일만 바뀌지만 실제로 덮어쓰므로 센다
     expect(op.item.forceChanges).toBe(5)
     expect(op.item.forceTasks).toEqual([
-      { before: '내가 고친 이름 (PROJ-8856)', after: '알림센터 API 연동 (PROJ-8856)' },
-      { before: '화면 바인딩 (PROJ-8861)', after: '화면 바인딩 (PROJ-8861)' },
-      { before: '[PROJ-8857] UI', after: '알림센터 UI (PROJ-8857)' }
+      { before: '내가 고친 이름 (PROJ-1856)', after: '알림센터 API 연동 (PROJ-1856)' },
+      { before: '화면 바인딩 (PROJ-1861)', after: '화면 바인딩 (PROJ-1861)' },
+      { before: '[PROJ-1857] UI', after: '알림센터 UI (PROJ-1857)' }
     ])
     // 보수적 경로는 그대로 — 키 백필 2건, 상태 역행 없음
     expect(op.taskUpdates.every((u) => u.status === null)).toBe(true)
@@ -1040,20 +1040,20 @@ describe('R10 기존 프로젝트 강제 업데이트', () => {
   it('R10: 강제 적용은 Jira 원본이 있는 필드만 덮어쓰고 수동 작업·날짜류는 건드리지 않는다', () => {
     const db = forcedDb()
     const c = plan(projSnapshot(), db)
-    const [selected] = selectProjectSyncOps(c, [{ jiraKey: 'PROJ-8855', force: true, projectId: 1 }])
+    const [selected] = selectProjectSyncOps(c, [{ jiraKey: 'PROJ-1855', force: true, projectId: 1 }])
     expect(selected).toMatchObject({ force: true, action: 'update', tasksUpdated: 3 })
 
-    const after = applyInMemory(db, c, [{ jiraKey: 'PROJ-8855', force: true, projectId: 1 }])
+    const after = applyInMemory(db, c, [{ jiraKey: 'PROJ-1855', force: true, projectId: 1 }])
     expect(after.projects[0]).toEqual({
       ...db.projects[0],
-      name: '알림센터 신설',
-      description: expect.stringContaining('알림센터을 신설한다.'),
-      jira_issue_key: 'PROJ-8855'
+      name: '알림센터 개편',
+      description: expect.stringContaining('알림센터를 개편한다.'),
+      jira_issue_key: 'PROJ-1855'
     })
     const byId = (id: number) => after.tasks.find((t) => t.id === id)
     expect(byId(10)).toMatchObject({ status: 'pending', parent_task_id: null, sort_order: 0 })
     expect(byId(11)).toMatchObject({ end_date: '2026-10-20', parent_task_id: 10 })
-    expect(byId(12)).toMatchObject({ name: '알림센터 UI (PROJ-8857)', end_date: '2026-05-05' })
+    expect(byId(12)).toMatchObject({ name: '알림센터 UI (PROJ-1857)', end_date: '2026-05-05' })
     expect(byId(13)).toEqual(db.tasks[3])
   })
 
@@ -1087,16 +1087,16 @@ describe('R10 기존 프로젝트 강제 업데이트', () => {
     const snapshot = projSnapshot()
     const db = forcedDb()
     const once = applyInMemory(db, plan(snapshot, db), [
-      { jiraKey: 'PROJ-8855', force: true, projectId: 1 }
+      { jiraKey: 'PROJ-1855', force: true, projectId: 1 }
     ])
     const again = plan(snapshot, once)
     const [selected] = selectProjectSyncOps(again, [
-      { jiraKey: 'PROJ-8855', force: true, projectId: 1 }
+      { jiraKey: 'PROJ-1855', force: true, projectId: 1 }
     ])
     expect(selected.action).toBe('unchanged')
     expect(selected.op.item.forceChanges).toBe(0)
     expect(
-      applyInMemory(once, again, [{ jiraKey: 'PROJ-8855', force: true, projectId: 1 }])
+      applyInMemory(once, again, [{ jiraKey: 'PROJ-1855', force: true, projectId: 1 }])
     ).toEqual(once)
   })
 })
@@ -1104,13 +1104,13 @@ describe('R10 기존 프로젝트 강제 업데이트', () => {
 describe('미리보기는 프로젝트 단위만 보고한다', () => {
   it('triggerCount와 skipped에서 하위 작업 트리거를 뺀다', () => {
     const c = plan(projSnapshot())
-    // 트리거 8건 중 하위 작업 2건(PROJ-8861, PROJ-8101) 제외
+    // 트리거 8건 중 하위 작업 2건(PROJ-1861, PROJ-1101) 제외
     expect(c.plan.triggerCount).toBe(6)
-    expect(c.plan.skipped.some((s) => s.jiraKey === 'PROJ-8101' || s.jiraKey === 'PROJ-8861')).toBe(
+    expect(c.plan.skipped.some((s) => s.jiraKey === 'PROJ-1101' || s.jiraKey === 'PROJ-1861')).toBe(
       false
     )
     // 가져오기 자체는 그대로 — 하위 작업은 자식 task로 들어간다
-    expect(opFor(c, 'PROJ-8855').newTasks.some((t) => t.jiraKey === 'PROJ-8861')).toBe(true)
+    expect(opFor(c, 'PROJ-1855').newTasks.some((t) => t.jiraKey === 'PROJ-1861')).toBe(true)
   })
 })
 
@@ -1151,7 +1151,7 @@ describe('2차 리뷰 결함 회귀', () => {
       projects: [
         {
           id: 1,
-          name: '알림센터 신설',
+          name: '알림센터 개편',
           description: null,
           jira_issue_key: null,
           status: 'development'
@@ -1164,16 +1164,16 @@ describe('2차 리뷰 결함 회귀', () => {
     // 미리보기 때는 새로 만들 항목이었는데(null) 지금은 프로젝트 1에 매칭됨
     expect(() =>
       selectProjectSyncOps(c, [
-        { jiraKey: 'PROJ-8893', force: false, projectId: null },
-        { jiraKey: 'PROJ-8855', force: false, projectId: null }
+        { jiraKey: 'PROJ-1893', force: false, projectId: null },
+        { jiraKey: 'PROJ-1855', force: false, projectId: null }
       ])
     ).toThrow(PROJECT_CHANGED_MESSAGE)
     // 다른 프로젝트 id로 본 경우도 같다
     expect(() =>
-      selectProjectSyncOps(c, [{ jiraKey: 'PROJ-8855', force: true, projectId: 2 }])
+      selectProjectSyncOps(c, [{ jiraKey: 'PROJ-1855', force: true, projectId: 2 }])
     ).toThrow(PROJECT_CHANGED_MESSAGE)
     expect(
-      selectProjectSyncOps(c, [{ jiraKey: 'PROJ-8855', force: true, projectId: 1 }])
+      selectProjectSyncOps(c, [{ jiraKey: 'PROJ-1855', force: true, projectId: 1 }])
     ).toHaveLength(1)
   })
 

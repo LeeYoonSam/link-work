@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS release_notes (
 CREATE TABLE IF NOT EXISTS release_note_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   release_note_id INTEGER NOT NULL,
-  issue_key TEXT NOT NULL,                   -- PROJ-8678
+  issue_key TEXT NOT NULL,                   -- PROJ-1678
   issue_type TEXT,                           -- Story / Bug / Task
   status TEXT,                               -- 닫힘 / 해결됨 / 처리중 / 할 일
   resolution TEXT,                           -- 완료 / NULL(미해결)

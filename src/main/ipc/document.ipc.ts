@@ -1,6 +1,7 @@
 import { ipcMain, shell } from 'electron'
 import { getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
+import { resolveOpenTarget } from '../utils/open-target'
 
 interface DocumentInput {
   name: string
@@ -91,11 +92,16 @@ export function registerDocumentIpc(): void {
   })
 
   ipcMain.handle('document:open', async (_event, url: string, type: string) => {
+    // 렌더러 값을 그대로 shell에 넘기지 않는다 — 허용 스킴·로컬 절대경로만 (utils/open-target.ts)
+    const resolved = resolveOpenTarget(url, type)
+    if (!resolved.ok) return { success: false, error: resolved.error }
     try {
-      if (type === 'file') {
-        await shell.openPath(url)
+      if (resolved.kind === 'path') {
+        // openPath는 실패를 throw하지 않고 오류 문자열로 돌려준다 ('' = 성공)
+        const error = await shell.openPath(resolved.target)
+        if (error) return { success: false, error }
       } else {
-        await shell.openExternal(url)
+        await shell.openExternal(resolved.target)
       }
       return { success: true }
     } catch (error) {

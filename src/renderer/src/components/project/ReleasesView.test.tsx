@@ -113,7 +113,7 @@ describe('filterReleaseNotes', () => {
   })
 
   it('대소문자를 가리지 않는다', () => {
-    expect(found('ica')).toEqual(found('PROJ'))
+    expect(found('proj')).toEqual(found('PROJ'))
   })
 
   it('공백으로 나눈 토큰은 모두 만족해야 한다 (AND)', () => {

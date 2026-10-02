@@ -174,7 +174,7 @@ describe('연결 상태와 자격 증명 저장', () => {
 
   it('이슈 키로 브라우저 URL을 만든다', () => {
     connect()
-    expect(getJiraIssueUrl('PROJ-8678')).toBe('https://acme.atlassian.net/browse/PROJ-8678')
+    expect(getJiraIssueUrl('PROJ-1678')).toBe('https://acme.atlassian.net/browse/PROJ-1678')
   })
 })
 
@@ -194,7 +194,7 @@ describe('기본 Jira 프로젝트 키', () => {
   })
 
   it('잘못된 형식은 거부한다', () => {
-    for (const bad of ['abc', '123', '', '   ', 'IC A', 'PROJ-1', '_ICA', 'iCA']) {
+    for (const bad of ['abc', '123', '', '   ', 'IC A', 'PROJ-1', '_PROJ', 'pROJ']) {
       expect(() => setDefaultJiraProjectKey(bad), bad).toThrow('잘못된 Jira 프로젝트 키입니다.')
     }
     expect(getDefaultJiraProjectKey()).toBeNull()
@@ -202,7 +202,7 @@ describe('기본 Jira 프로젝트 키', () => {
 
   it('거부된 값이 기존 설정을 덮어쓰지 않는다', () => {
     setDefaultJiraProjectKey('PROJ')
-    expect(() => setDefaultJiraProjectKey('ica')).toThrow()
+    expect(() => setDefaultJiraProjectKey('proj')).toThrow()
     expect(getDefaultJiraProjectKey()).toBe('PROJ')
   })
 
@@ -460,7 +460,7 @@ describe('listIssuesByFixVersion', () => {
       jsonResponse({
         issues: [
           {
-            key: 'PROJ-8678',
+            key: 'PROJ-1678',
             fields: {
               summary: '검색홈 개편',
               issuetype: { name: 'Story' },
@@ -477,7 +477,7 @@ describe('listIssuesByFixVersion', () => {
     const { issues } = await listIssuesByFixVersion('10042')
 
     expect(issues[0]).toEqual({
-      key: 'PROJ-8678',
+      key: 'PROJ-1678',
       issueType: 'Story',
       status: '진행 중',
       resolution: null,
@@ -646,28 +646,28 @@ describe('프로젝트 싱크업 조회', () => {
   it('실제 응답 형태를 싱크업용 이슈로 정규화한다', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(searchFixture))
 
-    const { issues, truncated } = await listIssuesByKeys(['PROJ-8861', 'PROJ-8855'])
+    const { issues, truncated } = await listIssuesByKeys(['PROJ-1861', 'PROJ-1855'])
 
     expect(truncated).toBe(false)
     expect(issues[0]).toEqual({
-      key: 'PROJ-8861',
+      key: 'PROJ-1861',
       summary: '화면 바인딩',
       issueType: '하위 작업',
       level: 'subtask',
       status: '할 일',
       statusCategory: 'new',
-      parentKey: 'PROJ-8856',
+      parentKey: 'PROJ-1856',
       assigneeAccountId: 'acc-me',
       duedate: '2026-10-20',
       labels: ['android'],
       description: searchFixture.issues[0].fields.description,
       issueLinks: [
-        { type: 'Blocks', key: 'PROJ-8870', summary: '알림센터 오픈' },
-        { type: 'Relates', key: 'PROJ-8700', summary: '알림 기획' }
+        { type: 'Blocks', key: 'PROJ-1870', summary: '알림센터 오픈' },
+        { type: 'Relates', key: 'PROJ-1700', summary: '알림 기획' }
       ]
     })
     expect(issues[1]).toMatchObject({
-      key: 'PROJ-8855',
+      key: 'PROJ-1855',
       level: 'epic',
       statusCategory: 'indeterminate',
       parentKey: null,
@@ -677,10 +677,10 @@ describe('프로젝트 싱크업 조회', () => {
   })
 
   it('잘못된 프로젝트 키·이슈 키는 네트워크를 타기 전에 거부한다 (JQL 인젝션 방어)', async () => {
-    for (const bad of ['ica', 'PROJ OR project = X', '', 'PROJ"']) {
+    for (const bad of ['proj', 'PROJ OR project = X', '', 'PROJ"']) {
       await expect(listMyTodoIssues(bad), bad).rejects.toThrow('잘못된 Jira 프로젝트 키입니다.')
     }
-    for (const bad of ['PROJ-1) OR project = SECRET', 'PROJ', 'ica-1', 'PROJ-1 ']) {
+    for (const bad of ['PROJ-1) OR project = SECRET', 'PROJ', 'proj-1', 'PROJ-1 ']) {
       await expect(listIssuesByKeys(['PROJ-2', bad]), bad).rejects.toThrow('잘못된 Jira 이슈 키입니다.')
       await expect(listChildIssues([bad]), bad).rejects.toThrow('잘못된 Jira 이슈 키입니다.')
       await expect(listRemoteLinks(bad), bad).rejects.toThrow('잘못된 Jira 이슈 키입니다.')
@@ -699,9 +699,9 @@ describe('프로젝트 싱크업 조회', () => {
     expect(first.endsWith('PROJ-50) ORDER BY key')).toBe(true)
 
     fetchMock.mockClear()
-    await listChildIssues(['PROJ-8855'])
+    await listChildIssues(['PROJ-1855'])
     expect(new URL(calledUrls()[0]).searchParams.get('jql')).toBe(
-      'parent in (PROJ-8855) ORDER BY key'
+      'parent in (PROJ-1855) ORDER BY key'
     )
   })
 
@@ -724,9 +724,9 @@ describe('프로젝트 싱크업 조회', () => {
       ])
     )
 
-    const links = await listRemoteLinks('PROJ-8855')
+    const links = await listRemoteLinks('PROJ-1855')
 
-    expect(calledUrls()[0]).toBe('https://acme.atlassian.net/rest/api/3/issue/PROJ-8855/remotelink')
+    expect(calledUrls()[0]).toBe('https://acme.atlassian.net/rest/api/3/issue/PROJ-1855/remotelink')
     expect(links).toEqual([
       { url: 'https://www.figma.com/design/abc', title: '디자인' },
       { url: 'https://example.com/doc', title: 'https://example.com/doc' }
