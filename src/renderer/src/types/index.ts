@@ -353,6 +353,9 @@ export interface TodoTagAPI {
 // 채팅별 데이터 작성 모드: 읽기 전용 | 승인 후 쓰기(기본) | 자동 쓰기
 export type AiWriteMode = 'readonly' | 'ask' | 'auto'
 
+// AI 대화 모델 (앱 전역 설정, 기본 sonnet) — 변경은 다음 메시지부터 적용
+export type AiModelChoice = 'opus' | 'sonnet' | 'haiku'
+
 export interface AiChat {
   id: number
   title: string
@@ -445,6 +448,8 @@ export interface AiAPI {
   notionDisconnect: () => Promise<{ success: boolean }>
   approve: (requestId: string, approved: boolean) => Promise<{ success: boolean }>
   setChatWriteMode: (chatId: number, mode: AiWriteMode) => Promise<{ success: boolean }>
+  getModel: () => Promise<AiModelChoice>
+  setModel: (model: AiModelChoice) => Promise<{ success: boolean; model: AiModelChoice }>
   onStream: (callback: (event: AiStreamEvent) => void) => () => void
   onDataChanged: (callback: (data: { entity: string }) => void) => () => void
 }

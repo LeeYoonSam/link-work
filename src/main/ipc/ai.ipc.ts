@@ -21,6 +21,7 @@ import {
   type AiAttachmentInput,
   type SavedAttachment
 } from '../services/ai-attachments'
+import { getAiModel, isAiModelChoice, setAiModel } from '../services/ai-model'
 import { disconnectNotion, isNotionConnected, saveNotionToken } from '../services/notion'
 
 const AI_WRITE_MODES: AiWriteMode[] = ['readonly', 'ask', 'auto']
@@ -158,6 +159,19 @@ export function registerAiIpc(): void {
       return { success: false }
     }
     return { success: setChatWriteMode(chatId, mode) }
+  })
+
+  // AI 대화 모델 (앱 전역 설정 — 진행 중인 쿼리에는 영향 없고 다음 쿼리부터 적용)
+  ipcMain.handle('ai:getModel', () => {
+    return getAiModel()
+  })
+
+  ipcMain.handle('ai:setModel', (_event, model: unknown) => {
+    if (!isAiModelChoice(model)) {
+      return { success: false, model: getAiModel() }
+    }
+    setAiModel(model)
+    return { success: true, model }
   })
 
   ipcMain.handle('ai:progress', (_event, chatId: number) => {

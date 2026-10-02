@@ -12,6 +12,7 @@ import type {
   AiAttachmentMeta,
   AiChat,
   AiMessage,
+  AiModelChoice,
   AiStatus,
   AiStreamEvent,
   AiWriteMode
@@ -23,6 +24,13 @@ const WRITE_MODES: { value: AiWriteMode; label: string; title: string }[] = [
   { value: 'readonly', label: '읽기 전용', title: 'AI가 데이터를 조회만 합니다' },
   { value: 'ask', label: '승인 후 쓰기', title: 'AI가 생성·수정 전 항목마다 승인을 요청합니다' },
   { value: 'auto', label: '자동 쓰기', title: 'AI가 승인 없이 즉시 생성·수정합니다 (변수는 항상 승인)' }
+]
+
+// AI 대화 모델 선택지 (앱 전역 설정 — 다음 메시지부터 적용)
+const MODELS: { value: AiModelChoice; label: string; title: string }[] = [
+  { value: 'opus', label: 'Opus', title: 'Opus — 가장 정확, 느림' },
+  { value: 'sonnet', label: 'Sonnet', title: 'Sonnet — 균형 (기본)' },
+  { value: 'haiku', label: 'Haiku', title: 'Haiku — 가장 빠름' }
 ]
 
 // "이 채팅에서 항상 승인"을 노출하지 않는 도구 — 변수는 auto 모드에서도 항상 승인
@@ -57,6 +65,7 @@ export default function AiChatView(): React.ReactNode {
     chats,
     currentChatId,
     fetchChats,
+    loadModel,
     createChat,
     deleteChat,
     openChat,
@@ -78,6 +87,7 @@ export default function AiChatView(): React.ReactNode {
 
   useEffect(() => {
     fetchChats()
+    void loadModel()
     checkStatus()
     refreshNotionStatus()
     const unsubscribe = window.api.ai.onStream((event) =>
@@ -368,7 +378,9 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
     cancelStream,
     respondApproval,
     renameChat,
-    setWriteMode
+    setWriteMode,
+    model,
+    setModel
   } = useAiChatStore()
   const { setView, setProjectView, fetchProject } = useProjectStore()
   const [input, setInput] = useState('')
@@ -511,26 +523,47 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
           </h3>
         )}
         {chat && (
-          <div
-            className="shrink-0 flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5"
-            title="이 채팅에서 AI의 데이터 작성 방식 (삭제는 항상 불가)"
-          >
-            {WRITE_MODES.map((m) => (
-              <button
-                key={m.value}
-                onClick={() => void setWriteMode(chat.id, m.value)}
-                title={m.title}
-                className={`px-2 py-1 text-[11px] font-medium rounded-md transition-colors ${
-                  writeMode === m.value
-                    ? m.value === 'auto'
-                      ? 'bg-amber-100 text-amber-800 shadow-sm'
-                      : 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {m.label}
-              </button>
-            ))}
+          <div className="shrink-0 flex items-center gap-2">
+            <div
+              className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5"
+              title="AI 대화 모델 (모든 채팅 공통, 다음 메시지부터 적용)"
+            >
+              {MODELS.map((m) => (
+                <button
+                  key={m.value}
+                  onClick={() => void setModel(m.value)}
+                  title={m.title}
+                  className={`px-2 py-1 text-[11px] font-medium rounded-md transition-colors ${
+                    model === m.value
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <div
+              className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5"
+              title="이 채팅에서 AI의 데이터 작성 방식 (삭제는 항상 불가)"
+            >
+              {WRITE_MODES.map((m) => (
+                <button
+                  key={m.value}
+                  onClick={() => void setWriteMode(chat.id, m.value)}
+                  title={m.title}
+                  className={`px-2 py-1 text-[11px] font-medium rounded-md transition-colors ${
+                    writeMode === m.value
+                      ? m.value === 'auto'
+                        ? 'bg-amber-100 text-amber-800 shadow-sm'
+                        : 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>

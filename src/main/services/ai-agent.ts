@@ -12,6 +12,7 @@ import {
 } from './ai-write-tools'
 import { logAiAudit } from './ai-audit'
 import { isPathInAttachmentsDir } from './ai-attachments'
+import { getAiModel, resolveAiModelId } from './ai-model'
 import { isNotionConnected } from './notion'
 
 // Agent SDK는 ESM 전용 — CJS 번들에서 require 불가하므로 동적 import로 lazy 로드
@@ -23,8 +24,7 @@ function loadSdk(): Promise<SdkModule> {
 }
 
 // Claude Code 구독 인증을 그대로 사용한다 (로컬 전용 기능).
-// 데이터 조회 용도이므로 응답이 빠른 sonnet을 기본으로 사용.
-const AI_MODEL = 'claude-sonnet-5'
+// 모델은 사용자가 고른 전역 설정(services/ai-model.ts)을 쿼리 시작 시점에 읽는다.
 const MAX_TURNS = 30
 // 가드레일: 동시 실행 쿼리 상한 (리소스/구독 한도 보호)
 const MAX_CONCURRENT_QUERIES = 3
@@ -386,6 +386,8 @@ export async function runAiQuery(
   // 시스템 프롬프트는 쿼리 시작 시점의 모드 기준. 도구 게이트(canUseTool)는
   // 호출 시점마다 재조회해 "이 채팅에서 항상 승인" 등 모드 전환을 즉시 반영한다.
   const writeMode = getChatWriteMode(chatId)
+  // 모델도 시작 시 한 번만 읽어 재시도/resume까지 같은 모델을 쓴다 (도중 설정 변경은 다음 쿼리부터)
+  const modelId = resolveAiModelId(getAiModel())
 
   // 쓰기/외부접근 도구 HITL: renderer에 승인 카드를 띄우고 사용자의 응답을 기다린다.
   // 타임아웃/쿼리 중단 시 자동 거절 — canUseTool이 무한 대기하지 않도록.
@@ -463,7 +465,7 @@ export async function runAiQuery(
       options: {
         abortController: abort,
         systemPrompt: buildSystemPrompt(writeMode, isNotionConnected()),
-        model: AI_MODEL,
+        model: modelId,
         maxTurns: MAX_TURNS,
         resume: resumeId,
         mcpServers: { linkwork: linkworkServer },

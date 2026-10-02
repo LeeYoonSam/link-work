@@ -195,7 +195,7 @@ interface SegmentRow {
   display_name: string | null
 }
 
-const MODEL = 'claude-sonnet-5'
+const MODEL = 'claude-opus-5-5'
 
 export async function runMeetingSummary(
   meetingId: number,

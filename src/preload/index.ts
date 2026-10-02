@@ -129,6 +129,8 @@ const api = {
       ipcRenderer.invoke('ai:approve', requestId, approved),
     setChatWriteMode: (chatId: number, mode: string) =>
       ipcRenderer.invoke('ai:setChatWriteMode', chatId, mode),
+    getModel: () => ipcRenderer.invoke('ai:getModel'),
+    setModel: (model: string) => ipcRenderer.invoke('ai:setModel', model),
     onStream: (callback: (event: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => callback(data)
       ipcRenderer.on('ai:stream', handler)

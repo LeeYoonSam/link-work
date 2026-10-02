@@ -4,6 +4,7 @@ import type {
   AiAttachmentInput,
   AiChat,
   AiMessage,
+  AiModelChoice,
   AiStreamEvent,
   AiWriteMode
 } from '../types'
@@ -17,6 +18,7 @@ interface AiChatStore {
   isStreaming: boolean
   error: string | null
   pendingApproval: AiApprovalRequest | null
+  model: AiModelChoice
 
   fetchChats: () => Promise<void>
   createChat: () => Promise<number>
@@ -27,6 +29,8 @@ interface AiChatStore {
   sendMessage: (text: string, attachments?: AiAttachmentInput[]) => Promise<void>
   cancelStream: () => Promise<void>
   setWriteMode: (chatId: number, mode: AiWriteMode) => Promise<void>
+  loadModel: () => Promise<void>
+  setModel: (model: AiModelChoice) => Promise<void>
   respondApproval: (requestId: string, approved: boolean, alwaysForChat?: boolean) => Promise<void>
   handleStreamEvent: (event: AiStreamEvent) => void
 }
@@ -40,6 +44,7 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
   isStreaming: false,
   error: null,
   pendingApproval: null,
+  model: 'sonnet',
 
   fetchChats: async () => {
     const chats = await window.api.ai.chatList()
@@ -143,6 +148,17 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
         chats: s.chats.map((c) => (c.id === chatId ? { ...c, write_mode: mode } : c))
       }))
     }
+  },
+
+  loadModel: async () => {
+    const model = await window.api.ai.getModel()
+    set({ model })
+  },
+
+  setModel: async (model) => {
+    // 실패 시에도 main이 현재 저장값을 돌려주므로 응답 기준으로 맞춘다
+    const result = await window.api.ai.setModel(model)
+    set({ model: result.model })
   },
 
   respondApproval: async (requestId, approved, alwaysForChat = false) => {
