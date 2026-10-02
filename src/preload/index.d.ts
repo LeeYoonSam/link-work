@@ -1,5 +1,5 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
-import type { ProjectAPI, TaskAPI, CalendarAPI, TrayAPI, DocumentAPI, VariableAPI, MemoAPI, MemoCategoryAPI, ReportAPI, TodoAPI, TodoTagAPI, AiAPI, ExportAPI, ReleaseNoteAPI, JiraAPI } from '../renderer/src/types'
+import type { ProjectAPI, TaskAPI, CalendarAPI, TrayAPI, DocumentAPI, VariableAPI, MemoAPI, MemoCategoryAPI, ReportAPI, TodoAPI, TodoTagAPI, AiAPI, ExportAPI, ReleaseNoteAPI, JiraAPI, ProjectSyncAPI } from '../renderer/src/types'
 
 declare global {
   interface Window {
@@ -20,6 +20,7 @@ declare global {
       export: ExportAPI
       releaseNote: ReleaseNoteAPI
       jira: JiraAPI
+      projectSync: ProjectSyncAPI
     }
   }
 }

@@ -6,7 +6,8 @@ import { getDatabase } from '../db/database'
 // [가드레일]
 // - API 토큰은 app_settings에 safeStorage로 암호화해 저장한다 (notion.ts와 동일 패턴).
 // - renderer에는 연결 여부·계정 표시명·만료일만 내보내고 토큰 값은 절대 노출하지 않는다.
-// - 이 모듈은 조회 API(myself, project, version, search/jql)만 호출한다 — 쓰기 API 호출 금지.
+// - 이 모듈은 조회 API(myself, project, version, search/jql, issue/{key}/remotelink)만
+//   호출한다 — 쓰기 API 호출 금지. 프로젝트 싱크업도 Jira를 읽기만 하고 LinkWork DB에만 쓴다.
 // - Jira REST 호출은 전부 이 파일에만 둔다. 엔드포인트가 또 바뀌어도 수정 지점이 하나다
 //   (구 /rest/api/3/search 제거 전례 — 아래 listIssuesByFixVersion 주석 참고).
 // - 한 릴리스에서 가져오는 이슈는 MAX_ISSUES로 상한을 둬 응답이 무한정 커지지 않게 한다.
@@ -482,4 +483,249 @@ export async function listIssuesByFixVersion(
   }
 
   return { issues, truncated }
+}
+
+// ── 프로젝트 싱크업용 조회 (services/project-sync.ts) ──
+
+/** 싱크업 한 번에 검색으로 가져올 이슈 상한 (검색 호출마다 따로 적용) */
+export const MAX_SYNC_ISSUES = 500
+// 키 목록을 JQL `in (...)`에 넣을 때 한 번에 넣는 개수. URL 길이가 무한정 늘지 않게 나눈다.
+const SYNC_KEY_CHUNK = 50
+
+/**
+ * 싱크업 대상이 되는 상태 이름. 응답의 status.name과 비교한다 — **JQL에는 넣지 않는다.**
+ *
+ * 화면에 "할 일"로 보이는 상태의 원래 이름은 "Open"이고 "할 일"은 번역된 표시 이름이다.
+ * JQL `status = "할 일"`은 오류 없이 0건을 돌려줘서, 싱크업이 "동기화할 것 없음"으로 조용히
+ * 끝났다(실제로는 16건). 그래서 JQL은 번역과 무관한 statusCategory로 넓게 가져오고, 이름은
+ * 응답에서 고른다. 카테고리만으로는 못 가른다 — 백로그도 같은 "To Do" 카테고리다.
+ * 응답의 이름은 토큰 계정의 언어를 따르므로 번역 전 이름들도 함께 둔다.
+ */
+export const SYNC_TRIGGER_STATUS = '할 일'
+const SYNC_TRIGGER_STATUS_NAMES = new Set([SYNC_TRIGGER_STATUS, 'Open', 'To Do'])
+
+const SYNC_FIELDS = 'summary,status,issuetype,parent,assignee,duedate,labels,description,issuelinks'
+
+export type JiraIssueLevel = 'epic' | 'standard' | 'subtask'
+export type JiraStatusCategory = 'new' | 'indeterminate' | 'done'
+
+export interface JiraIssueLinkRef {
+  /** 링크 타입 이름 (예: Blocks, Relates) */
+  type: string
+  key: string
+  summary: string
+}
+
+/** 싱크업 계획에 필요한 만큼만 정규화한 이슈 */
+export interface JiraSyncIssue {
+  key: string
+  summary: string
+  issueType: string
+  level: JiraIssueLevel
+  status: string
+  statusCategory: JiraStatusCategory
+  parentKey: string | null
+  assigneeAccountId: string | null
+  duedate: string | null
+  labels: string[]
+  /** ADF 원본. 해석은 project-sync-adf.ts가 한다 */
+  description: unknown
+  issueLinks: JiraIssueLinkRef[]
+}
+
+export interface JiraRemoteLink {
+  title: string
+  url: string
+}
+
+const PROJECT_KEY_RE = /^[A-Z][A-Z0-9_]*$/
+const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]*-\d+$/
+
+// 아래 키들은 JQL에 따옴표 없이 그대로 들어간다. 키는 Jira 응답 → DB → 다시 JQL로 흘러오므로
+// 어디서든 오염되면 JQL이 조작된다(`PROJ-1) OR project = SECRET`). 호출 직전에 막는다.
+function assertProjectKey(key: string): string {
+  if (!PROJECT_KEY_RE.test(key)) throw new Error('잘못된 Jira 프로젝트 키입니다.')
+  return key
+}
+
+function assertIssueKey(key: string): string {
+  if (!ISSUE_KEY_RE.test(key)) throw new Error('잘못된 Jira 이슈 키입니다.')
+  return key
+}
+
+interface RawSyncIssue {
+  key?: string
+  fields?: {
+    summary?: string
+    issuetype?: { name?: string; subtask?: boolean; hierarchyLevel?: number } | null
+    status?: { name?: string; statusCategory?: { key?: string } | null } | null
+    parent?: { key?: string } | null
+    assignee?: { accountId?: string } | null
+    duedate?: string | null
+    labels?: string[] | null
+    description?: unknown
+    issuelinks?: Array<{
+      type?: { name?: string } | null
+      inwardIssue?: { key?: string; fields?: { summary?: string } }
+      outwardIssue?: { key?: string; fields?: { summary?: string } }
+    }> | null
+  }
+}
+
+// 계층은 hierarchyLevel(1=에픽, 0=표준, -1=하위 작업)이 기준이다. 오래된 응답에 값이 없으면
+// subtask 플래그와 타입 이름으로 보완한다 — 타입 이름은 사이트 언어에 따라 "에픽"/"Epic"이다.
+function toIssueLevel(issuetype: NonNullable<RawSyncIssue['fields']>['issuetype']): JiraIssueLevel {
+  if (issuetype?.subtask === true || issuetype?.hierarchyLevel === -1) return 'subtask'
+  if (issuetype?.hierarchyLevel === 1) return 'epic'
+  const name = (issuetype?.name ?? '').trim().toLowerCase()
+  return name === '에픽' || name === 'epic' ? 'epic' : 'standard'
+}
+
+function toStatusCategory(key: string | undefined): JiraStatusCategory {
+  return key === 'done' || key === 'indeterminate' ? key : 'new'
+}
+
+export function toSyncIssue(raw: RawSyncIssue): JiraSyncIssue {
+  const f = raw.fields ?? {}
+  const issueLinks: JiraIssueLinkRef[] = []
+  for (const link of f.issuelinks ?? []) {
+    const other = link.outwardIssue ?? link.inwardIssue
+    if (!other?.key) continue
+    issueLinks.push({
+      type: link.type?.name ?? '연결',
+      key: other.key,
+      summary: other.fields?.summary ?? ''
+    })
+  }
+  return {
+    key: raw.key ?? '',
+    summary: f.summary ?? '',
+    issueType: f.issuetype?.name ?? '',
+    level: toIssueLevel(f.issuetype),
+    status: f.status?.name ?? '',
+    statusCategory: toStatusCategory(f.status?.statusCategory?.key),
+    parentKey: f.parent?.key ?? null,
+    assigneeAccountId: f.assignee?.accountId ?? null,
+    duedate: f.duedate ?? null,
+    labels: Array.isArray(f.labels) ? f.labels : [],
+    description: f.description ?? null,
+    issueLinks
+  }
+}
+
+// listIssuesByFixVersion과 같은 커서 페이지네이션이지만 필드가 달라 따로 둔다.
+async function searchSyncIssues(
+  jql: string
+): Promise<{ issues: JiraSyncIssue[]; truncated: boolean }> {
+  const issues: JiraSyncIssue[] = []
+  let truncated = false
+  let nextPageToken: string | undefined
+
+  for (let page = 0; page < MAX_ISSUE_PAGES; page++) {
+    const params = new URLSearchParams({
+      jql,
+      // /search/jql은 fields를 명시하지 않으면 id/key 정도만 돌려준다.
+      fields: SYNC_FIELDS,
+      maxResults: String(ISSUE_PAGE_SIZE)
+    })
+    if (nextPageToken) params.set('nextPageToken', nextPageToken)
+
+    // 구 /rest/api/3/search는 제거됐다(410 Gone) — listIssuesByFixVersion 주석 참고.
+    const data = (await jiraRequest(`/rest/api/3/search/jql?${params}`)) as {
+      issues?: RawSyncIssue[]
+      nextPageToken?: string
+    }
+
+    for (const raw of data.issues ?? []) {
+      if (issues.length >= MAX_SYNC_ISSUES) {
+        truncated = true
+        break
+      }
+      if (raw.key) issues.push(toSyncIssue(raw))
+    }
+
+    nextPageToken = data.nextPageToken ?? undefined
+    if (!nextPageToken) break
+    if (issues.length >= MAX_SYNC_ISSUES) {
+      truncated = true
+      break
+    }
+    if (page === MAX_ISSUE_PAGES - 1) truncated = true
+  }
+
+  return { issues, truncated }
+}
+
+// 키 목록을 SYNC_KEY_CHUNK개씩 나눠 `<field> in (...)` 검색을 돌리고 합친다.
+async function searchByKeyChunks(
+  field: 'key' | 'parent',
+  keys: string[]
+): Promise<{ issues: JiraSyncIssue[]; truncated: boolean }> {
+  const unique = [...new Set(keys.map(assertIssueKey))]
+  const issues: JiraSyncIssue[] = []
+  let truncated = false
+  for (let i = 0; i < unique.length; i += SYNC_KEY_CHUNK) {
+    const chunk = unique.slice(i, i + SYNC_KEY_CHUNK)
+    const found = await searchSyncIssues(`${field} in (${chunk.join(', ')}) ORDER BY key`)
+    issues.push(...found.issues)
+    truncated = truncated || found.truncated
+  }
+  return { issues, truncated }
+}
+
+/** 연결된 계정의 accountId — "내게 할당 + 미할당" 필터에 쓴다 */
+export async function getJiraMyAccountId(): Promise<string | null> {
+  const me = (await jiraRequest('/rest/api/3/myself')) as { accountId?: string }
+  return me.accountId ?? null
+}
+
+/** 싱크업 트리거: 내게 할당된 "할 일" 상태 이슈 */
+export async function listMyTodoIssues(
+  projectKey: string
+): Promise<{ issues: JiraSyncIssue[]; truncated: boolean }> {
+  const key = assertProjectKey(projectKey)
+  // 키 내림차순(최신부터)으로 받는다. 상태 이름("할 일")은 번역 이름이라 JQL에 넣을 수 없어
+  // statusCategory로 백로그까지 받은 뒤 이름으로 거르는데, MAX_SYNC_ISSUES 상한은 그 필터보다
+  // 먼저 걸린다. 오름차순이면 오래된 백로그가 상한을 채우고 최신 할 일 이슈가 잘려 나간다.
+  const found = await searchSyncIssues(
+    `project = ${key} AND assignee = currentUser() AND statusCategory = "To Do" ORDER BY key DESC`
+  )
+  return {
+    issues: found.issues.filter((issue) => SYNC_TRIGGER_STATUS_NAMES.has(issue.status)),
+    truncated: found.truncated
+  }
+}
+
+/** 키로 이슈를 가져온다 (트리거의 부모 작업·에픽 조회용) */
+export async function listIssuesByKeys(
+  keys: string[]
+): Promise<{ issues: JiraSyncIssue[]; truncated: boolean }> {
+  return searchByKeyChunks('key', keys)
+}
+
+/** 주어진 이슈들의 직계 자식 (에픽→작업, 작업→하위 작업) */
+export async function listChildIssues(
+  parentKeys: string[]
+): Promise<{ issues: JiraSyncIssue[]; truncated: boolean }> {
+  return searchByKeyChunks('parent', parentKeys)
+}
+
+/** 이슈에 붙은 원격 링크(Confluence·Figma 등). http(s)가 아닌 것은 걸러낸다 */
+export async function listRemoteLinks(issueKey: string): Promise<JiraRemoteLink[]> {
+  const key = assertIssueKey(issueKey)
+  const data = (await jiraRequest(`/rest/api/3/issue/${key}/remotelink`)) as Array<{
+    object?: { url?: string; title?: string }
+  }>
+  const links: JiraRemoteLink[] = []
+  for (const item of Array.isArray(data) ? data : []) {
+    const url = item.object?.url
+    if (!url || !/^https?:\/\//i.test(url)) continue
+    links.push({ url, title: item.object?.title?.trim() || url })
+  }
+  return links
+}
+
+/** 사이트 URL(끝 슬래시 제거됨). 미연결이면 null */
+export function getJiraSiteUrl(): string | null {
+  return getCredentials()?.siteUrl ?? null
 }

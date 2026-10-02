@@ -8,6 +8,7 @@ import { Badge, Card, EmptyState, projectStatus, projectPriority, button, typo }
 import PhaseHint from './PhaseHint'
 import PriorityBadge from './PriorityBadge'
 import ProjectExportModal from './ProjectExportModal'
+import ProjectSyncModal from './ProjectSyncModal'
 
 // 상태 필터 옵션 — 'all'(전체) + STATUS_RANK의 진행 순서.
 // 목록에 손으로 적어두면 상태가 늘 때마다 한쪽만 고쳐져 필터에서 빠진다(on_hold가 그랬다).
@@ -35,6 +36,7 @@ export default function ProjectList(): React.ReactNode {
   } = useProjectStore()
   const [filter, setFilter] = useState<string>('all')
   const [showExport, setShowExport] = useState(false)
+  const [showSync, setShowSync] = useState(false)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
   const dragGroupRef = useRef<string | null>(null)
@@ -200,6 +202,13 @@ export default function ProjectList(): React.ReactNode {
         <div className="flex items-center gap-2 shrink-0">
           {/* 한글 라벨은 글자 단위로 개행된다 — nowrap 없이 두면 좁은 창에서 세로로 깨진다 */}
           <button
+            onClick={() => setShowSync(true)}
+            className={`px-4 py-2 text-sm whitespace-nowrap ${button.subtle}`}
+            title="내게 할당된 Jira 할 일 이슈를 프로젝트로 가져옵니다"
+          >
+            Jira 싱크업
+          </button>
+          <button
             onClick={() => setShowExport(true)}
             className={`px-4 py-2 text-sm whitespace-nowrap ${button.subtle}`}
           >
@@ -244,6 +253,9 @@ export default function ProjectList(): React.ReactNode {
 
       {/* 내보내기는 화면 필터와 무관하게 전체 프로젝트를 대상으로 한다 */}
       {showExport && <ProjectExportModal projects={sorted} onClose={() => setShowExport(false)} />}
+
+      {/* 모달이 열릴 때 미리보기를 불러온다. 적용 결과는 스토어가 목록을 다시 읽어 반영한다 */}
+      {showSync && <ProjectSyncModal onClose={() => setShowSync(false)} />}
     </div>
   )
 }

@@ -14,6 +14,7 @@ import {
   syncAllReleases,
   syncReleaseNote
 } from '../services/release-note-sync'
+import { clearProjectSyncCache } from '../services/project-sync'
 
 // Jira가 얽힌 채널은 throw하지 않고 { success, error }로 감싼다.
 // 실패 사유(토큰 만료·권한 없음·버전 삭제됨)가 곧 사용자가 해야 할 조치라서
@@ -52,6 +53,8 @@ export function registerReleaseNoteIpc(): void {
   ipcMain.handle('jira:status', () => getJiraStatus())
 
   ipcMain.handle('jira:saveCredentials', async (_event, input: JiraCredentialsInput) => {
+    // 계정·사이트가 바뀌면 이전 연결로 받은 싱크업 미리보기는 더 이상 유효하지 않다.
+    clearProjectSyncCache()
     try {
       const { accountName } = await saveJiraCredentials(input)
       return { success: true, accountName }
@@ -62,6 +65,7 @@ export function registerReleaseNoteIpc(): void {
 
   ipcMain.handle('jira:disconnect', () => {
     disconnectJira()
+    clearProjectSyncCache()
     return { success: true }
   })
 
@@ -76,6 +80,8 @@ export function registerReleaseNoteIpc(): void {
   ipcMain.handle('jira:setDefaultProject', (_event, projectKey: string | null) => {
     try {
       setDefaultJiraProjectKey(projectKey)
+      // 싱크업 미리보기는 기본 프로젝트 기준으로 받은 것이라 키가 바뀌면 버린다.
+      clearProjectSyncCache()
       return { success: true }
     } catch (err) {
       return { success: false, error: toMessage(err) }

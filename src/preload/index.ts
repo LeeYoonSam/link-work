@@ -242,6 +242,12 @@ const api = {
       ipcRenderer.invoke('jira:setDefaultProject', projectKey),
     openIssue: (issueKey: string) => ipcRenderer.invoke('jira:openIssue', issueKey)
   },
+  // Jira 할 일 이슈 → 프로젝트/작업/문서. Jira는 읽기만 하고 LinkWork DB에만 쓴다
+  projectSync: {
+    preview: () => ipcRenderer.invoke('projectSync:preview'),
+    apply: (selection: { jiraKey: string; force: boolean; projectId: number | null }[]) =>
+      ipcRenderer.invoke('projectSync:apply', selection)
+  },
   backup: {
     // 저장 위치를 고르면 LinkWork-backup-<시각>.zip 파일 하나를 만든다
     exportToFile: () => ipcRenderer.invoke('backup:export'),

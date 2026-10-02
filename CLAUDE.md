@@ -38,9 +38,11 @@ LinkWork는 WBS(작업 분해 구조)와 회의 일정을 관리하는 macOS 데
 - 에이전트팀 공식 사용법: [docs/references/claude-agent-teams.md](docs/references/claude-agent-teams.md)
 - 팀 기반 개발 워크플로 스킬: `/team-dev [작업 설명]` — 플랜(완료 조건 정의) → 팀 구성 → 구현 → 검증 루프 → 종합 보고를 자동으로 수행한다.
 - 팀원 정의: `.claude/agents/planner.md`, `.claude/agents/implementer.md`, `.claude/agents/reviewer.md`
+- 프로젝트 싱크업 작업 스킬: `/project-sync [변경 또는 조사 내용]` — 싱크업 규칙·코드 수정과 오동작 조사 시 문서 → 테스트 → 구현 순서와 완료 조건을 따른다. 검증 전용 에이전트: `.claude/agents/sync-verifier.md`
 
 ## 기존 문서
 - [docs/AI_CHAT_ARCHITECTURE.md](docs/AI_CHAT_ARCHITECTURE.md) — AI 채팅 아키텍처
 - [docs/AI_GUARDRAILS.md](docs/AI_GUARDRAILS.md) — AI 가드레일 정책
 - [docs/MEETING_RECORDING.md](docs/MEETING_RECORDING.md) — 회의 녹음/기록 파이프라인
 - [docs/DATA_BACKUP.md](docs/DATA_BACKUP.md) — 데이터 백업·복원(새 PC 이전) 형식과 절차
+- [docs/PROJECT_SYNC.md](docs/PROJECT_SYNC.md) — Jira 프로젝트 싱크업 규칙(R1~R10)·가드레일·IPC 계약

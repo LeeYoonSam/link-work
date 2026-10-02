@@ -19,6 +19,7 @@ import { registerRecognitionAidsIpc } from './ipc/recognition-aids.ipc'
 import { registerExportIpc } from './ipc/export.ipc'
 import { registerReleaseNoteIpc } from './ipc/release-note.ipc'
 import { registerBackupIpc } from './ipc/backup.ipc'
+import { registerProjectSyncIpc } from './ipc/project-sync.ipc'
 import { cancelAllAiQueries } from './services/ai-agent'
 import { startNotificationService, stopNotificationService } from './services/notification'
 import { createTrayWidget, destroyTrayWidget } from './services/tray-widget'
@@ -202,6 +203,7 @@ app.whenReady().then(() => {
   registerExportIpc()
   registerReleaseNoteIpc()
   registerBackupIpc()
+  registerProjectSyncIpc()
   startNotificationService()
   createTrayWidget(() => createWindow())
 

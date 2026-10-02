@@ -843,6 +843,78 @@ export interface JiraAPI {
   openIssue: (issueKey: string) => Promise<{ success: boolean }>
 }
 
+// ── Jira 프로젝트 싱크업 (docs/PROJECT_SYNC.md) ──
+// main의 project-sync 서비스가 돌려주는 모양과 같아야 한다 — 한쪽만 바꾸면 미리보기가 조용히 빈 값을 그린다.
+
+export type ProjectSyncSkipReason = 'qa' | 'no_epic' | 'tracked_in_project'
+
+export interface ProjectSyncPlanItem {
+  jiraKey: string
+  summary: string
+  kind: 'epic' | 'sustain'
+  action: 'create' | 'update' | 'unchanged'
+  /** create면 null */
+  projectId: number | null
+  /** 기존 프로젝트 이름 또는 생성될 이름 */
+  projectName: string
+  matchedBy: 'jira_key' | 'document_url' | 'name' | null
+  newTasks: number
+  /** status 전진 또는 키 백필이 일어나는 기존 작업 수 */
+  updatedTasks: number
+  newDocuments: number
+  /** 기존 프로젝트 항목을 강제 적용할 때 덮어써질 필드/작업 수(이름 1 + 설명 1 + forceTasks.length). create 항목은 0 */
+  forceChanges: number
+  /** 강제 적용 시 이름·상태·마감일이 바뀌는 기존 작업. 이름이 같으면 before === after. create 항목은 [] */
+  forceTasks: { before: string; after: string }[]
+}
+
+/** 적용할 항목. 기존 프로젝트(projectId !== null)는 force=true로만 넘긴다 — 사용자가 덮어쓰기를 확인한 것 */
+export interface ProjectSyncSelection {
+  jiraKey: string
+  force: boolean
+  /** 미리보기 때의 대상 프로젝트. 적용 시 재계획 결과와 다르면 main이 거부한다 */
+  projectId: number | null
+}
+
+export interface ProjectSyncSkipped {
+  jiraKey: string
+  summary: string
+  reason: ProjectSyncSkipReason
+  detail: string | null
+}
+
+export interface ProjectSyncPlan {
+  items: ProjectSyncPlanItem[]
+  skipped: ProjectSyncSkipped[]
+  /** Jira 조회 상한에 걸림 */
+  truncated: boolean
+  /** Jira에서 찾은 트리거(내게 할당된 "할 일") 이슈 수 — 0건이면 조회 자체가 비었다는 뜻 */
+  triggerCount: number
+  /** ISO */
+  fetchedAt: string
+}
+
+export interface ProjectSyncResult {
+  created: number
+  updated: number
+  unchanged: number
+  tasksAdded: number
+  tasksUpdated: number
+  documentsAdded: number
+  skipped: ProjectSyncSkipped[]
+}
+
+export interface ProjectSyncAPI {
+  // 네트워크가 얽혀 있어 throw 대신 결과 객체로 감싼다 — 오류 문구를 그대로 표시해야 한다
+  preview: () => Promise<{ success: true; plan: ProjectSyncPlan } | { success: false; error: string }>
+  /** preview가 캐시한 Jira 스냅샷으로 현재 DB 기준 재계획 후, 고른 항목만 적용한다 */
+  apply: (
+    selection: ProjectSyncSelection[]
+  ) => Promise<
+    { success: true; result: ProjectSyncResult } | { success: false; error: string }
+  >
+}
+
 // ── 앱 데이터 백업 · 복원 (docs/DATA_BACKUP.md) ──
 // 백업 한 벌은 단일 .zip 파일이다(안에 manifest.json · linkwork.db · recordings/ · ai-attachments/).
 // main의 services/backup-service.ts가 만드는 manifest.json과 같은 모양이라

@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs'
+import { fileURLToPath } from 'url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Electron 런타임 없이 돌아야 하므로 safeStorage와 DB를 모듈 경계에서 대체한다.
@@ -35,13 +37,21 @@ import {
   getJiraIssueUrl,
   getJiraStatus,
   getJiraVersion,
+  getJiraMyAccountId,
+  getJiraSiteUrl,
   isJiraConnected,
+  listChildIssues,
   listIssuesByFixVersion,
+  listIssuesByKeys,
   listJiraProjects,
   listJiraVersions,
+  listMyTodoIssues,
+  listRemoteLinks,
   MAX_ISSUES,
+  MAX_SYNC_ISSUES,
   saveJiraCredentials,
-  setDefaultJiraProjectKey
+  setDefaultJiraProjectKey,
+  SYNC_TRIGGER_STATUS
 } from './jira'
 
 interface ResponseInit {
@@ -566,5 +576,178 @@ describe('computeRetryDelayMs', () => {
 
   it('Retry-After가 날짜 형식 등 숫자가 아니면 백오프로 되돌아간다', () => {
     expect(computeRetryDelayMs(0, 'Wed, 21 Oct 2026 07:28:00 GMT', () => 0.5)).toBe(2_000)
+  })
+})
+
+describe('프로젝트 싱크업 조회', () => {
+  beforeEach(connect)
+
+  const searchFixture = JSON.parse(
+    readFileSync(
+      fileURLToPath(
+        new URL('./__fixtures__/project-sync/search-jql-response.json', import.meta.url)
+      ),
+      'utf8'
+    )
+  )
+
+  function keyPage(count: number, nextPageToken?: string): Response {
+    return jsonResponse({
+      issues: Array.from({ length: count }, (_, i) => ({
+        key: `PROJ-${i + 1}`,
+        fields: { summary: `이슈 ${i + 1}` }
+      })),
+      ...(nextPageToken ? { nextPageToken } : {})
+    })
+  }
+
+  it('트리거 JQL은 번역된 상태 이름 대신 statusCategory로 조회하고 필요한 필드를 명시한다', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ issues: [] }))
+
+    await listMyTodoIssues('PROJ')
+
+    const url = calledUrls()[0]
+    expect(url).toContain('/rest/api/3/search/jql?')
+    expect(/\/rest\/api\/3\/search(\?|$)/.test(url)).toBe(false)
+    const params = new URL(url).searchParams
+    // `status = "할 일"`은 0건을 돌려준다 — "할 일"은 표시용 번역이고 원래 이름은 "Open"이다.
+    // 최신(키가 큰) 이슈부터 — 500건 상한이 상태 이름 필터보다 먼저 걸려도 최신 할 일이 남게
+    expect(params.get('jql')).toBe(
+      'project = PROJ AND assignee = currentUser() AND statusCategory = "To Do" ORDER BY key DESC'
+    )
+    expect(params.get('fields')).toBe(
+      'summary,status,issuetype,parent,assignee,duedate,labels,description,issuelinks'
+    )
+  })
+
+  it('트리거는 응답의 상태 이름으로 "할 일"만 남긴다 (백로그·처리중 제외, 번역 전 이름 허용)', async () => {
+    const issue = (key: string, name: string): unknown => ({
+      key,
+      fields: { summary: key, status: { name, statusCategory: { key: 'new' } } }
+    })
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        issues: [
+          issue('PROJ-1', '할 일'),
+          issue('PROJ-2', '백로그'),
+          issue('PROJ-3', 'Open'),
+          issue('PROJ-4', 'To Do'),
+          issue('PROJ-5', '처리중')
+        ]
+      })
+    )
+
+    const { issues } = await listMyTodoIssues('PROJ')
+
+    expect(SYNC_TRIGGER_STATUS).toBe('할 일')
+    expect(issues.map((i) => i.key)).toEqual(['PROJ-1', 'PROJ-3', 'PROJ-4'])
+  })
+
+  it('실제 응답 형태를 싱크업용 이슈로 정규화한다', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(searchFixture))
+
+    const { issues, truncated } = await listIssuesByKeys(['PROJ-8861', 'PROJ-8855'])
+
+    expect(truncated).toBe(false)
+    expect(issues[0]).toEqual({
+      key: 'PROJ-8861',
+      summary: '화면 바인딩',
+      issueType: '하위 작업',
+      level: 'subtask',
+      status: '할 일',
+      statusCategory: 'new',
+      parentKey: 'PROJ-8856',
+      assigneeAccountId: 'acc-me',
+      duedate: '2026-10-20',
+      labels: ['android'],
+      description: searchFixture.issues[0].fields.description,
+      issueLinks: [
+        { type: 'Blocks', key: 'PROJ-8870', summary: '알림센터 오픈' },
+        { type: 'Relates', key: 'PROJ-8700', summary: '알림 기획' }
+      ]
+    })
+    expect(issues[1]).toMatchObject({
+      key: 'PROJ-8855',
+      level: 'epic',
+      statusCategory: 'indeterminate',
+      parentKey: null,
+      assigneeAccountId: null,
+      description: null
+    })
+  })
+
+  it('잘못된 프로젝트 키·이슈 키는 네트워크를 타기 전에 거부한다 (JQL 인젝션 방어)', async () => {
+    for (const bad of ['ica', 'PROJ OR project = X', '', 'PROJ"']) {
+      await expect(listMyTodoIssues(bad), bad).rejects.toThrow('잘못된 Jira 프로젝트 키입니다.')
+    }
+    for (const bad of ['PROJ-1) OR project = SECRET', 'PROJ', 'ica-1', 'PROJ-1 ']) {
+      await expect(listIssuesByKeys(['PROJ-2', bad]), bad).rejects.toThrow('잘못된 Jira 이슈 키입니다.')
+      await expect(listChildIssues([bad]), bad).rejects.toThrow('잘못된 Jira 이슈 키입니다.')
+      await expect(listRemoteLinks(bad), bad).rejects.toThrow('잘못된 Jira 이슈 키입니다.')
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('키 목록은 중복을 걷어내고 50개씩 나눠 key in / parent in 으로 조회한다', async () => {
+    fetchMock.mockImplementation(async () => jsonResponse({ issues: [] }))
+    const keys = Array.from({ length: 120 }, (_, i) => `PROJ-${i + 1}`)
+
+    await listIssuesByKeys([...keys, 'PROJ-1'])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    const first = new URL(calledUrls()[0]).searchParams.get('jql') ?? ''
+    expect(first.startsWith('key in (PROJ-1, PROJ-2,')).toBe(true)
+    expect(first.endsWith('PROJ-50) ORDER BY key')).toBe(true)
+
+    fetchMock.mockClear()
+    await listChildIssues(['PROJ-8855'])
+    expect(new URL(calledUrls()[0]).searchParams.get('jql')).toBe(
+      'parent in (PROJ-8855) ORDER BY key'
+    )
+  })
+
+  it('MAX_SYNC_ISSUES 상한에서 멈추고 truncated를 알린다', async () => {
+    for (let page = 0; page < 6; page++) {
+      fetchMock.mockResolvedValueOnce(keyPage(100, `token-${page + 1}`))
+    }
+    const { issues, truncated } = await listChildIssues(['PROJ-1'])
+    expect(issues).toHaveLength(MAX_SYNC_ISSUES)
+    expect(truncated).toBe(true)
+  })
+
+  it('원격 링크는 http(s)만 남기고 제목이 없으면 URL을 이름으로 쓴다', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse([
+        { object: { url: 'https://www.figma.com/design/abc', title: '디자인' } },
+        { object: { url: 'https://example.com/doc' } },
+        { object: { url: 'javascript:alert(1)', title: 'x' } },
+        { object: {} }
+      ])
+    )
+
+    const links = await listRemoteLinks('PROJ-8855')
+
+    expect(calledUrls()[0]).toBe('https://acme.atlassian.net/rest/api/3/issue/PROJ-8855/remotelink')
+    expect(links).toEqual([
+      { url: 'https://www.figma.com/design/abc', title: '디자인' },
+      { url: 'https://example.com/doc', title: 'https://example.com/doc' }
+    ])
+  })
+
+  it('myself의 accountId와 사이트 URL을 돌려준다', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ accountId: 'acc-me', displayName: '홍길동' }))
+    expect(await getJiraMyAccountId()).toBe('acc-me')
+    expect(getJiraSiteUrl()).toBe('https://acme.atlassian.net')
+  })
+
+  it('모든 요청은 GET이다 (Jira 쓰기 금지)', async () => {
+    fetchMock.mockImplementation(async () => jsonResponse({ issues: [] }))
+    await listMyTodoIssues('PROJ')
+    await listIssuesByKeys(['PROJ-1'])
+    await listChildIssues(['PROJ-1'])
+    fetchMock.mockResolvedValueOnce(jsonResponse([]))
+    await listRemoteLinks('PROJ-1')
+    for (const call of fetchMock.mock.calls) {
+      expect(call[1]?.method).toBe('GET')
+    }
   })
 })

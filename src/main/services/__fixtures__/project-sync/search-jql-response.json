@@ -1,0 +1,59 @@
+{
+  "issues": [
+    {
+      "id": "10861",
+      "key": "PROJ-8861",
+      "fields": {
+        "summary": "화면 바인딩",
+        "status": {
+          "name": "할 일",
+          "statusCategory": { "id": 2, "key": "new", "name": "할 일" }
+        },
+        "issuetype": { "id": "10003", "name": "하위 작업", "subtask": true, "hierarchyLevel": -1 },
+        "parent": {
+          "id": "10856",
+          "key": "PROJ-8856",
+          "fields": { "summary": "알림센터 API 연동" }
+        },
+        "assignee": { "accountId": "acc-me", "displayName": "홍길동" },
+        "duedate": "2026-10-20",
+        "labels": ["android"],
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "바인딩" }] }]
+        },
+        "issuelinks": [
+          {
+            "id": "1",
+            "type": { "name": "Blocks", "inward": "is blocked by", "outward": "blocks" },
+            "outwardIssue": { "key": "PROJ-8870", "fields": { "summary": "알림센터 오픈" } }
+          },
+          {
+            "id": "2",
+            "type": { "name": "Relates", "inward": "relates to", "outward": "relates to" },
+            "inwardIssue": { "key": "PROJ-8700", "fields": { "summary": "알림 기획" } }
+          }
+        ]
+      }
+    },
+    {
+      "id": "10855",
+      "key": "PROJ-8855",
+      "fields": {
+        "summary": "알림센터 신설",
+        "status": {
+          "name": "처리중",
+          "statusCategory": { "id": 4, "key": "indeterminate", "name": "진행 중" }
+        },
+        "issuetype": { "id": "10000", "name": "에픽", "subtask": false, "hierarchyLevel": 1 },
+        "parent": null,
+        "assignee": null,
+        "duedate": null,
+        "labels": [],
+        "description": null,
+        "issuelinks": []
+      }
+    }
+  ]
+}

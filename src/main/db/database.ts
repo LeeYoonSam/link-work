@@ -137,6 +137,8 @@ export function initDatabase(): void {
       priority TEXT,
       -- 같은 우선순위 레벨 안에서의 수동 순서 (renderer/src/utils/projectOrder.ts)
       sort_order INTEGER NOT NULL DEFAULT 0,
+      -- 프로젝트 싱크업(services/project-sync.ts)이 만든·매칭한 Jira 이슈 키. 수동 프로젝트는 NULL.
+      jira_issue_key TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
@@ -152,6 +154,8 @@ export function initDatabase(): void {
       -- 1단계 부모-자식 계층. NULL이면 최상위 작업, 값이 있으면 해당 작업의 하위.
       -- SQLite ALTER TABLE로는 FK 제약을 못 붙이므로 tasks.id에 대한 논리 FK로만 둔다.
       parent_task_id INTEGER,
+      -- 프로젝트 싱크업이 만든·매칭한 Jira 이슈 키. 수동 작업은 NULL.
+      jira_issue_key TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
@@ -470,12 +474,21 @@ export function initDatabase(): void {
   if (projectColumns.length > 0 && !projectColumnNames.includes('sort_order')) {
     db.exec("ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
   }
+  // 프로젝트 싱크업의 매칭 키(docs/PROJECT_SYNC.md R5). 기존 프로젝트는 NULL로 시작하고
+  // 싱크업이 문서 URL·이름으로 매칭하면 그때 채운다.
+  if (projectColumns.length > 0 && !projectColumnNames.includes('jira_issue_key')) {
+    db.exec("ALTER TABLE projects ADD COLUMN jira_issue_key TEXT")
+  }
 
   // 작업 1단계 계층: 부모 작업 참조 컬럼. 기존 행은 자동으로 NULL(최상위)이라 하위 호환.
   // SQLite ALTER TABLE ADD COLUMN은 FK 제약을 붙일 수 없어 tasks.id에 대한 논리 FK로만 둔다.
   const taskColumns = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[]
   if (taskColumns.length > 0 && !taskColumns.map((c) => c.name).includes('parent_task_id')) {
     db.exec("ALTER TABLE tasks ADD COLUMN parent_task_id INTEGER")
+  }
+  // 프로젝트 싱크업의 작업 매칭 키(docs/PROJECT_SYNC.md R6). 기존 작업은 NULL — 이름 속 (KEY)로 매칭되면 백필된다.
+  if (taskColumns.length > 0 && !taskColumns.map((c) => c.name).includes('jira_issue_key')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN jira_issue_key TEXT")
   }
 
   // 회의: 참석 인원(지정 시 화자분리의 클러스터 수를 그 값으로 고정, null이면 자동 추정)
