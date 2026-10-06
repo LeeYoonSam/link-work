@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import Sidebar from './components/layout/Sidebar'
 import Header from './components/layout/Header'
 import ProjectList from './components/project/ProjectList'
@@ -15,6 +16,7 @@ import AiChatView from './components/ai/AiChatView'
 import RecordingView from './components/recording/RecordingView'
 import ReleasesView from './components/project/ReleasesView'
 import { useProjectStore } from './stores/projectStore'
+import { installRecorderBridge } from './stores/recorderSession'
 
 function App(): React.ReactNode {
   // Check if this is the tray panel window
@@ -27,6 +29,9 @@ function App(): React.ReactNode {
   }
 
   const { view, projectView } = useProjectStore()
+
+  // 녹음 상태를 main의 창 닫기/앱 종료 가드에 알리고 저장 명령을 받는다(메인 창에서 1회).
+  useEffect(() => installRecorderBridge(), [])
 
   const renderContent = (): React.ReactNode => {
     switch (view) {

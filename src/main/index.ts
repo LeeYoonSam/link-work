@@ -1,8 +1,8 @@
-import { app, shell, BrowserWindow, protocol } from 'electron'
+import { app, shell, BrowserWindow, protocol, dialog, ipcMain } from 'electron'
 import { join, basename } from 'path'
 import { stat, open, readFile } from 'fs/promises'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { initDatabase, closeDatabase } from './db/database'
+import { initDatabase, closeDatabase, getDatabase } from './db/database'
 import { registerProjectIpc } from './ipc/project.ipc'
 import { registerTaskIpc } from './ipc/task.ipc'
 import { registerCalendarIpc } from './ipc/calendar.ipc'
@@ -23,8 +23,129 @@ import { registerProjectSyncIpc } from './ipc/project-sync.ipc'
 import { cancelAllAiQueries } from './services/ai-agent'
 import { startNotificationService, stopNotificationService } from './services/notification'
 import { createTrayWidget, destroyTrayWidget } from './services/tray-widget'
+import { onRendererReload } from './services/recording-recovery'
+import {
+  RecordingGuard,
+  CLOSE_BUTTONS,
+  QUIT_BUTTONS,
+  closeChoiceToAction,
+  quitChoiceToAction,
+  forceChoiceToAction
+} from './services/recording-guard'
 
 let mainWindow: BrowserWindow | null = null
+
+// 녹음 중 창 닫기/앱 종료 가드 (docs/MEETING_RECORDING.md "녹음 수명주기와 비정상 종료 복구").
+// 렌더러가 recorder:state로 녹음 중 여부를 보고하고, 닫기/종료 시 사용자에게 묻는다.
+const recordingGuard = new RecordingGuard()
+// 사용자가 확인을 마친 창 닫기/앱 종료 — close/before-quit 핸들러가 다시 가로채지 않게 한다
+let forceCloseWindow = false
+let quitConfirmed = false
+// 가드 다이얼로그가 떠 있는 동안 중복 닫기/종료 요청은 무시한다
+let guardPromptOpen = false
+
+// 렌더러가 사라졌을 때(창 닫힘·크래시): 가드를 비우고 'recording'에 남은 회의를 정리한다.
+// 이 렌더러가 녹음기의 유일한 주인이므로 남은 'recording' 행은 전부 고아다.
+// 렌더러가 새로 로드될 때(첫 로드·새로고침)도 같다 — 새로고침은 'closed'/'render-process-gone'
+// 없이 이전 렌더러의 녹음기를 없앤다.
+function recoverAfterRendererGone(): void {
+  try {
+    onRendererReload(getDatabase(), recordingGuard)
+  } catch (err) {
+    // DB를 못 열어도 가드 상태는 비운다
+    recordingGuard.reset()
+    console.error('[recording] 고아 녹음 복구 실패:', err)
+  }
+}
+
+function stripHash(url: string): string {
+  const i = url.indexOf('#')
+  return i === -1 ? url : url.slice(0, i)
+}
+
+function sendRecorderCommand(win: BrowserWindow): (cmd: unknown) => void {
+  return (cmd) => {
+    if (win.isDestroyed()) throw new Error('창이 이미 닫혔습니다.')
+    win.webContents.send('recorder:command', cmd)
+  }
+}
+
+// 녹음 중 창 닫기 — 숨기고 계속 녹음 / 저장하고 닫기 / 돌아가기
+async function confirmCloseWhileRecording(win: BrowserWindow): Promise<void> {
+  guardPromptOpen = true
+  try {
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning',
+      buttons: CLOSE_BUTTONS,
+      defaultId: 0,
+      cancelId: 2,
+      message: '녹음 중입니다.',
+      detail:
+        '창을 닫으면 녹음이 중단됩니다. 창만 숨기고 녹음을 계속하거나, 지금까지 녹음된 내용을 저장하고 닫을 수 있습니다.'
+    })
+    const action = closeChoiceToAction(response)
+    if (action === 'cancel' || win.isDestroyed()) return
+    if (action === 'hide') {
+      win.hide()
+      return
+    }
+
+    const result = await recordingGuard.requestStopAndSave(sendRecorderCommand(win), true)
+    if (win.isDestroyed()) return
+    if (!result.success) {
+      const { response: retry } = await dialog.showMessageBox(win, {
+        type: 'warning',
+        buttons: ['그래도 닫기', '돌아가기'],
+        defaultId: 1,
+        cancelId: 1,
+        message: '녹음을 저장하지 못했습니다.',
+        detail: `창을 닫으면 녹음된 내용이 사라집니다.${result.error ? `\n(${result.error})` : ''}`
+      })
+      if (forceChoiceToAction(retry) === 'cancel' || win.isDestroyed()) return
+    }
+    forceCloseWindow = true
+    win.close()
+  } finally {
+    guardPromptOpen = false
+  }
+}
+
+// 녹음 중 앱 종료 — 저장하고 종료 / 돌아가기. 확인을 마치면 app.quit()을 다시 호출한다.
+async function confirmQuitWhileRecording(win: BrowserWindow): Promise<void> {
+  guardPromptOpen = true
+  try {
+    // 창을 숨겨 둔 채 녹음 중이면(트레이에서 종료) 다이얼로그를 띄울 창부터 보여 준다
+    if (!win.isVisible()) win.show()
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning',
+      buttons: QUIT_BUTTONS,
+      defaultId: 0,
+      cancelId: 1,
+      message: '녹음 중입니다.',
+      detail: '종료하기 전에 지금까지 녹음된 내용을 저장합니다. 전사·요약은 다음 실행 때 다시 처리할 수 있습니다.'
+    })
+    if (quitChoiceToAction(response) === 'cancel') return
+
+    if (!win.isDestroyed()) {
+      const result = await recordingGuard.requestStopAndSave(sendRecorderCommand(win), false)
+      if (!result.success && !win.isDestroyed()) {
+        const { response: retry } = await dialog.showMessageBox(win, {
+          type: 'warning',
+          buttons: ['그래도 종료', '돌아가기'],
+          defaultId: 1,
+          cancelId: 1,
+          message: '녹음을 저장하지 못했습니다.',
+          detail: `종료하면 녹음된 내용이 사라집니다.${result.error ? `\n(${result.error})` : ''}`
+        })
+        if (forceChoiceToAction(retry) === 'cancel') return
+      }
+    }
+    quitConfirmed = true
+    app.quit()
+  } finally {
+    guardPromptOpen = false
+  }
+}
 
 // 녹음 오디오 재생용 커스텀 프로토콜 (renderer는 userData 경로를 모르고 file://는 막힘).
 // 반드시 app ready 전에 등록해야 한다.
@@ -36,7 +157,8 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 function createWindow(): void {
-  mainWindow = new BrowserWindow({
+  forceCloseWindow = false
+  const win = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 800,
@@ -50,13 +172,44 @@ function createWindow(): void {
       nodeIntegration: false
     }
   })
+  mainWindow = win
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
   })
 
+  // 녹음 중 창 닫기(X/Cmd+W) 가드. 확인을 마친 닫기와 앱 종료 중 닫기는 통과시킨다.
+  mainWindow.on('close', (event) => {
+    if (forceCloseWindow || quitConfirmed || !recordingGuard.isActive()) return
+    event.preventDefault()
+    if (guardPromptOpen) return
+    void confirmCloseWhileRecording(win)
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
+    recoverAfterRendererGone()
+  })
+
+  // 렌더러 크래시 — 녹음은 사라졌으므로 'recording' 행을 정리한다
+  mainWindow.webContents.on('render-process-gone', () => {
+    recoverAfterRendererGone()
+  })
+
+  // 메인 프레임 이동 차단 — 파일 드롭·링크 클릭 등으로 앱 페이지를 벗어나면 녹음과 상태가
+  // 사라진다(외부 링크는 setWindowOpenHandler가 브라우저로 연다). 같은 문서로의 이동(새로고침,
+  // 개발 모드 HMR 전체 새로고침)은 통과시킨다.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const current = win.webContents.getURL()
+    if (current && stripHash(url) === stripHash(current)) return
+    event.preventDefault()
+  })
+
+  // 메인 프레임 이동 확정(첫 로드·새로고침) — 새로고침은 'closed'/'render-process-gone' 없이
+  // 이전 렌더러의 녹음기를 없앤다. 새 렌더러가 녹음을 시작하기 전에 이전 잔재를 정리한다.
+  // (did-start-loading은 다운로드로 바뀌는 이동에서도 발생해 살아 있는 녹음을 건드리므로 쓰지 않는다)
+  mainWindow.webContents.on('did-navigate', () => {
+    recoverAfterRendererGone()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -204,6 +357,14 @@ app.whenReady().then(() => {
   registerReleaseNoteIpc()
   registerBackupIpc()
   registerProjectSyncIpc()
+  ipcMain.on('recorder:state', (event, payload) => {
+    if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents) {
+      recordingGuard.setState(payload)
+    }
+  })
+  ipcMain.on('recorder:command-done', (_event, payload) => {
+    recordingGuard.handleCommandDone(payload)
+  })
   startNotificationService()
   createTrayWidget(() => createWindow())
 
@@ -219,7 +380,14 @@ app.whenReady().then(() => {
   })
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  // 녹음 중이면 종료를 멈추고 저장 여부를 묻는다. 확인 후 app.quit()이 다시 들어온다.
+  if (!quitConfirmed && recordingGuard.isActive() && mainWindow && !mainWindow.isDestroyed()) {
+    event.preventDefault()
+    if (!guardPromptOpen) void confirmQuitWhileRecording(mainWindow)
+    return
+  }
+  // 아래 정리는 종료가 실제로 진행될 때만 실행한다(위에서 막힌 종료에서는 트레이 등을 살려 둔다).
   // 타이머/트레이 먼저 정지 (in-flight async 콜백이 DB에 접근하는 race 회피)
   stopNotificationService()
   destroyTrayWidget()

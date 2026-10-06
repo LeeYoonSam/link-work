@@ -190,11 +190,29 @@ const api = {
       ipcRenderer.invoke('recording:setExpectedSpeakers', id, n),
     setAttendees: (meetingId: number, memberIds: number[]) =>
       ipcRenderer.invoke('recording:setAttendees', meetingId, memberIds),
+    discardDraft: (id: number) => ipcRenderer.invoke('recording:discardDraft', id),
     onStream: (callback: (event: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => callback(data)
       ipcRenderer.on('recording:stream', handler)
       return () => ipcRenderer.removeListener('recording:stream', handler)
     }
+  },
+  // 녹음기 ↔ main 가드 브리지 — 창 닫기/앱 종료 시 녹음 중 여부 확인과 저장 요청에 쓰인다
+  recorder: {
+    reportState: (s: { active: boolean; draftId: number | null }) =>
+      ipcRenderer.send('recorder:state', s),
+    onCommand: (
+      handler: (cmd: { type: 'stop-and-save'; requestId: string; process: boolean }) => void
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        cmd: { type: 'stop-and-save'; requestId: string; process: boolean }
+      ): void => handler(cmd)
+      ipcRenderer.on('recorder:command', listener)
+      return () => ipcRenderer.removeListener('recorder:command', listener)
+    },
+    commandDone: (r: { requestId: string; success: boolean; error?: string }) =>
+      ipcRenderer.send('recorder:command-done', r)
   },
   // 인식 보조 장치(용어집·구성원) — 로컬 DB에만 저장되며 전사 힌트/후보정/요약 프롬프트에 쓰인다
   recognitionAids: {

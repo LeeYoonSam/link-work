@@ -8,6 +8,7 @@ import { runMeetingSummary } from '../services/meeting-summary'
 import { wavDurationMs } from '../services/wav-util'
 import { cancelPipeline } from '../services/pipeline-abort'
 import { setAttendees, listAttendees } from '../services/recognition-aids'
+import { recoverOrphanRecordings, discardDraft } from '../services/recording-recovery'
 import type {
   RecordingStreamEvent,
   SendStream,
@@ -125,6 +126,9 @@ export function registerRecordingIpc(): void {
 
   // 앱 시작 시 1회: 지난 세션에서 크래시로 'processing'에 박제된 회의를 복구한다.
   restoreStuckProcessing(db)
+  // 같은 시점에 'recording'으로 남은 회의도 정리한다. 앱 시작 직후엔 아직 어떤 렌더러도
+  // 녹음을 시작하지 않았으므로 전부 지난 세션(창 닫기·크래시·종료)의 잔재다.
+  recoverOrphanRecordings(db, null)
 
   const streamTo = (event: Electron.IpcMainInvokeEvent): SendStream => {
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -247,6 +251,13 @@ export function registerRecordingIpc(): void {
       return { path: fileName }
     }
   )
+
+  // 녹음 시작 실패·취소 시 draft 행 삭제. 오디오가 없는 'recording' 행만 지운다(그 외 false).
+  ipcMain.handle('recording:discardDraft', (_e, id: number) => {
+    const success = discardDraft(db, id)
+    if (success) logActivity('meeting', 'delete', id)
+    return { success }
+  })
 
   // 전사+화자분리+VAD 파이프라인 (서비스에 위임, 진행률은 recording:stream)
   // opts.skipTranscribe=true면 재전사 없이 기존 전사로 정제/화자분리만 다시 수행(빠른 재적용)

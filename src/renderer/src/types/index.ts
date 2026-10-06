@@ -726,7 +726,25 @@ export interface RecordingAPI {
   linkProject: (id: number, projectId: number | null) => Promise<{ success: boolean }>
   setExpectedSpeakers: (id: number, n: number | null) => Promise<{ success: boolean }>
   setAttendees: (meetingId: number, memberIds: number[]) => Promise<{ success: boolean }>
+  // 녹음 시작 실패·취소 시 draft 행 삭제. status='recording'이고 오디오가 없는 행만 지운다.
+  discardDraft: (id: number) => Promise<{ success: boolean }>
   onStream: (cb: (e: RecordingStreamEvent) => void) => () => void
+}
+
+// main → 렌더러 녹음 명령 (창 닫기/앱 종료 가드가 녹음 저장을 요청할 때)
+export interface RecorderCommand {
+  type: 'stop-and-save'
+  requestId: string
+  // true면 저장 후 전사·요약까지 진행, false면 저장만(앱 종료 직전)
+  process: boolean
+}
+
+// 렌더러 녹음기 ↔ main 가드 브리지
+export interface RecorderBridgeAPI {
+  // active = 녹음기 상태가 'recording'|'paused'|'stopped'(저장 전)
+  reportState: (s: { active: boolean; draftId: number | null }) => void
+  onCommand: (handler: (cmd: RecorderCommand) => void) => () => void
+  commandDone: (r: { requestId: string; success: boolean; error?: string }) => void
 }
 
 export interface ExportAPI {

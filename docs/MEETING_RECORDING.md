@@ -584,3 +584,34 @@ components/recording/
 - **구 파이프라인 회의** → "다시 분석 후 요약 생성": 전체 재처리(컷편집 → 용어집·참석자 힌트로 재전사 → 후보정 → 화자분리) 후 자동 요약. 수동으로 고친 발언·화자 지정은 초기화된다(merge가 세그먼트를 재생성).
 - **현재 파이프라인 회의** → 요약만 재생성(전사·수동 수정 보존, `[참고 정보]` 블록은 항상 반영).
 "전체 다시 처리"는 버전과 무관하게 항상 재전사 + 요약 재생성이다(`recordingStore.reprocessMeeting`이 성공·전사 시 `summarizeMeeting`을 호출).
+
+## 14. 녹음 수명주기와 비정상 종료 복구
+
+**불변식**: `meetings.status='recording'` 행(draft)은 렌더러 녹음기 세션과 수명이 같다. 세션이 정상 종료되면 오디오가 저장되고, 시작 실패·취소되면 행을 지우며, 세션이 비정상으로 사라지면 main이 행을 `failed`로 돌려 '녹음 중' 배지가 박제되지 않게 한다.
+
+**구성**
+- `stores/recorderStore.ts` — MediaRecorder 래퍼. `start()`는 성공 여부(boolean)를 돌려준다. `stop()`은 무한 대기하지 않는다(이미 inactive면 즉시, 요청 없는 onstop이 먼저 왔으면 보존 청크로, `STOP_TIMEOUT_MS` 안에 onstop이 없으면 남은 청크로 resolve). 결과는 `lastResult`에 남는다. onerror·예기치 않은 중단·마이크 트랙 종료는 `error` 안내를 띄우고 recording/paused를 유지해 사용자가 저장할 수 있게 한다.
+- `stores/recorderSession.ts` — 세션 오케스트레이터(모듈 함수, 화면 언마운트와 무관).
+  - `startSession` = `createDraft` → `start`; 실패면 `discardDraft` 후 throw.
+  - `stopAndSave({process})` = `stop` → `saveRecording`(실패 시 throw) → 성공 시 즉시 `reset` → `process`면 `processAndSummarize`를 **기다리지 않고** 백그라운드 실행. 재진입 시 같은 Promise를 돌려준다. 저장 실패면 `state='stopped'`·`lastResult`를 남기고 `saveError`를 띄운다.
+  - `retrySave` = 'stopped' 상태의 `lastResult`로 다시 저장. `cancelSession` = `reset` → `discardDraft`.
+  - `installRecorderBridge()`(App에서 1회) — `{active: state≠'idle', draftId}`가 바뀔 때만 `recorder:state`로 main에 보고하고, main의 `recorder:command`(`stop-and-save`)를 받아 `stopAndSave` 후 `recorder:command-done`으로 결과를 돌려준다(녹음이 없으면 즉시 success).
+- `RecorderControls` — 녹음·일시정지 중 '취소'는 확인 후 `cancelSession`. 'stopped'(저장 실패)에는 '다시 저장'·'버리기'. '종료 및 저장'은 저장 중 비활성.
+- main `services/recording-guard.ts` + `index.ts` — 창 닫기·앱 종료 가드. `services/recording-recovery.ts` — `recoverOrphanRecordings`, `discardDraft`(`recording:discardDraft`: 오디오 없는 'recording' 행만 삭제).
+
+- `startSession`도 재진입 가드가 있다(권한 팝업·화면 선택창 대기 중 시작 버튼 재클릭 시 draft 2개·스트림 누수 방지). 시작 버튼은 진행 중 '시작 중...'으로 비활성화된다.
+- **'저장하고 닫기'의 한계**: 창을 닫으면 main의 전사 파이프라인(`recording:process`)은 계속 돌지만, 렌더러가 맡던 자동 요약(`processAndSummarize`의 요약 단계)은 실행되지 않는다. 회의는 'transcribed' 상태로 남으며 상세 화면에서 요약을 직접 실행해야 한다.
+
+**원인과 대응**
+
+| # | 상황 | 이전 동작 | 대응 |
+|---|---|---|---|
+| C1 | 녹음 중 창 닫기(macOS는 앱 유지) | 렌더러와 녹음이 사라지고 행은 영원히 '녹음 중' | 창 close 가드: '녹음 계속(창 숨기기)' / '저장하고 닫기' / '돌아가기'. 창이 실제로 닫히면 고아 행 복구 |
+| C2 | '취소' 버튼 | 녹음기만 reset, draft 행 고아 | 확인 후 `cancelSession`이 행 삭제 |
+| C3 | 시작 실패(마이크 권한 거부 등) | draft 행이 먼저 생기고 남음 | `start()`가 false → `discardDraft` |
+| C4 | MediaRecorder 비정상 중단 | `stop()`이 영원히 pending, 녹음 유실 | `stop()` 즉시/타임아웃 resolve, 청크 보존, `error` 안내 |
+| C5 | 종료 후 전사·요약 대기 | 수 분간 '저장 완료'+취소 상태, 저장 실패 시 blob 유실 | 저장 직후 reset·처리는 백그라운드, 실패 시 '다시 저장' |
+| C6 | 녹음 중 앱 종료(Cmd+Q·트레이) | 확인 없이 유실 + 고아 행 | before-quit 가드: '저장하고 종료'(처리 없이 저장만) / '돌아가기' |
+| C7 | 렌더러 크래시(render-process-gone) | C1과 같은 고아 | 가드 비활성화 + `recoverOrphanRecordings` |
+
+**복구 규칙(`recoverOrphanRecordings(db, keepId)`)**: 앱 시작 시(`restoreStuckProcessing` 옆)와 렌더러 소멸·창 닫힘 시 실행한다. `status='recording'`이고 `id≠keepId`인 행을 `failed`로 바꾸며, 오디오가 없으면 "녹음이 비정상 종료되어 오디오가 저장되지 않았습니다. 이 항목은 삭제해도 됩니다.", 오디오가 있으면 "녹음은 저장됐지만 처리가 완료되지 않았습니다. 다시 처리해 주세요."를 에러로 남긴다. 다른 status는 건드리지 않는다.

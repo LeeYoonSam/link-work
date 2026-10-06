@@ -11,6 +11,18 @@ export function formatElapsed(ms: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
+export interface RecorderResult {
+  blob: Blob
+  durationMs: number
+  mime: string
+}
+
+// stop() 요청 후 onstop을 기다리는 최대 시간. 넘기면 지금까지의 청크로 끝낸다.
+export const STOP_TIMEOUT_MS = 5000
+
+export const UNEXPECTED_STOP_ERROR =
+  '녹음이 예기치 않게 중단되었습니다. 종료 및 저장을 눌러 지금까지 녹음된 내용을 저장하세요.'
+
 interface RecorderStore {
   state: RecorderState
   elapsedMs: number
@@ -20,11 +32,14 @@ interface RecorderStore {
   draftId: number | null
   saving: boolean
   saveError: string | null
+  // 마지막 stop() 결과 — 저장 실패 시 재시도(다시 저장)에 쓰도록 reset 전까지 보존
+  lastResult: RecorderResult | null
 
-  start: (opts: { source: 'mic' | 'mic+system'; draftId: number }) => Promise<void>
+  // 시작 성공 시 true. 실패하면 자원을 정리하고 error·idle 상태로 false
+  start: (opts: { source: 'mic' | 'mic+system'; draftId: number }) => Promise<boolean>
   pause: () => void
   resume: () => void
-  stop: () => Promise<{ blob: Blob; durationMs: number; mime: string }>
+  stop: () => Promise<RecorderResult>
   reset: () => void
   setSaving: (saving: boolean) => void
   setSaveError: (msg: string | null) => void
@@ -56,7 +71,15 @@ let timerId: number | null = null
 let analyser: AnalyserNode | null = null
 let rafId: number | null = null
 
-let stopResolve: ((result: { blob: Blob; durationMs: number; mime: string }) => void) | null = null
+// stop() 진행 상태 — 중복 호출 시 같은 Promise를 돌려주고, onstop/타임아웃 중 먼저 온 쪽으로 끝낸다
+let stopPromise: Promise<RecorderResult> | null = null
+let stopResolve: (() => void) | null = null
+let stopReject: ((err: Error) => void) | null = null
+let stopTimeoutId: ReturnType<typeof setTimeout> | null = null
+let stopRequested = false
+
+// 녹음 세션 번호 — reset/새 start 이후 늦게 도착한 이전 녹음기의 이벤트를 무시한다
+let session = 0
 
 export const useRecorderStore = create<RecorderStore>((set) => {
   const startLevelLoop = (): void => {
@@ -100,30 +123,75 @@ export const useRecorderStore = create<RecorderStore>((set) => {
     }
   }
 
-  // 모든 트랙과 AudioContext 정리
-  const cleanup = async (): Promise<void> => {
-    stopLevelLoop()
+  // 진행 중인 구간을 누적하고 타이머·레벨미터를 멈춘다 (이미 멈춰 있으면 누적하지 않음)
+  const freezeElapsed = (): void => {
+    if (timerId !== null) {
+      accumulated += performance.now() - startTime
+      set({ elapsedMs: Math.round(accumulated) })
+    }
     stopTimer()
+    stopLevelLoop()
+  }
 
+  const clearStopTimeout = (): void => {
+    if (stopTimeoutId !== null) {
+      clearTimeout(stopTimeoutId)
+      stopTimeoutId = null
+    }
+  }
+
+  // 마이크·시스템 트랙과 AudioContext만 정리 (청크·녹음기는 유지)
+  const releaseMedia = (): void => {
     micStream?.getTracks().forEach((t) => t.stop())
     systemStream?.getTracks().forEach((t) => t.stop())
     micStream = null
     systemStream = null
 
     if (audioCtx) {
-      try {
-        await audioCtx.close()
-      } catch {
-        // 이미 닫혀있을 수 있음 — 무시
-      }
+      audioCtx.close().catch(() => {})
       audioCtx = null
     }
+    analyser = null
+  }
+
+  // 녹음이 요청 없이 끊겼을 때(onerror·예기치 않은 onstop·마이크 트랙 종료).
+  // state는 그대로 두어 사용자가 '종료 및 저장'으로 지금까지의 청크를 저장할 수 있게 한다.
+  const handleUnexpectedStop = (): void => {
+    if (stopRequested) return
+    freezeElapsed()
+    set({ error: UNEXPECTED_STOP_ERROR })
+  }
+
+  // 모든 트랙과 AudioContext 정리
+  const cleanup = async (): Promise<void> => {
+    stopLevelLoop()
+    stopTimer()
+    clearStopTimeout()
+
+    micStream?.getTracks().forEach((t) => t.stop())
+    systemStream?.getTracks().forEach((t) => t.stop())
+    micStream = null
+    systemStream = null
 
     analyser = null
     mediaRecorder = null
     chunks = []
     accumulated = 0
     startTime = 0
+    stopPromise = null
+    stopResolve = null
+    stopReject = null
+    stopRequested = false
+
+    if (audioCtx) {
+      const ctx = audioCtx
+      audioCtx = null
+      try {
+        await ctx.close()
+      } catch {
+        // 이미 닫혀있을 수 있음 — 무시
+      }
+    }
   }
 
   return {
@@ -134,9 +202,11 @@ export const useRecorderStore = create<RecorderStore>((set) => {
     draftId: null,
     saving: false,
     saveError: null,
+    lastResult: null,
 
     start: async (opts) => {
-      set({ error: null, draftId: opts.draftId })
+      const mySession = ++session
+      set({ error: null, draftId: opts.draftId, lastResult: null })
 
       try {
         // 1) 마이크 스트림 획득
@@ -210,19 +280,37 @@ export const useRecorderStore = create<RecorderStore>((set) => {
         const recorder = new MediaRecorder(dest.stream, recorderOpts)
         mediaRecorder = recorder
         chunks = []
+        stopRequested = false
 
         recorder.ondataavailable = (e) => {
+          if (mySession !== session) return
           if (e.data && e.data.size > 0) {
             chunks.push(e.data)
           }
         }
 
         recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: currentMime || 'audio/webm' })
-          const durationMs = accumulated
-          stopResolve?.({ blob, durationMs, mime: currentMime || 'audio/webm' })
-          stopResolve = null
+          if (mySession !== session) return
+          if (stopRequested) {
+            stopResolve?.()
+          } else {
+            // 요청 없는 중단 — 청크는 보존하고 이후 stop()이 그걸로 끝낸다
+            handleUnexpectedStop()
+          }
         }
+
+        recorder.onerror = () => {
+          if (mySession !== session) return
+          handleUnexpectedStop()
+        }
+
+        // 마이크 장치가 빠지거나 권한이 회수되면 트랙이 끝난다
+        mic.getAudioTracks().forEach((t) =>
+          t.addEventListener('ended', () => {
+            if (mySession !== session) return
+            handleUnexpectedStop()
+          })
+        )
 
         recorder.start(100) // 100ms 청크
 
@@ -232,10 +320,12 @@ export const useRecorderStore = create<RecorderStore>((set) => {
         startLevelLoop()
 
         set({ state: 'recording' })
+        return true
       } catch (err) {
         await cleanup()
         const msg = err instanceof Error ? err.message : String(err)
         set({ error: `녹음을 시작할 수 없습니다: ${msg}`, state: 'idle', draftId: null })
+        return false
       }
     },
 
@@ -244,9 +334,7 @@ export const useRecorderStore = create<RecorderStore>((set) => {
 
       mediaRecorder.pause()
       // 누적 시간 저장
-      accumulated += performance.now() - startTime
-      stopTimer()
-      stopLevelLoop()
+      freezeElapsed()
       set({ state: 'paused' })
     },
 
@@ -259,48 +347,85 @@ export const useRecorderStore = create<RecorderStore>((set) => {
       set({ state: 'recording' })
     },
 
+    // 절대 무한 대기하지 않는다: 이미 멈춘 녹음기는 즉시, 그 외엔 onstop 또는
+    // STOP_TIMEOUT_MS 중 먼저 오는 쪽에서 지금까지의 청크로 끝낸다.
     stop: () => {
-      return new Promise<{ blob: Blob; durationMs: number; mime: string }>((resolve, reject) => {
-        const recorder = mediaRecorder
-        if (!recorder) {
-          reject(new Error('MediaRecorder가 초기화되지 않았습니다.'))
-          return
+      if (stopPromise) return stopPromise
+
+      const recorder = mediaRecorder
+      if (!recorder) {
+        return Promise.reject(new Error('MediaRecorder가 초기화되지 않았습니다.'))
+      }
+
+      stopRequested = true
+      // 마지막 구간 누적
+      freezeElapsed()
+
+      stopPromise = new Promise<RecorderResult>((resolve, reject) => {
+        stopReject = (err) => {
+          clearStopTimeout()
+          stopResolve = null
+          stopReject = null
+          reject(err)
         }
-
-        // 마지막 구간 누적
-        if (recorder.state === 'recording') {
-          accumulated += performance.now() - startTime
-        }
-        stopTimer()
-        stopLevelLoop()
-
-        stopResolve = (result) => {
-          // 트랙 정리 (AudioContext 포함)
-          micStream?.getTracks().forEach((t) => t.stop())
-          systemStream?.getTracks().forEach((t) => t.stop())
-          micStream = null
-          systemStream = null
-
-          if (audioCtx) {
-            audioCtx.close().catch(() => {})
-            audioCtx = null
+        stopResolve = () => {
+          clearStopTimeout()
+          stopResolve = null
+          stopReject = null
+          const mime = currentMime || 'audio/webm'
+          const result: RecorderResult = {
+            blob: new Blob(chunks, { type: mime }),
+            durationMs: Math.round(accumulated),
+            mime
           }
-          analyser = null
-
-          set({ state: 'stopped' })
+          // 트랙 정리 (AudioContext 포함)
+          releaseMedia()
+          set({ state: 'stopped', lastResult: result })
           resolve(result)
         }
-
-        try {
-          recorder.stop()
-        } catch (err) {
-          stopResolve = null
-          reject(err instanceof Error ? err : new Error(String(err)))
-        }
       })
+      // reset으로 거부된 Promise를 아무도 기다리지 않아도 unhandled rejection이 되지 않게
+      stopPromise.catch(() => {})
+      const promise = stopPromise
+
+      if (recorder.state === 'inactive') {
+        // 이미 멈춘 녹음기(예기치 않은 중단 등) — stop()은 no-op이라 onstop이 오지 않는다
+        stopResolve?.()
+        return promise
+      }
+
+      stopTimeoutId = setTimeout(() => {
+        stopTimeoutId = null
+        stopResolve?.()
+      }, STOP_TIMEOUT_MS)
+
+      try {
+        recorder.stop()
+      } catch {
+        // 상태가 꼬여 stop이 던지면 지금까지의 청크로 끝낸다
+        stopResolve?.()
+      }
+      return promise
     },
 
     reset: () => {
+      session++
+      const recorder = mediaRecorder
+      if (recorder) {
+        // 늦게 오는 이벤트가 새 상태를 건드리지 않게 핸들러를 먼저 분리
+        recorder.ondataavailable = null
+        recorder.onstop = null
+        recorder.onerror = null
+        if (recorder.state !== 'inactive') {
+          try {
+            recorder.stop()
+          } catch {
+            // 이미 멈춘 경우 — 무시
+          }
+        }
+      }
+      // 저장 없이 끝나는 pending stop은 거부해 기다리는 쪽이 멈추지 않게 한다
+      stopReject?.(new Error('녹음이 취소되었습니다.'))
       void cleanup()
       set({
         state: 'idle',
@@ -309,7 +434,8 @@ export const useRecorderStore = create<RecorderStore>((set) => {
         error: null,
         draftId: null,
         saving: false,
-        saveError: null
+        saveError: null,
+        lastResult: null
       })
     },
 

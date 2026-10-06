@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { formatElapsed, useRecorderStore } from '../../stores/recorderStore'
-import { useRecordingStore } from '../../stores/recordingStore'
+import { cancelSession, retrySave, startSession, stopAndSave } from '../../stores/recorderSession'
 import { useRecognitionAidsStore } from '../../stores/recognitionAidsStore'
 import type { MeetingKind, MeetingSource } from '../../types'
 import { button } from '../ui'
@@ -15,7 +15,6 @@ const KIND_LABEL: Record<MeetingKind, string> = {
 }
 
 export default function RecorderControls({ onDone }: Props): React.ReactNode {
-  const { createDraft, saveAndProcess } = useRecordingStore()
   // 녹음 상태는 화면(View) 언마운트에도 유지되도록 전역 스토어에 있다.
   // 다른 메뉴로 이동해도 녹음은 계속되고, 돌아오면 이 컴포넌트가 이어서 표시한다.
   const {
@@ -23,15 +22,10 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
     elapsedMs,
     level,
     error,
-    draftId,
     saving,
     saveError,
-    start,
     pause,
     resume,
-    stop,
-    reset,
-    setSaving,
     setSaveError
   } = useRecorderStore()
 
@@ -50,6 +44,8 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
   const [compactAudio, setCompactAudio] = useState(true)
   // 면접 녹음은 지원자 동의가 전제다. 고지를 확인해야만 시작 버튼이 활성화된다.
   const [consent, setConsent] = useState(false)
+  // 시작 진행 중(권한 팝업·화면 선택창 대기) — 버튼 중복 클릭을 막는다
+  const [starting, setStarting] = useState(false)
 
   // 참석자 칩에 쓸 구성원 목록. 인식 보조 패널에서 방금 추가했을 수도 있으니 열 때마다 읽는다.
   useEffect(() => {
@@ -90,41 +86,64 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
     setAutoFilledCount(suggested)
   }
 
+  // 녹음 수명주기(draft 행 생성·삭제, 저장, 후속 처리)는 recorderSession이 맡는다.
+  // 화면이 언마운트돼도 main의 창 닫기/앱 종료 가드가 같은 경로로 저장할 수 있게 하기 위해서다.
   const handleStart = async (): Promise<void> => {
-    setSaveError(null)
+    if (starting) return
+    setStarting(true)
     try {
       const parsed = speakerCount.trim() === '' ? NaN : parseInt(speakerCount, 10)
       const expected_speakers = Number.isNaN(parsed) ? null : parsed
-      const id = await createDraft({
+      await startSession({
         source,
         kind,
         expected_speakers,
         attendee_ids: attendeeIds,
         compact_audio: compactAudio
       })
-      await start({ source, draftId: id })
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : '녹음 시작 실패')
+    } finally {
+      setStarting(false)
     }
   }
 
+  // 오디오 저장까지만 기다리고 닫는다. 전사·요약은 백그라운드에서 진행된다.
+  // 실패 시 recorderSession이 saveError를 세팅하고 'stopped' 상태로 남겨 재시도할 수 있게 한다.
   const handleStop = async (): Promise<void> => {
-    if (draftId == null) return
-    setSaving(true)
-    setSaveError(null)
+    if (saving) return
     try {
-      const { blob, durationMs, mime } = await stop()
-      await saveAndProcess(draftId, blob, durationMs, mime)
-      reset()
+      await stopAndSave({ process: true })
       onDone()
-    } catch (e) {
-      setSaveError(e instanceof Error ? e.message : '저장 실패')
-      setSaving(false)
+    } catch {
+      // saveError로 표시된다
     }
   }
 
-  const handleCancel = (): void => {
-    reset()
+  const handleRetrySave = async (): Promise<void> => {
+    if (saving) return
+    try {
+      await retrySave()
+      onDone()
+    } catch {
+      // saveError로 표시된다
+    }
+  }
+
+  // 녹음·일시정지 중 취소는 녹음 내용과 draft 회의를 지우므로 확인을 받는다.
+  const handleCancelRecording = async (): Promise<void> => {
+    if (!window.confirm('녹음을 취소하면 지금까지 녹음된 내용이 삭제됩니다. 취소할까요?')) return
+    await cancelSession()
+    onDone()
+  }
+
+  // 저장 실패로 남은 녹음을 버린다 — 버튼 자체가 명시적인 선택이라 확인은 생략한다.
+  const handleDiscard = async (): Promise<void> => {
+    await cancelSession()
+    onDone()
+  }
+
+  const handleClose = (): void => {
     onDone()
   }
 
@@ -304,12 +323,12 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
           <button
             type="button"
             onClick={handleStart}
-            disabled={isInterview && !consent}
+            disabled={starting || (isInterview && !consent)}
             title={isInterview && !consent ? '동의 확인 후 시작할 수 있습니다' : undefined}
             className={`px-3 py-1.5 text-xs font-medium ${button.primary} flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed`}
           >
             <RecordIcon />
-            {isInterview ? '면접 녹음 시작' : '녹음 시작'}
+            {starting ? '시작 중...' : isInterview ? '면접 녹음 시작' : '녹음 시작'}
           </button>
         )}
 
@@ -353,15 +372,34 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
           </>
         )}
 
+        {/* 'stopped'는 오디오 저장이 실패해 녹음이 보존된 상태다(성공하면 바로 idle로 돌아간다) */}
         {isStopped && (
-          <span className="text-xs text-gray-500">저장 완료</span>
+          <>
+            <button
+              type="button"
+              onClick={handleRetrySave}
+              disabled={saving}
+              className={`px-3 py-1.5 text-xs font-medium ${button.dark} disabled:opacity-50`}
+            >
+              {saving ? '저장 중...' : '다시 저장'}
+            </button>
+            <button
+              type="button"
+              onClick={handleDiscard}
+              disabled={saving}
+              className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+            >
+              버리기
+            </button>
+          </>
         )}
 
-        {!isIdle && (
+        {(isRecording || isPaused) && (
           <button
             type="button"
-            onClick={handleCancel}
-            className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+            onClick={handleCancelRecording}
+            disabled={saving}
+            className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
           >
             취소
           </button>
@@ -370,7 +408,7 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
         {isIdle && (
           <button
             type="button"
-            onClick={handleCancel}
+            onClick={handleClose}
             className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
           >
             닫기

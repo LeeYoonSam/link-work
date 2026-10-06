@@ -37,7 +37,7 @@ interface RecordingStore {
   closeMeeting: () => void
   refreshCurrent: () => Promise<void>
 
-  // 녹음 완료 → 저장+처리+요약 오케스트레이션
+  // 녹음 완료 → 저장+처리+요약 (세션 오케스트레이션은 recorderSession.ts)
   createDraft: (input: {
     title?: string
     source: 'mic' | 'mic+system'
@@ -49,7 +49,12 @@ interface RecordingStore {
     // 처리 전 긴 침묵을 잘라낼지 여부(기본 true)
     compact_audio?: boolean
   }) => Promise<number>
-  saveAndProcess: (meetingId: number, blob: Blob, durationMs: number, mime: string) => Promise<void>
+  // 녹음 오디오 저장 — 실패하면 throw한다(호출자가 blob을 보존해 재시도할 수 있게).
+  saveRecording: (meetingId: number, blob: Blob, durationMs: number, mime: string) => Promise<void>
+  // 저장된 녹음의 전사+화자분리 → 요약. 수 분 걸리므로 백그라운드로 호출하며 에러는 삼킨다.
+  processAndSummarize: (meetingId: number) => Promise<void>
+  // 시작 실패·취소된 draft 행 삭제(오디오 없는 'recording' 행만 main이 지운다)
+  discardDraft: (id: number) => Promise<void>
   summarizeMeeting: (id: number) => Promise<void>
   reprocessMeeting: (id: number, fast?: boolean) => Promise<void>
   // 진행 중인 처리(전사/화자분리/요약)를 취소한다
@@ -140,34 +145,38 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
     return result.id
   },
 
-  saveAndProcess: async (meetingId, blob, durationMs, mime) => {
+  saveRecording: async (meetingId, blob, durationMs, mime) => {
+    // 오디오 저장 — whisper 입력 포맷(16kHz mono WAV)으로 변환해 저장한다.
+    // WAV는 duration 메타데이터도 갖춰 재생 표시가 정확하다.
+    // 변환 실패 시 원본(webm)을 저장하고 폴백 전사로 진행한다.
+    let bytes: ArrayBuffer
+    let saveMime = mime
+    let saveDuration = durationMs
+    let channelEnergy: { hopMs: number; left: number[]; right: number[] } | null = null
     try {
-      // 1) 오디오 저장 — whisper 입력 포맷(16kHz mono WAV)으로 변환해 저장한다.
-      //    WAV는 duration 메타데이터도 갖춰 재생 표시가 정확하다.
-      //    변환 실패 시 원본(webm)을 저장하고 폴백 전사로 진행한다.
-      let bytes: ArrayBuffer
-      let saveMime = mime
-      let saveDuration = durationMs
-      let channelEnergy: { hopMs: number; left: number[]; right: number[] } | null = null
-      try {
-        const converted = await blobToWav16kMono(blob)
-        bytes = converted.wav
-        saveMime = 'audio/wav'
-        if (converted.durationMs > 0) saveDuration = converted.durationMs
-        channelEnergy = converted.channelEnergy
-      } catch (convErr) {
-        console.warn('[recordingStore] WAV 변환 실패, 원본 저장:', convErr)
-        bytes = await blob.arrayBuffer()
-      }
-      await window.api.recording.saveAudio(
-        meetingId,
-        bytes,
-        { mime: saveMime, durationMs: saveDuration },
-        channelEnergy
-      )
-      await get().refreshCurrent()
+      const converted = await blobToWav16kMono(blob)
+      bytes = converted.wav
+      saveMime = 'audio/wav'
+      if (converted.durationMs > 0) saveDuration = converted.durationMs
+      channelEnergy = converted.channelEnergy
+    } catch (convErr) {
+      console.warn('[recordingStore] WAV 변환 실패, 원본 저장:', convErr)
+      bytes = await blob.arrayBuffer()
+    }
+    await window.api.recording.saveAudio(
+      meetingId,
+      bytes,
+      { mime: saveMime, durationMs: saveDuration },
+      channelEnergy
+    )
+    await get().fetchMeetings()
+    await get().refreshCurrent()
+  },
 
-      // 2) 전사+화자분리+VAD 파이프라인
+  processAndSummarize: async (meetingId) => {
+    try {
+      // 1) 전사+화자분리+VAD 파이프라인
+      // process IPC는 반드시 첫 await 전에 보낸다 — recorderSession.stopAndSave 순서 주의 참고.
       const processResult = await window.api.recording.process(meetingId)
       await get().refreshCurrent()
 
@@ -176,15 +185,25 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
         return
       }
 
-      // 3) AI 요약 — 실제 전사가 있을 때만 자동 실행.
+      // 2) AI 요약 — 실제 전사가 있을 때만 자동 실행.
       // 폴백 전사(엔진 미설치/빈 전사)면 불필요한 Claude 호출을 건너뛴다.
       if (processResult.transcribed) {
         await get().summarizeMeeting(meetingId)
       }
     } catch (err) {
-      console.error('[recordingStore] saveAndProcess error:', err)
+      console.error('[recordingStore] processAndSummarize error:', err)
       await get().refreshCurrent()
     }
+  },
+
+  discardDraft: async (id) => {
+    try {
+      const result = await window.api.recording.discardDraft(id)
+      if (!result.success) console.warn('[recordingStore] discardDraft skipped:', id)
+    } catch (err) {
+      console.error('[recordingStore] discardDraft error:', err)
+    }
+    await get().fetchMeetings()
   },
 
   summarizeMeeting: async (id) => {
