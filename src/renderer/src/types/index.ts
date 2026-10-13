@@ -677,6 +677,35 @@ export interface ChannelEnergy {
   right: number[]
 }
 
+// ── 회의록 (요약 완료된 회의를 문서처럼 열람) — docs/MEETING_NOTES.md ──
+export interface MeetingNoteFilter {
+  q?: string                      // 검색어(공백 trim, 빈 문자열은 무시)
+  kind?: 'all' | MeetingKind      // 기본 'all'
+  projectId?: number | null       // undefined=전체, null=프로젝트 미지정만, 숫자=해당 프로젝트
+}
+
+export interface MeetingNoteItem {
+  id: number
+  title: string
+  kind: MeetingKind
+  started_at: string
+  duration_ms: number
+  project_id: number | null
+  project_name: string | null
+  tldr: string | null
+  key_point_count: number
+  decision_count: number
+  action_item_count: number
+  open_action_count: number       // action_items 중 todo_id가 없는 개수
+  attendee_names: string[]        // meeting_attendees JOIN meeting_members 이름(없으면 [])
+  generated_at: string            // 요약 생성 시각
+}
+
+export interface MeetingNotesAPI {
+  list: (filter?: MeetingNoteFilter) => Promise<MeetingNoteItem[]>   // started_at DESC
+  markdown: (id: number) => Promise<string>                           // 회의록 Markdown 문서 (없으면 '')
+}
+
 export interface RecordingAPI {
   list: () => Promise<Meeting[]>
   get: (id: number) => Promise<MeetingDetail | null>

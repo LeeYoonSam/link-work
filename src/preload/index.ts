@@ -197,6 +197,12 @@ const api = {
       return () => ipcRenderer.removeListener('recording:stream', handler)
     }
   },
+  // 회의록 — 요약 완료된 회의 목록·검색·Markdown (docs/MEETING_NOTES.md)
+  meetingNotes: {
+    list: (filter?: { q?: string; kind?: string; projectId?: number | null }) =>
+      ipcRenderer.invoke('meetingNotes:list', filter),
+    markdown: (id: number) => ipcRenderer.invoke('meetingNotes:markdown', id)
+  },
   // 녹음기 ↔ main 가드 브리지 — 창 닫기/앱 종료 시 녹음 중 여부 확인과 저장 요청에 쓰인다
   recorder: {
     reportState: (s: { active: boolean; draftId: number | null }) =>

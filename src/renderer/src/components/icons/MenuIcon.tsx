@@ -11,6 +11,7 @@ export type MenuIconName =
   | 'reports'
   | 'ai'
   | 'recordings'
+  | 'notes'
   | 'releases'
 
 const PATHS: Record<MenuIconName, React.ReactNode> = {
@@ -156,6 +157,23 @@ const PATHS: Record<MenuIconName, React.ReactNode> = {
       <path d="M12 18v3.2" stroke={INK} strokeWidth="1.9" strokeLinecap="round" />
       <path d="M8.6 21.4h6.8" stroke={INK} strokeWidth="1.9" strokeLinecap="round" />
       <circle cx="12" cy="6" r="1.5" fill="#fff" />
+    </>
+  ),
+  notes: (
+    <>
+      <path
+        d="M6 2.5h9l4.5 4.5v12.5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-15a2 2 0 0 1 2-2Z"
+        fill="#F8F9FA"
+        stroke={INK}
+        strokeWidth="1.9"
+        strokeLinejoin="round"
+      />
+      <path d="M15 2.5V7h4.5" fill="#63E6BE" stroke={INK} strokeWidth="1.9" strokeLinejoin="round" />
+      <g stroke={INK} strokeWidth="1.8" strokeLinecap="round">
+        <path d="M7.8 11h8" />
+        <path d="M7.8 14.5h8" />
+        <path d="M7.8 18h5" />
+      </g>
     </>
   ),
   releases: (

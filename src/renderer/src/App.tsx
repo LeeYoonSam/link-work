@@ -14,6 +14,7 @@ import WeeklyReport from './components/report/WeeklyReport'
 import TrayPanel from './components/tray/TrayPanel'
 import AiChatView from './components/ai/AiChatView'
 import RecordingView from './components/recording/RecordingView'
+import MeetingNotesView from './components/notes/MeetingNotesView'
 import ReleasesView from './components/project/ReleasesView'
 import { useProjectStore } from './stores/projectStore'
 import { installRecorderBridge } from './stores/recorderSession'
@@ -64,6 +65,8 @@ function App(): React.ReactNode {
         return <AiChatView />
       case 'recordings':
         return <RecordingView />
+      case 'notes':
+        return <MeetingNotesView />
       case 'releases':
         return <ReleasesView />
       default:

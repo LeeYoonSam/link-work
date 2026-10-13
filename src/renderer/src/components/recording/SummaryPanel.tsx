@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
+import { useMeetingNotesStore } from '../../stores/meetingNotesStore'
+import { useProjectStore } from '../../stores/projectStore'
 import type { ActionItem, MeetingSummary } from '../../types'
 import { EmptyState, ProgressBar } from '../ui'
 
@@ -157,11 +159,21 @@ export default function SummaryPanel({ summary, meetingId }: Props): React.React
       )}
 
       {/* 생성 정보 (요약 재생성은 상단 ↻ 메뉴에서) */}
-      <div className="pt-2 border-t border-gray-100">
+      <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
         <span className="text-[11px] text-gray-400">
           생성: {formatDate(summary.generated_at)}
           {summary.model && ` · ${summary.model}`}
         </span>
+        <button
+          type="button"
+          onClick={() => {
+            useMeetingNotesStore.getState().select(meetingId)
+            useProjectStore.getState().setView('notes')
+          }}
+          className="text-[11px] font-medium text-blue-600 hover:text-blue-700"
+        >
+          회의록으로 보기
+        </button>
       </div>
 
       {summaryError && (
