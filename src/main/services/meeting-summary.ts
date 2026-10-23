@@ -13,6 +13,7 @@ import { INTERVIEW_SPEC } from './interview-summary'
 import { buildSummaryContextBlock, loadPromptContext } from './recognition-aids'
 import type { SendStream, MeetingSummaryResult } from './meeting-types'
 import type { SummarySpec } from './summary-spec'
+import { WRITING_STYLE_JSON_NOTE, WRITING_STYLE_RULES } from './writing-style'
 
 // ── ai-agent.ts와 동일한 인증/환경 패턴 복제 (ai-agent.ts 수정 금지) ──
 
@@ -117,10 +118,15 @@ const SummarySchema = z.object({
 // ── 회의 요약 스펙 (kind='meeting') ──
 // 면접 전용 4분류는 빈 배열로 덮어써, 종류를 바꿔 재요약했을 때 이전 종류의
 // 잔여 데이터가 남지 않게 한다 (INTERVIEW_SPEC.persist와 대칭).
-const MEETING_SPEC: SummarySpec<MeetingSummaryResult> = {
+// 테스트가 공통 글쓰기 규칙 포함 여부를 확인할 수 있도록 export 한다.
+export const MEETING_SPEC: SummarySpec<MeetingSummaryResult> = {
   systemPrompt: `회의록을 분석해 한국어로 JSON만 출력하세요.
 키: tldr(string), key_points(string[]), decisions(string[]), action_items({text, assignee?, due?}[]), next_steps(string[]).
 회의에 없는 내용 생성 금지, 불확실하면 해당 배열을 비워두세요.
+
+${WRITING_STYLE_RULES}
+${WRITING_STYLE_JSON_NOTE}
+
 코드펜스 없이 순수 JSON만 출력하세요.`,
 
   buildPrompt: (transcript, contextBlock) =>

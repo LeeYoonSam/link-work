@@ -256,3 +256,5 @@ renderer의 `MarkdownContent`가 클릭을 가로채 처리한다
   반드시 따를 것 (HITL 승인, 소프트 삭제, 일괄 변경 금지, 채팅별 쓰기 모드 등).
 - **모델/턴 수 변경**: `ai-agent.ts`의 `AI_MODEL`, `MAX_TURNS` 상수.
 - **시스템 프롬프트(답변 포맷) 조정**: `ai-agent.ts`의 `buildSystemPrompt()`.
+  ASD-STE100 글쓰기 규칙은 공통 조각 `src/main/services/writing-style.ts`의 `WRITING_STYLE_RULES` 한 곳에 정의한다.
+  이 조각은 채팅·회의 요약·면접 요약 시스템 프롬프트가 모두 포함하므로, 문장 규칙은 이 파일만 고친다.

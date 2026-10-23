@@ -17,13 +17,27 @@ export default function SummaryPanel({ summary, meetingId }: Props): React.React
   // 남지 않게 한다.
   const [summarizingId, setSummarizingId] = useState<number | null>(null)
   const [summaryError, setSummaryError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const summarizing = summarizingId === meetingId
 
-  // 회의를 전환하면 이전 회의의 에러 메시지가 남지 않도록 초기화한다.
+  // 회의를 전환하면 이전 회의의 에러 메시지와 '복사됨' 표시가 남지 않도록 초기화한다.
   useEffect(() => {
     setSummaryError(null)
+    setCopied(false)
   }, [meetingId])
+
+  // 회의록 메뉴의 'Markdown 복사'와 같은 Markdown을 복사한다.
+  const handleCopy = async (): Promise<void> => {
+    try {
+      const md = await window.api.meetingNotes.markdown(meetingId)
+      await navigator.clipboard.writeText(md)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch (e) {
+      console.warn('[SummaryPanel] 회의 내용 복사 실패', e)
+    }
+  }
 
   const proc = processing[meetingId]
   const isProcessing =
@@ -164,16 +178,25 @@ export default function SummaryPanel({ summary, meetingId }: Props): React.React
           생성: {formatDate(summary.generated_at)}
           {summary.model && ` · ${summary.model}`}
         </span>
-        <button
-          type="button"
-          onClick={() => {
-            useMeetingNotesStore.getState().select(meetingId)
-            useProjectStore.getState().setView('notes')
-          }}
-          className="text-[11px] font-medium text-blue-600 hover:text-blue-700"
-        >
-          회의록으로 보기
-        </button>
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="text-[11px] font-medium text-blue-600 hover:text-blue-700"
+          >
+            {copied ? '복사됨' : '내용 복사'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              useMeetingNotesStore.getState().select(meetingId)
+              useProjectStore.getState().setView('notes')
+            }}
+            className="text-[11px] font-medium text-blue-600 hover:text-blue-700"
+          >
+            회의록으로 보기
+          </button>
+        </div>
       </div>
 
       {summaryError && (

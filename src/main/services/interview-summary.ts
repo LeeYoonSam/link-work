@@ -8,6 +8,7 @@ import type Database from 'better-sqlite3'
 import { z } from 'zod'
 import type { InterviewSummaryResult } from './meeting-types'
 import type { SummarySpec } from './summary-spec'
+import { WRITING_STYLE_JSON_NOTE, WRITING_STYLE_RULES } from './writing-style'
 
 // AI에게 ms 정수를 직접 만들게 하면 신뢰도가 낮다. 전사록에 이미 [mm:ss]가 붙어 있으므로
 // 그 표기를 그대로 돌려받아 여기서 ms로 환산한다.
@@ -62,6 +63,11 @@ const SYSTEM_PROMPT = `면접 전사록을 분석해 한국어로 JSON만 출력
   - note: 사실 서술만 (예: "구체적 수치는 언급되지 않음"). 평가 금지. 없으면 null.
 - follow_ups: [string] 답변이 모호하거나 구체성이 부족해 추가 질문이 필요한 지점
 - fact_checks: [string] 경력 기간·규모·성과 수치 등 레퍼런스 체크로 확인할 주장
+
+${WRITING_STYLE_RULES}
+${WRITING_STYLE_JSON_NOTE}
+question, quote, evidence 는 발언 원문을 유지하는 필드다. 이 3개 필드에는 글쓰기 규칙을 적용하지 않는다.
+글쓰기 규칙은 문장 형식만 정한다. 위의 평가 금지 규칙이 항상 우선한다.
 
 코드펜스 없이 순수 JSON만 출력하세요.`
 

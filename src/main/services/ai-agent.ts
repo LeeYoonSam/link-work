@@ -14,6 +14,7 @@ import { logAiAudit } from './ai-audit'
 import { isPathInAttachmentsDir } from './ai-attachments'
 import { getAiModel, resolveAiModelId } from './ai-model'
 import { isNotionConnected } from './notion'
+import { WRITING_STYLE_RULES } from './writing-style'
 
 // Agent SDK는 ESM 전용 — CJS 번들에서 require 불가하므로 동적 import로 lazy 로드
 type SdkModule = typeof import('@anthropic-ai/claude-agent-sdk')
@@ -211,7 +212,8 @@ export function findClaudeExecutable(): string | undefined {
   return candidates.find((p) => existsSync(p))
 }
 
-function buildSystemPrompt(writeMode: AiWriteMode, notionConnected: boolean): string {
+// 테스트가 공통 글쓰기 규칙 포함 여부를 확인할 수 있도록 export 한다.
+export function buildSystemPrompt(writeMode: AiWriteMode, notionConnected: boolean): string {
   const now = new Date()
   const days = ['일', '월', '화', '수', '목', '금', '토']
   const yyyy = now.getFullYear()
@@ -244,6 +246,10 @@ ${
 3. 한국어로 간결하게, 불필요한 서론 없이 핵심부터 답하세요.
 4. 마크다운을 활용하세요. 항목이 많고 속성이 여러 개면 표를 사용하세요.
 5. 날짜는 YYYY-MM-DD 형식으로 표기하세요.
+
+${WRITING_STYLE_RULES}
+- 마크다운 링크 문법 [텍스트](URL) 은 괄호 금지 규칙의 대상이 아니다.
+- 병렬 항목이 많고 속성이 여러 개면, 불릿 목록 대신 표를 쓴다. 답변 규칙 4번을 따른다.
 
 ## 외부 콘텐츠 읽기 (Notion / Jira / 웹 링크)
 1. 사용자가 웹 URL을 공유하거나 특정 웹 문서 내용을 물으면 fetch_url로 실제 내용을 읽은 뒤 답하세요.

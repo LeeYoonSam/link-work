@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import type { Memo } from '../../types'
 import MarkdownContent from './MarkdownContent'
@@ -22,6 +22,24 @@ export default function MemoViewer({ memo, onClose, onEdit }: MemoViewerProps): 
       document.body.style.overflow = ''
     }
   }, [onClose])
+
+  const [copied, setCopied] = useState(false)
+
+  // 다른 메모로 바뀌면 이전 메모의 '복사됨' 표시가 남지 않게 한다.
+  useEffect(() => {
+    setCopied(false)
+  }, [memo.id])
+
+  // 렌더된 HTML이 아니라 마크다운 원문을 복사한다.
+  const handleCopy = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(memo.content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch (e) {
+      console.warn('[MemoViewer] 메모 복사 실패', e)
+    }
+  }
 
   const isImportant = memo.is_important === 1
   const edited = memo.updated_at !== memo.created_at
@@ -48,6 +66,13 @@ export default function MemoViewer({ memo, onClose, onEdit }: MemoViewerProps): 
             ) : null}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="px-3 py-1.5 text-xs text-gray-600 bg-gray-100 rounded-md hover:bg-gray-200"
+            >
+              {copied ? '복사됨' : '메모 복사'}
+            </button>
             {onEdit ? (
               <button
                 onClick={() => onEdit(memo)}

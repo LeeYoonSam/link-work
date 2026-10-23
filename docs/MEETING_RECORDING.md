@@ -469,7 +469,7 @@ export interface VadAdapter {
 `ai-agent.ts`의 인프라(SDK lazy load, `findClaudeExecutable`, `sanitizedEnv`, `settingSources:[]`, `cwd`)를 **재사용**하되, MCP 도구 없이 단순 텍스트→JSON query. 회의 요약은 데이터 조회가 아니라 변환이므로 `allowedTools:[]`, `mcpServers` 없음.
 
 - 입력: 전사본을 `[mm:ss] 화자명: 텍스트` 라인들로 직렬화(긴 회의는 청크/길이 가드 — 너무 길면 앞부분 우선 + 길이 상한). 앞에 `buildSummaryContextBlock(loadPromptContext(db, meetingId))`의 `[참고 정보]` 블록(참석자·용어집, §12)을 붙인다 — 비어 있으면 생략. `SummarySpec.buildPrompt(transcript, contextBlock)`.
-- 시스템 프롬프트: "회의록을 분석해 한국어로 JSON만 출력. 키: tldr(string), key_points(string[]), decisions(string[]), action_items({text, assignee?, due?}[]), next_steps(string[]). 추측 금지, 회의에 없는 내용 생성 금지."
+- 시스템 프롬프트: "회의록을 분석해 한국어로 JSON만 출력. 키: tldr(string), key_points(string[]), decisions(string[]), action_items({text, assignee?, due?}[]), next_steps(string[]). 추측 금지, 회의에 없는 내용 생성 금지." 회의·면접 요약 시스템 프롬프트는 공통 조각 `src/main/services/writing-style.ts`의 ASD-STE100 글쓰기 규칙과 JSON 보조 안내를 포함하고, "순수 JSON만 출력" 문장을 마지막에 둔다.
 - 출력 파싱: 응답에서 JSON 블록 추출(코드펜스 허용) → zod 검증(`zod`는 이미 의존성) → `meeting_summaries` upsert.
 - 진행률: phase:summarize, 완료 시 phase:done. 실패 시 friendly error(`toFriendlyError` 패턴 재사용 — 미로그인/미설치 안내).
 
