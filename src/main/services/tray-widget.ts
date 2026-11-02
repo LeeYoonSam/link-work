@@ -10,6 +10,10 @@ import {
   type OrderableProject
 } from '../../renderer/src/utils/projectOrder'
 import { applyProjectAutoStatus } from '../utils/project-dates'
+import { getToday } from './assistant-service'
+import { navigateToToday } from './assistant-scheduler'
+import { toTraySummary } from './assistant-tray'
+import type { TrayAssistant } from './assistant-types'
 
 let tray: Tray | null = null
 let panelWindow: BrowserWindow | null = null
@@ -38,6 +42,7 @@ interface TrayEvent {
 interface TrayData {
   projects: TrayProject[]
   events: TrayEvent[]
+  assistant: TrayAssistant | null
 }
 
 /**
@@ -155,7 +160,22 @@ function getTodayTodoScheduleItems(): TrayEvent[] {
   return items
 }
 
+/**
+ * 트레이 '오늘 계획' 요약 (부록 E.4.1). 비서 테이블을 직접 읽지 않고 getToday 를 투영한다 (A28).
+ * 백업 복원 중 DB 가 닫혀 있으면 throw 하므로 null 로 넘긴다 (A13).
+ */
+async function getTrayAssistant(): Promise<TrayAssistant | null> {
+  try {
+    const today = await getToday()
+    if (!today.settings.enabled) return null
+    return toTraySummary(today)
+  } catch {
+    return null
+  }
+}
+
 async function getTrayData(): Promise<TrayData> {
+  const assistant = await getTrayAssistant()
   const projects = getActiveProjects()
   const calEvents = await getTodayEvents()
   const calItems: TrayEvent[] = calEvents.map((e: CalendarEvent) => ({
@@ -175,7 +195,7 @@ async function getTrayData(): Promise<TrayData> {
     return a.time.localeCompare(b.time)
   })
 
-  return { projects, events }
+  return { projects, events, assistant }
 }
 
 function createPanelWindow(): BrowserWindow {
@@ -298,6 +318,12 @@ export function createTrayWidget(onOpenApp: () => void): void {
     panelWindow?.hide()
   })
 
+  // 트레이 '오늘 보기' (부록 E.4.3)
+  ipcMain.handle('tray:openToday', () => {
+    navigateToToday()
+    panelWindow?.hide()
+  })
+
   // Auto-refresh tooltip
   //
   // 반드시 try/catch로 감싼다. 이 콜백은 async라 안에서 throw하면 아무도 받지 않는
@@ -329,6 +355,7 @@ export function destroyTrayWidget(): void {
   // 앱 종료/재생성 시 이중 등록 방지
   ipcMain.removeHandler('tray:getData')
   ipcMain.removeHandler('tray:openApp')
+  ipcMain.removeHandler('tray:openToday')
   if (panelWindow) {
     panelWindow.destroy()
     panelWindow = null

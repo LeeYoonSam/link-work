@@ -2,11 +2,23 @@ import { app } from 'electron'
 import { getDatabase } from '../db/database'
 import { getTodayEvents } from './google-calendar'
 import { isHeadlessAvailable } from './ai-headless'
-import { collectSources, resolveVanished, type CollectedSources } from './assistant-sources'
+import {
+  collectSources,
+  getSourceCheckTimes as getSourcesCheckTimes,
+  resolveVanished,
+  type CollectedSources
+} from './assistant-sources'
 import { renderRuleBriefing, requestLlmBriefing, type BriefingInput } from './assistant-briefing'
 import { logicalDate, toLocalDateTime, toHHmm } from './assistant-day'
 import { buildStartPlanItems, buildTimeline, roundUpToQuarter } from './assistant-slots'
-import { diffSources, focusUpdates, planRefresh, rerank } from './assistant-refresh'
+import {
+  buildPlanUpdateNotices,
+  diffSources,
+  focusUpdates,
+  isInMeeting,
+  planRefresh,
+  rerank
+} from './assistant-refresh'
 import { isUrgent } from './assistant-candidates'
 import { rankCandidates, scoreCandidate } from './assistant-score'
 import {
@@ -32,6 +44,7 @@ import {
 import type {
   AssistantChangedEvent,
   AssistantSettings,
+  AutoRefreshOutcome,
   Candidate,
   DailyPlan,
   DayTimeline,
@@ -39,6 +52,12 @@ import type {
   PlanItem,
   PlanItemStatus,
   PlanItemUpdate,
+  PlanUpdateRecord,
+  RefreshDiff,
+  RefreshMode,
+  RefreshSummary,
+  SentPlanUpdateNotice,
+  SourceCheckTimes,
   SourceSnapshot,
   TodayPayload
 } from './assistant-types'
@@ -341,11 +360,36 @@ export async function saveWrapup(note: string, planDate: string, now: Date = new
   return saved
 }
 
-export function runRefresh(mode: 'full' | 'local', now: Date = new Date()): Promise<TodayPayload | null> {
-  return serialized(() => runRefreshImpl(mode, now))
+export function runRefresh(mode: RefreshMode, now: Date = new Date()): Promise<TodayPayload | null> {
+  // 알림 후보를 만들지 않는다. IPC·앱 내부 변경이 쓴다 (E.2.7)
+  return serialized(async () => (await runRefreshImpl(mode, now, false))?.today ?? null)
 }
 
-async function runRefreshImpl(mode: 'full' | 'local', now: Date): Promise<TodayPayload | null> {
+export function runAutoRefresh(mode: RefreshMode, now: Date = new Date()): Promise<AutoRefreshOutcome | null> {
+  // 알림 후보를 INSERT 한 뒤 돌려준다. 틱·깨어남이 쓴다 (E.3.6)
+  return serialized(() => runRefreshImpl(mode, now, true))
+}
+
+export function getSourceCheckTimes(): SourceCheckTimes {
+  return getSourcesCheckTimes()
+}
+
+/**
+ * 오늘 화면의 연결 상태·오류 문구 기준을 갱신한다 (E.2.6 갱신분).
+ * full 은 통째로 바꾼다. local 은 바꾸지 않는다. calendar·jira 는 보지 않은 출처의 오류를 이전 값으로 유지한다.
+ */
+function mergeCollected(prev: CollectedSources | null, next: CollectedSources, mode: RefreshMode): CollectedSources {
+  if (!prev || mode === 'full') return next
+  if (mode === 'local') return prev
+  if (mode === 'calendar') {
+    const jiraErrors = prev.jiraErrors ?? []
+    return { ...next, jiraErrors, jiraTruncated: prev.jiraTruncated, errors: [...next.calendarErrors, ...jiraErrors] }
+  }
+  const calendarErrors = prev.calendarErrors ?? []
+  return { ...next, calendarErrors, errors: [...calendarErrors, ...next.jiraErrors] }
+}
+
+async function runRefreshImpl(mode: RefreshMode, now: Date, notify: boolean): Promise<AutoRefreshOutcome | null> {
   const db = getDatabase()
   const { settings, today, at } = todayOf(db, now)
   if (!settings.enabled) return null
@@ -354,7 +398,7 @@ async function runRefreshImpl(mode: 'full' | 'local', now: Date): Promise<TodayP
   if (!plan || plan.status !== 'active') return null
 
   const sources = await collectSources(db, settings, mode, now)
-  if (mode === 'full' || !lastCollected) lastCollected = sources
+  lastCollected = mergeCollected(lastCollected, sources, mode)
 
   // 수집을 기다리는 사이 계획이 닫혔으면 반영하지 않는다
   const fresh = getPlanByDate(db, today)
@@ -363,13 +407,14 @@ async function runRefreshImpl(mode: 'full' | 'local', now: Date): Promise<TodayP
   const items = listPlanItems(db, plan.id)
   const prev = fresh.source_snapshot ?? emptySnapshot(fresh.started_at)
   const diff = diffSources(prev, sources, items)
-  // local 최신화는 네트워크를 쓰지 않는다. 사라진 Jira 항목의 상태 확인도 하지 않는다
+  // Jira 를 보지 않는 mode 는 사라진 Jira 항목의 상태 확인에 네트워크를 쓰지 않는다
   const resolutions = await resolveVanished(db, diff.vanishedCandidateIds, sources.candidates, {
-    network: mode === 'full'
+    network: mode === 'full' || mode === 'jira'
   })
+  const nowHHmm = timelineNow(now, today)
   const refreshPlan = planRefresh(diff, sources, prev, items, {
     today,
-    nowHHmm: timelineNow(now, today),
+    nowHHmm,
     workEnd: settings.workEnd,
     dayStart: dayStartOf(fresh),
     resolutions
@@ -384,13 +429,66 @@ async function runRefreshImpl(mode: 'full' | 'local', now: Date): Promise<TodayP
     refreshPlan.inserts.length > 0 ||
     refreshPlan.updates.length > 0 ||
     s.calendarAdded + s.calendarChanged + s.calendarRemoved > 0
-  if (hasChange) logPlanUpdate(db, today, at, JSON.stringify(s))
 
-  if (hasChange || mode === 'full') emitChanged({ date: today, reason: 'refresh' })
-  return buildPayload(db, settings, today, now)
+  const notices: SentPlanUpdateNotice[] = []
+  if (notify && hasChange) notices.push(...insertPlanUpdateNotices(db, diff, s, settings, today, at, nowHHmm, now))
+
+  if (hasChange) {
+    const notified = [...new Set(notices.map((n) => n.kind))]
+    const record: PlanUpdateRecord = { ...s, notified }
+    logPlanUpdate(db, today, at, JSON.stringify(record))
+  }
+
+  // 자동 최신화는 변경이 없으면 알리지 않는다. 수동 full 은 항상 알린다 (E.2.6)
+  if (hasChange || (!notify && mode === 'full')) emitChanged({ date: today, reason: 'refresh' })
+  return { today: buildPayload(db, settings, today, now), notices }
 }
 
-// plan_update 는 알림 없이 기록만 한다(status 'logged'). 같은 초에 두 번 돌면 접미어로 키를 나눈다
+// 알림 후보를 만들고 INSERT 한다. INSERT 에 성공한 후보만 돌려준다 (A5, E.3.6). show() 는 스케줄러가 한다
+function insertPlanUpdateNotices(
+  db: Db,
+  diff: RefreshDiff,
+  summary: RefreshSummary,
+  settings: AssistantSettings,
+  today: string,
+  at: string,
+  nowHHmm: string,
+  now: Date
+): SentPlanUpdateNotice[] {
+  // 갱신 후 계획·항목으로 후 타임라인을 만든다
+  const afterPlan = getPlanByDate(db, today)
+  const afterItems = afterPlan ? listPlanItems(db, afterPlan.id) : []
+  const after = timelineOf(afterPlan, afterItems, settings, today, now)
+  const inMeeting = isInMeeting(afterPlan?.source_snapshot?.calendar ?? [], nowHHmm)
+  const candidates = buildPlanUpdateNotices({
+    diff,
+    summary,
+    after,
+    items: afterItems,
+    today,
+    nowHHmm,
+    ctx: { refreshNotify: settings.refreshNotify, inMeeting }
+  })
+
+  const sent: SentPlanUpdateNotice[] = []
+  for (const n of candidates) {
+    const ev = insertEvent(db, {
+      event_key: n.eventKey,
+      kind: 'plan_update',
+      plan_date: today,
+      scheduled_at: at,
+      fired_at: at,
+      status: 'sent',
+      ref_id: n.refId,
+      payload: JSON.stringify({ title: n.title, body: n.body, focus: n.focus })
+    })
+    // UNIQUE 충돌이면 이미 보낸 버킷·후보다. 보내지 않는다 (A5)
+    if (ev) sent.push({ ...n, eventId: ev.id })
+  }
+  return sent
+}
+
+// 변경 기록 행이다. 알림 행과 다른 행이다(status 'logged', ref_id null). 같은 초에 두 번 돌면 접미어로 키를 나눈다
 function logPlanUpdate(db: Db, today: string, at: string, payload: string): void {
   const base = `plan_update:${today}:${at}`
   for (let i = 0; i < 5; i++) {

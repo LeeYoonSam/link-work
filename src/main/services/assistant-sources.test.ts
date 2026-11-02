@@ -90,7 +90,14 @@ import Database from 'better-sqlite3'
 import { DEFAULT_ASSISTANT_SETTINGS } from './assistant-settings'
 import { toLocalDateTime } from './assistant-day'
 import type { Candidate } from './assistant-types'
-import { clearJiraCache, collectSources, resolveVanished, toCalendarRef } from './assistant-sources'
+import {
+  clearJiraCache,
+  collectSources,
+  getSourceCheckTimes,
+  resetSourceCheckTimes,
+  resolveVanished,
+  toCalendarRef
+} from './assistant-sources'
 
 // 로컬 시각 기준. 테스트는 실행 기기의 시간대와 무관하게 동작한다.
 const NOW = new Date(2026, 10, 2, 9, 40)
@@ -162,6 +169,7 @@ function localIso(h: number, m: number, day = 2): string {
 
 beforeEach(() => {
   clearJiraCache()
+  resetSourceCheckTimes()
   state.jiraConnected = true
   state.calendarConnected = true
   state.defaultProjectKey = 'PROJ'
@@ -386,6 +394,130 @@ describe('collectSources Jira', () => {
     expect(r.jira).toBeNull()
     expect(r.errors).toEqual(['Jira 조회에 실패했습니다. 네트워크 오류'])
     expect(ids(r.candidates)).toContain('task:10')
+  })
+})
+
+describe('collectSources mode 확장 (부록 E.2.6)', () => {
+  const meeting = { id: 'e1', summary: '회의', start: localIso(14, 0), end: localIso(15, 0), allDay: false }
+
+  it("'calendar' 모드는 캘린더를 조회하고 Jira 는 호출하지 않는다. 캐시가 없으면 jira 는 null 이다", async () => {
+    state.rangeEvents = [meeting]
+    const r = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'calendar', NOW)
+    expect(state.rangeCalls).toHaveLength(1)
+    expect(r.calendar?.map((c) => c.id)).toEqual(['e1'])
+    expect(state.openCalls).toEqual([])
+    // 위험 11: Jira 항목이 사라진 것으로 보이지 않는다. 스냅샷 jira 유지는 §8.2 규칙이 맡는다
+    expect(r.jira).toBeNull()
+    expect(ids(r.candidates)).not.toContain('jira:PROJ-1')
+    expect(r.errors).toEqual([])
+  })
+
+  it("'calendar' 모드는 Jira 캐시가 60초를 넘었어도 호출하지 않고 캐시를 쓴다", async () => {
+    const db = makeDb()
+    await collectSources(db, DEFAULT_ASSISTANT_SETTINGS, 'full', NOW)
+    const r = await collectSources(db, DEFAULT_ASSISTANT_SETTINGS, 'calendar', new Date(NOW.getTime() + 600_000))
+    expect(state.openCalls).toHaveLength(1)
+    expect(r.jira).toHaveLength(1)
+    expect(ids(r.candidates)).toContain('jira:PROJ-1')
+  })
+
+  it("'jira' 모드는 캘린더를 조회하지 않고 calendar 는 null 이다. 미연결 문구도 넣지 않는다", async () => {
+    state.calendarConnected = false
+    const r = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'jira', NOW)
+    expect(state.rangeCalls).toEqual([])
+    expect(r.calendar).toBeNull()
+    expect(r.busy).toEqual([])
+    expect(r.errors).toEqual([])
+    expect(state.openCalls).toHaveLength(1)
+    expect(r.jira).toHaveLength(1)
+  })
+
+  it("'jira' 모드는 60초 안이면 캐시를 쓰고 60초가 지나면 다시 호출한다", async () => {
+    const db = makeDb()
+    await collectSources(db, DEFAULT_ASSISTANT_SETTINGS, 'jira', NOW)
+    await collectSources(db, DEFAULT_ASSISTANT_SETTINGS, 'jira', new Date(NOW.getTime() + 30_000))
+    expect(state.openCalls).toHaveLength(1)
+    await collectSources(db, DEFAULT_ASSISTANT_SETTINGS, 'jira', new Date(NOW.getTime() + 61_000))
+    expect(state.openCalls).toHaveLength(2)
+  })
+})
+
+describe('출처별 오류 (부록 E.2.6 갱신분)', () => {
+  it('캘린더 오류와 Jira 오류를 따로 담고 errors 는 캘린더 다음 Jira 순서로 합친다', async () => {
+    state.rangeFail = true
+    state.openFail = true
+    const r = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'full', NOW)
+    expect(r.calendarErrors).toHaveLength(1)
+    expect(r.calendarErrors[0].startsWith(CALENDAR_FAILED_PREFIX)).toBe(true)
+    expect(r.jiraErrors).toEqual(['Jira 조회에 실패했습니다. 네트워크 오류'])
+    expect(r.errors).toEqual([...r.calendarErrors, ...r.jiraErrors])
+  })
+
+  it("'jira' 모드는 캘린더 오류를 만들지 않고 'calendar' 모드는 Jira 오류를 만들지 않는다", async () => {
+    state.rangeFail = true
+    state.openFail = true
+    const j = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'jira', NOW)
+    expect(j.calendarErrors).toEqual([])
+    expect(j.jiraErrors).toHaveLength(1)
+    const c = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'calendar', NOW)
+    expect(c.jiraErrors).toEqual([])
+    expect(c.calendarErrors).toHaveLength(1)
+  })
+})
+
+describe('SourceCheckTimes (부록 E.2.2)', () => {
+  it('재시작 직후 두 값은 null 이다', () => {
+    expect(getSourceCheckTimes()).toEqual({ calendarAt: null, jiraAt: null })
+  })
+
+  it("full 은 두 시각을, 'calendar' 는 캘린더만, 'jira' 는 Jira 만 기록한다. local 은 기록하지 않는다", async () => {
+    const db = makeDb()
+    await collectSources(db, DEFAULT_ASSISTANT_SETTINGS, 'local', NOW)
+    expect(getSourceCheckTimes()).toEqual({ calendarAt: null, jiraAt: null })
+
+    const t1 = NOW.getTime() + 1_000
+    await collectSources(db, DEFAULT_ASSISTANT_SETTINGS, 'calendar', new Date(t1))
+    expect(getSourceCheckTimes()).toEqual({ calendarAt: t1, jiraAt: null })
+
+    const t2 = NOW.getTime() + 2_000
+    await collectSources(db, DEFAULT_ASSISTANT_SETTINGS, 'jira', new Date(t2))
+    expect(getSourceCheckTimes()).toEqual({ calendarAt: t1, jiraAt: t2 })
+
+    const t3 = NOW.getTime() + 3_000
+    await collectSources(db, DEFAULT_ASSISTANT_SETTINGS, 'full', new Date(t3))
+    expect(getSourceCheckTimes()).toEqual({ calendarAt: t3, jiraAt: t3 })
+  })
+
+  it('Jira 60초 캐시를 써도 jiraAt 을 기록한다', async () => {
+    const db = makeDb()
+    await collectSources(db, DEFAULT_ASSISTANT_SETTINGS, 'full', NOW)
+    const t = NOW.getTime() + 30_000
+    await collectSources(db, DEFAULT_ASSISTANT_SETTINGS, 'jira', new Date(t))
+    expect(state.openCalls).toHaveLength(1)
+    expect(getSourceCheckTimes().jiraAt).toBe(t)
+  })
+
+  it('위험 6: 미연결·조회 실패에도 확인 시각을 기록한다', async () => {
+    state.calendarConnected = false
+    state.jiraConnected = false
+    await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'full', NOW)
+    expect(getSourceCheckTimes()).toEqual({ calendarAt: NOW.getTime(), jiraAt: NOW.getTime() })
+
+    state.calendarConnected = true
+    state.jiraConnected = true
+    state.rangeFail = true
+    state.openFail = true
+    const t = NOW.getTime() + 120_000
+    const r = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'full', new Date(t))
+    expect(r.errors).toHaveLength(2)
+    expect(getSourceCheckTimes()).toEqual({ calendarAt: t, jiraAt: t })
+  })
+
+  it('getSourceCheckTimes 는 사본을 돌려준다', async () => {
+    await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'full', NOW)
+    const times = getSourceCheckTimes()
+    times.calendarAt = 0
+    expect(getSourceCheckTimes().calendarAt).toBe(NOW.getTime())
   })
 })
 

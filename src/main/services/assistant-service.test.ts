@@ -59,7 +59,11 @@ const headless = vi.hoisted(() => ({ isHeadlessAvailable: vi.fn(() => true), run
 vi.mock('./ai-headless', () => headless)
 
 // 수집 모듈은 네트워크를 쓰므로 픽스처로 답한다
-const sources = vi.hoisted(() => ({ collectSources: vi.fn(), resolveVanished: vi.fn(async () => ({})) }))
+const sources = vi.hoisted(() => ({
+  collectSources: vi.fn(),
+  resolveVanished: vi.fn(async () => ({})),
+  getSourceCheckTimes: vi.fn(() => ({ calendarAt: null as number | null, jiraAt: null as number | null }))
+}))
 vi.mock('./assistant-sources', () => sources)
 
 const briefing = vi.hoisted(() => ({ requestLlmBriefing: vi.fn() }))
@@ -73,7 +77,9 @@ import {
   acceptSuggestion,
   closeDay,
   focusItem,
+  getSourceCheckTimes,
   getToday,
+  runAutoRefresh,
   runRefresh,
   saveSettings,
   setAssistantChangedListener,
@@ -107,14 +113,23 @@ function candidate(id: number, over: Partial<Candidate> = {}): Candidate {
   }
 }
 
-function collected(candidates: Candidate[], calendar: CalendarRef[] = []): unknown {
+function collected(
+  candidates: Candidate[],
+  calendar: CalendarRef[] | null = [],
+  errors: string[] = [],
+  calendarErrors: string[] = [],
+  jiraTruncated = false
+): unknown {
+  // errors 인자는 Jira 오류로 둔다. 실제 수집처럼 캘린더 오류 다음 Jira 오류 순서로 합친다
   return {
     candidates,
     calendar,
     jira: null,
     busy: [],
-    jiraTruncated: false,
-    errors: [],
+    jiraTruncated,
+    errors: [...calendarErrors, ...errors],
+    calendarErrors,
+    jiraErrors: errors,
     jiraConnected: false,
     calendarConnected: true
   }
@@ -385,5 +400,188 @@ describe('saveSettings', () => {
     saveSettings({ planSize: 4 })
     expect(electron.setLoginItemSettings).not.toHaveBeenCalled()
     expect(getDatabase()).toBeTruthy()
+  })
+})
+
+describe('runAutoRefresh (부록 E.3·E.6.5)', () => {
+  const MON_1000 = new Date(2026, 10, 2, 10, 0, 0)
+  const MON_1010 = new Date(2026, 10, 2, 10, 10, 0)
+  const review: CalendarRef = { id: 'r1', title: '제품 리뷰', start: '14:00', end: '15:00', allDay: false }
+  const sync: CalendarRef = { id: 's1', title: '주간 싱크', start: '16:00', end: '17:00', allDay: false }
+  const base = (): Candidate[] => [candidate(1, { dueDate: '2026-11-02' }), candidate(2)]
+  const urgent3 = (): Candidate => candidate(3, { dueDate: '2026-11-02' })
+
+  async function start(): Promise<void> {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(MON_0940)
+    changed.length = 0
+  }
+
+  async function eventsOf(at: Date): Promise<{ notices: Awaited<ReturnType<typeof getToday>>['events']; records: Awaited<ReturnType<typeof getToday>>['events'] }> {
+    const events = (await getToday(at)).events.filter((e) => e.kind === 'plan_update')
+    return { notices: events.filter((e) => e.ref_id !== null), records: events.filter((e) => e.ref_id === null) }
+  }
+
+  it('근무 중이 아니면 null 이다', async () => {
+    expect(await runAutoRefresh('calendar', MON_0940)).toBeNull()
+  })
+
+  it('A21: 긴급 제안은 urgent 알림 행을 sent 로 INSERT 하고 변경 기록 행과 분리한다', async () => {
+    await start()
+    sources.collectSources.mockResolvedValue(collected([...base(), urgent3()]))
+    const out = await runAutoRefresh('calendar', MON_1100)
+
+    expect(sources.collectSources).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), 'calendar', MON_1100)
+    const u = out?.notices.find((n) => n.kind === 'urgent')
+    expect(u).toMatchObject({
+      eventKey: 'plan_update:2026-11-02:urgent:todo:3',
+      refId: 'urgent:todo:3',
+      title: '새로 들어온 일',
+      body: '할 일 3 오늘 마감',
+      focus: { kind: 'inbox' }
+    })
+    expect(typeof u?.eventId).toBe('number')
+
+    const { notices, records } = await eventsOf(MON_1100)
+    const row = notices.find((e) => e.ref_id === 'urgent:todo:3')
+    expect(row).toMatchObject({ status: 'sent', scheduled_at: '2026-11-02 11:00:00', fired_at: '2026-11-02 11:00:00', id: u?.eventId })
+    expect(JSON.parse(row!.payload!)).toEqual({ title: '새로 들어온 일', body: '할 일 3 오늘 마감', focus: { kind: 'inbox' } })
+    // 변경 기록 행은 1개다. notified 에 INSERT 에 성공한 종류가 있다 (E.3.3)
+    expect(records).toHaveLength(1)
+    expect(records[0].status).toBe('logged')
+    expect(JSON.parse(records[0].payload!).notified).toContain('urgent')
+    expect(changed).toContainEqual({ date: '2026-11-02', reason: 'refresh' })
+  })
+
+  it('A21: 지금 블록이 회의로 줄면 slot 알림을 만든다. 같은 30분 버킷의 두 번째 slot 은 INSERT 하지 않는다 (A5)', async () => {
+    await start()
+    sources.collectSources.mockResolvedValue(collected(base(), [review]))
+    const first = await runAutoRefresh('calendar', MON_1000)
+    const slot = first?.notices.find((n) => n.kind === 'slot')
+    expect(slot).toMatchObject({ eventKey: 'plan_update:2026-11-02:1000', refId: '1000', title: '계획 변경', focus: { kind: 'timeline' } })
+    expect(slot?.body.startsWith('14:00 제품 리뷰 추가 · ')).toBe(true)
+
+    sources.collectSources.mockResolvedValue(collected(base(), [review, sync]))
+    const second = await runAutoRefresh('calendar', MON_1010)
+    expect(second?.notices.filter((n) => n.kind === 'slot')).toEqual([])
+
+    const { notices, records } = await eventsOf(MON_1010)
+    expect(notices.filter((e) => e.ref_id === '1000')).toHaveLength(1)
+    expect(records).toHaveLength(2)
+    expect(JSON.parse(records[0].payload!).notified).toEqual(['slot'])
+    expect(JSON.parse(records[1].payload!).notified).toEqual([])
+  })
+
+  it('A21: refreshNotify 가 꺼져 있으면 알림 행을 만들지 않고 변경 기록만 남긴다', async () => {
+    saveSettings({ refreshNotify: false })
+    await start()
+    sources.collectSources.mockResolvedValue(collected([...base(), urgent3()]))
+    const out = await runAutoRefresh('calendar', MON_1100)
+    expect(out?.notices).toEqual([])
+    const { notices, records } = await eventsOf(MON_1100)
+    expect(notices).toEqual([])
+    expect(records).toHaveLength(1)
+    expect(JSON.parse(records[0].payload!).notified).toEqual([])
+  })
+
+  it('A21: 회의 중이면 알림을 만들지 않는다. 회의 판정은 갱신 후 스냅샷 일정이다', async () => {
+    await start()
+    const now: CalendarRef = { id: 'm1', title: '진행 중 회의', start: '10:30', end: '11:30', allDay: false }
+    sources.collectSources.mockResolvedValue(collected([...base(), urgent3()], [now]))
+    const out = await runAutoRefresh('calendar', MON_1100)
+    expect(out?.notices).toEqual([])
+    expect((await eventsOf(MON_1100)).notices).toEqual([])
+  })
+
+  it('E.2.6: 변경이 없으면 assistant:changed 를 보내지 않고 기록도 남기지 않는다', async () => {
+    await start()
+    const out = await runAutoRefresh('calendar', MON_1100)
+    expect(out?.notices).toEqual([])
+    expect(out?.today.plan?.status).toBe('active')
+    expect(changed).toEqual([])
+    expect((await eventsOf(MON_1100)).records).toEqual([])
+  })
+
+  it('E.2.6: 수동 full 은 변경이 없어도 assistant:changed 를 보낸다', async () => {
+    await start()
+    await runRefresh('full', MON_1100)
+    expect(changed).toEqual([{ date: '2026-11-02', reason: 'refresh' }])
+  })
+
+  it('E.2.7: runRefresh 는 알림 행을 만들지 않는다. 변경 기록의 notified 는 빈 배열이다', async () => {
+    await start()
+    sources.collectSources.mockResolvedValue(collected([...base(), urgent3()]))
+    await runRefresh('full', MON_1100)
+    const { notices, records } = await eventsOf(MON_1100)
+    expect(notices).toEqual([])
+    expect(records).toHaveLength(1)
+    expect(JSON.parse(records[0].payload!).notified).toEqual([])
+  })
+
+  it("E.2.6: resolveVanished 의 network 는 'full'·'jira' 에서만 true 다", async () => {
+    await start()
+    // todo:2 가 사라져야 resolveVanished 가 대상 ID 를 받는다. 호출 자체는 mode 와 무관하다
+    sources.collectSources.mockResolvedValue(collected([candidate(1, { dueDate: '2026-11-02' })], null))
+    const cases: [Parameters<typeof runAutoRefresh>[0], boolean][] = [
+      ['calendar', false],
+      ['jira', true],
+      ['full', true],
+      ['local', false]
+    ]
+    for (const [mode, network] of cases) {
+      sources.resolveVanished.mockClear()
+      await runAutoRefresh(mode, MON_1100)
+      expect((sources.resolveVanished.mock.calls as unknown[][])[0]?.[3]).toEqual({ network })
+    }
+  })
+
+  it("E.2.6: lastCollected 는 'local' 이 아닌 mode 에서 갱신한다", async () => {
+    await start()
+    sources.collectSources.mockResolvedValue(collected(base(), null, ['Jira 조회에 실패했습니다.']))
+    expect((await runAutoRefresh('jira', MON_1100))?.today.lastErrors).toEqual(['Jira 조회에 실패했습니다.'])
+
+    sources.collectSources.mockResolvedValue(collected(base(), null, []))
+    expect((await runRefresh('local', MON_1100))?.lastErrors).toEqual(['Jira 조회에 실패했습니다.'])
+
+    expect((await runAutoRefresh('full', MON_1100))?.today.lastErrors).toEqual([])
+  })
+
+  it('jira 실패 뒤 calendar 틱이 와도 Jira 오류 문구가 남는다', async () => {
+    await start()
+    const JIRA_ERR = 'Jira 조회에 실패했습니다. 네트워크 오류'
+    sources.collectSources.mockResolvedValue(collected(base(), null, [JIRA_ERR], [], true))
+    await runAutoRefresh('jira', MON_1100)
+
+    // calendar mode 는 Jira 를 보지 않는다. 캘린더 오류만 새 값으로 바꾼다
+    const CAL_ERR = 'Google 캘린더 조회에 실패해 오늘 일정을 확인하지 못했습니다. 503'
+    sources.collectSources.mockResolvedValue(collected(base(), null, [], [CAL_ERR], false))
+    const out = await runAutoRefresh('calendar', MON_1100)
+    expect(out?.today.lastErrors).toEqual([CAL_ERR, JIRA_ERR])
+    expect(out?.today.jiraTruncated).toBe(true)
+
+    // full 은 통째로 바꾼다
+    sources.collectSources.mockResolvedValue(collected(base(), [], []))
+    expect((await runRefresh('full', MON_1100))?.lastErrors).toEqual([])
+  })
+
+  it('calendar 실패 뒤 jira 틱이 와도 캘린더 오류 문구가 남는다', async () => {
+    await start()
+    const CAL_ERR = 'Google 캘린더가 연결되어 있지 않아 오늘 일정을 확인하지 못했습니다.'
+    sources.collectSources.mockResolvedValue(collected(base(), null, [], [CAL_ERR]))
+    await runAutoRefresh('calendar', MON_1100)
+
+    // jira mode 가 성공해도 캘린더 오류는 이전 값을 유지한다
+    sources.collectSources.mockResolvedValue(collected(base(), null, []))
+    const out = await runAutoRefresh('jira', MON_1100)
+    expect(out?.today.lastErrors).toEqual([CAL_ERR])
+
+    // local 은 기준을 바꾸지 않는다
+    sources.collectSources.mockResolvedValue(collected(base(), null, ['무시되는 문구']))
+    expect((await runRefresh('local', MON_1100))?.lastErrors).toEqual([CAL_ERR])
+  })
+
+  it('getSourceCheckTimes 는 assistant-sources 에 위임한다', () => {
+    sources.getSourceCheckTimes.mockReturnValue({ calendarAt: 5, jiraAt: 6 })
+    expect(getSourceCheckTimes()).toEqual({ calendarAt: 5, jiraAt: 6 })
   })
 })

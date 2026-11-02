@@ -112,7 +112,7 @@ export interface RefreshSummary {
   suggested: number; urgentSuggestedIds: string[]
   completed: number; dropped: number; replaced: number
   timelineChanged: boolean         // 일정 변경 여부
-  currentOrNextChanged: boolean    // current·다음 future 블록의 itemId 변경 여부
+  currentOrNextChanged: boolean    // current 블록 end·itemId, 다음 future 블록 start·end·itemId 변경 여부 (E.3.1)
 }
 export interface RefreshPlan { inserts: NewPlanItem[]; updates: PlanItemUpdate[]; snapshot: SourceSnapshot; summary: RefreshSummary }
 
@@ -151,4 +151,47 @@ export interface TodayPayload {
   lastErrors: string[]             // 마지막 수집에서 실패한 출처의 사용자용 문구
 }
 export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' }
-export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing'; id?: string } }
+export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline'; id?: string } }
+
+// ── MVP2 (부록 E.6.1) ──
+export type RefreshMode = 'full' | 'local' | 'calendar' | 'jira'
+
+export interface SourceCheckTimes { calendarAt: number | null; jiraAt: number | null }   // epoch ms. 마지막 확인 대상 시각
+
+export interface RefreshDecisionInput {
+  nowMs: number
+  settings: Pick<AssistantSettings, 'enabled' | 'refreshCalendarMin' | 'refreshJiraMin'>
+  hasActivePlan: boolean
+  inFlight: boolean            // 자동 최신화가 진행 중이다
+  times: SourceCheckTimes
+  wake: boolean                // resume·unlock-screen 에서 불렀다
+}
+
+export interface NotifyContext { refreshNotify: boolean; inMeeting: boolean }
+export type PlanUpdateNoticeKind = 'slot' | 'urgent'
+export interface PlanUpdateNotice {
+  kind: PlanUpdateNoticeKind
+  eventKey: string             // 'plan_update:<date>:<HHmm>' | 'plan_update:<date>:urgent:<candidate_id>'
+  refId: string                // '<HHmm>' | 'urgent:<candidate_id>'
+  title: string
+  body: string
+  focus: NonNullable<AssistantNavigateEvent['focus']>
+}
+export interface SentPlanUpdateNotice extends PlanUpdateNotice { eventId: number }
+export interface NoticeInput {
+  diff: RefreshDiff; summary: RefreshSummary; after: DayTimeline; items: PlanItem[]   // items 는 갱신 후 항목
+  today: string; nowHHmm: string; ctx: NotifyContext
+}
+export type PlanUpdateRecord = RefreshSummary & { notified: PlanUpdateNoticeKind[] }   // 변경 기록 행 payload
+export interface AutoRefreshOutcome { today: TodayPayload; notices: SentPlanUpdateNotice[] }
+
+export interface TrayPlanItem { id: number; title: string; rank: number | null; status: PlanItemStatus; isFocus: boolean }
+export interface TrayAssistant {
+  logicalDate: string
+  status: 'none' | 'active' | 'closed'
+  startedAt: string | null     // 'HH:mm'
+  items: TrayPlanItem[]        // 활성 항목 rank 순 상위 3건
+  activeCount: number; doneCount: number
+  suggestedCount: number; urgentSuggestedCount: number
+  freeMinutesLeft: number
+}

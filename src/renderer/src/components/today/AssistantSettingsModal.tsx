@@ -2,8 +2,8 @@ import { useState } from 'react'
 import type { AiModelChoice, AssistantSettings } from '../../types'
 import { Card, XIcon, button } from '../ui'
 
-// MVP1 설정 키만 다룬다 (docs/ASSISTANT.md §3.2)
-export type Mvp1SettingKey =
+// 모달이 노출하는 설정 키 (docs/ASSISTANT.md §3.2, 부록 E.5)
+export type FormSettingKey =
   | 'enabled'
   | 'dayRollover'
   | 'startNudge'
@@ -14,10 +14,13 @@ export type Mvp1SettingKey =
   | 'jiraScope'
   | 'openAtLogin'
   | 'startView'
+  | 'refreshCalendarMin'
+  | 'refreshJiraMin'
+  | 'refreshNotify'
 
-export type Mvp1Settings = Pick<AssistantSettings, Mvp1SettingKey>
+export type FormSettings = Pick<AssistantSettings, FormSettingKey>
 
-export const MVP1_SETTING_KEYS: Mvp1SettingKey[] = [
+export const FORM_SETTING_KEYS: FormSettingKey[] = [
   'enabled',
   'dayRollover',
   'startNudge',
@@ -27,24 +30,31 @@ export const MVP1_SETTING_KEYS: Mvp1SettingKey[] = [
   'llmModel',
   'jiraScope',
   'openAtLogin',
-  'startView'
+  'startView',
+  'refreshCalendarMin',
+  'refreshJiraMin',
+  'refreshNotify'
 ]
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
 
 // 폼 값 검증. 문제가 있으면 사용자용 문구를 돌려준다
-export function validateSettings(s: Mvp1Settings): string | null {
+const isRefreshMin = (v: number): boolean => Number.isInteger(v) && v >= 1 && v <= 240
+
+export function validateSettings(s: FormSettings): string | null {
   if (!HHMM.test(s.dayRollover)) return '날짜 경계는 HH:mm 형식이어야 합니다'
   if (!HHMM.test(s.workEnd)) return '근무 종료 시각은 HH:mm 형식이어야 합니다'
   if (!Number.isInteger(s.planSize) || s.planSize < 1 || s.planSize > 20)
     return '계획 항목 수는 1~20 사이여야 합니다'
+  if (!isRefreshMin(s.refreshCalendarMin)) return '캘린더 확인 주기는 1~240분 사이여야 합니다'
+  if (!isRefreshMin(s.refreshJiraMin)) return 'Jira 확인 주기는 1~240분 사이여야 합니다'
   return null
 }
 
 // 바뀐 키만 patch 로 만든다
-export function diffSettings(base: AssistantSettings, next: Mvp1Settings): Partial<AssistantSettings> {
+export function diffSettings(base: AssistantSettings, next: FormSettings): Partial<AssistantSettings> {
   const patch: Partial<AssistantSettings> = {}
-  for (const k of MVP1_SETTING_KEYS) {
+  for (const k of FORM_SETTING_KEYS) {
     if (base[k] !== next[k]) (patch as Record<string, unknown>)[k] = next[k]
   }
   return patch
@@ -80,11 +90,20 @@ function Toggle({
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }): React.ReactNode {
+function Field({
+  label,
+  hint,
+  children
+}: {
+  label: string
+  hint?: string
+  children: React.ReactNode
+}): React.ReactNode {
   return (
     <label className="block">
       <span className="block text-xs font-medium text-gray-700 mb-1">{label}</span>
       {children}
+      {hint ? <span className="block mt-1 text-[11px] text-gray-500">{hint}</span> : null}
     </label>
   )
 }
@@ -103,16 +122,16 @@ export default function AssistantSettingsModal({
   onClose,
   onSave
 }: AssistantSettingsModalProps): React.ReactNode {
-  const [form, setForm] = useState<Mvp1Settings>(() => {
+  const [form, setForm] = useState<FormSettings>(() => {
     const init = {} as Record<string, unknown>
-    for (const k of MVP1_SETTING_KEYS) init[k] = settings[k]
+    for (const k of FORM_SETTING_KEYS) init[k] = settings[k]
     // 이전 버전 main 이 startView 를 주지 않아도 select 가 비지 않게 한다
     init.startView ??= 'auto'
-    return init as Mvp1Settings
+    return init as FormSettings
   })
   const [error, setError] = useState('')
 
-  const set = <K extends Mvp1SettingKey>(key: K, value: Mvp1Settings[K]): void =>
+  const set = <K extends FormSettingKey>(key: K, value: FormSettings[K]): void =>
     setForm((f) => ({ ...f, [key]: value }))
 
   const handleSave = async (): Promise<void> => {
@@ -149,7 +168,7 @@ export default function AssistantSettingsModal({
               <XIcon size={16} />
             </button>
           </div>
-          <p className="text-xs text-gray-500 mb-4">오늘 계획과 시작 알림의 동작을 정합니다.</p>
+          <p className="text-xs text-gray-500 mb-4">오늘 계획, 알림, 자동 최신화의 동작을 정합니다.</p>
 
           <div className="space-y-1 mb-4">
             <Toggle label="비서 사용" checked={form.enabled} onChange={(v) => set('enabled', v)} />
@@ -158,6 +177,12 @@ export default function AssistantSettingsModal({
               hint="그날 첫 활동 때 '하루 시작'을 권하는 알림을 1회 보냅니다."
               checked={form.startNudge}
               onChange={(v) => set('startNudge', v)}
+            />
+            <Toggle
+              label="최신화 알림"
+              hint="지금·다음 블록이 바뀌거나 긴급한 일이 들어오면 알립니다"
+              checked={form.refreshNotify}
+              onChange={(v) => set('refreshNotify', v)}
             />
             <Toggle
               label="AI 브리핑"
@@ -176,7 +201,7 @@ export default function AssistantSettingsModal({
             <Field label="첫 화면">
               <select
                 value={form.startView}
-                onChange={(e) => set('startView', e.target.value as Mvp1Settings['startView'])}
+                onChange={(e) => set('startView', e.target.value as FormSettings['startView'])}
                 className={inputClass}
               >
                 <option value="auto">자동</option>
@@ -232,12 +257,35 @@ export default function AssistantSettingsModal({
             <Field label="Jira 범위">
               <select
                 value={form.jiraScope}
-                onChange={(e) => set('jiraScope', e.target.value as Mvp1Settings['jiraScope'])}
+                onChange={(e) => set('jiraScope', e.target.value as FormSettings['jiraScope'])}
                 className={inputClass}
               >
                 <option value="all">전체 프로젝트</option>
                 <option value="default_project">기본 프로젝트만</option>
               </select>
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <Field label="캘린더 확인 주기 (분)" hint="1~240분. 권장 5분">
+              <input
+                type="number"
+                min={1}
+                max={240}
+                value={form.refreshCalendarMin}
+                onChange={(e) => set('refreshCalendarMin', Number(e.target.value))}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Jira 확인 주기 (분)" hint="1~240분. 기본 15분">
+              <input
+                type="number"
+                min={1}
+                max={240}
+                value={form.refreshJiraMin}
+                onChange={(e) => set('refreshJiraMin', Number(e.target.value))}
+                className={inputClass}
+              />
             </Field>
           </div>
 

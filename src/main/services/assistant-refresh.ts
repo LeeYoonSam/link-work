@@ -1,7 +1,7 @@
-// 최신화 변경 계산·반영 계획 (docs/ASSISTANT.md §8.3·§8.4, 부록 B.4·B.7). 순수 모듈이다 (A3·A14).
+// 최신화 변경 계산·반영 계획·최신화 알림 (docs/ASSISTANT.md §8.3·§8.4, 부록 B.4·B.7·E.3). 순수 모듈이다 (A3·A14).
 import { isUrgent } from './assistant-candidates'
 import { compareDue, compareId, rankCandidates, scoreCandidate, SOURCE_ORDER } from './assistant-score'
-import { ACTIVE_STATUSES, buildTimeline, compareByRank } from './assistant-slots'
+import { ACTIVE_STATUSES, buildTimeline, compareByRank, toMinutes } from './assistant-slots'
 import type {
   CalendarRef,
   DayTimeline,
@@ -9,13 +9,18 @@ import type {
   CurrentSources,
   JiraSnapshotRef,
   NewPlanItem,
+  NoticeInput,
+  NotifyContext,
   PlanItem,
   PlanItemStatus,
   PlanItemUpdate,
   RefreshContext,
   RefreshDiff,
   RefreshPlan,
-  SourceSnapshot
+  RefreshSummary,
+  PlanUpdateNotice,
+  SourceSnapshot,
+  TimelineEntry
 } from './assistant-types'
 
 type Patch = PlanItemUpdate['patch']
@@ -230,7 +235,7 @@ export function planRefresh(
 
   const updates = finalizeUpdates(items, patches)
 
-  // 5. 타임라인 전후의 current·다음 future 블록 itemId 비교
+  // 5. 타임라인 전후의 current·다음 future 블록 비교 (E.3.1)
   const before = buildTimeline({
     calendar: prev.calendar, dayStart: ctx.dayStart, nowHHmm: ctx.nowHHmm, workEnd: ctx.workEnd,
     items, today: ctx.today, closed: false
@@ -239,9 +244,7 @@ export function planRefresh(
     calendar: current.calendar ?? prev.calendar, dayStart: ctx.dayStart, nowHHmm: ctx.nowHHmm, workEnd: ctx.workEnd,
     items: applyPatches(items, patches), today: ctx.today, closed: false
   })
-  const a = currentAndNextItemIds(before)
-  const b = currentAndNextItemIds(after)
-  const currentOrNextChanged = a[0] !== b[0] || a[1] !== b[1]
+  const currentOrNextChanged = !sameCurrentAndNext(currentAndNextBlocks(before), currentAndNextBlocks(after))
 
   // 6. 스냅샷: 조회하지 못한 출처는 이전 값을 유지한다
   const seenIds = new Set(prev.seenCandidateIds)
@@ -282,20 +285,34 @@ function compareItemsByScore(a: PlanItem, b: PlanItem): number {
   return compareId(a.candidate_id, b.candidate_id)
 }
 
-/** current 블록과 첫 future 블록의 itemId. 블록이 없으면 null. */
-function currentAndNextItemIds(t: DayTimeline): [number | null, number | null] {
-  let cur: number | null = null
-  let next: number | null = null
-  let nextSeen = false
+type BlockEntry = Extract<TimelineEntry, { kind: 'block' }>
+
+/** current 블록과 첫 future 블록. 없으면 null. */
+function currentAndNextBlocks(t: DayTimeline): { current: BlockEntry | null; next: BlockEntry | null } {
+  let current: BlockEntry | null = null
+  let next: BlockEntry | null = null
   for (const e of t.entries) {
     if (e.kind !== 'block') continue
-    if (e.state === 'current') cur = e.itemId
-    else if (e.state === 'future' && !nextSeen) {
-      next = e.itemId
-      nextSeen = true
-    }
+    if (e.state === 'current') current = e
+    else if (e.state === 'future' && next === null) next = e
   }
-  return [cur, next]
+  return { current, next }
+}
+
+/** E.3.1 비교 키. current 는 end·itemId, next 는 start·end·itemId. */
+function sameCurrentAndNext(
+  a: ReturnType<typeof currentAndNextBlocks>,
+  b: ReturnType<typeof currentAndNextBlocks>
+): boolean {
+  const cur =
+    a.current === null || b.current === null
+      ? a.current === b.current
+      : a.current.end === b.current.end && a.current.itemId === b.current.itemId
+  const next =
+    a.next === null || b.next === null
+      ? a.next === b.next
+      : a.next.start === b.next.start && a.next.end === b.next.end && a.next.itemId === b.next.itemId
+  return cur && next
 }
 
 /**
@@ -330,4 +347,124 @@ export function focusUpdates(items: PlanItem[], itemId: number): PlanItemUpdate[
   const others = items.filter((it) => it.id !== itemId && ACTIVE_STATUSES.has(it.status)).sort(compareByRank)
   others.forEach((it, idx) => addPatch(patches, it.id, { rank: idx + 2 }))
   return finalizeUpdates(items, patches)
+}
+
+// ── 최신화 알림 (A21, 부록 E.3) ──
+
+/** 긴급 제안 알림의 최신화 1회당 최대 건수 (E.9). */
+const URGENT_NOTICE_LIMIT = 3
+const TITLE_LIMIT = 20
+
+/** 종일이 아닌 일정 중 start ≤ now < end 인 것이 있으면 참. */
+export function isInMeeting(calendar: CalendarRef[], nowHHmm: string): boolean {
+  const now = toMinutes(nowHHmm)
+  if (now === null) return false
+  return calendar.some((e) => {
+    if (e.allDay) return false
+    const s = toMinutes(e.start)
+    const en = toMinutes(e.end)
+    return s !== null && en !== null && s <= now && now < en
+  })
+}
+
+/** 'HH:mm' → 30분 내림 'HHmm'. 14:42 → '1430'. */
+export function bucketOf(nowHHmm: string): string {
+  const v = toMinutes(nowHHmm) ?? 0
+  const b = Math.floor(v / 30) * 30
+  return `${String(Math.floor(b / 60)).padStart(2, '0')}${String(b % 60).padStart(2, '0')}`
+}
+
+/** A21. E.3.2 판정. */
+export function shouldNotifyPlanUpdate(summary: RefreshSummary, ctx: NotifyContext): boolean {
+  if (!ctx.refreshNotify || ctx.inMeeting) return false
+  return summary.currentOrNextChanged || summary.urgentSuggestedIds.length > 0
+}
+
+/** 20자를 넘으면 자르고 '…' 를 붙인다. */
+function clip(text: string): string {
+  const chars = Array.from(text)
+  return chars.length > TITLE_LIMIT ? `${chars.slice(0, TITLE_LIMIT).join('')}…` : text
+}
+
+/** 'YYYY-MM-DD' 두 날짜의 일수 차이 (b − a). */
+function daysBetween(a: string, b: string): number {
+  const toUtc = (d: string): number => {
+    const [y, m, day] = d.split('-').map(Number)
+    return Date.UTC(y, m - 1, day)
+  }
+  return Math.round((toUtc(b) - toUtc(a)) / 86_400_000)
+}
+
+/** slot 알림의 일정 조각. 일정 변경이 없으면 null. */
+function calendarPiece(input: NoticeInput): string | null {
+  const { calendarAdded, calendarChanged, calendarRemoved } = input.diff
+  const total = calendarAdded.length + calendarChanged.length + calendarRemoved.length
+  let piece: string | null = null
+  if (calendarAdded[0]) piece = `${calendarAdded[0].start} ${clip(calendarAdded[0].title)} 추가`
+  else if (calendarChanged[0]) piece = `${calendarChanged[0].start} ${clip(calendarChanged[0].title)} 변경`
+  else if (calendarRemoved[0]) piece = `${calendarRemoved[0].start} ${clip(calendarRemoved[0].title)} 취소`
+  if (piece === null) return null
+  return total >= 2 ? `${piece} 외 ${total - 1}건` : piece
+}
+
+/** slot 알림의 블록 조각. */
+function blockPiece(input: NoticeInput): string {
+  const { current, next } = currentAndNextBlocks(input.after)
+  const titleOf = (id: number | null): string | null => {
+    if (id === null) return null
+    const it = input.items.find((i) => i.id === id)
+    return it ? clip(it.title) : null
+  }
+  if (next) return `다음 ${next.start}–${next.end} ${titleOf(next.itemId) ?? '빈 블록'}`
+  if (current) return `지금 ${titleOf(current.itemId) ?? '빈 블록'} ~${current.end}`
+  return '남은 블록 없음'
+}
+
+/** urgent 알림 본문. 대상을 찾지 못하면 null. */
+function urgentBody(input: NoticeInput, candidateId: string): string | null {
+  const it = input.items.find((i) => i.candidate_id === candidateId)
+  const c = it ? null : input.diff.newCandidates.find((x) => x.id === candidateId)
+  if (!it && !c) return null
+  const key = it ? it.jira_issue_key : (c as Candidate).jiraKey
+  const title = it ? it.title : (c as Candidate).title
+  const due = it ? it.due_date : (c as Candidate).dueDate
+  const label = key ?? clip(title)
+  let reason = '우선순위 최상'
+  if (due !== null && due === input.today) reason = '오늘 마감'
+  else if (due !== null && due < input.today) reason = `${daysBetween(due, input.today)}일 지남`
+  return `${label} ${reason}`
+}
+
+/** A21. E.3.2~E.3.5 알림 후보. slot 최대 1건 + urgent 최대 3건. */
+export function buildPlanUpdateNotices(input: NoticeInput): PlanUpdateNotice[] {
+  if (!shouldNotifyPlanUpdate(input.summary, input.ctx)) return []
+  const out: PlanUpdateNotice[] = []
+  if (input.summary.currentOrNextChanged) {
+    const bucket = bucketOf(input.nowHHmm)
+    const pieces = [calendarPiece(input), blockPiece(input)].filter((p): p is string => p !== null)
+    out.push({
+      kind: 'slot',
+      eventKey: `plan_update:${input.today}:${bucket}`,
+      refId: bucket,
+      title: '계획 변경',
+      body: pieces.join(' · '),
+      focus: { kind: 'timeline' }
+    })
+  }
+  let urgent = 0
+  for (const id of input.summary.urgentSuggestedIds) {
+    if (urgent >= URGENT_NOTICE_LIMIT) break
+    const body = urgentBody(input, id)
+    if (body === null) continue
+    out.push({
+      kind: 'urgent',
+      eventKey: `plan_update:${input.today}:urgent:${id}`,
+      refId: `urgent:${id}`,
+      title: '새로 들어온 일',
+      body,
+      focus: { kind: 'inbox' }
+    })
+    urgent++
+  }
+  return out
 }

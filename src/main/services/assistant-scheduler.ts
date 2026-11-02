@@ -3,11 +3,19 @@ import { getDatabase } from '../db/database'
 import { onActivity, type ActivityEvent, type EntityType } from '../utils/activity-logger'
 import { logicalDate, shouldSendStartNudge, toLocalDateTime, type NudgeTrigger } from './assistant-day'
 import { closeStalePlans, findEventByKey, getPlanByDate, insertEvent, readAssistantSettings, updateEventStatus } from './assistant-store'
-import { getStartNudgeContent, runRefresh, setAssistantChangedListener } from './assistant-service'
-import type { AssistantChangedEvent, AssistantNavigateEvent } from './assistant-types'
+import { decideRefresh, TICK_MS } from './assistant-schedule'
+import {
+  getSourceCheckTimes,
+  getStartNudgeContent,
+  runAutoRefresh,
+  runRefresh,
+  setAssistantChangedListener
+} from './assistant-service'
+import type { AssistantChangedEvent, AssistantNavigateEvent, SentPlanUpdateNotice } from './assistant-types'
 
-// 비서의 부수 효과 모듈이다. MVP1 은 이벤트 기반만 쓴다 (§7.2). 주기 틱을 두지 않는다.
+// 비서의 부수 효과 모듈이다. 이벤트 처리기와 60초 틱을 둔다 (§7.2, 부록 E.2).
 // A13: 모든 처리기는 try/catch 로 감싼다. 백업 복원 중 DB 가 닫혀 있어도 메인 프로세스가 죽지 않는다.
+// 위험 8: 확인 시각은 assistant-service 경유로 읽는다. assistant-sources 를 직접 import 하지 않는다.
 
 interface SchedulerDeps {
   getMainWindow: () => BrowserWindow | null
@@ -28,6 +36,9 @@ let localRefreshTimer: ReturnType<typeof setTimeout> | null = null
 const liveNotifications = new Set<Notification>()
 // 렌더러가 아직 받을 수 없을 때 보관하는 navigate 신호
 let pendingNavigate: { payload: AssistantNavigateEvent; at: number } | null = null
+let tickTimer: ReturnType<typeof setInterval> | null = null
+// A26: 자동 최신화는 동시에 1개만 실행한다. 서비스의 serialized 는 큐라서 중복 실행을 막지 못한다
+let autoRefreshInFlight = false
 
 function logError(where: string, err: unknown): void {
   console.error(`[assistant-scheduler] ${where}`, err)
@@ -52,9 +63,9 @@ function sendToMainWindow(channel: string, payload: unknown): void {
  * 렌더러가 아직 구독 전일 수 있다. 그래서 로딩 중이거나 창이 없으면 보관 신호에 두고,
  * 렌더러가 마운트 직후 takePendingNavigate 로 가져간다.
  */
-function navigateToToday(): void {
+export function navigateToToday(focus?: AssistantNavigateEvent['focus']): void {
   if (!deps) return
-  const payload: AssistantNavigateEvent = { view: 'today' }
+  const payload: AssistantNavigateEvent = focus ? { view: 'today', focus } : { view: 'today' }
   try {
     const win = deps.getMainWindow()
     if (win && !win.isDestroyed()) {
@@ -160,12 +171,91 @@ export async function runStartNudgeCheck(trigger: NudgeTrigger, now: Date = new 
   }
 }
 
+/**
+ * 최신화 알림 발송. 서비스가 INSERT 에 성공한 알림만 받는다 (A5, E.3.6).
+ * show() 가 실패하면 그 알림 행을 'failed' 로 바꾼다.
+ */
+function showPlanUpdateNotices(notices: SentPlanUpdateNotice[]): void {
+  for (const notice of notices) {
+    try {
+      const n = new Notification({ title: notice.title, body: notice.body })
+      liveNotifications.add(n)
+      n.on('click', () => {
+        liveNotifications.delete(n)
+        navigateToToday(notice.focus)
+      })
+      n.on('close', () => {
+        liveNotifications.delete(n)
+      })
+      n.show()
+    } catch (err) {
+      logError('plan update show', err)
+      try {
+        updateEventStatus(getDatabase(), notice.eventId, 'failed')
+      } catch (e2) {
+        logError('plan update mark failed', e2)
+      }
+    }
+  }
+}
+
+/**
+ * 틱 1회 (부록 E.2.1). 판정은 decideRefresh 가 한다 (A25). 이 함수는 throw 하지 않는다 (A13).
+ * wake 는 resume·unlock-screen 에서 불렀는지다. 테스트용으로 export 한다.
+ */
+export async function runTick(wake: boolean = false, now: Date = new Date()): Promise<void> {
+  try {
+    const db = getDatabase()
+    const settings = readAssistantSettings(db)
+    const today = logicalDate(now, settings.dayRollover)
+    // A18: 날짜 경계가 지나면 닫는다. 열린 오늘 화면을 닫힘 상태로 바꾼다
+    const closed = closeStalePlans(db, today, toLocalDateTime(now))
+    if (closed.length > 0) sendToMainWindow('assistant:changed', { date: today, reason: 'day' } satisfies AssistantChangedEvent)
+
+    const plan = getPlanByDate(db, today)
+    const mode = decideRefresh({
+      nowMs: now.getTime(),
+      settings,
+      hasActivePlan: plan?.status === 'active',
+      inFlight: autoRefreshInFlight,
+      times: getSourceCheckTimes(),
+      wake
+    })
+    // A26: 진행 중이면 건너뛴다. 판정 결과와 별개로 한 번 더 막는다
+    if (mode === null || autoRefreshInFlight) return
+
+    autoRefreshInFlight = true
+    try {
+      const outcome = await runAutoRefresh(mode, now)
+      if (outcome) showPlanUpdateNotices(outcome.notices)
+    } finally {
+      autoRefreshInFlight = false
+    }
+  } catch (err) {
+    logError(`tick${wake ? '(wake)' : ''}`, err)
+  }
+}
+
+// A26: 시작 알림 판정 뒤에 최신화를 한다. 순서를 고정해 결과를 결정론적으로 만든다
+async function onWake(trigger: 'resume' | 'unlock-screen'): Promise<void> {
+  try {
+    await runStartNudgeCheck(trigger)
+    await runTick(true)
+  } catch (err) {
+    logError(`wake(${trigger})`, err)
+  }
+}
+
 function onUnlockScreen(): void {
-  void runStartNudgeCheck('unlock-screen')
+  void onWake('unlock-screen')
 }
 
 function onResume(): void {
-  void runStartNudgeCheck('resume')
+  void onWake('resume')
+}
+
+function onIntervalTick(): void {
+  void runTick(false)
 }
 
 function onWindowFocus(): void {
@@ -233,6 +323,7 @@ export function startAssistantScheduler(d: SchedulerDeps): void {
   }
   app.on('browser-window-focus', onWindowFocus)
   unsubscribeActivity = onActivity(onActivityEvent)
+  tickTimer = setInterval(onIntervalTick, TICK_MS)
 }
 
 export function stopAssistantScheduler(): void {
@@ -247,6 +338,9 @@ export function stopAssistantScheduler(): void {
   unsubscribeActivity = null
   if (localRefreshTimer) clearTimeout(localRefreshTimer)
   localRefreshTimer = null
+  if (tickTimer) clearInterval(tickTimer)
+  tickTimer = null
+  autoRefreshInFlight = false
   setAssistantChangedListener(null)
   liveNotifications.clear()
   pendingNavigate = null

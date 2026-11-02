@@ -24,6 +24,7 @@ const api = {
   tray: {
     getData: () => ipcRenderer.invoke('tray:getData'),
     openApp: () => ipcRenderer.invoke('tray:openApp'),
+    openToday: () => ipcRenderer.invoke('tray:openToday'),
     onData: (callback: (data: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => callback(data)
       ipcRenderer.on('tray:data', handler)

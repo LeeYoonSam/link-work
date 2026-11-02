@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { PlanItem, TodayPayload } from '../../types'
+import type { AssistantNavigateEvent, PlanItem, TodayPayload } from '../../types'
 import { useAssistantStore } from '../../stores/assistantStore'
 import { Card, EmptyState, SectionTitle, button } from '../ui'
 import DayHeader from './DayHeader'
@@ -39,6 +39,20 @@ export function todayNotices(today: TodayPayload): string[] {
   if (today.jiraTruncated) notes.push('Jira 이슈가 많습니다. 일부만 가져왔습니다.')
   for (const e of today.lastErrors ?? []) notes.push(e)
   return notes
+}
+
+// 알림 focus 를 스크롤 대상 요소 id 로 바꾼다
+export function focusTargetId(focus: NonNullable<AssistantNavigateEvent['focus']>): string {
+  switch (focus.kind) {
+    case 'inbox':
+      return 'today-inbox'
+    case 'briefing':
+      return 'today-briefing'
+    case 'timeline':
+      return 'today-timeline'
+    default:
+      return `plan-item-${focus.id ?? ''}`
+  }
 }
 
 export default function TodayView(): React.ReactNode {
@@ -82,12 +96,7 @@ export default function TodayView(): React.ReactNode {
   // 알림 클릭으로 열리면 해당 영역으로 스크롤한다
   useEffect(() => {
     if (!focus || !today) return
-    const id =
-      focus.kind === 'inbox'
-        ? 'today-inbox'
-        : focus.kind === 'briefing'
-          ? 'today-briefing'
-          : `plan-item-${focus.id ?? ''}`
+    const id = focusTargetId(focus)
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     setFocus(null)
   }, [focus, today])
@@ -193,7 +202,7 @@ export default function TodayView(): React.ReactNode {
           />
 
           <Card padding="none">
-            <div className="flex items-center justify-between px-4 pt-4 pb-2">
+            <div id="today-timeline" className="flex items-center justify-between px-4 pt-4 pb-2">
               <SectionTitle>오늘 계획</SectionTitle>
               {timeline && !readOnly ? (
                 <span className="text-xs text-gray-500 tabular-nums">

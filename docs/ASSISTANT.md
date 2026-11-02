@@ -26,6 +26,7 @@
   - 최신화를 MVP2 로 올렸다.
 - 3판: 항목당 고정 60분 배치를 없앴다. 회의 사이 빈 시간을 블록으로 보여 주고, 블록에 작업을 배정한다. 규칙은 '1순위 집중 + 마감 항목 끼우기' 다. 부록 B 가 §5.2~5.4, §12.2, A20 을 대체한다.
 - 3판 보완 (2026-11-02): MVP1 남은 과제 4건을 고쳤다. 내용은 부록 D 다.
+- MVP2 설계 (2026-11-02): 자동 최신화·최신화 알림·트레이 연계의 모듈 계약을 부록 E 에 둔다. 부록 E 가 §16 MVP2 표와 §17 MVP2 조건을 대체한다.
 
 ---
 
@@ -1564,3 +1565,419 @@ IPC·preload: `assistant:setItemSlot` → `assistant:focusItem` (인자 `itemId`
 5. `grep -cE "getTodayEvents|getEventsInRange" src/main/services/assistant-sources.ts` = 0.
 6. `grep -c "did-finish-load" src/main/services/assistant-scheduler.ts` = 0.
 7. `takePendingNavigate` 가 `preload/index.ts`·`preload/index.d.ts`·`renderer/src/env.d.ts`·`App.tsx`·`assistant.ipc.ts` 에 각각 1건 이상 있다.
+
+---
+
+## 부록 E. MVP2 자동 최신화·최신화 알림·트레이 연계
+
+### E.1 범위
+
+MVP2 에 들어가는 것:
+- 60초 틱. 틱은 캘린더 주기·Jira 주기를 판정하고 자동 최신화를 실행한다.
+- `resume`·`unlock-screen` 때 시작 알림 판정 뒤 자동 최신화를 실행한다.
+- 날짜 경계가 지나면 틱이 자동 닫기를 실행한다 (A18). 사용자가 버튼을 누르지 않아도 하루가 닫힌다.
+- 최신화 알림 `plan_update` (A21). 종류는 `slot`·`urgent` 2가지다.
+- `runRefresh` 의 mode 를 `'full' | 'local' | 'calendar' | 'jira'` 로 늘린다.
+- 트레이 패널의 `오늘 계획` 섹션. '하루 시작'·'퇴근'·'오늘 보기' 버튼을 둔다.
+- 오늘 화면 변경 기록에 알림 표시를 붙인다. 설정 모달에 MVP2 설정 3개를 노출한다.
+- `currentOrNextChanged` 의 판정 기준을 3판 블록 타임라인에 맞춰 다시 정의한다 (E.3).
+
+MVP2 에서 빠지는 것:
+- 체크인 (MVP4), 회의 전 브리핑 (MVP5), 맥락 복구 (MVP3).
+- 수동 '새로고침' 버튼과 앱 내부 변경의 최신화 알림. 이유: 사용자가 이미 앱 안에 있다.
+- 트레이 퇴근 메모 입력, 트레이 '다시 열기'. 메인 창이 담당한다.
+- 트레이 패널에 `assistant:changed` push. 패널은 열릴 때마다 데이터를 다시 받는다.
+- 설정 키·타입 추가. `assistant_refresh_calendar_min`·`assistant_refresh_jira_min`·`assistant_refresh_notify` 는 이미 있다.
+
+### E.2 틱과 트리거
+
+#### E.2.1 틱 구조
+- `assistant-scheduler.ts` 가 `setInterval(runTick, TICK_MS)` 를 둔다. `TICK_MS` 는 60000 이다.
+- 틱은 판정만 한다. 판정은 순수 함수 `decideRefresh` 가 한다 (A25). 파일은 새 순수 모듈 `assistant-schedule.ts` 다. 이 파일은 §16 의 MVP4 파일을 미리 만든 것이다.
+- 틱 1회의 처리 순서:
+  1. `readAssistantSettings`·`logicalDate`·`closeStalePlans` 를 실행한다.
+  2. `closeStalePlans` 가 1건 이상 닫았으면, 스케줄러가 메인 창에 `assistant:changed { reason: 'day' }` 를 보낸다. 이유: 열려 있는 오늘 화면이 닫힘 상태로 바뀐다.
+  3. `getPlanByDate(db, today)` 로 근무 중 여부를 본다.
+  4. `decideRefresh` 를 부른다. 결과가 null 이면 끝낸다.
+  5. 결과 mode 로 `runAutoRefresh(mode, now)` 를 부른다. 반환된 알림 목록을 발송한다 (E.3.6).
+- 틱 전체는 `try/catch` 로 감싼다 (A13). 자동 최신화는 동시에 1개만 실행한다 (A26). 진행 중이면 틱은 건너뛴다.
+
+#### E.2.2 마지막 확인 시각의 위치
+- 출처별 마지막 확인 시각은 `assistant-sources.ts` 의 모듈 메모리에 둔다. 이름은 `SourceCheckTimes { calendarAt; jiraAt }` 다. 값은 epoch ms 다.
+- `collectSources` 가 캘린더를 확인 대상으로 삼으면 `calendarAt = now` 를 기록한다. 연결이 없거나 조회가 실패해도 기록한다. 이유: 실패한 출처를 매 틱마다 다시 두드리지 않는다.
+- `collectSources` 가 Jira 를 확인 대상으로 삼으면 `jiraAt = now` 를 기록한다. 60초 캐시를 썼어도 기록한다.
+- DB 에 두지 않는다. 이유 3가지:
+  - `plan.last_refresh_at` 은 출처를 구분하지 않는다. 계획이 바뀐 시각이지 출처 확인 시각이 아니다.
+  - 새 컬럼은 마이그레이션이 필요하다.
+  - 앱 재시작 뒤에는 즉시 1회 확인하는 편이 맞다. 메모리는 재시작 때 null 이므로 첫 틱이 바로 확인한다.
+- `plan.last_refresh_at` 은 그대로 화면 표시에만 쓴다.
+- 수동 '새로고침'·하루 시작·후보 더 보기도 `collectSources('full')` 을 거친다. 그래서 같은 메모리에 시각을 남긴다. 버튼을 누른 직후 틱은 다시 조회하지 않는다.
+
+#### E.2.3 판정 규칙 (A25)
+`decideRefresh(input)` 은 아래 순서로 판정한다.
+1. `settings.enabled` 가 false 면 null 이다.
+2. `hasActivePlan` 이 false 면 null 이다. 이유: 최신화는 근무 중에만 한다.
+3. `inFlight` 가 true 면 null 이다.
+4. `calendarDue` 를 계산한다. `calendarAt` 이 null 이거나 `now − calendarAt ≥ refreshCalendarMin × 60000` 이면 true 다.
+5. `wake` 가 true 이고 `calendarAt` 이 null 이거나 `now − calendarAt ≥ WAKE_MIN_GAP_MS` 이면, `calendarDue` 는 true 다. `WAKE_MIN_GAP_MS` 는 120000 이다.
+6. `jiraDue` 를 계산한다. `jiraAt` 이 null 이거나 `now − jiraAt ≥ refreshJiraMin × 60000` 이면 true 다. `wake` 는 `jiraDue` 를 바꾸지 않는다.
+7. 둘 다 true 면 `'full'` 이다. 캘린더만 true 면 `'calendar'` 다. Jira 만 true 면 `'jira'` 다. 둘 다 false 면 null 이다.
+
+#### E.2.4 디바운스
+- §8.1 의 '캘린더·Jira 2분 모음' 은 틱 구조에서 두 규칙으로 지킨다.
+  - 주기 확인은 틱 간격 60초와 설정 주기로 이미 모인다. 주기 최솟값은 1분이다.
+  - 깨어남 트리거는 `WAKE_MIN_GAP_MS` 로 모은다. 2분 안에 `resume`·`unlock-screen` 이 여러 번 와도 캘린더는 1번만 확인한다.
+- 로컬 출처의 2초 디바운스는 MVP1 그대로다.
+
+#### E.2.5 `resume`·`unlock-screen` 처리
+- 두 이벤트는 같은 처리기 `onWake(trigger)` 로 간다.
+- 처리 순서: `await runStartNudgeCheck(trigger)` 다음에 `await runTick(true)` 다 (A26).
+- 두 처리는 계획 상태로 배타적이다. 계획이 없으면 시작 알림만 가능하다. 근무 중이면 최신화만 가능하다. 순서를 고정하는 이유는 테스트 결정론이다.
+- 잠자기 뒤에는 `setInterval` 콜백과 `resume` 이 함께 들어온다. 둘 다 `decideRefresh` 와 진행 중 가드를 거친다. 먼저 온 쪽이 실행하고 나중 쪽은 건너뛴다.
+
+#### E.2.6 `runRefresh` 의 mode 확장
+- 타입 `RefreshMode = 'full' | 'local' | 'calendar' | 'jira'` 를 `assistant-types.ts` 에 둔다.
+- `collectSources` 의 출처 선택:
+
+| mode | 로컬 DB | 캘린더 | Jira 네트워크 | Jira 캐시 |
+|------|---------|--------|---------------|-----------|
+| full | 읽는다 | 조회한다 | 캐시가 60초 넘었으면 호출한다 | 60초 안이면 쓴다 |
+| calendar | 읽는다 | 조회한다 | 호출하지 않는다 | 있으면 쓴다. 없으면 `jira = null` |
+| jira | 읽는다 | 조회하지 않는다. `calendar = null` | 캐시가 60초 넘었으면 호출한다 | 60초 안이면 쓴다 |
+| local | 읽는다 | 조회하지 않는다 | 호출하지 않는다 | 있으면 쓴다 |
+
+- 근거: 캘린더 5분·Jira 15분 주기가 다르다. 한 mode 로 묶으면 캘린더 확인 때마다 Jira 를 부르거나, Jira 주기에 맞춰 캘린더가 늦어진다.
+- `resolveVanished` 의 `network` 는 `mode === 'full' || mode === 'jira'` 다.
+- `calendar = null`·`jira = null` 의 스냅샷 유지 규칙은 §8.2·A.2 그대로다. 새 mode 는 새 규칙을 만들지 않는다.
+- `lastCollected` 는 `local` 이 아닌 모든 mode 에서 교체한다. 오늘 화면의 오류 문구는 마지막 네트워크 수집을 보여 준다.
+- 단, `calendar` mode 는 Jira 오류 문구와 `jiraTruncated` 를 이전 값으로 유지한다. `jira` mode 는 캘린더 오류 문구를 이전 값으로 유지한다. 이유: 조회하지 않은 출처의 오류가 화면에서 사라지지 않는다.
+- 자동 최신화는 변경이 없으면 `assistant:changed` 를 보내지 않는다. 이유: 오늘 화면이 5분마다 다시 읽지 않는다. 수동 `full` 은 MVP1 처럼 항상 보낸다.
+
+#### E.2.7 수동 '새로고침'과 Jira 캐시
+- 버튼은 `runRefresh('full')` 이다. 변경 없음.
+- `collectSources('full')` 은 Jira 캐시가 60초 안이면 캐시를 쓴다. 60초를 넘었으면 호출한다. §8.1 마지막 항목과 같다.
+- 버튼 호출은 `jiraAt`·`calendarAt` 을 갱신한다. 그래서 다음 자동 Jira 확인은 버튼으로부터 15분 뒤다. 비서는 Jira 를 주기보다 자주 호출하지 않는다.
+- 버튼과 앱 내부 변경은 알림을 만들지 않는다. `runRefresh` 는 알림 없는 경로다. `runAutoRefresh` 만 알림 후보를 만든다.
+
+### E.3 최신화 알림 (A21)
+
+#### E.3.1 '지금·다음이 바뀌었다' 의 3판 정의
+3판에는 슬롯이 없다. §8.5 의 '지금 하는 항목이나 다음 항목의 슬롯이 바뀌었다' 를 아래로 다시 정의한다.
+- `current` 블록은 지금을 포함하는 블록이다. `next` 블록은 첫 `future` 블록이다. 둘은 `buildTimeline` 결과에서 찾는다.
+- 비교 대상은 최신화 전 타임라인과 최신화 후 타임라인이다. 전 타임라인은 이전 스냅샷 캘린더와 갱신 전 항목으로 만든다. 후 타임라인은 현재 캘린더와 갱신 후 항목으로 만든다. 지금 시각은 둘 다 같다.
+- `current` 블록 비교 키는 `end`·`itemId` 다. `start` 는 비교하지 않는다. 이유: 지금을 포함하는 블록의 시작은 이미 지난 시각이다.
+- `next` 블록 비교 키는 `start`·`end`·`itemId` 다.
+- 두 블록 중 하나라도 키가 다르면 `summary.currentOrNextChanged` 는 true 다. 블록이 없어졌거나 새로 생겨도 true 다.
+- 현재 코드는 `itemId` 만 비교한다. 이 정의로 바꾼다. 이유: 집중 작업이 모든 블록을 받으므로 `itemId` 는 거의 바뀌지 않는다. 14:00 회의가 들어와 지금 블록이 13:00~14:00 으로 줄어도 알림이 가지 않는다. 그러면 §2.2 4단계가 동작하지 않는다.
+- 기존 A23 테스트 중 일정 변경이 current·next 경계를 건드리는 케이스는 기대값이 바뀐다. 팀원 1 이 다시 검증한다.
+
+#### E.3.2 판정 규칙
+`shouldNotifyPlanUpdate(summary, ctx)` 는 아래 조건이 모두 참일 때만 참이다.
+- `ctx.refreshNotify` 가 true 다.
+- `ctx.inMeeting` 이 false 다. `inMeeting` 은 `isInMeeting(calendar, nowHHmm)` 결과다. 종일이 아닌 일정 중 `start ≤ now < end` 인 것이 있으면 true 다. calendar 는 갱신 후 스냅샷이다.
+- `summary.currentOrNextChanged` 가 true 이거나 `summary.urgentSuggestedIds` 가 비어 있지 않다.
+
+`buildPlanUpdateNotices(input)` 는 알림 후보 목록을 돌려준다.
+1. `shouldNotifyPlanUpdate` 가 false 면 빈 배열이다.
+2. `currentOrNextChanged` 가 true 면 `slot` 알림 1건을 넣는다.
+3. `urgentSuggestedIds` 의 각 후보마다 `urgent` 알림 1건을 넣는다. 순서는 `inserts` 순서다. 최대 3건이다. 이유: 알림 피로를 막는다. 4건째부터는 변경 기록에만 남는다.
+4. 결과 길이는 최대 4다.
+
+#### E.3.3 event_key 와 ref_id
+| 종류 | event_key | ref_id | 중복 방지 |
+|------|-----------|--------|-----------|
+| 변경 기록 | `plan_update:<date>:<YYYY-MM-DD HH:mm:ss>` | null | 같은 초는 접미어 `:1`~`:4`. MVP1 그대로 |
+| slot 알림 | `plan_update:<date>:<HHmm>` | `<HHmm>` | 30분 버킷당 1회 |
+| urgent 알림 | `plan_update:<date>:urgent:<candidate_id>` | `urgent:<candidate_id>` | 후보당 1회 |
+
+- `<HHmm>` 은 `bucketOf(nowHHmm)` 결과다. 분을 30으로 내림한다. 14:42 는 `1430` 이다.
+- 변경 기록 행과 알림 행은 서로 다른 행이다. 이유: 알림 중복 방지 키는 버킷·후보 단위다. 변경 기록 키는 최신화 1회 단위다. 한 행으로는 두 키를 함께 둘 수 없다.
+- 알림 행의 status 는 INSERT 때 `sent` 다. `show()` 가 실패하면 `failed` 다. UNIQUE 충돌이면 발송하지 않는다 (A5).
+- 변경 기록 행의 status 는 항상 `logged` 다. payload 는 `PlanUpdateRecord` 다. `notified` 에 INSERT 에 성공한 알림 종류를 넣는다.
+- 오늘 화면의 변경 내역은 `ref_id` 가 null 인 행만 보여 준다.
+
+#### E.3.4 알림 문구 (순수 함수)
+`buildPlanUpdateNotices` 가 문구를 만든다. 제목·본문은 `Notification` 에 그대로 간다.
+
+`slot` 알림:
+- 제목은 `계획 변경` 이다.
+- 본문은 조각을 ` · ` 로 잇는다. 조각 순서는 일정 조각, 블록 조각이다.
+- 일정 조각: `diff.calendarAdded` 첫 항목이 있으면 `<start> <title> 추가` 다. 없고 `calendarChanged` 가 있으면 `<start> <title> 변경` 이다. 없고 `calendarRemoved` 가 있으면 `<start> <title> 취소` 다. 일정 변경 합계가 2 이상이면 ` 외 N건` 을 붙인다. 일정 변경이 없으면 조각을 넣지 않는다.
+- 블록 조각: `after` 의 next 블록이 있으면 `다음 <start>–<end> <항목 제목>` 이다. 항목이 없으면 `다음 <start>–<end> 빈 블록` 이다. next 블록이 없고 current 블록이 있으면 `지금 <항목 제목> ~<end>` 다. 둘 다 없으면 `남은 블록 없음` 이다.
+- 제목 문자열은 20자에서 자르고 `…` 를 붙인다.
+- 예: `14:00 제품 리뷰 추가 · 다음 15:00–18:00 API 설계`.
+
+`urgent` 알림:
+- 제목은 `새로 들어온 일` 이다.
+- 본문은 `<식별 문구> <긴급 사유>` 다. 식별 문구는 `jira_issue_key` 가 있으면 키다. 없으면 제목 20자다.
+- 긴급 사유: `due_date === today` 면 `오늘 마감` 이다. `due_date < today` 면 `N일 지남` 이다. 둘 다 아니면 `우선순위 최상` 이다.
+- 예: `PROJ-123 오늘 마감`.
+
+세부 규칙 (구현 확정분):
+- ` 외 N건` 의 N 은 일정 변경 합계에서 1 을 뺀 값이다. 예: 추가 1건과 취소 1건이면 `외 1건` 이다.
+- current 블록에 항목이 없으면, 블록 조각은 `지금 빈 블록 ~<end>` 다.
+- 긴급 후보는 갱신 후 `items` 에서 `candidate_id` 로 먼저 찾는다. 없으면 `diff.newCandidates` 에서 찾는다. 둘 다 없으면, 그 후보는 알림에서 뺀다.
+
+#### E.3.5 클릭 시 focus
+- `slot` 알림의 focus 는 `{ kind: 'timeline' }` 이다. `AssistantNavigateEvent.focus.kind` 에 `'timeline'` 을 추가한다. 오늘 화면은 `id="today-timeline"` 카드로 스크롤한다.
+- `urgent` 알림의 focus 는 `{ kind: 'inbox' }` 다.
+- 스케줄러의 `navigateToToday(focus)` 가 `assistant:navigate { view: 'today', focus }` 를 보낸다. 보관 신호 규칙은 부록 D.4 그대로다.
+
+#### E.3.6 서비스와 스케줄러의 역할 분리
+- 서비스 `runAutoRefresh` 는 `applyRefreshPlan` 뒤에 알림 후보를 만든다. 각 후보를 `insertEvent` 한다. INSERT 에 성공한 후보만 `notices` 에 담아 돌려준다. 그다음 변경 기록 행을 INSERT 한다.
+- 스케줄러는 받은 `notices` 마다 `Notification` 을 만든다. `liveNotifications` 에 넣는다. click 은 `navigateToToday(notice.focus)` 다. `show()` 가 throw 하면 `updateEventStatus(eventId, 'failed')` 다.
+- 이 분리로 A5 순서를 지킨다. INSERT 는 서비스에서, `show()` 는 그 뒤 스케줄러에서 일어난다.
+- 알림을 보내지 않은 최신화는 변경 기록 행만 남는다. status 는 `logged` 다.
+- 서비스는 계획에 변경이 있을 때만 알림 후보를 만든다. 변경은 항목 추가·항목 갱신·일정 변경이다. 이유: 변경 기록 행이 없는 알림이 생기지 않는다.
+- `notified` 는 INSERT 에 성공한 알림 종류를 중복 없이 담는다. 예: urgent 3건이면 `['urgent']` 다.
+
+### E.4 트레이
+
+#### E.4.1 `getTrayData` 의 assistant 필드
+- `TrayData.assistant: TrayAssistant | null` 을 추가한다. 타입은 E.6 에 있다.
+- `tray-widget.ts` 는 `getToday()` 를 부른 뒤 순수 함수 `toTraySummary(payload)` 로 투영한다 (A27). 트레이 코드는 비서 테이블을 직접 읽지 않는다 (A28). 이유: 계획·타임라인 규칙이 한 곳에만 있다.
+- `getToday()` 가 throw 하거나 `settings.enabled` 가 false 면 `assistant` 는 null 이다. 트레이는 `try/catch` 로 감싼다. 이유: 백업 복원 중 DB 가 닫혀 있어도 트레이가 죽지 않는다.
+- `getToday()` 는 `local` 수집만 한다. 네트워크를 쓰지 않는다. 자동 닫기도 실행한다.
+
+#### E.4.2 오늘 계획 섹션 동작
+- 섹션 위치는 헤더 바로 아래다. 이유: 하루의 첫 행동이다.
+- `assistant` 가 null 이면 섹션을 그리지 않는다.
+- `status === 'none'`: 문구 `오늘 계획이 없습니다` 와 '하루 시작' 버튼을 보여 준다.
+- `status === 'active'`: `HH:mm 시작 · 집중 가능 N분` 줄을 보여 준다. 활성 항목 상위 3건을 rank 순으로 보여 준다. 집중 작업에는 `집중` 배지를 붙인다. 제안이 있으면 `새로 들어온 일 N건 · 긴급 M건` 줄을 보여 준다. 버튼은 '오늘 보기'와 '퇴근'이다.
+- `status === 'closed'`: 문구 `오늘 마감` 과 '오늘 보기' 버튼을 보여 준다.
+- 버튼 처리 중에는 `busy` 로 버튼을 막는다. 실패하면 섹션 안에 오류 문구를 보여 준다.
+- 버튼 처리가 끝나면 패널이 `window.api.tray.getData()` 를 다시 부른다.
+
+#### E.4.3 IPC 경로
+- 트레이 패널 창의 preload 는 메인 창과 같은 `preload/index.js` 다. `tray-widget.ts` 의 `createPanelWindow` 가 같은 경로를 쓴다. 그래서 패널에서 `window.api.assistant.startDay()`·`closeDay()` 를 그대로 부른다. 새 채널을 만들지 않는다.
+- 동시 호출 보호는 서비스의 `startDayInFlight`·`serialized` 가 이미 한다.
+- '오늘 보기' 는 새 채널 `tray:openToday` 다. `tray-widget.ts` 가 핸들러를 등록한다. 핸들러는 스케줄러의 `navigateToToday()` 를 부르고 패널을 숨긴다. preload 에 `tray.openToday` 를 추가한다. `destroyTrayWidget` 이 핸들러를 제거한다.
+- '퇴근' 은 메모 없이 `closeDay()` 를 부른다.
+
+#### E.4.4 메인 창과의 동기화
+- 트레이에서 하루 시작·퇴근을 하면 서비스가 `emitChanged({ reason: 'day' })` 를 부른다. 스케줄러가 메인 창에 `assistant:changed` 를 보낸다. 오늘 화면이 다시 읽는다. 추가 작업이 없다.
+- 메인 창에서 하루 시작·퇴근을 해도 트레이 패널에 push 하지 않는다. 패널은 `showPanel` 때마다 `tray:data` 를 새로 받는다. 패널이 열린 채로 메인 창이 바뀌는 경우는 다음 열기 때 반영한다.
+
+### E.5 오늘 화면 변경
+
+- `ChangeLog.tsx`: `planUpdateEvents` 는 `kind === 'plan_update'` 이고 `ref_id === null` 인 행만 고른다. `describePlanUpdate` 는 `payload.notified` 가 비어 있지 않으면 끝에 ` · 알림 보냄` 을 붙인다. `currentOrNextChanged` 문구는 `지금·다음 블록 변경` 으로 바꾼다.
+- `TodayView.tsx`: 오늘 계획 카드에 `id="today-timeline"` 을 둔다. focus `kind === 'timeline'` 이면 그 id 로 스크롤한다.
+- `AssistantSettingsModal.tsx`: `refreshCalendarMin`·`refreshJiraMin`·`refreshNotify` 를 노출한다. 숫자 입력 2개는 1~240 검증을 둔다. 토글 1개의 문구는 `최신화 알림` 이다. 힌트는 `지금·다음 블록이 바뀌거나 긴급한 일이 들어오면 알립니다` 다. `Mvp1SettingKey`·`MVP1_SETTING_KEYS`·`Mvp1Settings` 는 `FormSettingKey`·`FORM_SETTING_KEYS`·`FormSettings` 로 이름을 바꾼다.
+- `DayHeader.tsx` 는 바꾸지 않는다. `마지막 최신화` 표시가 자동 최신화 시각을 그대로 보여 준다.
+
+### E.6 모듈 계약
+
+팀원은 이 계약의 이름과 시그니처를 그대로 쓴다. 계약을 바꿔야 하면 리더에게 알린다.
+
+#### E.6.1 `assistant-types.ts` (팀원 1) 추가분
+```ts
+export type RefreshMode = 'full' | 'local' | 'calendar' | 'jira'
+
+export interface SourceCheckTimes { calendarAt: number | null; jiraAt: number | null }   // epoch ms. 마지막 확인 대상 시각
+
+export interface RefreshDecisionInput {
+  nowMs: number
+  settings: Pick<AssistantSettings, 'enabled' | 'refreshCalendarMin' | 'refreshJiraMin'>
+  hasActivePlan: boolean
+  inFlight: boolean            // 자동 최신화가 진행 중이다
+  times: SourceCheckTimes
+  wake: boolean                // resume·unlock-screen 에서 불렀다
+}
+
+export interface NotifyContext { refreshNotify: boolean; inMeeting: boolean }
+export type PlanUpdateNoticeKind = 'slot' | 'urgent'
+export interface PlanUpdateNotice {
+  kind: PlanUpdateNoticeKind
+  eventKey: string             // 'plan_update:<date>:<HHmm>' | 'plan_update:<date>:urgent:<candidate_id>'
+  refId: string                // '<HHmm>' | 'urgent:<candidate_id>'
+  title: string
+  body: string
+  focus: NonNullable<AssistantNavigateEvent['focus']>
+}
+export interface SentPlanUpdateNotice extends PlanUpdateNotice { eventId: number }
+export interface NoticeInput {
+  diff: RefreshDiff; summary: RefreshSummary; after: DayTimeline; items: PlanItem[]   // items 는 갱신 후 항목
+  today: string; nowHHmm: string; ctx: NotifyContext
+}
+export type PlanUpdateRecord = RefreshSummary & { notified: PlanUpdateNoticeKind[] }   // 변경 기록 행 payload
+export interface AutoRefreshOutcome { today: TodayPayload; notices: SentPlanUpdateNotice[] }
+
+export interface TrayPlanItem { id: number; title: string; rank: number | null; status: PlanItemStatus; isFocus: boolean }
+export interface TrayAssistant {
+  logicalDate: string
+  status: 'none' | 'active' | 'closed'
+  startedAt: string | null     // 'HH:mm'
+  items: TrayPlanItem[]        // 활성 항목 rank 순 상위 3건
+  activeCount: number; doneCount: number
+  suggestedCount: number; urgentSuggestedCount: number
+  freeMinutesLeft: number
+}
+
+// 변경: AssistantNavigateEvent.focus.kind 에 'timeline' 을 추가한다
+export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline'; id?: string } }
+```
+
+#### E.6.2 `assistant-schedule.ts` (팀원 1, 새 파일, 순수)
+```ts
+export const TICK_MS = 60_000
+export const WAKE_MIN_GAP_MS = 120_000
+export function decideRefresh(input: RefreshDecisionInput): RefreshMode | null    // A25. E.2.3 순서
+```
+
+#### E.6.3 `assistant-refresh.ts` (팀원 1) 추가·변경분
+```ts
+export function isInMeeting(calendar: CalendarRef[], nowHHmm: string): boolean
+export function bucketOf(nowHHmm: string): string                                     // 'HHmm'. 30분 내림
+export function shouldNotifyPlanUpdate(summary: RefreshSummary, ctx: NotifyContext): boolean   // A21. E.3.2
+export function buildPlanUpdateNotices(input: NoticeInput): PlanUpdateNotice[]        // A21. E.3.2~E.3.5. 최대 4건
+// 변경: planRefresh 의 summary.currentOrNextChanged 를 E.3.1 정의로 계산한다
+```
+
+#### E.6.4 `assistant-sources.ts` (팀원 2) 변경분
+```ts
+export async function collectSources(db, settings: AssistantSettings, mode: RefreshMode, now: Date): Promise<CollectedSources>   // E.2.6 표
+export function getSourceCheckTimes(): SourceCheckTimes
+export function resetSourceCheckTimes(): void        // 테스트용. clearJiraCache 와 별개다
+```
+
+#### E.6.5 `assistant-service.ts` (팀원 2) 변경분
+```ts
+export function runRefresh(mode: RefreshMode, now?: Date): Promise<TodayPayload | null>            // 알림 후보를 만들지 않는다. IPC·앱 내부 변경이 쓴다
+export function runAutoRefresh(mode: RefreshMode, now?: Date): Promise<AutoRefreshOutcome | null>  // 알림 후보를 INSERT 한 뒤 돌려준다. 틱·깨어남이 쓴다
+export function getSourceCheckTimes(): SourceCheckTimes                                             // assistant-sources 에 위임한다
+```
+- 두 함수는 같은 `runRefreshImpl(mode, now, notify)` 를 쓴다. `serialized` 로 직렬화한다.
+- `notify === true` 일 때 `applyRefreshPlan` 뒤의 순서: 갱신 후 항목·계획을 다시 읽는다 → 후 타임라인을 만든다 → `inMeeting` 을 계산한다 → `buildPlanUpdateNotices` → 각 후보 `insertEvent` → 변경 기록 `logPlanUpdate` 에 `notified` 포함 → `emitChanged` 는 변경이 있을 때만.
+- 알림 행 INSERT 값: `kind 'plan_update'`, `scheduled_at = at`, `fired_at = at`, `status 'sent'`, `ref_id = refId`, `payload = JSON { title, body, focus }`.
+
+#### E.6.6 `assistant-scheduler.ts` (팀원 2) 변경분
+```ts
+export function navigateToToday(focus?: AssistantNavigateEvent['focus']): void   // 기존 내부 함수를 export 한다. 트레이가 쓴다
+export async function runTick(wake?: boolean, now?: Date): Promise<void>         // E.2.1 순서. throw 하지 않는다 (A13). 테스트용 export
+// 내부: onWake(trigger) = await runStartNudgeCheck(trigger); await runTick(true)
+// 내부: showPlanUpdateNotices(notices: SentPlanUpdateNotice[]) — Notification 생성·liveNotifications·click→navigateToToday(focus)·실패 시 failed
+// startAssistantScheduler 가 setInterval(TICK_MS) 를 둔다. stopAssistantScheduler 가 clearInterval 하고 진행 중 가드를 비운다
+```
+
+#### E.6.7 `assistant-tray.ts` (팀원 3, 새 파일, 순수)
+```ts
+export const TRAY_ITEM_LIMIT = 3
+export function toTraySummary(payload: TodayPayload): TrayAssistant   // A27
+```
+A27 규칙:
+1. `plan` 이 null 이면 status 는 `none` 이다. items 는 빈 배열이고 수치는 0 이다.
+2. items 는 status 가 `planned`·`in_progress` 인 항목을 rank 오름차순으로 정렬한 앞 3건이다. rank null 은 뒤로 간다. 같으면 id 오름차순이다. `isFocus` 는 `id === timeline.focusItemId` 다.
+3. `activeCount` 는 활성 항목 수다. `doneCount` 는 `done` 수다. `suggestedCount` 는 `suggested` 수다. `urgentSuggestedCount` 는 `suggested` 이고 `urgent` 인 수다.
+4. `freeMinutesLeft` 는 `timeline.freeMinutesLeft` 다. `startedAt` 은 `plan.started_at` 의 `HH:mm` 이다.
+5. 입력을 바꾸지 않는다 (A14).
+
+#### E.6.8 `tray-widget.ts` (팀원 3) 변경분
+```ts
+interface TrayData { projects: TrayProject[]; events: TrayEvent[]; assistant: TrayAssistant | null }
+// getTrayData: try { assistant = toTraySummary(await getToday()) } catch { assistant = null }. settings.enabled 가 false 면 null
+// ipcMain.handle('tray:openToday', () => { navigateToToday(); panelWindow?.hide() })
+// destroyTrayWidget: ipcMain.removeHandler('tray:openToday')
+```
+
+#### E.6.9 `TrayPanel.tsx` (팀원 3) 변경분
+```ts
+export function TrayAssistantSection(props: {
+  assistant: TrayAssistant; busy: boolean; error: string
+  onStartDay: () => void; onCloseDay: () => void; onOpenToday: () => void
+}): React.ReactNode
+export function trayStatusLine(a: TrayAssistant): string   // 'HH:mm 시작 · 집중 가능 N분' | '오늘 계획이 없습니다' | '오늘 마감'
+```
+- `TrayAssistant` 는 파일 안에 로컬 인터페이스로 둔다. 기존 `TrayProject`·`TrayEvent` 와 같은 관례다.
+- 테스트는 `renderToStaticMarkup` 으로 `TrayAssistantSection` 을 그린다. `window.api` 를 쓰지 않는다.
+
+#### E.6.10 `preload/index.ts` (팀원 2) 변경분
+```ts
+tray: { getData, openApp, openToday: () => ipcRenderer.invoke('tray:openToday'), onData }
+```
+
+#### E.6.11 렌더러 `types/index.ts` (팀원 4) 변경분
+- `AssistantNavigateEvent.focus.kind` 에 `'timeline'` 추가.
+- `RefreshSummary` 에 `notified?: Array<'slot' | 'urgent'>` 추가.
+- `TrayAPI` 에 `openToday: () => Promise<void>` 추가.
+- `TrayAssistant`·`TrayPlanItem` 을 E.6.1 과 같은 모양으로 추가.
+
+#### E.6.12 변경하지 않는 파일
+`assistant.ipc.ts`, `src/main/index.ts`, `preload/index.d.ts`, `renderer/src/env.d.ts`, `App.tsx`, `assistantStore.ts`, `assistant-settings.ts`, `assistant-store.ts`, `DayHeader.tsx`. 이유: 기존 시그니처와 채널이 그대로다. `App.tsx` 의 `goToday` 는 focus 를 그대로 전달한다.
+
+### E.7 팀 구성과 소유 파일
+
+§16 의 MVP2 표를 현재 코드에 맞게 고친다. 팀원 4명이다.
+
+| 팀원 | 역할 | 소유 파일 |
+|------|------|-----------|
+| 1 순수 로직·타입 | 타입, 판정, 알림 문구 | `src/main/services/assistant-types.ts`, `assistant-schedule.ts`, `assistant-schedule.test.ts`, `assistant-refresh.ts`, `assistant-refresh.test.ts`, `assistant-settings.ts`, `assistant-settings.test.ts` |
+| 2 런타임 | 수집 mode, 서비스, 틱·알림 발송, preload | `assistant-sources.ts`, `assistant-sources.test.ts`, `assistant-service.ts`, `assistant-service.test.ts`, `assistant-scheduler.ts`, `assistant-scheduler.test.ts`, `src/main/ipc/assistant.ipc.ts`, `src/main/index.ts`, `src/preload/index.ts`, `src/preload/index.d.ts` |
+| 3 트레이 | 트레이 데이터·패널 | `src/main/services/tray-widget.ts`, `assistant-tray.ts`, `assistant-tray.test.ts`, `src/renderer/src/components/tray/TrayPanel.tsx`, `TrayPanel.test.tsx` |
+| 4 렌더러 | 타입 복제, 오늘 화면 | `src/renderer/src/types/index.ts`, `env.d.ts`, `stores/assistantStore.ts`, `components/today/TodayView.tsx`, `ChangeLog.tsx`, `AssistantSettingsModal.tsx`, `TodayView.test.tsx`, `App.tsx` |
+
+- `assistant-settings.ts`·`assistant.ipc.ts`·`index.ts`·`env.d.ts`·`App.tsx`·`assistantStore.ts` 는 변경 예정이 없다. 소유자를 정해 두는 이유는 예상 밖 수정이 생겨도 충돌이 없게 하기 위해서다.
+- `assistant-slots.ts`·`assistant-store.ts`·`assistant-day.ts` 는 이번에 아무도 수정하지 않는다. 수정이 필요하면 리더에게 알린다.
+
+의존 순서:
+1. 팀원 1 이 `assistant-types.ts` 추가분을 먼저 쓴다. 팀원 4 가 같은 시각에 `types/index.ts` 복제분을 쓴다. 두 작업은 서로 기다리지 않는다.
+2. 팀원 2 는 1단계 뒤에 시작한다. `decideRefresh`·`buildPlanUpdateNotices` 를 import 한다. 함수 본문이 아직 없으면 스텁이 아니라 계약 시그니처를 기준으로 작성한다.
+3. 팀원 3 은 1단계와 팀원 2 의 `navigateToToday` export·preload `tray.openToday` 뒤에 타입체크가 통과한다. 그 전에는 `assistant-tray.ts`·테스트·`TrayAssistantSection` 을 먼저 만든다.
+4. 팀원 4 의 `ChangeLog`·`SettingsModal`·`TodayView` 는 1단계 뒤 바로 진행한다.
+
+### E.8 완료 조건
+
+최대 반복 5회. 같은 실패가 2회 연속이면 중단하고 리더에게 보고한다. 5회를 넘으면 리더가 미충족 항목·시도·원인을 사용자에게 보고한다.
+
+1. C1: `npx vitest run` 종료 코드 0, 실패 0건.
+2. C2: `npm run typecheck` 에러 0건.
+3. C3: `npm run build` 종료 코드 0.
+4. `grep -c "A21" src/main/services/assistant-refresh.test.ts` ≥ 4. 대상: `refreshNotify` 꺼짐, 회의 중, slot 변경, 긴급 제안, 버킷 키.
+5. `grep -c "A25" src/main/services/assistant-schedule.test.ts` ≥ 5. 대상: 비활성, 계획 없음, 진행 중, 주기 미경과, 깨어남 2분, mode 조합.
+6. `grep -c "A26" src/main/services/assistant-scheduler.test.ts` ≥ 2. 대상: 동시 실행 1개, 깨어남 순서.
+7. `grep -c "A5\|A13" src/main/services/assistant-scheduler.test.ts` ≥ 4. 기존 2건에 plan_update INSERT→show 와 틱 예외 삼킴을 더한다.
+8. `grep -c "A27" src/main/services/assistant-tray.test.ts` ≥ 3.
+9. `grep -c "setInterval" src/main/services/assistant-scheduler.ts` ≥ 1. `grep -c "powerMonitor" src/main/services/assistant-scheduler.ts` ≥ 1.
+10. `grep -c "'calendar'\|'jira'" src/main/services/assistant-sources.test.ts` ≥ 2.
+11. `grep -c "getSourceCheckTimes" src/main/services/assistant-sources.ts src/main/services/assistant-service.ts` 각각 ≥ 1.
+12. `grep -c "runAutoRefresh" src/main/services/assistant-scheduler.ts` ≥ 1.
+13. `grep -c "assistant_refresh_calendar_min\|assistant_refresh_jira_min\|assistant_refresh_notify" src/main/services/assistant-settings.ts` ≥ 3.
+14. `grep -c "assistant"` 결과가 `src/main/services/tray-widget.ts`, `src/renderer/src/components/tray/TrayPanel.tsx` 각각 ≥ 1.
+15. `grep -c "openToday"` 결과가 `src/preload/index.ts`, `src/main/services/tray-widget.ts`, `src/renderer/src/components/tray/TrayPanel.tsx`, `src/renderer/src/types/index.ts` 각각 ≥ 1.
+16. A28: `grep -cE "daily_plans|plan_items|assistant_events" src/main/services/tray-widget.ts` 결과 0.
+17. `grep -c "refreshNotify\|refreshCalendarMin\|refreshJiraMin" src/renderer/src/components/today/AssistantSettingsModal.tsx` ≥ 3.
+18. `grep -c "notified" src/renderer/src/components/today/ChangeLog.tsx` ≥ 1. `grep -c "'timeline'" src/renderer/src/components/today/TodayView.tsx` ≥ 1.
+19. `grep -c "Mvp1SettingKey\|MVP1_SETTING_KEYS" src/renderer/src/components/today/AssistantSettingsModal.tsx src/renderer/src/components/today/TodayView.test.tsx` 합계 0.
+20. A1: `grep -n "method:" src/main/services/jira.ts | grep -vc "'GET'"` 결과 0.
+21. A2: `grep -nE "INSERT INTO (projects|tasks|todos|meetings)|UPDATE (projects|tasks|todos|meetings)|DELETE FROM (projects|tasks|todos|meetings)" src/main/services/assistant-*.ts src/main/ipc/assistant.ipc.ts src/main/services/tray-widget.ts` 결과 0건.
+22. A3: `grep -lE "from '(electron|better-sqlite3|\.\./db|\./jira|\./google-calendar)" src/main/services/assistant-{candidates,score,slots,settings,day,refresh,schedule,tray}.ts` 결과 0건.
+23. 부록 D.5 조건 5: `grep -cE "getTodayEvents|getEventsInRange" src/main/services/assistant-sources.ts` = 0.
+24. 부록 B.8 조건 6·12·13 을 다시 실행한다. 결과가 모두 충족이다.
+
+새 규칙 ID 요약. §15 표에 추가한다.
+
+| ID | 규칙 | 이유 | 판정 |
+|----|------|------|------|
+| A25 | 자동 최신화 판정은 근무 중·주기 경과·진행 중 아님일 때만 mode 를 돌려준다. 깨어남은 캘린더만 2분 간격으로 앞당긴다. Jira 주기는 앞당기지 않는다 | Jira 호출량과 알림 피로를 제한한다 | 테스트 `A25` |
+| A26 | 자동 최신화는 동시에 1개만 실행한다. 깨어남 처리는 시작 알림 판정 뒤에 최신화를 한다 | 중복 수집과 비결정적 순서를 막는다 | 테스트 `A26` |
+| A27 | 트레이 요약은 `TodayPayload` 의 순수 투영이다. 활성 항목 rank 순 상위 3건, 제안 수, 근무 상태를 담는다 | 계획 규칙이 한 곳에만 있다 | 테스트 `A27` |
+| A28 | 트레이 코드는 비서 테이블을 직접 읽지 않는다. 하루 시작·퇴근은 기존 `assistant:*` 채널을 쓴다 | 두 진입점이 같은 보호 장치를 거친다 | 조건 16 |
+
+### E.9 사용자 결정 (2026-11-02)
+- 깨어남 때 Jira 는 `assistant_refresh_jira_min` 주기를 지킨다. 깨어남은 캘린더만 2분 간격으로 앞당긴다. 이 결정이 §8.1 표의 `resume`·`unlock-screen` 행보다 우선한다.
+- 트레이 '퇴근'은 메모 없이 하루를 닫는다. 메모는 메인 창의 퇴근에서 쓴다.
+- 긴급 제안 알림은 최신화 1회당 최대 3건이다. 4건째부터는 변경 기록과 '새로 들어온 일' 섹션에만 남는다.
+
+### E.10 위험
+| # | 위험 | 대응 |
+|---|------|------|
+| 1 | `Notification` 객체가 GC 되면 click 핸들러가 사라진다 | 기존 `liveNotifications` Set 에 넣는다. close·click 때 뺀다. 시작 알림과 같은 패턴이다 |
+| 2 | 틱과 `resume` 이 잠자기 뒤 같은 순간에 들어온다 | 진행 중 가드 1개와 `SourceCheckTimes` 로 두 번째 호출을 건너뛴다 (A26). 서비스의 `serialized` 는 큐라서 중복 실행을 막지 못한다. 가드는 스케줄러에 둔다 |
+| 3 | 백업 복원 중 DB 가 닫혀 있다 | 틱·`getTrayData` 의 assistant 부분을 `try/catch` 로 감싼다 (A13). `tray-widget.ts` 의 기존 주석이 근거다 |
+| 4 | 트레이 패널이 `ready-to-show` 전이거나 파괴된 뒤다 | `showPanel` 의 기존 `panelReady` 검사를 유지한다. `tray:openToday` 핸들러는 `panelWindow?.hide()` 로 옵셔널 호출한다 |
+| 5 | `currentOrNextChanged` 재정의로 기존 A23 테스트의 기대값이 바뀐다 | 팀원 1 이 `assistant-refresh.test.ts` 221~281 행 케이스를 새 정의로 다시 검증한다. `ChangeLog.tsx` 의 문구도 함께 바꾼다 |
+| 6 | 캘린더 미연결 상태에서 틱이 매 분 최신화를 돌려 오늘 화면이 매 분 다시 읽는다 | `calendarAt` 을 미연결·실패에도 기록한다. 변경이 없으면 `assistant:changed` 를 보내지 않는다 |
+| 7 | `refreshCalendarMin` 최솟값 1 로 두면 Google API 를 매 분 부른다 | 설정 범위는 그대로 둔다. 기본값 5 를 유지한다. 모달 힌트에 '권장 5분' 을 적는다 |
+| 8 | 스케줄러 테스트가 `assistant-sources.ts` 를 직접 import 하면 `jira.ts`·`google-calendar.ts` 의 electron 의존이 테스트 mock 범위를 넘는다 | 스케줄러는 `getSourceCheckTimes` 를 `assistant-service.ts` 경유로 쓴다. 기존 테스트는 `./assistant-service` 만 mock 한다 |
+| 9 | `insertEvent` 충돌로 알림 행이 빠지면 `notified` 와 실제 발송이 어긋날 수 있다 | `notified` 는 INSERT 에 성공한 종류만 담는다. `show()` 실패는 알림 행 status `failed` 로만 남긴다. 변경 기록은 '알림 대상' 을 뜻한다 |
+| 10 | 트레이 패널이 열린 채 틱 최신화가 돌면 패널이 오래된 값을 보여 준다 | 다음 열기 때 반영한다. push 는 범위 밖이다. 문제가 되면 후속에서 `tray:data` push 를 더한다 |
+| 11 | `collectSources('calendar')` 에서 Jira 캐시가 없으면 `jira = null` 이다. Jira 항목이 사라진 것으로 보이지 않고 스냅샷 jira 가 유지된다 | 기존 §8.2·A.2 규칙 그대로다. 새 테스트로 명시한다 (조건 10) |

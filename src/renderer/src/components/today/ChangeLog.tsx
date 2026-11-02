@@ -47,7 +47,7 @@ export function describePlanUpdate(ev: Pick<AssistantEvent, 'scheduled_at' | 'fi
     parts.push(...calendar)
     if (timelineChanged) parts.push('시간표 갱신')
   }
-  if (s.currentOrNextChanged === true) parts.push('지금·다음 블록 작업 변경')
+  if (s.currentOrNextChanged === true) parts.push('지금·다음 블록 변경')
 
   const suggested = n(s.suggested)
   const urgent = Array.isArray(s.urgentSuggestedIds) ? s.urgentSuggestedIds.length : 0
@@ -59,12 +59,15 @@ export function describePlanUpdate(ev: Pick<AssistantEvent, 'scheduled_at' | 'fi
   if (n(s.replaced) > 0) parts.push(`액션아이템 ${n(s.replaced)}건 TODO 로 교체`)
 
   const body = parts.length > 0 ? parts.join(' · ') : '변경 없음'
-  return `${time} ${body}`.trim()
+  // 알림 행 INSERT 에 성공한 종류가 있으면 표시한다 (부록 E.3.3)
+  const notified = Array.isArray(s.notified) && s.notified.length > 0 ? ' · 알림 보냄' : ''
+  return `${time} ${body}${notified}`.trim()
 }
 
+// 변경 기록 행만 고른다. 알림 행은 ref_id 가 있다 (부록 E.3.3)
 export function planUpdateEvents(events: AssistantEvent[]): AssistantEvent[] {
   return events
-    .filter((e) => e.kind === 'plan_update')
+    .filter((e) => e.kind === 'plan_update' && e.ref_id === null)
     .sort((a, b) => {
       const ta = a.fired_at ?? a.scheduled_at
       const tb = b.fired_at ?? b.scheduled_at

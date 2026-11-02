@@ -78,16 +78,57 @@ vi.mock('./assistant-store', () => store)
 const service = vi.hoisted(() => ({
   getStartNudgeContent: vi.fn(async () => ({ candidateCount: 3, eventCount: 2 })),
   runRefresh: vi.fn(async () => null),
+  runAutoRefresh: vi.fn(async (): Promise<unknown> => null),
+  getSourceCheckTimes: vi.fn(() => ({ calendarAt: null, jiraAt: null })),
   setAssistantChangedListener: vi.fn()
 }))
 vi.mock('./assistant-service', () => service)
 
+// 판정 규칙(A25)은 assistant-schedule.test.ts 가 검증한다. 여기서는 근무 중이고 진행 중이 아니면 'calendar' 로 둔다
+const schedule = vi.hoisted(() => ({
+  TICK_MS: 60_000,
+  decideRefresh: vi.fn((input: { hasActivePlan: boolean; inFlight: boolean }) => {
+    order.push('decideRefresh')
+    return input.hasActivePlan && !input.inFlight ? 'calendar' : null
+  })
+}))
+vi.mock('./assistant-schedule', () => schedule)
+
 import {
+  navigateToToday,
   runStartNudgeCheck,
+  runTick,
   startAssistantScheduler,
   stopAssistantScheduler,
   takePendingNavigate
 } from './assistant-scheduler'
+
+function notice(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    kind: 'slot',
+    eventKey: 'plan_update:2026-11-02:0930',
+    refId: '0930',
+    title: '계획 변경',
+    body: '14:00 제품 리뷰 추가 · 다음 15:00–18:00 API 설계',
+    focus: { kind: 'timeline' },
+    eventId: 7,
+    ...over
+  }
+}
+
+// 서비스가 알림 행을 INSERT 한 뒤 결과를 돌려준다 (E.3.6)
+function autoRefreshReturns(notices: Record<string, unknown>[]): void {
+  service.runAutoRefresh.mockImplementation(async () => {
+    order.push('insertEvent')
+    return { today: {}, notices }
+  })
+}
+
+function deferred(): { promise: Promise<unknown>; resolve: (v: unknown) => void } {
+  let resolve: (v: unknown) => void = () => undefined
+  const promise = new Promise((r) => (resolve = r))
+  return { promise, resolve }
+}
 
 function fakeWindow(loading = false): {
   isDestroyed: () => boolean
@@ -114,7 +155,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   db.getDatabase.mockReturnValue({})
   store.getPlanByDate.mockReturnValue(null)
+  store.closeStalePlans.mockReturnValue([])
   store.findEventByKey.mockReturnValue(null)
+  service.runAutoRefresh.mockImplementation(async () => null)
   store.insertEvent.mockImplementation((_db: unknown, ev: { event_key: string }) => {
     order.push('insertEvent')
     return { id: 1, ...ev }
@@ -294,5 +337,187 @@ describe('앱 내부 변경 최신화 예약', () => {
     expect(activity.listener).toBeNull()
     expect(electron.handlers.size).toBe(0)
     expect(service.setAssistantChangedListener).toHaveBeenLastCalledWith(null)
+  })
+})
+
+describe('틱과 자동 최신화 (부록 E.2)', () => {
+  beforeEach(() => {
+    store.getPlanByDate.mockReturnValue({ id: 9, status: 'active' } as never)
+  })
+
+  it('setInterval 로 60초마다 틱을 돌린다. 정지하면 더 돌지 않는다', async () => {
+    vi.useFakeTimers()
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
+    await vi.advanceTimersByTimeAsync(59_999)
+    expect(schedule.decideRefresh).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(schedule.decideRefresh).toHaveBeenCalledTimes(1)
+    expect(schedule.decideRefresh.mock.calls[0][0]).toMatchObject({ wake: false, hasActivePlan: true, inFlight: false })
+    expect(service.runAutoRefresh).toHaveBeenCalledWith('calendar', expect.any(Date))
+    stopAssistantScheduler()
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(schedule.decideRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('판정에 확인 시각을 서비스 경유로 넘긴다 (위험 8)', async () => {
+    service.getSourceCheckTimes.mockReturnValue({ calendarAt: 111, jiraAt: 222 } as never)
+    const now = new Date(2026, 10, 2, 10, 0, 0)
+    await runTick(false, now)
+    expect(schedule.decideRefresh.mock.calls[0][0]).toMatchObject({
+      nowMs: now.getTime(),
+      times: { calendarAt: 111, jiraAt: 222 }
+    })
+  })
+
+  it('근무 중이 아니면 판정이 null 이고 runAutoRefresh 를 부르지 않는다', async () => {
+    store.getPlanByDate.mockReturnValue({ id: 9, status: 'closed' } as never)
+    await runTick()
+    expect(schedule.decideRefresh.mock.calls[0][0]).toMatchObject({ hasActivePlan: false })
+    expect(service.runAutoRefresh).not.toHaveBeenCalled()
+  })
+
+  it('A18: closeStalePlans 가 닫으면 메인 창에 assistant:changed day 를 보낸다', async () => {
+    const win = fakeWindow()
+    startAssistantScheduler({ getMainWindow: () => win as never, createWindow: vi.fn() })
+    store.closeStalePlans.mockReturnValue([3] as never)
+    await runTick()
+    expect(win.webContents.send).toHaveBeenCalledWith('assistant:changed', { date: '2026-11-02', reason: 'day' })
+
+    win.webContents.send.mockClear()
+    store.closeStalePlans.mockReturnValue([])
+    await runTick()
+    expect(win.webContents.send).not.toHaveBeenCalledWith('assistant:changed', expect.anything())
+  })
+
+  it('A26: 자동 최신화가 진행 중이면 두 번째 틱은 runAutoRefresh 를 부르지 않는다', async () => {
+    const gate = deferred()
+    service.runAutoRefresh.mockImplementation(async () => {
+      await gate.promise
+      return null
+    })
+    const first = runTick()
+    const second = runTick(true)
+    await second
+    expect(service.runAutoRefresh).toHaveBeenCalledTimes(1)
+    expect(schedule.decideRefresh.mock.calls[1][0]).toMatchObject({ inFlight: true, wake: true })
+    gate.resolve(null)
+    await first
+    // 끝나면 가드를 푼다
+    await runTick()
+    expect(service.runAutoRefresh).toHaveBeenCalledTimes(2)
+  })
+
+  it('A26: stopAssistantScheduler 가 진행 중 가드를 비운다', async () => {
+    const gate = deferred()
+    service.runAutoRefresh.mockImplementationOnce(async () => {
+      await gate.promise
+      return null
+    })
+    const first = runTick()
+    stopAssistantScheduler()
+    await runTick()
+    expect(service.runAutoRefresh).toHaveBeenCalledTimes(2)
+    gate.resolve(null)
+    await first
+  })
+
+  it('A26: 깨어남은 시작 알림 판정 뒤에 wake 틱을 실행한다', async () => {
+    // 계획이 없으면 시작 알림만 가능하다. 틱 판정은 그 뒤에 온다
+    store.getPlanByDate.mockReturnValue(null)
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
+    electron.handlers.get('power:resume')?.()
+    await vi.waitFor(() => expect(schedule.decideRefresh).toHaveBeenCalled())
+    expect(order).toEqual(['insertEvent', 'new Notification', 'show', 'decideRefresh'])
+    expect(schedule.decideRefresh.mock.calls[0][0]).toMatchObject({ wake: true })
+  })
+
+  it('A26: unlock-screen 도 같은 처리기로 wake 틱을 실행한다', async () => {
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
+    electron.handlers.get('power:unlock-screen')?.()
+    await vi.waitFor(() => expect(service.runAutoRefresh).toHaveBeenCalled())
+    expect(schedule.decideRefresh.mock.calls[0][0]).toMatchObject({ wake: true })
+  })
+})
+
+describe('최신화 알림 발송 (부록 E.3.6)', () => {
+  beforeEach(() => {
+    store.getPlanByDate.mockReturnValue({ id: 9, status: 'active' } as never)
+  })
+
+  it('A5: plan_update 는 서비스 INSERT 뒤에 Notification show() 를 한다', async () => {
+    autoRefreshReturns([notice(), notice({ kind: 'urgent', title: '새로 들어온 일', body: 'PROJ-1 오늘 마감', focus: { kind: 'inbox' }, eventId: 8 })])
+    await runTick()
+    expect(order).toEqual(['decideRefresh', 'insertEvent', 'new Notification', 'show', 'new Notification', 'show'])
+    expect(electron.notifications.map((n) => n.opts)).toEqual([
+      { title: '계획 변경', body: '14:00 제품 리뷰 추가 · 다음 15:00–18:00 API 설계' },
+      { title: '새로 들어온 일', body: 'PROJ-1 오늘 마감' }
+    ])
+  })
+
+  it('A5: 서비스가 돌려준 알림이 없으면 Notification 을 만들지 않는다', async () => {
+    autoRefreshReturns([])
+    await runTick()
+    expect(electron.notifications).toHaveLength(0)
+  })
+
+  it('A5: plan_update show() 가 실패하면 그 알림 행을 failed 로 바꾼다', async () => {
+    electron.state.throwOnShow = true
+    autoRefreshReturns([notice({ eventId: 42 })])
+    await runTick()
+    expect(store.updateEventStatus).toHaveBeenCalledWith({}, 42, 'failed')
+  })
+
+  it('slot 알림 클릭은 timeline focus 로, urgent 알림 클릭은 inbox focus 로 이동한다', async () => {
+    const win = fakeWindow()
+    startAssistantScheduler({ getMainWindow: () => win as never, createWindow: vi.fn() })
+    autoRefreshReturns([notice(), notice({ kind: 'urgent', focus: { kind: 'inbox' }, eventId: 8 })])
+    await runTick()
+    electron.notifications[0].listeners.get('click')?.()
+    expect(win.webContents.send).toHaveBeenLastCalledWith('assistant:navigate', { view: 'today', focus: { kind: 'timeline' } })
+    electron.notifications[1].listeners.get('click')?.()
+    expect(win.webContents.send).toHaveBeenLastCalledWith('assistant:navigate', { view: 'today', focus: { kind: 'inbox' } })
+  })
+
+  it('창이 없을 때 알림을 클릭하면 focus 를 보관 신호에 둔다 (부록 D.4)', async () => {
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
+    autoRefreshReturns([notice()])
+    await runTick()
+    electron.notifications[0].listeners.get('click')?.()
+    expect(takePendingNavigate()).toEqual({ view: 'today', focus: { kind: 'timeline' } })
+  })
+
+  it('navigateToToday 는 인자가 없으면 focus 없이 보낸다 (트레이 오늘 보기)', () => {
+    const win = fakeWindow()
+    startAssistantScheduler({ getMainWindow: () => win as never, createWindow: vi.fn() })
+    navigateToToday()
+    expect(win.webContents.send).toHaveBeenCalledWith('assistant:navigate', { view: 'today' })
+  })
+})
+
+describe('A13: 틱 예외를 삼킨다', () => {
+  it('A13: runTick 은 getDatabase 가 throw 해도 throw 하지 않는다', async () => {
+    db.getDatabase.mockImplementation(() => {
+      throw new Error('Database not initialized')
+    })
+    await expect(runTick()).resolves.toBeUndefined()
+    expect(service.runAutoRefresh).not.toHaveBeenCalled()
+  })
+
+  it('A13: runAutoRefresh 가 reject 해도 throw 하지 않고 가드를 푼다', async () => {
+    store.getPlanByDate.mockReturnValue({ id: 9, status: 'active' } as never)
+    service.runAutoRefresh.mockRejectedValueOnce(new Error('Database not initialized'))
+    await expect(runTick()).resolves.toBeUndefined()
+    await runTick()
+    expect(service.runAutoRefresh).toHaveBeenCalledTimes(2)
+  })
+
+  it('A13: 깨어남 처리기는 getDatabase 예외에도 throw 하지 않고 틱까지 진행한다', async () => {
+    db.getDatabase.mockImplementation(() => {
+      throw new Error('Database not initialized')
+    })
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
+    expect(() => electron.handlers.get('power:resume')?.()).not.toThrow()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(service.runAutoRefresh).not.toHaveBeenCalled()
   })
 })

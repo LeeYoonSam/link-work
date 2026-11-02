@@ -106,6 +106,8 @@ export interface TaskAPI {
 export interface TrayAPI {
   getData: () => Promise<unknown>
   openApp: () => Promise<void>
+  // 트레이 '오늘 보기'. 메인 창을 오늘 화면으로 연다 (부록 E.4.3)
+  openToday: () => Promise<void>
   onData: (callback: (data: unknown) => void) => () => void
 }
 
@@ -1153,6 +1155,8 @@ export interface RefreshSummary {
   replaced: number
   timelineChanged: boolean
   currentOrNextChanged: boolean
+  // 변경 기록 행에서만 있다. INSERT 에 성공한 알림 종류 (부록 E.3.3)
+  notified?: Array<'slot' | 'urgent'>
 }
 
 export interface AssistantSettings {
@@ -1196,7 +1200,29 @@ export interface AssistantChangedEvent {
 }
 export interface AssistantNavigateEvent {
   view: 'today'
-  focus?: { kind: 'inbox' | 'item' | 'briefing'; id?: string }
+  focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline'; id?: string }
+}
+
+// 트레이 오늘 계획 섹션 (부록 E.6.1 과 같은 모양)
+export interface TrayPlanItem {
+  id: number
+  title: string
+  rank: number | null
+  status: PlanItemStatus
+  isFocus: boolean
+}
+export interface TrayAssistant {
+  logicalDate: string
+  status: 'none' | 'active' | 'closed'
+  // 'HH:mm'
+  startedAt: string | null
+  // 활성 항목 rank 순 상위 3건
+  items: TrayPlanItem[]
+  activeCount: number
+  doneCount: number
+  suggestedCount: number
+  urgentSuggestedCount: number
+  freeMinutesLeft: number
 }
 
 export type AssistantResult<T> = ({ success: true } & T) | { success: false; error: string }

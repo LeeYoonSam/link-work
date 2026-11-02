@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Badge, StatusDot, projectStatus, button } from '../ui'
 import PhaseHint from '../project/PhaseHint'
 
@@ -21,9 +21,123 @@ interface TrayEvent {
   isCompleted: boolean
 }
 
+interface TrayPlanItem {
+  id: number
+  title: string
+  rank: number | null
+  status: string
+  isFocus: boolean
+}
+
+// 메인 assistant-types.ts 의 TrayAssistant 와 같은 모양 (부록 E.6.1)
+interface TrayAssistant {
+  logicalDate: string
+  status: 'none' | 'active' | 'closed'
+  startedAt: string | null
+  items: TrayPlanItem[]
+  activeCount: number
+  doneCount: number
+  suggestedCount: number
+  urgentSuggestedCount: number
+  freeMinutesLeft: number
+}
+
 interface TrayData {
   projects: TrayProject[]
   events: TrayEvent[]
+  assistant: TrayAssistant | null
+}
+
+type ActionResult = { success: true } | { success: false; error: string } | void
+
+export function trayStatusLine(a: TrayAssistant): string {
+  if (a.status === 'none') return '오늘 계획이 없습니다'
+  if (a.status === 'closed') return '오늘 마감'
+  return `${a.startedAt ?? '--:--'} 시작 · 집중 가능 ${a.freeMinutesLeft}분`
+}
+
+const sectionButton = 'text-xs px-2.5 py-1 disabled:opacity-50 disabled:cursor-not-allowed'
+
+/** 트레이 '오늘 계획' 섹션 (부록 E.4.2) */
+export function TrayAssistantSection(props: {
+  assistant: TrayAssistant
+  busy: boolean
+  error: string
+  onStartDay: () => void
+  onCloseDay: () => void
+  onOpenToday: () => void
+}): React.ReactNode {
+  const { assistant: a, busy, error, onStartDay, onCloseDay, onOpenToday } = props
+  return (
+    <div className="px-4 py-3">
+      <h3 className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-2">
+        오늘 계획
+      </h3>
+      <p className={`text-xs ${a.status === 'active' ? 'text-gray-700 tabular-nums' : 'text-gray-400'}`}>
+        {trayStatusLine(a)}
+      </p>
+
+      {a.status === 'active' && a.items.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          {a.items.map((item) => (
+            <div key={item.id} className="flex items-center gap-2">
+              <span
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  item.status === 'in_progress' ? 'bg-blue-500' : 'bg-gray-300'
+                }`}
+              />
+              <span className="text-xs text-gray-800 truncate flex-1 min-w-0">{item.title}</span>
+              {item.isFocus ? (
+                <Badge color="bg-blue-50 text-blue-600" size="xs">
+                  집중
+                </Badge>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {a.status === 'active' && a.suggestedCount > 0 ? (
+        <p className="mt-2 text-[11px] text-amber-600">
+          새로 들어온 일 {a.suggestedCount}건 · 긴급 {a.urgentSuggestedCount}건
+        </p>
+      ) : null}
+
+      {error ? <p className="mt-2 text-[11px] text-red-500">{error}</p> : null}
+
+      <div className="mt-2 flex items-center gap-2">
+        {a.status === 'none' ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onStartDay}
+            className={`${button.dark} ${sectionButton}`}
+          >
+            하루 시작
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onOpenToday}
+            className={`${button.subtle} ${sectionButton}`}
+          >
+            오늘 보기
+          </button>
+        )}
+        {a.status === 'active' ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onCloseDay}
+            className={`${button.subtle} ${sectionButton}`}
+          >
+            퇴근
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
 // 'YYYY-MM-DD' → 'MM-DD' (좁은 위젯용 압축 표기)
@@ -32,8 +146,37 @@ function md(dateStr: string): string {
 }
 
 export default function TrayPanel(): React.ReactNode {
-  const [data, setData] = useState<TrayData>({ projects: [], events: [] })
+  const [data, setData] = useState<TrayData>({ projects: [], events: [], assistant: null })
   const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const reload = (): Promise<void> =>
+    window.api.tray.getData().then((d) => {
+      setData(d as TrayData)
+    }).catch(() => {
+      // getData failed - keep previous data
+    })
+
+  // 버튼 처리: busy 로 막고, 실패 문구를 섹션에 보이고, 끝나면 데이터를 다시 받는다
+  // 진행 중 플래그. busy state 는 다시 그리기 전까지 갱신되지 않아 연타를 못 막는다
+  const inFlight = useRef(false)
+  const runAction = async (fn: () => Promise<ActionResult>, failText: string): Promise<void> => {
+    if (inFlight.current) return
+    inFlight.current = true
+    setBusy(true)
+    setError('')
+    try {
+      const res = await fn()
+      if (res && !res.success) setError(res.error || failText)
+    } catch {
+      setError(failText)
+    } finally {
+      inFlight.current = false
+      setBusy(false)
+      await reload()
+    }
+  }
 
   useEffect(() => {
     window.api.tray.getData().then((d) => {
@@ -48,6 +191,7 @@ export default function TrayPanel(): React.ReactNode {
     const unsubscribe = window.api.tray.onData((d) => {
       setData(d as TrayData)
       setLoading(false)
+      setError('')
     })
     return unsubscribe
   }, [])
@@ -74,6 +218,27 @@ export default function TrayPanel(): React.ReactNode {
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        {/* 오늘 계획 Section. 하루의 첫 행동이라 맨 위에 둔다 */}
+        {data.assistant ? (
+          <>
+            <TrayAssistantSection
+              assistant={data.assistant}
+              busy={busy}
+              error={error}
+              onStartDay={() =>
+                void runAction(() => window.api.assistant.startDay(), '하루 시작에 실패했습니다')
+              }
+              onCloseDay={() =>
+                void runAction(() => window.api.assistant.closeDay(), '퇴근 처리에 실패했습니다')
+              }
+              onOpenToday={() =>
+                void runAction(() => window.api.tray.openToday(), '오늘 화면을 열지 못했습니다')
+              }
+            />
+            <div className="border-t border-gray-100" />
+          </>
+        ) : null}
+
         {/* Projects Section */}
         <div className="px-4 py-3">
           <h3 className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-2">
@@ -175,11 +340,8 @@ export default function TrayPanel(): React.ReactNode {
         <button
           onClick={() => {
             setLoading(true)
-            window.api.tray.getData().then((d) => {
-              setData(d as TrayData)
-            }).catch(() => {
-              // getData failed - keep previous data
-            }).finally(() => {
+            setError('')
+            reload().finally(() => {
               setLoading(false)
             })
           }}

@@ -171,7 +171,7 @@ vi.mock('../../stores/assistantStore', async (importOriginal) => ({
 }))
 
 const TodayView = (await import('./TodayView')).default
-const { orderPlanItems, todayNotices, unplacedDeadlineItems } = await import('./TodayView')
+const { orderPlanItems, todayNotices, unplacedDeadlineItems, focusTargetId } = await import('./TodayView')
 const { dayCountLabel, dueLabel, durationLabel, freeTimeLabel } = await import('./PlanItemRow')
 const { blockItemMeta } = await import('./Timeline')
 const { describePlanUpdate, planUpdateEvents } = await import('./ChangeLog')
@@ -466,7 +466,7 @@ describe('오늘 화면 순수 헬퍼', () => {
           })
         })
       )
-    ).toBe('10:42 회의 1건 변경으로 시간표 갱신 · 지금·다음 블록 작업 변경 · 새로 들어온 일 1건 (긴급 1건)')
+    ).toBe('10:42 회의 1건 변경으로 시간표 갱신 · 지금·다음 블록 변경 · 새로 들어온 일 1건 (긴급 1건)')
     expect(describePlanUpdate(event({ id: 5, payload: JSON.stringify({ calendarRemoved: 2 }) }))).toBe(
       '10:42 회의 2건 취소'
     )
@@ -487,6 +487,63 @@ describe('오늘 화면 순수 헬퍼', () => {
       event({ id: 3, scheduled_at: '2026-11-02 10:00:00' })
     ])
     expect(list.map((e) => e.id)).toEqual([3, 1])
+  })
+
+  it('planUpdateEvents: 알림 행(ref_id 있음)은 빼고 변경 기록 행만 고른다 (부록 E.3.3)', () => {
+    const list = planUpdateEvents([
+      event({ id: 1, scheduled_at: '2026-11-02 14:42:00' }),
+      event({ id: 2, event_key: 'plan_update:2026-11-02:1430', ref_id: '1430', status: 'sent' }),
+      event({ id: 3, event_key: 'plan_update:2026-11-02:urgent:jira:A-1', ref_id: 'urgent:jira:A-1', status: 'sent' })
+    ])
+    expect(list.map((e) => e.id)).toEqual([1])
+  })
+
+  it('describePlanUpdate: notified 가 있으면 끝에 알림 보냄을 붙인다 (부록 E.5)', () => {
+    expect(
+      describePlanUpdate(
+        event({ id: 1, payload: JSON.stringify({ currentOrNextChanged: true, notified: ['slot'] }) })
+      )
+    ).toBe('10:42 지금·다음 블록 변경 · 알림 보냄')
+    expect(
+      describePlanUpdate(event({ id: 2, payload: JSON.stringify({ completed: 1, notified: ['slot', 'urgent'] }) }))
+    ).toBe('10:42 1건 완료 반영 · 알림 보냄')
+    // 빈 배열·없음은 표시하지 않는다
+    expect(describePlanUpdate(event({ id: 3, payload: JSON.stringify({ completed: 1, notified: [] }) }))).toBe(
+      '10:42 1건 완료 반영'
+    )
+    expect(describePlanUpdate(event({ id: 4, payload: JSON.stringify({ completed: 1 }) }))).toBe(
+      '10:42 1건 완료 반영'
+    )
+  })
+
+  it('변경 내역: 알림 행은 그리지 않고 오늘 계획 카드에 today-timeline id 를 둔다', () => {
+    state.today = payload({
+      plan: plan(),
+      items: [item({ id: 1 })],
+      timeline: WORKING_TIMELINE,
+      events: [
+        event({ id: 10, payload: JSON.stringify({ completed: 1, notified: ['slot'] }) }),
+        // 알림 행. payload 가 있어도 변경 내역에 나오면 안 된다
+        event({
+          id: 11,
+          event_key: 'plan_update:2026-11-02:1030',
+          ref_id: '1030',
+          status: 'sent',
+          payload: JSON.stringify({ dropped: 9 })
+        })
+      ]
+    })
+    const html = render()
+    expect(html).toContain('id="today-timeline"')
+    expect(html).toContain('10:42 1건 완료 반영 · 알림 보냄')
+    expect(html).not.toContain('9건 제외')
+  })
+
+  it('focusTargetId: 알림 focus 를 스크롤 대상 id 로 바꾼다 (부록 E.3.5)', () => {
+    expect(focusTargetId({ kind: 'timeline' })).toBe('today-timeline')
+    expect(focusTargetId({ kind: 'inbox' })).toBe('today-inbox')
+    expect(focusTargetId({ kind: 'briefing' })).toBe('today-briefing')
+    expect(focusTargetId({ kind: 'item', id: '7' })).toBe('plan-item-7')
   })
 
   it('todayNotices: 연결 상태와 수집 실패를 안내한다', () => {
@@ -535,7 +592,31 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(diffSettings(SETTINGS, { ...SETTINGS, planSize: 7 })).toEqual({ planSize: 7 })
   })
 
-  it('설정 모달: MVP1 키만 보여 준다', () => {
+  it('설정: 최신화 주기는 1~240분 정수만 받고 MVP2 키도 patch 에 담는다', () => {
+    expect(validateSettings({ ...SETTINGS, refreshCalendarMin: 0 })).not.toBeNull()
+    expect(validateSettings({ ...SETTINGS, refreshCalendarMin: 241 })).not.toBeNull()
+    expect(validateSettings({ ...SETTINGS, refreshJiraMin: 1.5 })).not.toBeNull()
+    expect(validateSettings({ ...SETTINGS, refreshCalendarMin: 1, refreshJiraMin: 240 })).toBeNull()
+    expect(
+      diffSettings(SETTINGS, { ...SETTINGS, refreshCalendarMin: 10, refreshJiraMin: 30, refreshNotify: false })
+    ).toEqual({ refreshCalendarMin: 10, refreshJiraMin: 30, refreshNotify: false })
+  })
+
+  it('설정 모달: MVP2 최신화 설정 3개를 보여 준다', () => {
+    const html = renderToStaticMarkup(
+      <AssistantSettingsModal settings={SETTINGS} busy={false} onClose={() => {}} onSave={async () => true} />
+    )
+    expect(html).toContain('최신화 알림')
+    expect(html).toContain('지금·다음 블록이 바뀌거나 긴급한 일이 들어오면 알립니다')
+    expect(html).toContain('캘린더 확인 주기 (분)')
+    expect(html).toContain('권장 5분')
+    expect(html).toContain('Jira 확인 주기 (분)')
+    expect(html).toContain('기본 15분')
+    expect(html).toContain('value="5"')
+    expect(html).toContain('value="15"')
+  })
+
+  it('설정 모달: 노출 키만 보여 준다', () => {
     const html = renderToStaticMarkup(
       <AssistantSettingsModal settings={SETTINGS} busy={false} onClose={() => {}} onSave={async () => true} />
     )

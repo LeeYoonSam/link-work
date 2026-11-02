@@ -1,8 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import { diffSources, focusUpdates, planRefresh, rerank } from './assistant-refresh'
+import {
+  bucketOf,
+  buildPlanUpdateNotices,
+  diffSources,
+  focusUpdates,
+  isInMeeting,
+  planRefresh,
+  rerank,
+  shouldNotifyPlanUpdate
+} from './assistant-refresh'
+import { buildTimeline } from './assistant-slots'
 import { buildCandidates } from './assistant-candidates'
 import { scoreCandidate } from './assistant-score'
-import type { CalendarRef, CurrentSources, PlanItem, RefreshContext, SourceSnapshot, TaskRow } from './assistant-types'
+import type {
+  CalendarRef,
+  CurrentSources,
+  DayTimeline,
+  NoticeInput,
+  PlanItem,
+  RefreshContext,
+  RefreshDiff,
+  RefreshSummary,
+  SourceSnapshot,
+  TaskRow
+} from './assistant-types'
 import { cand, deepFreeze, item, snapshot, TODAY } from './__fixtures__/assistant/factories'
 
 function ev(id: string, start: string, end: string, title = id): CalendarRef {
@@ -218,7 +239,24 @@ describe('planRefresh §8.4', () => {
     expect(plan.snapshot.jira).toEqual(prevJira)
   })
 
-  it('A23: 일정이 바뀌어도 current·다음 블록 항목이 같으면 currentOrNextChanged 는 거짓이다', () => {
+  it('A23: 일정이 바뀌어도 current·다음 블록의 키가 같으면 currentOrNextChanged 는 거짓이다', () => {
+    // 블록: 09~12 current, 13~15 next, 16~18. 15~16 회의의 끝만 16:30 으로 바뀐다
+    const items = [item({ id: 1, rank: 1, status: 'in_progress' }), item({ id: 2, rank: 2 })]
+    const all = items.map((i) => i.candidate_id)
+    const plan = run(
+      snapshot({ calendar: [ev('m', '12:00', '13:00'), ev('k', '15:00', '16:00')], seenCandidateIds: all }),
+      { candidates: all.map((id) => cand({ id })), calendar: [ev('m', '12:00', '13:00'), ev('k', '15:00', '16:30')], jira: [] },
+      items,
+      { nowHHmm: '09:30' }
+    )
+    expect(plan.updates).toEqual([])
+    expect(plan.summary.calendarChanged).toBe(1)
+    expect(plan.summary.timelineChanged).toBe(true)
+    expect(plan.summary.currentOrNextChanged).toBe(false)
+  })
+
+  it('A23·E.3.1: 회의 이동으로 current 블록 end 가 바뀌면 itemId 가 같아도 참이다', () => {
+    // 전: 09~12 current. 후: 09~12:30 current. 항목은 둘 다 1
     const items = [item({ id: 1, rank: 1, status: 'in_progress' }), item({ id: 2, rank: 2 })]
     const all = items.map((i) => i.candidate_id)
     const plan = run(
@@ -227,10 +265,43 @@ describe('planRefresh §8.4', () => {
       items,
       { nowHHmm: '09:30' }
     )
-    expect(plan.updates).toEqual([])
-    expect(plan.summary.calendarChanged).toBe(1)
+    expect(plan.summary.currentOrNextChanged).toBe(true)
+  })
+
+  it('A23·E.3.1: 14:00 회의가 들어와 지금 블록이 줄면 참이다', () => {
+    const items = [item({ id: 1, rank: 1, status: 'in_progress' })]
+    const plan = run(
+      snapshot({ calendar: [], seenCandidateIds: ['todo:1'] }),
+      { candidates: [cand({ id: 'todo:1' })], calendar: [ev('p', '14:00', '15:00', '제품 리뷰')], jira: [] },
+      items,
+      { nowHHmm: '13:10' }
+    )
+    expect(plan.summary.calendarAdded).toBe(1)
+    expect(plan.summary.currentOrNextChanged).toBe(true)
+  })
+
+  it('A23·E.3.1: current 블록의 start 만 바뀌면 거짓이다', () => {
+    // 전: 09~11 회의 없음 → current 09~18. 후: 08~09:15 회의 → current 09:15~18. end·itemId 는 같다
+    const items = [item({ id: 1, rank: 1 })]
+    const plan = run(
+      snapshot({ calendar: [], seenCandidateIds: ['todo:1'] }),
+      { candidates: [cand({ id: 'todo:1' })], calendar: [ev('a', '08:00', '09:15')], jira: [] },
+      items,
+      { nowHHmm: '10:00' }
+    )
     expect(plan.summary.timelineChanged).toBe(true)
     expect(plan.summary.currentOrNextChanged).toBe(false)
+  })
+
+  it('A23·E.3.1: 지금 블록이 회의로 없어지면 참이다', () => {
+    const items = [item({ id: 1, rank: 1 })]
+    const plan = run(
+      snapshot({ calendar: [], seenCandidateIds: ['todo:1'] }),
+      { candidates: [cand({ id: 'todo:1' })], calendar: [ev('a', '09:30', '10:30')], jira: [] },
+      items,
+      { nowHHmm: '10:00' }
+    )
+    expect(plan.summary.currentOrNextChanged).toBe(true)
   })
 
   it('A23: 회의 추가로 다음 블록의 항목이 바뀌면 currentOrNextChanged 가 참이다', () => {
@@ -421,5 +492,178 @@ describe('focusUpdates B.4', () => {
   it('A14: 입력을 바꾸지 않고 같은 입력에 같은 결과를 낸다', () => {
     const frozen = deepFreeze(items.map((i) => ({ ...i })))
     expect(focusUpdates(frozen, 2)).toEqual(focusUpdates(frozen, 2))
+  })
+})
+
+// ── 최신화 알림 (A21, 부록 E.3) ──
+
+function summary(over: Partial<RefreshSummary> = {}): RefreshSummary {
+  return {
+    calendarAdded: 0, calendarChanged: 0, calendarRemoved: 0,
+    suggested: 0, urgentSuggestedIds: [], completed: 0, dropped: 0, replaced: 0,
+    timelineChanged: false, currentOrNextChanged: false, ...over
+  }
+}
+
+function emptyDiff(over: Partial<RefreshDiff> = {}): RefreshDiff {
+  return {
+    calendarAdded: [], calendarChanged: [], calendarRemoved: [],
+    newCandidates: [], vanishedCandidateIds: [], updatedCandidates: [], ...over
+  }
+}
+
+function timeline(calendar: CalendarRef[], items: PlanItem[], nowHHmm: string): DayTimeline {
+  return buildTimeline({ calendar, dayStart: '09:00', nowHHmm, workEnd: '18:00', items, today: TODAY, closed: false })
+}
+
+function noticeInput(over: Partial<NoticeInput> = {}): NoticeInput {
+  const items = over.items ?? [item({ id: 1, rank: 1, title: 'API 설계' })]
+  return {
+    diff: emptyDiff(),
+    summary: summary({ currentOrNextChanged: true }),
+    after: timeline([], items, '10:00'),
+    items,
+    today: TODAY,
+    nowHHmm: '10:00',
+    ctx: { refreshNotify: true, inMeeting: false },
+    ...over
+  }
+}
+
+describe('isInMeeting·bucketOf E.3', () => {
+  it('종일이 아닌 일정 중 start ≤ now < end 이면 회의 중이다', () => {
+    const cal = [ev('a', '10:00', '11:00'), { ...ev('d', '00:00', '24:00'), allDay: true }]
+    expect(isInMeeting(cal, '10:00')).toBe(true)
+    expect(isInMeeting(cal, '10:59')).toBe(true)
+    expect(isInMeeting(cal, '11:00')).toBe(false)
+    expect(isInMeeting(cal, '09:59')).toBe(false)
+    expect(isInMeeting([{ ...ev('d', '00:00', '24:00'), allDay: true }], '12:00')).toBe(false)
+  })
+
+  it('A21: 버킷 키는 분을 30으로 내린 HHmm 이다', () => {
+    expect(bucketOf('14:42')).toBe('1430')
+    expect(bucketOf('14:29')).toBe('1400')
+    expect(bucketOf('09:30')).toBe('0930')
+    expect(bucketOf('00:05')).toBe('0000')
+  })
+})
+
+describe('shouldNotifyPlanUpdate A21', () => {
+  const ctxOn = { refreshNotify: true, inMeeting: false }
+
+  it('A21: refreshNotify 가 꺼져 있으면 알리지 않는다', () => {
+    const s = summary({ currentOrNextChanged: true, urgentSuggestedIds: ['jira:P-1'] })
+    expect(shouldNotifyPlanUpdate(s, { refreshNotify: false, inMeeting: false })).toBe(false)
+    expect(buildPlanUpdateNotices(noticeInput({ summary: s, ctx: { refreshNotify: false, inMeeting: false } }))).toEqual([])
+  })
+
+  it('A21: 회의 중이면 알리지 않는다', () => {
+    const s = summary({ currentOrNextChanged: true, urgentSuggestedIds: ['jira:P-1'] })
+    expect(shouldNotifyPlanUpdate(s, { refreshNotify: true, inMeeting: true })).toBe(false)
+    expect(buildPlanUpdateNotices(noticeInput({ summary: s, ctx: { refreshNotify: true, inMeeting: true } }))).toEqual([])
+  })
+
+  it('A21: 지금·다음 변경도 긴급 제안도 없으면 알리지 않는다', () => {
+    expect(shouldNotifyPlanUpdate(summary({ timelineChanged: true, suggested: 2 }), ctxOn)).toBe(false)
+  })
+
+  it('A21: 지금·다음 변경 또는 긴급 제안이 있으면 알린다', () => {
+    expect(shouldNotifyPlanUpdate(summary({ currentOrNextChanged: true }), ctxOn)).toBe(true)
+    expect(shouldNotifyPlanUpdate(summary({ urgentSuggestedIds: ['todo:1'] }), ctxOn)).toBe(true)
+  })
+})
+
+describe('buildPlanUpdateNotices A21', () => {
+  it('A21: slot 변경은 버킷 키·timeline focus 의 계획 변경 알림 1건이다 (E.3.4 예시)', () => {
+    // 14:00 제품 리뷰 추가. 지금 블록 13:00~14:00, 다음 15:00~18:00 API 설계
+    const items = [item({ id: 1, rank: 1, title: 'API 설계' })]
+    const cal = [ev('p', '14:00', '15:00', '제품 리뷰')]
+    const notices = buildPlanUpdateNotices(noticeInput({
+      diff: emptyDiff({ calendarAdded: cal }),
+      summary: summary({ calendarAdded: 1, timelineChanged: true, currentOrNextChanged: true }),
+      after: timeline(cal, items, '13:42'),
+      items,
+      nowHHmm: '13:42'
+    }))
+    expect(notices).toEqual([{
+      kind: 'slot',
+      eventKey: `plan_update:${TODAY}:1330`,
+      refId: '1330',
+      title: '계획 변경',
+      body: '14:00 제품 리뷰 추가 · 다음 15:00–18:00 API 설계',
+      focus: { kind: 'timeline' }
+    }])
+  })
+
+  it('A21: 일정 변경이 2건 이상이면 외 N건, 변경·취소 문구를 쓴다', () => {
+    const items = [item({ id: 1, rank: 1, title: 'API 설계' })]
+    const body = (diff: RefreshDiff): string =>
+      buildPlanUpdateNotices(noticeInput({ diff, items, after: timeline([], items, '10:00') }))[0].body
+    expect(body(emptyDiff({ calendarAdded: [ev('a', '14:00', '15:00', '리뷰')], calendarRemoved: [ev('b', '16:00', '17:00')] })))
+      .toBe('14:00 리뷰 추가 외 1건 · 지금 API 설계 ~18:00')
+    expect(body(emptyDiff({ calendarChanged: [ev('a', '11:00', '12:00', '주간')] }))).toBe('11:00 주간 변경 · 지금 API 설계 ~18:00')
+    expect(body(emptyDiff({ calendarRemoved: [ev('a', '11:00', '12:00', '주간')], calendarChanged: [], calendarAdded: [] })))
+      .toBe('11:00 주간 취소 · 지금 API 설계 ~18:00')
+  })
+
+  it('A21: 블록 조각 — 빈 블록·남은 블록 없음·제목 20자 자르기', () => {
+    // 항목이 없으면 다음 블록은 빈 블록이다
+    const empty = buildPlanUpdateNotices(noticeInput({ items: [], after: timeline([ev('m', '10:00', '18:00')], [], '09:10') }))
+    expect(empty[0].body).toBe('지금 빈 블록 ~10:00')
+    const nextEmpty = buildPlanUpdateNotices(noticeInput({ items: [], after: timeline([ev('m', '09:00', '11:00')], [], '09:10') }))
+    expect(nextEmpty[0].body).toBe('다음 11:00–18:00 빈 블록')
+    // 남은 블록이 없다
+    const none = buildPlanUpdateNotices(noticeInput({ items: [], after: timeline([], [], '18:30') }))
+    expect(none[0].body).toBe('남은 블록 없음')
+    // 제목은 20자에서 자른다
+    const long = '가나다라마바사아자차카타파하가나다라마바사아'
+    const items = [item({ id: 1, rank: 1, title: long })]
+    const cut = buildPlanUpdateNotices(noticeInput({ items, after: timeline([], items, '10:00') }))
+    expect(cut[0].body).toBe(`지금 ${Array.from(long).slice(0, 20).join('')}… ~18:00`)
+  })
+
+  it('A21: 긴급 제안은 후보당 urgent 알림 1건이고 inbox focus 다 (E.3.4 예시)', () => {
+    const items = [
+      item({ id: 1, rank: 1, title: 'API 설계' }),
+      item({ id: 2, candidate_id: 'jira:PROJ-123', source: 'jira', jira_issue_key: 'PROJ-123', status: 'suggested', rank: null, due_date: TODAY, urgent: true }),
+      item({ id: 3, candidate_id: 'todo:9', title: '보고서 제출', status: 'suggested', rank: null, due_date: '2026-10-30', urgent: true }),
+      item({ id: 4, candidate_id: 'todo:10', title: '장애 대응', status: 'suggested', rank: null, due_date: null, urgent: true })
+    ]
+    const notices = buildPlanUpdateNotices(noticeInput({
+      items,
+      summary: summary({ suggested: 3, urgentSuggestedIds: ['jira:PROJ-123', 'todo:9', 'todo:10'] })
+    }))
+    expect(notices).toEqual([
+      { kind: 'urgent', eventKey: `plan_update:${TODAY}:urgent:jira:PROJ-123`, refId: 'urgent:jira:PROJ-123', title: '새로 들어온 일', body: 'PROJ-123 오늘 마감', focus: { kind: 'inbox' } },
+      { kind: 'urgent', eventKey: `plan_update:${TODAY}:urgent:todo:9`, refId: 'urgent:todo:9', title: '새로 들어온 일', body: '보고서 제출 3일 지남', focus: { kind: 'inbox' } },
+      { kind: 'urgent', eventKey: `plan_update:${TODAY}:urgent:todo:10`, refId: 'urgent:todo:10', title: '새로 들어온 일', body: '장애 대응 우선순위 최상', focus: { kind: 'inbox' } }
+    ])
+  })
+
+  it('A21: slot 1건 + urgent 최대 3건, 최대 4건이다', () => {
+    const items = [item({ id: 1, rank: 1, title: 'API 설계' })]
+    const ids = ['todo:21', 'todo:22', 'todo:23', 'todo:24', 'todo:25']
+    for (const [i, id] of ids.entries()) {
+      items.push(item({ id: 21 + i, candidate_id: id, status: 'suggested', rank: null, urgent: true }))
+    }
+    const notices = buildPlanUpdateNotices(noticeInput({
+      items,
+      summary: summary({ currentOrNextChanged: true, suggested: 5, urgentSuggestedIds: ids })
+    }))
+    expect(notices.map((n) => n.kind)).toEqual(['slot', 'urgent', 'urgent', 'urgent'])
+    expect(notices.slice(1).map((n) => n.refId)).toEqual(['urgent:todo:21', 'urgent:todo:22', 'urgent:todo:23'])
+  })
+
+  it('A21: 항목에 없는 긴급 후보는 diff.newCandidates 로 문구를 만든다', () => {
+    const notices = buildPlanUpdateNotices(noticeInput({
+      diff: emptyDiff({ newCandidates: [cand({ id: 'jira:X-1', jiraKey: 'X-1', dueDate: TODAY })] }),
+      summary: summary({ urgentSuggestedIds: ['jira:X-1'] })
+    }))
+    expect(notices.map((n) => n.body)).toEqual(['X-1 오늘 마감'])
+  })
+
+  it('A14: 입력을 바꾸지 않고 같은 입력에 같은 결과를 낸다', () => {
+    const input = deepFreeze(noticeInput({ summary: summary({ currentOrNextChanged: true, urgentSuggestedIds: ['todo:1'] }) }))
+    expect(buildPlanUpdateNotices(input)).toEqual(buildPlanUpdateNotices(input))
   })
 })

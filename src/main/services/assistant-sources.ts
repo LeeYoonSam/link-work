@@ -20,6 +20,8 @@ import type {
   CurrentSources,
   JiraCandidateInput,
   JiraSnapshotRef,
+  RefreshMode,
+  SourceCheckTimes,
   TaskRow,
   TodoRow,
   VanishedResolution
@@ -40,7 +42,9 @@ import { parseJsonArray, type NoteActionItem } from './meeting-notes'
 export interface CollectedSources extends CurrentSources {
   busy: BusyBlock[]
   jiraTruncated: boolean
-  errors: string[]
+  errors: string[]                 // calendarErrors 다음 jiraErrors 순서로 합친 값
+  calendarErrors: string[]         // 출처별 오류. 부분 mode 가 보지 않은 출처의 문구를 유지할 때 쓴다
+  jiraErrors: string[]
   jiraConnected: boolean
   calendarConnected: boolean
 }
@@ -266,15 +270,30 @@ function errorText(prefix: string, err: unknown): string {
   return detail ? `${prefix} ${detail}` : prefix
 }
 
+// ── 출처별 마지막 확인 시각 (부록 E.2.2) ──
+// DB 에 두지 않는다. 재시작 뒤 null 이므로 첫 틱이 바로 확인한다.
+let checkTimes: SourceCheckTimes = { calendarAt: null, jiraAt: null }
+
+export function getSourceCheckTimes(): SourceCheckTimes {
+  return { ...checkTimes }
+}
+
+/** 테스트용. clearJiraCache 와 별개다. */
+export function resetSourceCheckTimes(): void {
+  checkTimes = { calendarAt: null, jiraAt: null }
+}
+
 // ── 수집 ──
 
+// mode 별 출처 선택은 부록 E.2.6 표를 따른다.
 export async function collectSources(
   db: Database.Database,
   settings: AssistantSettings,
-  mode: 'full' | 'local',
+  mode: RefreshMode,
   now: Date
 ): Promise<CollectedSources> {
-  const errors: string[] = []
+  const calendarErrors: string[] = []
+  const jiraErrors: string[] = []
   // 일정은 논리 날짜 기준이다. 날짜 경계 전(예: 00:00~04:00)에는 전날 일정을 본다.
   const today = logicalDate(now, settings.dayRollover)
 
@@ -287,9 +306,11 @@ export async function collectSources(
   // 캘린더
   const calendarConnected = isCalendarConnected()
   let calendar: CalendarRef[] | null = null
-  if (mode === 'full') {
+  if (mode === 'full' || mode === 'calendar') {
+    // 미연결·실패에도 기록한다. 실패한 출처를 매 틱마다 다시 두드리지 않는다
+    checkTimes = { ...checkTimes, calendarAt: now.getTime() }
     if (!calendarConnected) {
-      errors.push(CALENDAR_NOT_CONNECTED)
+      calendarErrors.push(CALENDAR_NOT_CONNECTED)
     } else {
       try {
         const events = await fetchDayEvents(today)
@@ -297,7 +318,7 @@ export async function collectSources(
           .map((e) => toCalendarRef(e, today))
           .filter((e): e is CalendarRef => e !== null)
       } catch (err) {
-        errors.push(errorText(CALENDAR_FAILED, err))
+        calendarErrors.push(errorText(CALENDAR_FAILED, err))
       }
     }
   }
@@ -306,12 +327,15 @@ export async function collectSources(
   const jiraConnected = isJiraConnected()
   let jiraIssues: JiraMyIssue[] | null = null
   let jiraTruncated = false
+  const jiraTarget = mode === 'full' || mode === 'jira'
+  // 미연결·60초 캐시 사용에도 기록한다
+  if (jiraTarget) checkTimes = { ...checkTimes, jiraAt: now.getTime() }
   if (jiraConnected) {
     const scopeKey = jiraScopeKey(settings)
     const cache = jiraCache && jiraCache.scopeKey === scopeKey ? jiraCache : null
     const fresh = cache !== null && now.getTime() - cache.fetchedAt < JIRA_CACHE_MS
-    if (mode === 'local' || fresh) {
-      // local 은 네트워크를 쓰지 않는다. 캐시가 없으면 null 이다.
+    if (!jiraTarget || fresh) {
+      // local·calendar 는 Jira 네트워크를 쓰지 않는다. 캐시가 없으면 null 이다.
       if (cache) {
         jiraIssues = cache.issues
         jiraTruncated = cache.truncated
@@ -323,7 +347,7 @@ export async function collectSources(
         jiraIssues = found.issues
         jiraTruncated = found.truncated
       } catch (err) {
-        errors.push(errorText(JIRA_FAILED, err))
+        jiraErrors.push(errorText(JIRA_FAILED, err))
       }
     }
   }
@@ -342,7 +366,9 @@ export async function collectSources(
     jira: jiraIssues === null ? null : jiraIssues.map(toJiraSnapshotRef),
     busy: calendarToBusy(calendar ?? []),
     jiraTruncated,
-    errors,
+    errors: [...calendarErrors, ...jiraErrors],
+    calendarErrors,
+    jiraErrors,
     jiraConnected,
     calendarConnected
   }
