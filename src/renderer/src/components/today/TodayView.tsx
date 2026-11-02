@@ -6,6 +6,7 @@ import DayHeader from './DayHeader'
 import BriefingCard from './BriefingCard'
 import RecoveryCard from './RecoveryCard'
 import CheckinPanel, { pendingCheckin } from './CheckinPanel'
+import MeetingBriefingCard, { meetingBriefings } from './MeetingBriefingCard'
 import InboxSection from './InboxSection'
 import PlanItemRow, { freeTimeLabel, isActiveItem } from './PlanItemRow'
 import Timeline from './Timeline'
@@ -55,9 +56,18 @@ export function focusTargetId(focus: NonNullable<AssistantNavigateEvent['focus']
       return 'today-timeline'
     case 'checkin':
       return 'today-checkin'
+    // 회의 브리핑 알림 클릭 (부록 I.10.2). id 는 이벤트 id 다
+    case 'meeting':
+      return `meeting-briefing-${focus.id ?? ''}`
     default:
       return `plan-item-${focus.id ?? ''}`
   }
+}
+
+// 지금 로컬 시각을 'YYYY-MM-DD HH:mm:ss' 로 만든다
+export function localNow(d: Date = new Date()): string {
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
 export default function TodayView(): React.ReactNode {
@@ -91,6 +101,8 @@ export default function TodayView(): React.ReactNode {
     setFocus,
     clearError,
     respondCheckin,
+    regenerateMeetingBriefing,
+    meetingRegeneratingIds,
     subscribe
   } = useAssistantStore()
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -142,6 +154,7 @@ export default function TodayView(): React.ReactNode {
       : null
   const canRegenerate =
     plan?.status === 'active' && today.aiAvailable && today.settings.llmEnabled
+  const meetingRows = meetingBriefings(today.events)
 
   const rowProps = {
     readOnly,
@@ -199,21 +212,30 @@ export default function TodayView(): React.ReactNode {
         </Card>
       ) : null}
 
+      {/* 시각에 묶인 질문이라 본문 맨 위에 둔다 (부록 H.8.1) */}
+      {plan && checkin ? (
+        <CheckinPanel
+          // 다른 체크인으로 바뀌면 메모 입력을 새로 시작한다
+          key={checkin.event.id}
+          pending={checkin}
+          busy={busy}
+          readOnly={readOnly}
+          onRespond={(eventId, status, note) => respondCheckin(eventId, status, note)}
+          onApplied={() => void load()}
+        />
+      ) : null}
+
+      {/* 회의 브리핑은 계획이 없어도 보인다 (부록 I.10.1) */}
+      <MeetingBriefingCard
+        rows={meetingRows}
+        now={localNow()}
+        regeneratingIds={meetingRegeneratingIds ?? []}
+        canRegenerate={today.aiAvailable && today.settings.llmEnabled}
+        onRegenerate={(eventId) => void regenerateMeetingBriefing(eventId)}
+      />
+
       {plan ? (
         <>
-          {/* 시각에 묶인 질문이라 본문 맨 위에 둔다 (부록 H.8.1) */}
-          {checkin ? (
-            <CheckinPanel
-              // 다른 체크인으로 바뀌면 메모 입력을 새로 시작한다
-              key={checkin.event.id}
-              pending={checkin}
-              busy={busy}
-              readOnly={readOnly}
-              onRespond={(eventId, status, note) => respondCheckin(eventId, status, note)}
-              onApplied={() => void load()}
-            />
-          ) : null}
-
           <RecoveryCard
             plan={plan}
             state={today.recovery ?? { inFlight: false, error: null }}

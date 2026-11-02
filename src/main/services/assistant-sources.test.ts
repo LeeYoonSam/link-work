@@ -99,16 +99,19 @@ import Database from 'better-sqlite3'
 import { DEFAULT_ASSISTANT_SETTINGS } from './assistant-settings'
 import { toLocalDateTime } from './assistant-day'
 import { RECOVERY_LIMITS } from './assistant-recovery'
-import type { Candidate, PlanItem, RecoveryContext } from './assistant-types'
+import type { Candidate, MeetingRef, PlanItem, RecoveryContext } from './assistant-types'
 import {
   clearJiraCache,
+  collectMeetingContext,
   collectRecovery,
   collectSources,
   getSourceCheckTimes,
   resetSourceCheckTimes,
   readRecoveryLocal,
+  MEETING_LIMITS,
   resolveVanished,
-  toCalendarRef
+  toCalendarRef,
+  toMeetingRef
 } from './assistant-sources'
 
 // 로컬 시각 기준. 테스트는 실행 기기의 시간대와 무관하게 동작한다.
@@ -944,5 +947,223 @@ describe('collectRecovery', () => {
     expect(r.meetings).toEqual([])
     expect(r.completedTodos).toHaveLength(1)
     expect(r.errors).toEqual(['회의 요약 조회에 실패했습니다.'])
+  })
+})
+
+// ── 회의 전 브리핑 수집 (부록 I.3.1, I.5) ──
+
+describe('toMeetingRef', () => {
+  it('ISO 시작·종료를 로컬 datetime 으로 바꾼다', () => {
+    const ref = toMeetingRef({ id: 'evt-1', summary: '주간 회의', start: localIso(14, 0), end: localIso(15, 0), allDay: false })
+    expect(ref).toEqual({ id: 'evt-1', title: '주간 회의', startAt: '2026-11-02 14:00:00', endAt: '2026-11-02 15:00:00' })
+  })
+
+  it('종일 일정은 null 이다', () => {
+    expect(toMeetingRef({ id: 'e', summary: '휴가', start: '2026-11-02', end: '2026-11-03', allDay: true })).toBeNull()
+  })
+
+  it('시각 변환이 실패하면 null 이다', () => {
+    expect(toMeetingRef({ id: 'e', summary: '회의', start: '잘못된 값', end: localIso(15, 0), allDay: false })).toBeNull()
+    expect(toMeetingRef({ id: 'e', summary: '회의', start: localIso(14, 0), end: '', allDay: false })).toBeNull()
+  })
+})
+
+// 회의 수집 쿼리가 읽는 컬럼을 가진 스키마. 실제 database.ts 의 해당 컬럼과 같다.
+function makeMeetingDb(): Database.Database {
+  const db = new Database(':memory:')
+  db.exec(`
+    CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT, dev_start_date TEXT, dev_end_date TEXT,
+      qa_start_date TEXT, qa_end_date TEXT, deploy_date TEXT, status TEXT, status_manual INTEGER, priority TEXT);
+    CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT, kind TEXT, started_at TEXT,
+      calendar_event_title TEXT);
+    CREATE TABLE meeting_summaries (id INTEGER PRIMARY KEY, meeting_id INTEGER UNIQUE, tldr TEXT,
+      action_items TEXT, generated_at TEXT);
+  `)
+  seed(db, 'projects', [
+    `(1, '결제 개편', '2026-10-01', '2026-12-01', '2026-12-02', '2026-12-04', '2026-12-05', 'development', 1, 'now')`,
+    `(2, '정산', '2026-10-01', '2026-12-01', '2026-12-02', '2026-12-04', '2026-12-05', 'development', 1, NULL)`,
+    `(3, '주간', '2026-10-01', '2026-12-01', '2026-12-02', '2026-12-04', '2026-12-05', 'on_hold', 1, NULL)`,
+    `(4, 'A', '2026-10-01', '2026-12-01', '2026-12-02', '2026-12-04', '2026-12-05', 'development', 1, NULL)`
+  ])
+  return db
+}
+
+const MEETING: MeetingRef = {
+  id: 'evt-1',
+  title: '결제 개편·정산 주간 회의',
+  startAt: '2026-11-02 14:00:00',
+  endAt: '2026-11-02 15:00:00'
+}
+
+function meetingRow(id: number, title: string, startedAt: string, kind = 'meeting', calTitle: string | null = null): string {
+  const q = (v: string | null): string => (v === null ? 'NULL' : `'${v.replace(/'/g, "''")}'`)
+  return `(${id}, ${q(title)}, ${q(kind)}, ${q(startedAt)}, ${q(calTitle)})`
+}
+
+function summaryRow(meetingId: number, tldr: string | null, actions: unknown[]): string {
+  const q = (v: string | null): string => (v === null ? 'NULL' : `'${v.replace(/'/g, "''")}'`)
+  return `(${meetingId}, ${meetingId}, ${q(tldr)}, ${q(JSON.stringify(actions))}, '2026-10-01 00:00:00')`
+}
+
+describe('collectMeetingContext', () => {
+  it('활성 프로젝트만 매칭한다. 중단 프로젝트와 1자 이름은 빠진다', () => {
+    const ctx = collectMeetingContext(makeMeetingDb(), MEETING, [])
+    expect(ctx.projects).toEqual([
+      { id: 1, name: '결제 개편' },
+      { id: 2, name: '정산' }
+    ])
+    expect(ctx.meeting).toBe(MEETING)
+    expect(ctx.errors).toEqual([])
+  })
+
+  it('지난 회의는 같은 제목만 고르고 calendar_event_title 도 본다. 면접·회의 시작 이후는 뺀다', () => {
+    const db = makeMeetingDb()
+    seed(db, 'meetings', [
+      meetingRow(1, '결제 개편 · 정산 주간회의', '2026-10-26 14:00:00'),
+      meetingRow(2, '녹음 1', '2026-10-19 14:00:00', 'meeting', '결제 개편·정산 주간 회의'),
+      meetingRow(3, '다른 회의', '2026-10-30 10:00:00'),
+      meetingRow(4, '결제 개편·정산 주간 회의', '2026-10-28 10:00:00', 'interview'),
+      meetingRow(5, '결제 개편·정산 주간 회의', '2026-11-02 14:00:00'),
+      meetingRow(6, '결제 개편·정산 주간 회의', '2026-10-12 14:00:00')
+    ])
+    seed(db, 'meeting_summaries', [
+      summaryRow(1, '  일정 합의  ', [{ text: '문서 공유' }, { text: '옮김', todo_id: 3 }, { text: ' ' }]),
+      summaryRow(2, null, [{ text: '견적 확인' }]),
+      summaryRow(3, '무관', [{ text: '무관 액션' }]),
+      summaryRow(4, '면접', [{ text: '면접 액션' }]),
+      summaryRow(5, '지금', [{ text: '지금 액션' }])
+    ])
+    const ctx = collectMeetingContext(db, MEETING, [])
+    expect(ctx.pastMeetings).toEqual([
+      { meetingId: 1, title: '결제 개편 · 정산 주간회의', startedAt: '2026-10-26 14:00:00', tldr: '일정 합의', openActionItems: ['문서 공유'] },
+      { meetingId: 2, title: '녹음 1', startedAt: '2026-10-19 14:00:00', tldr: null, openActionItems: ['견적 확인'] }
+    ])
+    // 요약이 없는 회의(6)는 JOIN 에서 빠진다
+    expect(ctx.openActionItems).toEqual(['문서 공유', '견적 확인'])
+  })
+
+  it('A46: 지난 회의는 회의 시작 기준 90일 안만 읽는다', () => {
+    const db = makeMeetingDb()
+    seed(db, 'meetings', [
+      meetingRow(1, MEETING.title, '2026-08-04 14:00:00'),
+      meetingRow(2, MEETING.title, '2026-08-04 13:59:59')
+    ])
+    seed(db, 'meeting_summaries', [summaryRow(1, '90일째', []), summaryRow(2, '90일 넘음', [])])
+    expect(MEETING_LIMITS.pastDays).toBe(90)
+    const ctx = collectMeetingContext(db, MEETING, [])
+    expect(ctx.pastMeetings.map((m) => m.meetingId)).toEqual([1])
+  })
+
+  it('A46: 지난 회의는 최근 3건까지만 둔다. startedAt 내림차순이다', () => {
+    const db = makeMeetingDb()
+    seed(db, 'meetings', [1, 2, 3, 4, 5].map((n) => meetingRow(n, MEETING.title, `2026-10-0${n} 14:00:00`)))
+    seed(db, 'meeting_summaries', [1, 2, 3, 4, 5].map((n) => summaryRow(n, `요약 ${n}`, [])))
+    const ctx = collectMeetingContext(db, MEETING, [])
+    expect(MEETING_LIMITS.pastMeetings).toBe(3)
+    expect(ctx.pastMeetings.map((m) => m.meetingId)).toEqual([5, 4, 3])
+  })
+
+  it('A46: 지난 회의 후보는 최근 200건까지만 읽는다', () => {
+    const db = makeMeetingDb()
+    const rows: string[] = []
+    const sums: string[] = []
+    // 같은 제목 회의는 가장 오래된 1건이다. 그 뒤 다른 제목 회의 200건이 후보 상한을 채운다
+    rows.push(meetingRow(1, MEETING.title, '2026-08-10 09:00:00'))
+    sums.push(summaryRow(1, '오래된 같은 제목', []))
+    for (let n = 2; n <= 201; n++) {
+      rows.push(meetingRow(n, `다른 회의 ${n}`, `2026-09-01 ${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}:00`))
+      sums.push(summaryRow(n, null, []))
+    }
+    seed(db, 'meetings', rows)
+    seed(db, 'meeting_summaries', sums)
+    expect(MEETING_LIMITS.pastCandidates).toBe(200)
+    expect(collectMeetingContext(db, MEETING, []).pastMeetings).toEqual([])
+  })
+
+  it('A46: 미완료 액션아이템은 10건까지만 둔다', () => {
+    const db = makeMeetingDb()
+    seed(db, 'meetings', [
+      meetingRow(1, MEETING.title, '2026-10-26 14:00:00'),
+      meetingRow(2, MEETING.title, '2026-10-19 14:00:00')
+    ])
+    const actions = (prefix: string, n: number): { text: string }[] =>
+      Array.from({ length: n }, (_, i) => ({ text: `${prefix} ${i + 1}` }))
+    seed(db, 'meeting_summaries', [summaryRow(1, null, actions('최근', 12)), summaryRow(2, null, actions('이전', 4))])
+    const ctx = collectMeetingContext(db, MEETING, [])
+    expect(MEETING_LIMITS.actionItems).toBe(10)
+    expect(ctx.openActionItems).toHaveLength(10)
+    expect(ctx.openActionItems[0]).toBe('최근 1')
+    expect(ctx.openActionItems[9]).toBe('최근 10')
+    expect(ctx.pastMeetings[0].openActionItems).toHaveLength(10)
+  })
+
+  it('A46: tldr 는 200자에서 자른다', () => {
+    const db = makeMeetingDb()
+    seed(db, 'meetings', [meetingRow(1, MEETING.title, '2026-10-26 14:00:00')])
+    seed(db, 'meeting_summaries', [summaryRow(1, '가'.repeat(300), [])])
+    expect(collectMeetingContext(db, MEETING, []).pastMeetings[0].tldr).toBe('가'.repeat(200))
+  })
+
+  it('A46: 관련 항목은 매칭 프로젝트의 planned·in_progress 항목을 순위 순으로 5건까지 둔다', () => {
+    const items: PlanItem[] = [
+      planItem(1, { project_id: 1, rank: 3 }),
+      planItem(2, { project_id: 2, rank: 1, status: 'in_progress' }),
+      planItem(3, { project_id: 1, rank: null }),
+      planItem(4, { project_id: 1, rank: 2, status: 'done' }),
+      planItem(5, { project_id: 1, rank: 4, status: 'suggested' }),
+      planItem(6, { project_id: 3, rank: 1 }),
+      planItem(7, { project_id: null, rank: 1 }),
+      planItem(8, { project_id: 2, rank: 5 }),
+      planItem(9, { project_id: 2, rank: 6 }),
+      planItem(10, { project_id: 1, rank: 7, status: 'deferred' }),
+      planItem(11, { project_id: 1, rank: 8 })
+    ]
+    const ctx = collectMeetingContext(makeMeetingDb(), MEETING, items)
+    expect(MEETING_LIMITS.relatedItems).toBe(5)
+    expect(ctx.relatedItems).toEqual([
+      { id: 2, title: '항목 2', status: 'in_progress' },
+      { id: 1, title: '항목 1', status: 'planned' },
+      { id: 8, title: '항목 8', status: 'planned' },
+      { id: 9, title: '항목 9', status: 'planned' },
+      { id: 11, title: '항목 11', status: 'planned' }
+    ])
+  })
+
+  it('매칭 프로젝트가 없으면 관련 항목도 없다', () => {
+    const ctx = collectMeetingContext(makeMeetingDb(), { ...MEETING, title: '1:1' }, [planItem(1, { project_id: 1 })])
+    expect(ctx.projects).toEqual([])
+    expect(ctx.relatedItems).toEqual([])
+  })
+
+  it('출처 조회가 실패하면 throw 하지 않고 그 출처만 비운다', () => {
+    const db = makeMeetingDb()
+    db.exec('DROP TABLE meeting_summaries')
+    const ctx = collectMeetingContext(db, MEETING, [planItem(1, { project_id: 1 })])
+    expect(ctx.pastMeetings).toEqual([])
+    expect(ctx.openActionItems).toEqual([])
+    expect(ctx.projects).toHaveLength(2)
+    expect(ctx.relatedItems).toHaveLength(1)
+    expect(ctx.errors).toEqual(['지난 회의 조회에 실패했습니다.'])
+
+    const empty = collectMeetingContext(new Database(':memory:'), MEETING, [planItem(1, { project_id: 1 })])
+    expect(empty.projects).toEqual([])
+    expect(empty.relatedItems).toEqual([])
+    expect(empty.errors).toEqual(['프로젝트 조회에 실패했습니다.', '지난 회의 조회에 실패했습니다.'])
+  })
+
+  it('A2·A46: 수집은 원본 테이블을 바꾸지 않고 Jira·캘린더를 부르지 않는다', () => {
+    const db = makeMeetingDb()
+    seed(db, 'meetings', [meetingRow(1, MEETING.title, '2026-10-26 14:00:00')])
+    seed(db, 'meeting_summaries', [summaryRow(1, '요약', [{ text: '액션' }])])
+    const dump = (): string =>
+      JSON.stringify(['projects', 'meetings', 'meeting_summaries'].map((t) => db.prepare(`SELECT * FROM ${t} ORDER BY id`).all()))
+    const before = dump()
+    collectMeetingContext(db, MEETING, [])
+    expect(dump()).toBe(before)
+    expect(state.openCalls).toEqual([])
+    expect(state.keysCalls).toEqual([])
+    expect(state.recentCalls).toEqual([])
+    expect(state.myCalls).toBe(0)
+    expect(state.rangeCalls).toEqual([])
   })
 })

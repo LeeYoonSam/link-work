@@ -30,6 +30,7 @@
 - MVP3 설계 (2026-11-02): 맥락 복구·AI 채팅 도구의 모듈 계약을 부록 F 에 둔다. 부록 F 가 §10, §14, §16 MVP3 표, §17 MVP3 조건을 구체화한다. 규칙 A25~A28 은 부록 E.8, A29~A33 은 부록 F.11 에 있다.
 - 명령 입력 설계 (2026-11-02): 오늘 화면의 자유 문장 입력을 부록 G 에 둔다. 명령 입력은 MVP4 앞에 구현한다. 규칙 A34~A40 은 부록 G.14 에 있다. IPC 2개는 G.9 에 있다.
 - MVP4 설계 (2026-11-02): 작업 경계 체크인의 모듈 계약을 부록 H 에 둔다. 부록 H 가 §16 MVP4 표와 §17 MVP4 조건을 대체한다. 규칙 A41~A44 는 부록 H.10 에 있다.
+- MVP5 설계 (2026-11-02): 회의 전 브리핑의 모듈 계약을 부록 I 에 둔다. 부록 I 가 §16 MVP5 표와 §17 MVP5 조건을 대체한다. 규칙 A45~A47 은 부록 I.12 에 있다.
 
 ---
 
@@ -3731,3 +3732,441 @@ export default function CheckinPanel(props: {
 - `TodayView` 는 `CheckinPanel` 에 `key={event.id}` 를 붙인다. 패널은 응답이 성공했을 때만 메모를 비운다.
 - 설정 모달의 숫자 입력은 빈 칸을 검증 오류로 처리한다. 이전에는 빈 칸이 0 으로 저장됐다.
 - 알려진 한계: 자동 최신화가 항목 상태를 바꿔도 `status_at` 이 바뀐다. 그래서 그 뒤 15분 동안 체크인이 억제된다 (A44).
+
+---
+
+## 부록 I. MVP5 회의 전 브리핑
+
+이 부록이 §16 MVP5 표와 §17 MVP5 조건을 대체한다. §2.8, §7.3 의 meeting_briefing 행, §12.1 의 meeting_briefing 행, §19-19 를 아래 내용으로 구체화한다. MVP5 는 MVP4 뒤에 구현하고 따로 커밋한다. 틱 7단계와 `dueInFlight` 는 부록 H 가 만든 것을 쓴다.
+
+### I.1 범위
+
+MVP5 에 들어가는 것:
+- 틱이 회의 시작 − `assistant_meeting_lead_min` 분에 회의 브리핑을 만들고 알림을 보낸다. 대상은 종일이 아닌 오늘의 모든 일정이다. 근무 중 여부와 무관하다. 하루 6건 상한이다.
+- 규칙 브리핑을 `assistant_events.payload` 에 먼저 저장한다. 알림 뒤 LLM 브리핑을 백그라운드로 만든다. 규칙 A8·A32 다.
+- 오늘 화면에 `MeetingBriefingCard` 를 둔다. 계획이 없어도 보인다.
+- 설정 키 `assistant_meeting_briefing_enabled` 를 추가한다. 설정 모달에 회의 브리핑 설정 2개를 노출한다.
+- `AssistantChangedEvent.reason` 에 `'meeting'` 을 추가한다. IPC `regenerateMeetingBriefing` 을 추가한다.
+
+MVP5 에서 빠지는 것:
+- 참석자 매핑. 캘린더 attendees 를 쓰지 않는다. §19-19 그대로다.
+- 회의 녹음 화면으로의 이동. 이유: 캘린더 일정은 아직 녹음 행이 없다.
+- `notification.ts` 의 10·5·1분 전 일정 알림 변경. §7.1 그대로다.
+- Jira 조회. 브리핑 수집은 DB 와 캘린더 캐시만 쓴다. 규칙 A46 다.
+- 캘린더 일정이 바뀐 뒤 브리핑 재작성. 보낸 브리핑은 고정이다.
+
+### I.2 '회의 카드' 의 정의
+
+코드에 '회의 카드' 라는 컴포넌트는 없다. 가까운 것은 2개다.
+- `components/calendar/DayScheduleCard.tsx` 는 하루 일정 목록이다. 일정 1건으로 이동하는 경로가 없다.
+- `components/recording/MeetingDetail.tsx` 는 녹음 회의 상세다. 캘린더 일정이 아니라 `meetings` 행이 대상이다.
+
+그래서 §2.8 4단계와 §12.1 의 '회의 카드' 는 오늘 화면의 `MeetingBriefingCard` 로 정한다. 알림 클릭은 `navigateToToday({ kind: 'meeting', id: String(eventId) })` 다. 이유: `assistant:navigate` 는 `view: 'today'` 만 지원한다. 부록 D.4 의 보관 신호 경로를 그대로 쓴다.
+
+### I.3 트리거
+
+#### I.3.1 캘린더 출처
+- 서비스는 `getTodayEvents()` 를 쓴다. `google-calendar.ts` 의 5분 캐시 함수다. `notification.ts` 가 1분마다 같은 캐시를 데운다. 추가 API 호출이 없다.
+- 계획 스냅샷의 calendar 를 쓰지 않는다. 이유 2가지: 계획이 없는 날에도 브리핑을 보낸다. 스냅샷은 `HH:mm` 만 가진다.
+- `getTodayEvents` 는 미연결이면 빈 배열이다. 조회 실패면 이전 캐시를 돌려주고 로그만 남긴다. 그래서 실패는 '브리핑 없음' 으로 나타난다. 서비스는 오류를 payload 에 쓰지 않는다. 위험 I-3 이다.
+- 일정 변환은 `toMeetingRef(e)` 다. `start`·`end` 를 `isoToLocalDateTime` 으로 바꾼다. 종일이거나 변환이 실패하면 null 이다.
+
+#### I.3.2 창과 상태
+- 예정 시각은 `startAt − meetingLeadMin 분` 이다.
+- 창은 `[예정 시각, startAt)` 이다. 창 안의 첫 틱이 보낸다.
+- 발송이 예정 시각보다 2분 이상 늦으면 `late` 다. 아니면 `sent` 다. `LATE_AFTER_MIN` 은 부록 H 의 상수다.
+- 창이 지났고 같은 키의 행이 없으면 `skipped` 행을 남긴다. payload 는 `{ reason: 'window' }` 다. 규칙 A6 이다. 이유: 앱을 늦게 켠 날 지난 회의를 매 틱 다시 보지 않는다.
+- 하루 발송 수가 6건이면 남은 회의는 즉시 `skipped` 다. payload 는 `{ reason: 'cap' }` 이다. 상수 `MEETING_BRIEFING_DAILY_CAP = 6` 이다. 설정으로 노출하지 않는다.
+- 회의 중 여부를 보지 않는다. 연속 회의에서 다음 회의 브리핑은 앞 회의 중에 온다. 이유: 다음 회의 준비는 앞 회의 중에 한다. 열린 결정 I-4 다.
+- 틱 1회에 여러 건이 창 안이면 모두 보낸다. 상한 안에서다. 순서는 `startAt` 오름차순이다.
+
+#### I.3.3 일정 id·시각 변경
+- 키는 캘린더 일정 id 다. 반복 일정의 인스턴스는 id 가 다르다. `singleEvents: true` 조회 결과다.
+- 일정이 삭제되고 다시 만들어지면 id 가 바뀐다. 새 브리핑을 보낸다. 받아들인다.
+- 보내기 전 시각이 바뀌면, 다음 틱이 새 시각으로 판정한다. 예정 시각은 매 틱 다시 계산한다.
+- 보낸 뒤 시각이 바뀌면, 다시 보내지 않는다. 같은 키다. 카드는 보낸 시점의 시각을 보여 준다.
+- 보낸 뒤 일정이 취소되면, 카드는 남는다. 삭제하지 않는다.
+
+### I.4 판정 규칙
+
+`computeDueMeetingBriefings(input)` 은 아래 순서로 판정한다. 규칙 A47 이다.
+1. `settings.enabled` 와 `settings.meetingBriefingEnabled` 가 모두 true 다. 아니면 빈 배열이다.
+2. `meetings` 를 `startAt` 오름차순으로 정렬한다. 종일은 이미 빠져 있다.
+3. 각 회의의 키 `meeting_briefing:<today>:<id>` 가 `events` 에 있으면 건너뛴다.
+4. `now ≥ startAt` 이면 `{ action: 'skip', reason: 'window' }` 다.
+5. `now < 예정 시각` 이면 건너뛴다. 행을 만들지 않는다.
+6. 오늘 `sent`·`late` 행 수와 이번 결과의 `send` 수의 합이 6 이상이면 `{ action: 'skip', reason: 'cap' }` 이다.
+7. 아니면 `{ action: 'send', late }` 다.
+
+입력을 바꾸지 않는다. 규칙 A14 다.
+
+### I.5 수집
+
+`assistant-sources.ts` 의 `collectMeetingContext(db, meeting, items)` 가 수집한다. 부수 효과가 있는 유일한 지점이다. 규칙 A46 를 지킨다.
+
+| 출처 | 읽기 | 상한 |
+|------|------|------|
+| 프로젝트 | `projects` 의 id·name·status. 활성 상태만 | 전부. 매칭은 순수 함수 |
+| 지난 회의 | `meetings` JOIN `meeting_summaries`. `started_at` 이 90일 안. `kind = 'meeting'` | 후보 200건. 매칭 뒤 3건 |
+| 미완료 액션아이템 | 매칭된 지난 회의의 `action_items` 중 `todo_id` 가 null | 10건 |
+| 오늘 계획 항목 | 인자 `items` 중 `project_id` 가 매칭 프로젝트에 속하는 활성 항목 | 5건 |
+
+- 프로젝트 매칭은 `matchProjects(title, projects)` 다. 정규화는 소문자화와 공백·구두점 제거다. 프로젝트 이름이 2자 이상이고 정규화한 제목에 포함되면 매칭이다. 최대 3건이다. 이름 길이 내림차순이다.
+- 지난 회의 매칭은 `sameTitle(a, b)` 다. 정규화한 두 제목이 같으면 참이다. `meetings.title` 또는 `meetings.calendar_event_title` 중 하나가 같으면 매칭이다.
+- 출처별 실패는 그 출처를 비우고 `errors` 에 문구를 넣는다. throw 하지 않는다. `collectRecovery` 와 같은 관례다.
+- Jira 를 부르지 않는다. 캘린더도 다시 부르지 않는다.
+
+### I.6 규칙 본문과 알림 문구
+
+`assistant-meeting.ts` 의 `buildMeetingBriefing(ctx)` 가 순수하게 만든다.
+
+```
+# <회의 제목> <HH:mm>
+- 관련 프로젝트: A, B            ← 없으면 '관련 프로젝트 없음'
+## 지난 회의
+- <MM-DD> <제목> — <tldr 200자>  ← 없으면 '같은 제목의 지난 회의 없음'
+## 미완료 액션아이템 (N)
+- <text>                          ← 없으면 절을 뺀다
+## 오늘 계획 중 관련 항목
+- <title>                         ← 없으면 절을 뺀다
+```
+
+- 각 줄은 200자에서 자른다. `tldr` 는 200자다.
+- 알림 제목은 `<회의 제목 30자> <lead>분 전` 이다. 본문은 `<프로젝트 이름 또는 '관련 프로젝트 없음'> · 미완료 액션 N건` 이다. §12.1 그대로다.
+- `hasContext` 는 프로젝트·지난 회의·액션아이템·관련 항목 중 하나라도 있으면 true 다. false 면 LLM 을 부르지 않는다. 이유: 요약할 자료가 없다.
+
+### I.7 LLM 본문
+
+- `assistant-briefing.ts` 의 `requestLlmMeetingBriefing(input, model)` 이 `runHeadlessJson` 을 쓴다. `ai-headless.ts` 는 이미 `tools: []` 를 쓴다. Agent SDK 는 `allowedTools: []` 만으로 도구를 막지 못한다. 이 파일은 바꾸지 않는다.
+- 입력은 `[데이터]` 블록이다. `neutralizeMarkers` 를 거친다. 규칙 A9 다.
+- 출력 스키마 `MeetingBriefingSchema`: `{ headline: string ≤ 80, prep: string[] ≤ 5 × 120자, questions: string[] ≤ 3 × 120자 }`.
+- `meetingBriefingJsonToMarkdown` 이 Markdown 으로 바꾼다. 제목이 비어 있으면 `<회의 제목> 준비` 를 쓴다.
+- 서비스는 `llmSerialized` 로 호출한다. 규칙 A32 다. 결과는 `updateEventPayload` 로 같은 행에 쓴다. 성공이면 `llmMarkdown`·`llmModel`·`llmAt`·`llmStatus 'done'` 이다. 실패면 `llmError`·`llmStatus 'failed'` 다.
+- LLM 전 payload 의 `llmStatus` 는 `'pending'` 이다. LLM 을 부르지 않으면 `'off'` 다. 앱이 중간에 꺼지면 `'pending'` 이 남는다. 카드의 '다시 만들기' 가 이를 푼다.
+- `regenerateMeetingBriefing(eventId)` 는 같은 LLM 경로를 다시 돈다. 버튼은 결과를 기다린다. 규칙 본문은 그대로 남는다.
+
+### I.8 저장
+
+- 스키마 변경은 없다. 본문은 `assistant_events.payload` JSON 이다. §3.1 의 'payload: 회의 브리핑 본문' 그대로다. 컬럼이 더 필요해지면 부록 G.7.1 의 `migrateAssistantSchema(db)` 에 추가한다.
+- `assistant-store.ts` 에 `updateEventPayload(db, eventId, payload)` 를 추가한다.
+- 새 테이블을 만들지 않는 이유: 브리핑은 알림 1건과 1:1 이다. 하루 6건이다. 별도 컬럼이 필요한 질의가 없다.
+
+### I.9 발송·클릭 흐름
+
+#### I.9.1 서비스 `runDueMeetingBriefings(now)`
+`serialized` 안에서 아래 순서로 처리한다.
+1. `getTodayEvents()` 로 일정을 읽는다. `toMeetingRef` 로 바꾼다.
+2. `computeDueMeetingBriefings` 를 부른다.
+3. `skip` 결과는 `insertEvent` 로 `skipped` 행을 만든다. `fired_at` 은 null 이다.
+4. `send` 결과마다: `collectMeetingContext` → `buildMeetingBriefing` → payload 를 만든다 → `insertEvent` 한다. 충돌이면 건너뛴다. 성공이면 `SentMeetingNotice` 에 담는다.
+5. `emitChanged({ date: today, reason: 'meeting' })` 를 1회 보낸다. 보낸 건이 있을 때만이다.
+6. 보낸 건마다 `hasContext` 이고 `llmEnabled` 이고 헤드리스 가능이면 `startBackgroundMeetingLlm(eventId, input)` 을 부른다. 결과를 기다리지 않는다.
+7. 알림 목록을 돌려준다.
+
+- INSERT 가 `show()` 보다 먼저다. 규칙 A5 다. 규칙 본문이 LLM 보다 먼저다. 규칙 A8·A45 다.
+- 백그라운드 LLM 은 `backgroundTasks` 에 넣는다. `waitForAssistantBackground` 가 기다린다. 완료 뒤 `emitChanged({ reason: 'meeting' })` 다.
+
+#### I.9.2 스케줄러
+- 틱 7단계: 6단계 뒤 같은 `dueInFlight` 안에서 `runDueMeetingBriefings(now)` 를 `await` 한다. 결과마다 `showMeetingNotice` 를 부른다.
+- `showMeetingNotice(n)` 는 `Notification({ title, body })` 다. `hasReply` 가 없다. click 은 `navigateToToday(n.focus)` 다. 실패는 `failed` 다. `showPlanUpdateNotices` 와 같은 패턴이다.
+
+### I.10 UI
+
+#### I.10.1 `MeetingBriefingCard.tsx`
+- 위치는 `CheckinPanel` 아래, `RecoveryCard` 위다. `plan` 이 없어도 보인다. 이유: 브리핑은 근무 중 여부와 무관하다.
+- `meetingBriefings(events)` 가 `kind === 'meeting_briefing'` 이고 status 가 `sent`·`late`·`failed` 인 행을 `scheduled_at` 오름차순으로 고른다. `skipped` 는 보이지 않는다.
+- 행이 없으면 카드를 그리지 않는다.
+- 행마다 루트 id 는 `meeting-briefing-<eventId>` 다. 제목 줄은 `<HH:mm> <회의 제목>` 과 배지다. 배지는 `llmStatus` 가 `done` 이면 `AI 브리핑`, 아니면 `규칙 브리핑` 이다.
+- 본문은 `llmMarkdown ?? ruleMarkdown` 을 `MarkdownContent` 로 그린다. `onInternalLink` 는 `openInternalLink` 다.
+- `llmStatus === 'pending'` 이면 `AI 브리핑 만드는 중…` 문구를 보인다. `failed` 면 amber 경고 `AI 브리핑을 마치지 못했습니다. <llmError>` 를 보인다. `RecoveryCard` 와 같은 모양이다.
+- 접기 토글은 행마다 둔다. 기본은 회의 시작이 지났으면 접힘, 아니면 펼침이다. 상태는 `useState` 다.
+- '다시 만들기' 버튼은 `aiAvailable` 이고 `llmEnabled` 일 때 보인다. `busy` 면 비활성이다.
+
+#### I.10.2 `TodayView.tsx`
+- `plan ?` 블록 밖, 안내 문구 아래에 `MeetingBriefingCard` 를 둔다.
+- `focusTargetId` 에 `case 'meeting': return \`meeting-briefing-${focus.id ?? ''}\`` 를 추가한다.
+
+#### I.10.3 `assistantStore.ts`
+- `regenerateMeetingBriefing: (eventId: number) => Promise<void>` 를 추가한다. `run(...)` 패턴이다.
+- `subscribe` 는 바꾸지 않는다. `reason === 'meeting'` 도 `load()` 를 부른다.
+
+#### I.10.4 `AssistantSettingsModal.tsx`
+- `meetingBriefingEnabled` 토글을 추가한다. 문구는 `회의 전 브리핑` 이다. 힌트는 `회의 시작 전에 관련 프로젝트·지난 회의·액션아이템을 알립니다` 다.
+- `meetingLeadMin` 숫자 입력을 추가한다. 범위는 1~120 이다. 문구는 `회의 전 알림(분)` 이다. 힌트는 `권장 15분. 기존 10분 전 일정 알림보다 앞서게 두세요` 다.
+
+### I.11 모듈 계약
+
+팀원은 이름과 시그니처를 그대로 쓴다. 계약을 바꿔야 하면 리더에게 알린다.
+
+#### I.11.1 `assistant-types.ts` (팀원 I1) 추가·변경분
+```ts
+// ── MVP5 (부록 I) ──
+export interface MeetingRef { id: string; title: string; startAt: string; endAt: string }   // 'YYYY-MM-DD HH:mm:ss'. 종일 제외
+export interface MeetingDecisionInput {
+  today: string; at: string                                   // at 은 'YYYY-MM-DD HH:mm:ss'
+  settings: Pick<AssistantSettings, 'enabled' | 'meetingBriefingEnabled' | 'meetingLeadMin'>
+  meetings: MeetingRef[]
+  events: AssistantEvent[]
+}
+export type DueMeetingBriefing =
+  | { action: 'send'; meeting: MeetingRef; eventKey: string; scheduledAt: string; late: boolean }
+  | { action: 'skip'; meeting: MeetingRef; eventKey: string; scheduledAt: string; reason: 'window' | 'cap' }
+
+export interface MeetingProjectRef { id: number; name: string }
+export interface MeetingPastRef { meetingId: number; title: string; startedAt: string; tldr: string | null; openActionItems: string[] }
+export interface MeetingContext {
+  meeting: MeetingRef
+  projects: MeetingProjectRef[]            // 최대 3
+  pastMeetings: MeetingPastRef[]           // 최대 3. startedAt 내림차순
+  openActionItems: string[]                // 최대 10
+  relatedItems: Pick<PlanItem, 'id' | 'title' | 'status'>[]   // 최대 5
+  errors: string[]
+}
+export type MeetingLlmStatus = 'off' | 'pending' | 'done' | 'failed'
+export interface MeetingBriefingPayload {
+  meeting: MeetingRef
+  title: string; body: string              // 알림 문구
+  projects: MeetingProjectRef[]
+  hasContext: boolean
+  ruleMarkdown: string
+  llmStatus: MeetingLlmStatus
+  llmMarkdown: string | null; llmModel: string | null; llmAt: string | null; llmError: string | null
+}
+export interface SentMeetingNotice {
+  eventId: number; title: string; body: string
+  focus: { kind: 'meeting'; id: string }
+}
+
+// 변경: AssistantSettings 에 meetingBriefingEnabled: boolean 추가
+// 변경: AssistantChangedEvent.reason 에 'meeting' 추가
+// 변경: AssistantNavigateEvent.focus.kind 에 'meeting' 추가
+```
+
+#### I.11.2 `assistant-schedule.ts` (팀원 I1) 추가분
+```ts
+export const MEETING_BRIEFING_DAILY_CAP = 6
+export function meetingEventKey(today: string, calendarEventId: string): string    // 'meeting_briefing:<date>:<id>'
+export function computeDueMeetingBriefings(input: MeetingDecisionInput): DueMeetingBriefing[]   // I.4. A14·A47
+```
+
+#### I.11.3 `assistant-meeting.ts` (팀원 I1, 새 파일, 순수)
+```ts
+export const MEETING_TITLE_MAX = 30
+export const MEETING_LINE_MAX = 200
+export function normalizeTitle(s: string): string
+export function sameTitle(a: string, b: string): boolean
+export function matchProjects(title: string, projects: { id: number; name: string }[]): MeetingProjectRef[]   // 최대 3
+export function hasMeetingContext(ctx: MeetingContext): boolean
+export function buildMeetingBriefing(ctx: MeetingContext): string                     // 규칙 Markdown. I.6
+export function meetingNoticeText(ctx: MeetingContext, leadMin: number): { title: string; body: string }
+```
+- import 허용: `./assistant-types` 만. electron·DB·jira·google-calendar 를 import 하지 않는다. 규칙 A3 대상에 `meeting` 을 추가한다.
+
+#### I.11.4 `assistant-settings.ts` (팀원 I1) 변경분
+- `ASSISTANT_SETTING_KEYS.meetingBriefingEnabled = 'assistant_meeting_briefing_enabled'`.
+- `DEFAULT_ASSISTANT_SETTINGS.meetingBriefingEnabled = true`.
+- `FIELD_SPECS.meetingBriefingEnabled = { kind: 'bool' }`.
+
+#### I.11.5 `assistant-sources.ts` (팀원 I2) 추가분
+```ts
+export function toMeetingRef(e: CalendarEvent): MeetingRef | null                   // 종일·변환 실패는 null
+export function collectMeetingContext(db, meeting: MeetingRef, items: PlanItem[]): MeetingContext   // I.5. throw 하지 않는다
+```
+- `MEETING_LIMITS = { pastDays: 90, pastCandidates: 200, pastMeetings: 3, actionItems: 10, relatedItems: 5 }` 를 export 한다.
+
+#### I.11.6 `assistant-briefing.ts` (팀원 I2) 추가분
+```ts
+export interface MeetingLlmInput { ctx: MeetingContext; ruleMarkdown: string }
+export const MeetingBriefingSchema: z.ZodType<MeetingBriefingJson>
+export const MEETING_SYSTEM_PROMPT: string
+export function buildMeetingPrompt(input: MeetingLlmInput): string                 // [데이터] 블록. neutralizeMarkers (A9)
+export function meetingBriefingJsonToMarkdown(value: MeetingBriefingJson, meeting: MeetingRef): string
+export async function requestLlmMeetingBriefing(input: MeetingLlmInput, model: AiModelName): Promise<{ ok: true; markdown: string; model: string } | { ok: false; error: string }>   // throw 하지 않는다
+```
+
+#### I.11.7 `assistant-store.ts` (팀원 I2) 추가분
+```ts
+export function updateEventPayload(db, eventId: number, payload: string): void
+```
+
+#### I.11.8 `assistant-service.ts` (팀원 I3) 추가분
+```ts
+export function runDueMeetingBriefings(now?: Date): Promise<SentMeetingNotice[]>        // serialized. I.9.1
+export function regenerateMeetingBriefing(eventId: number, now?: Date): Promise<TodayPayload>   // llmSerialized. 결과를 기다린다
+// 내부: startBackgroundMeetingLlm(eventId: number, input: MeetingLlmInput, settings): void   // llmSerialized → updateEventPayload → emitChanged('meeting')
+// 내부: runMeetingLlm(eventId, input, settings): Promise<void>                              // throw 하지 않는다. 실패는 payload.llmStatus 'failed'
+// 변경: waitForAssistantBackground 가 회의 LLM 도 기다린다. backgroundTasks 를 그대로 쓴다
+```
+- `regenerateMeetingBriefing` 검증: 행이 있고 `kind === 'meeting_briefing'` 이고 status 가 `skipped` 가 아니다. `llmEnabled` 가 false 면 throw 한다. 헤드리스 불가면 `llmStatus 'failed'` 와 안내 문구를 쓴다. `refreshBriefing` 과 같은 관례다.
+
+#### I.11.9 `assistant-scheduler.ts` (팀원 I3) 변경분
+```ts
+// 내부: showMeetingNotices(notices: SentMeetingNotice[]) — Notification({ title, body }) · click → navigateToToday(focus) · 실패 시 failed
+// 변경: runTick 7단계 (I.9.2). 6단계와 같은 dueInFlight 안이다
+```
+
+#### I.11.10 `assistant.ipc.ts`·`preload/index.ts` (팀원 I3)
+
+| preload 메서드 | 채널 | 인자 | 성공 응답 |
+|----------------|------|------|-----------|
+| regenerateMeetingBriefing | `assistant:regenerateMeetingBriefing` | `eventId: number` | `{ success: true, today }` |
+
+- §13 의 `getMeetingBriefing(calendarEventId)` 를 만들지 않는다. 이유: `TodayPayload.events` 가 오늘 브리핑 행을 이미 담는다.
+- `preload/index.d.ts` 는 바꾸지 않는다.
+
+#### I.11.11 렌더러 (팀원 I4)
+
+`types/index.ts`:
+- `MeetingRef`·`MeetingProjectRef`·`MeetingLlmStatus`·`MeetingBriefingPayload` 를 I.11.1 과 같은 모양으로 추가한다.
+- `AssistantSettings.meetingBriefingEnabled: boolean` 추가.
+- `AssistantChangedEvent.reason` 에 `'meeting'` 추가. `AssistantNavigateEvent.focus.kind` 에 `'meeting'` 추가.
+- `AssistantAPI.regenerateMeetingBriefing: (eventId: number) => Promise<TodayResult>` 추가.
+
+`MeetingBriefingCard.tsx`:
+```ts
+export interface MeetingBriefingRow { event: AssistantEvent; payload: MeetingBriefingPayload }
+export function parseMeetingPayload(payload: string | null): MeetingBriefingPayload | null
+export function meetingBriefings(events: AssistantEvent[]): MeetingBriefingRow[]    // I.10.1
+export function briefingBadge(status: MeetingLlmStatus): string                       // 'AI 브리핑' | '규칙 브리핑'
+export default function MeetingBriefingCard(props: {
+  rows: MeetingBriefingRow[]
+  now: string                    // 'YYYY-MM-DD HH:mm:ss'. 시작 지남 판정은 날짜와 시각을 함께 비교한다
+  regeneratingIds: number[]      // 다시 만드는 중인 행. 그 행의 버튼만 비활성이다
+  canRegenerate: boolean         // aiAvailable && settings.llmEnabled
+  onRegenerate: (eventId: number) => void
+}): React.ReactNode
+```
+- 테스트는 `renderToStaticMarkup` 으로 4가지 상태를 그린다. 규칙만, pending, failed, done 이다.
+
+#### I.11.12 변경하지 않는 파일
+`assistant-schema.ts`, `assistant-refresh.ts`, `assistant-slots.ts`, `assistant-day.ts`, `assistant-recovery.ts`, `assistant-command.ts`, `ai-headless.ts`, `google-calendar.ts`, `notification.ts`, `src/main/index.ts`, `src/main/db/database.ts`, `preload/index.d.ts`, `App.tsx`, `CheckinPanel.tsx`, `CommandInput.tsx`, `ChangeLog.tsx`, `PlanItemRow.tsx`, `RecoveryCard.tsx`, `BriefingCard.tsx`, `tray-widget.ts`, `TrayPanel.tsx`, `DayScheduleCard.tsx`, `CalendarView.tsx`.
+
+### I.12 가드레일
+
+기존 규칙 적용:
+- A1: Jira 를 부르지 않는다. `jira.ts` 는 바꾸지 않는다.
+- A2: `meetings`·`meeting_summaries`·`projects` 는 읽기만 한다.
+- A3: `assistant-meeting.ts` 는 순수다. 대상 목록에 `meeting` 을 추가한다.
+- A5: INSERT 가 `show()` 보다 먼저다.
+- A6: 창 밖은 `skipped` 행이다.
+- A8: 규칙 본문이 LLM 보다 먼저다. LLM 실패는 알림에 영향이 없다.
+- A9·A10·A11·A32: `runHeadlessJson` 과 `llmSerialized` 를 쓴다. 도구는 0개다.
+- A13: 틱 7단계와 백그라운드 LLM 은 `try/catch` 안이다.
+- A16·A31: 셸 실행이 없다. AI 채팅 도구는 바꾸지 않는다.
+
+새 규칙. §15 표에 추가한다.
+
+| ID | 규칙 | 이유 | 판정 |
+|----|------|------|------|
+| A45 | 회의 브리핑은 규칙 본문을 INSERT 한 뒤 알림을 보내고, LLM 은 그 뒤 `llmSerialized` 로 돈다. LLM 실패는 payload 의 `llmStatus`·`llmError` 로만 남는다 | 규칙 A8 을 회의 브리핑에 적용한다 | 테스트 `A45` |
+| A46 | 회의 브리핑 수집은 DB 읽기와 `getTodayEvents` 캐시만 쓴다. Jira 를 부르지 않는다. 지난 회의 90일·3건, 액션아이템 10건, 관련 항목 5건 상한이다 | 회의 직전에 네트워크 지연이 없다. 프롬프트 크기를 제한한다 | 테스트 `A46` |
+| A47 | 회의 브리핑 창은 `[시작 − lead, 시작)` 이다. 하루 6건 상한이다. 창 밖·상한 초과는 `skipped` 행이다. 회의 중 여부를 보지 않는다 | 지난 회의를 매 틱 다시 보지 않는다. 알림 피로를 막는다 | 테스트 `A47` |
+
+### I.13 팀 구성과 소유 파일
+
+팀원 4명이다. 파일은 겹치지 않는다.
+
+| 팀원 | 역할 | 소유 파일 |
+|------|------|-----------|
+| I1 순수·타입·설정 | 타입, 판정, 매칭·규칙 본문, 설정 키 | `src/main/services/assistant-types.ts`, `assistant-schedule.ts`, `assistant-schedule.test.ts`, `assistant-meeting.ts`, `assistant-meeting.test.ts`, `assistant-settings.ts`, `assistant-settings.test.ts` |
+| I2 수집·LLM·저장 | 일정 변환, 맥락 수집, LLM 브리핑, payload 갱신 | `src/main/services/assistant-sources.ts`, `assistant-sources.test.ts`, `assistant-briefing.ts`, `assistant-briefing.test.ts`, `assistant-store.ts`, `assistant-store.test.ts` |
+| I3 서비스·스케줄러·IPC | 발송 흐름, 백그라운드 LLM, 틱 7단계, 채널 | `src/main/services/assistant-service.ts`, `assistant-service.test.ts`, `assistant-scheduler.ts`, `assistant-scheduler.test.ts`, `assistant-tray.test.ts`, `src/main/ipc/assistant.ipc.ts`, `src/preload/index.ts`, `src/preload/index.d.ts`, `src/main/index.ts` |
+| I4 렌더러 | 타입 복제, 카드, 오늘 화면, 설정 모달 | `src/renderer/src/types/index.ts`, `env.d.ts`, `stores/assistantStore.ts`, `components/today/MeetingBriefingCard.tsx`, `MeetingBriefingCard.test.tsx`, `TodayView.tsx`, `TodayView.test.tsx`, `AssistantSettingsModal.tsx`, `App.tsx` |
+
+- `AssistantSettings.meetingBriefingEnabled` 추가로 깨지는 픽스처: `assistant-settings.test.ts` 는 I1, `assistant-tray.test.ts` 는 I3, `TodayView.test.tsx` 는 I4 가 고친다.
+- I3 의 `index.ts`·`preload/index.d.ts` 와 I4 의 `App.tsx`·`env.d.ts` 는 변경 예정이 없다. 소유자를 정해 두는 이유는 예상 밖 수정의 충돌을 막기 위해서다.
+- `docs/ASSISTANT.md` 는 리더가 쓴다. 부록 I 삽입, §15 표에 A45~A47 추가, §13 에서 `getMeetingBriefing` 삭제와 `regenerateMeetingBriefing` 추가, 변경 이력 1줄이다.
+
+의존 순서:
+1. 부록 H 가 커밋되어 있다. `dueInFlight`·`LATE_AFTER_MIN`·`minutesBetween` 을 쓴다.
+2. I1 이 `assistant-types.ts` 추가분을 먼저 쓴다. I4 가 같은 시각에 `types/index.ts` 복제분을 쓴다.
+3. I2·I3 은 2단계 뒤에 시작한다. 함수 본문이 아직 없으면 계약 시그니처 기준으로 작성한다.
+4. I3 은 I1 의 `computeDueMeetingBriefings`·`buildMeetingBriefing`·`meetingNoticeText`·`hasMeetingContext` 와 I2 의 `toMeetingRef`·`collectMeetingContext`·`requestLlmMeetingBriefing`·`updateEventPayload` 를 import 한다. 테스트는 `./assistant-sources`·`./assistant-briefing`·`./google-calendar` 를 mock 한다.
+5. I4 는 2단계 뒤 바로 진행한다. I3 의 preload `regenerateMeetingBriefing` 이 들어와야 런타임이 동작한다.
+
+### I.14 완료 조건
+
+최대 반복 5회. 같은 실패가 2회 연속이면 중단하고 리더에게 보고한다. 5회를 넘으면 리더가 미충족 항목·시도·원인을 사용자에게 보고한다.
+
+1. C1: `npx vitest run` 종료 코드 0, 실패 0건.
+2. C2: `npm run typecheck` 에러 0건.
+3. C3: `npm run build` 종료 코드 0.
+4. `grep -c "A47" src/main/services/assistant-schedule.test.ts` ≥ 6. 대상: 비활성, 창 전, 창 안, 창 뒤 skipped, 상한 skipped, 기존 행 건너뜀.
+5. `grep -c "late" src/main/services/assistant-schedule.test.ts` ≥ 1. 대상: 예정 2분 뒤 발송은 late 다.
+6. `grep -c "A14" src/main/services/assistant-meeting.test.ts` ≥ 1. `grep -c "A3" src/main/services/assistant-meeting.test.ts` ≥ 1.
+7. `grep -c "matchProjects\|sameTitle" src/main/services/assistant-meeting.test.ts` ≥ 4. 대상: 포함 매칭, 1자 이름 제외, 최대 3건, 정규화 동일 제목.
+8. `grep -c "A46" src/main/services/assistant-sources.test.ts` ≥ 3. 대상: 90일 상한, 3건 상한, 액션아이템 10건 상한.
+9. `grep -c "A9" src/main/services/assistant-briefing.test.ts` ≥ 14. 기존 12건에 회의 프롬프트의 [데이터] 블록과 스키마 검증을 더한다.
+10. `grep -c "A45" src/main/services/assistant-service.test.ts` ≥ 3. 대상: 규칙 본문이 LLM 전에 저장, LLM 실패가 알림을 막지 않음, hasContext false 면 LLM 미호출.
+11. `grep -c "A32" src/main/services/assistant-service.test.ts` ≥ 6. 기존 5건에 회의 LLM 이 줄을 거치는 케이스를 더한다.
+12. `grep -c "A5" src/main/services/assistant-service.test.ts src/main/services/assistant-scheduler.test.ts` 합계 ≥ 12. MVP4 의 10건에 회의 브리핑 INSERT 충돌 건너뜀과 INSERT→show 를 더한다.
+13. `grep -c "A42" src/main/services/assistant-scheduler.test.ts` ≥ 3. 기존 건수에 7단계가 6단계 뒤인 케이스를 더한다.
+14. `grep -c "runDueMeetingBriefings" src/main/services/assistant-scheduler.ts` ≥ 1.
+15. `grep -c "getTodayEvents" src/main/services/assistant-service.ts` ≥ 3. 기존 import 와 시작 알림 2곳에 회의 브리핑 1곳을 더한다.
+16. `grep -c "regenerateMeetingBriefing"` 결과가 `src/preload/index.ts`, `src/main/ipc/assistant.ipc.ts`, `src/main/services/assistant-service.ts`, `src/renderer/src/types/index.ts`, `src/renderer/src/stores/assistantStore.ts` 각각 ≥ 1.
+17. `grep -c "getMeetingBriefing" src/preload/index.ts src/main/ipc/assistant.ipc.ts` 합계 0.
+18. `grep -c "updateEventPayload" src/main/services/assistant-store.ts` ≥ 1. `grep -c "updateEventPayload" src/main/services/assistant-store.test.ts` ≥ 1.
+19. `grep -c "assistant_meeting_briefing_enabled" src/main/services/assistant-settings.ts` ≥ 1.
+20. `grep -c "meetingBriefingEnabled\|meetingLeadMin" src/renderer/src/components/today/AssistantSettingsModal.tsx` ≥ 2.
+21. `test -f src/renderer/src/components/today/MeetingBriefingCard.tsx` 종료 코드 0. `grep -c "MeetingBriefingCard" src/renderer/src/components/today/TodayView.tsx` ≥ 1. `grep -c "meeting-briefing-" src/renderer/src/components/today/MeetingBriefingCard.test.tsx` ≥ 1.
+22. `grep -c "meetingBriefingEnabled"` 결과가 `src/main/services/assistant-types.ts`, `src/renderer/src/types/index.ts` 각각 ≥ 1. `grep -c "'meeting'" src/renderer/src/components/today/TodayView.tsx` ≥ 1.
+23. `grep -c "tools: \[\]" src/main/services/ai-headless.ts` ≥ 1. `grep -c "settingSources: \[\]" src/main/services/ai-headless.ts` ≥ 1.
+24. `grep -cE "from '\./jira'" src/main/services/assistant-meeting.ts src/main/services/assistant-briefing.ts` 합계 0.
+25. A1: `grep -n "method:" src/main/services/jira.ts | grep -vc "'GET'"` 결과 0.
+26. A2: `grep -nE "INSERT INTO (projects|tasks|todos|meetings)|UPDATE (projects|tasks|todos|meetings)|DELETE FROM (projects|tasks|todos|meetings)" src/main/services/assistant-*.ts src/main/ipc/assistant.ipc.ts src/main/services/tray-widget.ts src/main/services/ai-assistant-tools.ts` 결과 0건.
+27. A3: `grep -lE "from '(electron|better-sqlite3|\.\./db|\./jira|\./google-calendar)" src/main/services/assistant-{candidates,score,slots,settings,day,refresh,schedule,tray,recovery,command,meeting}.ts` 결과 0건.
+28. A16: `grep -nE "child_process|execSync|spawn" src/main/services/assistant-*.ts src/main/services/ai-assistant-tools.ts` 결과 0건.
+29. A31: `grep -cE "from '\./jira'|from '\./google-calendar'|from '\./ai-headless'|\bgetDatabase\b" src/main/services/ai-assistant-tools.ts` 결과 0.
+30. 부록 H.12 조건 4~22 를 다시 실행한다. 결과가 모두 충족이다.
+31. 부록 E.8 조건 5·6·7·8·16 과 부록 F.11 조건 7·8·23 을 다시 실행한다. 결과가 모두 충족이다.
+
+### I.15 열린 결정
+
+| # | 항목 | 권장 기본값 | 근거 |
+|---|------|-------------|------|
+| I-1 | 캘린더 출처 | `getTodayEvents` 5분 캐시 | 추가 API 호출이 없다. 계획 없는 날에도 동작한다 |
+| I-2 | 브리핑 저장 위치 | `assistant_events.payload` JSON | 알림과 1:1 이다. 스키마 변경이 없다 |
+| I-3 | 클릭 이동 대상 | 오늘 화면의 `MeetingBriefingCard` | 코드에 회의 카드가 없다. `assistant:navigate` 는 today 만 지원한다 |
+| I-4 | 회의 중 발송 | 허용 | 연속 회의에서 다음 회의 준비는 앞 회의 중에 한다 |
+| I-5 | 하루 상한 | 6건, 상수 | §19-19 그대로다. 설정을 늘리지 않는다 |
+| I-6 | 회의 브리핑 켜기 설정 | 새 키 `assistant_meeting_briefing_enabled`, 기본 켬 | lead 분으로는 끌 수 없다 |
+| I-7 | 자료 없는 회의의 LLM | 부르지 않음 | 요약할 자료가 없다. 구독 사용량을 아낀다 |
+| I-8 | 지난 회의 범위 | 같은 제목, 90일, 3건 | 제목 매칭은 단순하고 예측 가능하다. 프로젝트 기반 확장은 후속이다 |
+| I-9 | 기존 10·5·1분 전 일정 알림 | 그대로 둠 | `notification.ts` 는 바꾸지 않는다. lead 15분이 앞선다 |
+| I-10 | 보낸 뒤 일정 변경·취소 | 다시 보내지 않음, 카드 유지 | 같은 키다. 취소 감지는 범위 밖이다 |
+| I-11 | 카드 기본 접힘 | 시작 지난 회의는 접힘 | 지난 브리핑은 참고용이다 |
+| I-12 | `getMeetingBriefing` IPC | 만들지 않음 | `TodayPayload.events` 가 이미 담는다 |
+
+### I.16 위험
+
+| # | 위험 | 대응 |
+|---|------|------|
+| 1 | `notification.ts` 의 10·5·1분 전 알림과 겹쳐 회의 1건에 알림 4개가 온다 | 기본 lead 15분으로 앞선다. 사용자가 문제 삼으면 후속에서 `notification.ts` 의 일정 알림을 비서로 통합한다 |
+| 2 | `getTodayEvents` 는 실제 날짜 기준이다. 날짜 경계 전 새벽의 일정은 논리 날짜가 전날이다. 경계 직후 회의는 경계 전 틱과 경계 뒤 틱에서 서로 다른 키로 2번 나갈 수 있다 | 서비스는 `startAt` 의 논리 날짜가 오늘인 회의만 판정한다. 경계 직후 회의의 브리핑은 경계 뒤 첫 틱에 `late` 로 나간다 |
+| 3 | 캘린더 조회 실패를 `getTodayEvents` 가 삼킨다. 브리핑이 조용히 빠진다 | 받아들인다. 로그만 남는다. 오늘 화면의 `calendarConnected` 안내 문구가 미연결을 알린다 |
+| 4 | 회의 직전에 LLM 이 늦게 끝난다 | 규칙 본문과 알림이 먼저다. LLM 은 완료 시점에 카드만 바꾼다 |
+| 5 | 앱이 LLM 중간에 꺼져 `llmStatus 'pending'` 이 남는다 | 카드가 '다시 만들기' 를 허용한다. 열린 결정 I-7 과 무관하다 |
+| 6 | 같은 제목의 지난 회의가 없는 첫 회의는 브리핑이 빈약하다 | 규칙 본문이 '지난 회의 없음' 을 적는다. 프로젝트 매칭과 관련 항목이 남는다 |
+| 7 | 프로젝트 이름이 짧거나 흔해 오매칭한다 | 2자 이상만 매칭한다. 최대 3건이다. 카드가 프로젝트를 보여 주므로 사용자가 확인한다 |
+| 8 | `AssistantSettings` 키 추가로 픽스처 3개가 깨진다 | I.13 에 소유자를 정했다 |
+| 9 | 틱 7단계가 `getTodayEvents` 네트워크를 기다리는 동안 `dueInFlight` 가 길어진다 | 5분 캐시가 대부분 적중한다. 캐시 미스는 1회 호출이다. 다음 틱이 건너뛰어도 창은 lead 분이다 |
+| 10 | `TodayPayload.events` 에 LLM 본문이 들어가 payload 가 커진다 | 하루 6건 × 약 2KB 다. 받아들인다 |
+| 11 | `meeting_summaries.action_items` 의 JSON 형식이 바뀐다 | `parseJsonArray`·`NoteActionItem` 을 그대로 쓴다. `readRecoveryMeetings` 와 같은 경로다 |
+
+### I.17 사용자 결정 (2026-11-02)
+- 사용자가 MVP4 뒤에 MVP5 를 바로 진행하기로 했다.
+- I.15 의 열린 결정은 모두 권장 기본값을 쓴다.
+
+### I.18 구현 확정분
+구현 중 팀원과 리더가 계약에 없던 세부를 아래처럼 정했다.
+- 서비스는 회의 `startAt` 의 논리 날짜가 오늘인 회의만 판정에 넘긴다. 이유: 날짜 경계 직후 회의가 2번 나가는 것을 막는다.
+- `runDueMeetingBriefings` 는 `serialized` 줄 밖에서 설정을 확인하고 `getTodayEvents` 를 부른다. 줄 안에서는 시각 잡기·판정·INSERT 만 한다. 이유: 일정이 0건이면 캐시가 적중하지 않아 매 틱 네트워크를 부른다. 그 대기가 사용자 쓰기를 막으면 안 된다.
+- 회의 1건의 예외는 그 회의만 건너뛴다. `getTodayEvents` 가 reject 하면 일정 없음으로 처리한다. 스케줄러 6·7단계는 각각 `try/catch` 다.
+- LLM 이 실패하면 `llmMarkdown`·`llmModel`·`llmAt` 를 null 로 비운다. 이유: 카드 본문은 `llmMarkdown ?? ruleMarkdown` 이다. 배지와 본문이 어긋나지 않는다.
+- `regenerateMeetingBriefing` 은 LLM 호출 전에 `llmStatus` 를 `pending` 으로 쓰고 `emitChanged` 를 보낸다. 맥락은 지금 DB 로 다시 수집한다. `hasContext` 가 false 여도 LLM 을 부른다. 이유: 사용자가 버튼을 직접 눌렀다.
+- 렌더러의 '다시 만들기' 는 전역 `busy` 를 쓰지 않는다. 스토어의 `meetingRegeneratingIds` 가 행 단위로 버튼을 막는다.
+- 카드의 시작 지남 판정은 `startAt` 과 현재 로컬 날짜·시각을 함께 비교한다.
+- `buildMeetingBriefing` 은 회의 제목·프로젝트 이름·지난 회의 제목·tldr·액션아이템·관련 항목 제목의 Markdown 링크 문법 문자를 이스케이프한다. 이유: 외부 초대 제목이 클릭 가능한 링크로 바뀌지 않는다. 주소를 그대로 쓴 URL 의 자동 링크는 남는다. 주소가 그대로 보이므로 받아들인다.
+- `normalizeTitle` 은 NFC 정규화 뒤 공백·구두점·기호를 지운다. 정규화 결과가 빈 제목끼리는 같은 제목이 아니다.
+- 지난 회의 90일은 회의 `startAt` 기준이다. 이번 회의보다 앞선 회의만 읽는다. 후보 200건을 먼저 자른 뒤 제목으로 매칭한다.
+- `TodayView` 의 화면 순서는 체크인 패널, 회의 브리핑 카드, 나머지 계획 영역이다. 회의 브리핑 카드는 계획이 없어도 보인다.

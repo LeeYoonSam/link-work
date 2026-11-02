@@ -60,7 +60,9 @@ vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] }
 }))
 
-vi.mock('./google-calendar', () => ({ getTodayEvents: vi.fn(async () => []) }))
+// 회의 브리핑이 읽는 5분 캐시다 (I.3.1). 테스트가 일정을 넣는다
+const calendar = vi.hoisted(() => ({ getTodayEvents: vi.fn(async (): Promise<unknown[]> => []) }))
+vi.mock('./google-calendar', () => calendar)
 
 const headless = vi.hoisted(() => ({ isHeadlessAvailable: vi.fn(() => true), runHeadlessJson: vi.fn() }))
 vi.mock('./ai-headless', () => headless)
@@ -70,14 +72,26 @@ const sources = vi.hoisted(() => ({
   collectSources: vi.fn(),
   collectRecovery: vi.fn(),
   resolveVanished: vi.fn(async () => ({})),
-  getSourceCheckTimes: vi.fn(() => ({ calendarAt: null as number | null, jiraAt: null as number | null }))
+  getSourceCheckTimes: vi.fn(() => ({ calendarAt: null as number | null, jiraAt: null as number | null })),
+  // 회의 브리핑 (부록 I.5). 변환·수집 규칙은 assistant-sources.test.ts 가 검증한다
+  toMeetingRef: vi.fn(),
+  collectMeetingContext: vi.fn()
 }))
 vi.mock('./assistant-sources', () => sources)
 
-const briefing = vi.hoisted(() => ({ requestLlmBriefing: vi.fn(), requestLlmRecovery: vi.fn() }))
+const briefing = vi.hoisted(() => ({
+  requestLlmBriefing: vi.fn(),
+  requestLlmRecovery: vi.fn(),
+  requestLlmMeetingBriefing: vi.fn()
+}))
 vi.mock('./assistant-briefing', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./assistant-briefing')>()
-  return { ...actual, requestLlmBriefing: briefing.requestLlmBriefing, requestLlmRecovery: briefing.requestLlmRecovery }
+  return {
+    ...actual,
+    requestLlmBriefing: briefing.requestLlmBriefing,
+    requestLlmRecovery: briefing.requestLlmRecovery,
+    requestLlmMeetingBriefing: briefing.requestLlmMeetingBriefing
+  }
 })
 
 // 명령 LLM 은 픽스처로 답한다. assistant-command.ts 는 실제 구현을 쓴다 (G.11.5)
@@ -85,11 +99,16 @@ const commandLlm = vi.hoisted(() => ({ requestLlmCommand: vi.fn() }))
 vi.mock('./assistant-command-llm', () => commandLlm)
 
 // 체크인 판정은 실제 구현을 쓴다. UNIQUE 충돌 테스트만 결과를 고정한다 (부록 H)
-const schedule = vi.hoisted(() => ({ computeDueCheckin: vi.fn() }))
+const schedule = vi.hoisted(() => ({ computeDueCheckin: vi.fn(), computeDueMeetingBriefings: vi.fn() }))
 vi.mock('./assistant-schedule', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./assistant-schedule')>()
   schedule.computeDueCheckin.mockImplementation(actual.computeDueCheckin)
-  return { ...actual, computeDueCheckin: schedule.computeDueCheckin }
+  schedule.computeDueMeetingBriefings.mockImplementation(actual.computeDueMeetingBriefings)
+  return {
+    ...actual,
+    computeDueCheckin: schedule.computeDueCheckin,
+    computeDueMeetingBriefings: schedule.computeDueMeetingBriefings
+  }
 })
 
 import { closeDatabase, getDatabase, initDatabase } from '../db/database'
@@ -105,9 +124,11 @@ import {
   getToday,
   interpretCommand,
   refreshBriefing,
+  regenerateMeetingBriefing,
   respondCheckin,
   runAutoRefresh,
   runDueCheckin,
+  runDueMeetingBriefings,
   runRefresh,
   saveSettings,
   setAssistantChangedListener,
@@ -123,6 +144,10 @@ import type {
   CheckinAnswer,
   CommandOp,
   DueCheckin,
+  DueMeetingBriefing,
+  MeetingBriefingPayload,
+  MeetingContext,
+  MeetingRef,
   PlanItem,
   RecoveryContext,
   RecoveryInput,
@@ -1583,6 +1608,443 @@ describe('작업 경계 체크인 (부록 H)', () => {
 
       expect(out.items.find((i) => i.id === itemId)).toMatchObject({ status: 'in_progress', status_note: '절반' })
       expect(out.events.filter((e) => e.kind === 'checkin' && e.response === null)).toHaveLength(0)
+    })
+  })
+})
+
+describe('회의 전 브리핑 (부록 I)', () => {
+  // 10:15 회의, lead 15분이면 창은 [10:00, 10:15) 다
+  const MON_0955 = new Date(2026, 10, 2, 9, 55, 0)
+  const MON_1001 = new Date(2026, 10, 2, 10, 1, 0)
+  const MON_1003 = new Date(2026, 10, 2, 10, 3, 0)
+  const MON_1002 = new Date(2026, 10, 2, 10, 2, 0)
+  const MON_1020 = new Date(2026, 10, 2, 10, 20, 0)
+
+  interface FakeCalendarEvent { id: string; summary: string; start: string; end: string; allDay: boolean }
+
+  function calEvent(id: string, start: string, over: Partial<FakeCalendarEvent> = {}): FakeCalendarEvent {
+    return { id, summary: `회의 ${id}`, start: `2026-11-02 ${start}:00`, end: `2026-11-02 ${start.slice(0, 2)}:59:00`, allDay: false, ...over }
+  }
+
+  function ctxOf(meeting: MeetingRef, over: Partial<MeetingContext> = {}): MeetingContext {
+    return {
+      meeting,
+      projects: [{ id: 1, name: '링크워크' }],
+      pastMeetings: [],
+      openActionItems: ['API 문서 정리'],
+      relatedItems: [],
+      errors: [],
+      ...over
+    }
+  }
+
+  function meetingRows(): { id: number; event_key: string; status: string; fired_at: string | null; scheduled_at: string; ref_id: string | null; payload: string | null }[] {
+    return getDatabase()
+      .prepare("SELECT id, event_key, status, fired_at, scheduled_at, ref_id, payload FROM assistant_events WHERE kind = 'meeting_briefing' ORDER BY id")
+      .all() as never
+  }
+
+  function payloadOf(eventId: number): MeetingBriefingPayload {
+    return JSON.parse(getEventById(getDatabase(), eventId)!.payload!) as MeetingBriefingPayload
+  }
+
+  function deferred(): { promise: Promise<void>; resolve: () => void } {
+    let resolve: () => void = () => undefined
+    const promise = new Promise<void>((r) => (resolve = r))
+    return { promise, resolve }
+  }
+
+  beforeEach(() => {
+    calendar.getTodayEvents.mockImplementation(async () => [calEvent('m1', '10:15')])
+    sources.toMeetingRef.mockImplementation((e: FakeCalendarEvent): MeetingRef | null =>
+      e.allDay ? null : { id: e.id, title: e.summary, startAt: e.start, endAt: e.end }
+    )
+    sources.collectMeetingContext.mockImplementation((_db: unknown, meeting: MeetingRef) => ctxOf(meeting))
+    briefing.requestLlmMeetingBriefing.mockResolvedValue({ ok: true, markdown: '# AI 회의 브리핑', model: 'claude-sonnet-5-5' })
+  })
+
+  describe('runDueMeetingBriefings (I.9.1)', () => {
+    it('A45: 창 안이면 규칙 본문을 INSERT 하고 알림을 돌려준다. LLM 은 그 뒤 같은 행에 쓴다', async () => {
+      let rowAtLlm: MeetingBriefingPayload | null = null
+      const gate = deferred()
+      briefing.requestLlmMeetingBriefing.mockImplementation(async () => {
+        // LLM 이 시작할 때 규칙 본문이 이미 저장되어 있다
+        rowAtLlm = payloadOf(meetingRows()[0].id)
+        await gate.promise
+        return { ok: true, markdown: '# AI 회의 브리핑', model: 'claude-sonnet-5-5' }
+      })
+
+      const notices = await runDueMeetingBriefings(MON_1001)
+      expect(notices).toHaveLength(1)
+      const n = notices[0]
+      expect(n.focus).toEqual({ kind: 'meeting', id: String(n.eventId) })
+      expect(n.title).toBe('회의 m1 15분 전')
+      expect(n.body).toBe('링크워크 · 미완료 액션 1건')
+
+      const row = getEventById(getDatabase(), n.eventId)
+      expect(row).toMatchObject({
+        event_key: 'meeting_briefing:2026-11-02:m1',
+        kind: 'meeting_briefing',
+        plan_date: '2026-11-02',
+        scheduled_at: '2026-11-02 10:00:00',
+        fired_at: '2026-11-02 10:01:00',
+        status: 'sent',
+        ref_id: 'm1'
+      })
+      const before = payloadOf(n.eventId)
+      expect(before.ruleMarkdown).toContain('회의 m1')
+      expect(before).toMatchObject({ hasContext: true, llmStatus: 'pending', llmMarkdown: null, title: n.title, body: n.body })
+      expect(before.projects).toEqual([{ id: 1, name: '링크워크' }])
+      expect(changed).toContainEqual({ date: '2026-11-02', reason: 'meeting' })
+
+      gate.resolve()
+      await waitForAssistantBackground()
+      expect(rowAtLlm!.ruleMarkdown).toBe(before.ruleMarkdown)
+      expect(rowAtLlm!.llmStatus).toBe('pending')
+      const after = payloadOf(n.eventId)
+      expect(after).toMatchObject({ llmStatus: 'done', llmMarkdown: '# AI 회의 브리핑', llmModel: 'claude-sonnet-5-5', llmError: null })
+      expect(after.llmAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+      expect(after.ruleMarkdown).toBe(before.ruleMarkdown)
+      // LLM 입력은 수집 맥락과 규칙 본문이다
+      expect(briefing.requestLlmMeetingBriefing.mock.calls[0][0]).toEqual({
+        ctx: ctxOf({ id: 'm1', title: '회의 m1', startAt: '2026-11-02 10:15:00', endAt: '2026-11-02 10:59:00' }),
+        ruleMarkdown: before.ruleMarkdown
+      })
+    })
+
+    it('A45: LLM 이 실패해도 알림은 그대로 나가고 payload 에 failed 와 오류만 남는다', async () => {
+      briefing.requestLlmMeetingBriefing.mockResolvedValue({ ok: false, error: 'Claude Code 로그인이 필요합니다.' })
+      const notices = await runDueMeetingBriefings(MON_1001)
+      expect(notices).toHaveLength(1)
+      await waitForAssistantBackground()
+      const p = payloadOf(notices[0].eventId)
+      expect(p).toMatchObject({ llmStatus: 'failed', llmError: 'Claude Code 로그인이 필요합니다.', llmMarkdown: null })
+      expect(p.ruleMarkdown.length).toBeGreaterThan(0)
+      expect(getEventById(getDatabase(), notices[0].eventId)?.status).toBe('sent')
+    })
+
+    it('A45: LLM 이 reject 해도 throw 하지 않고 failed 로 남긴다', async () => {
+      briefing.requestLlmMeetingBriefing.mockRejectedValue(new Error('boom'))
+      const notices = await runDueMeetingBriefings(MON_1001)
+      await waitForAssistantBackground()
+      expect(payloadOf(notices[0].eventId)).toMatchObject({ llmStatus: 'failed', llmError: 'boom' })
+    })
+
+    it('A45: hasContext 가 false 면 LLM 을 부르지 않고 llmStatus 는 off 다', async () => {
+      sources.collectMeetingContext.mockImplementation((_db: unknown, meeting: MeetingRef) =>
+        ctxOf(meeting, { projects: [], openActionItems: [] })
+      )
+      const notices = await runDueMeetingBriefings(MON_1001)
+      await waitForAssistantBackground()
+      expect(notices[0].body).toBe('관련 프로젝트 없음 · 미완료 액션 0건')
+      expect(payloadOf(notices[0].eventId)).toMatchObject({ hasContext: false, llmStatus: 'off' })
+      expect(briefing.requestLlmMeetingBriefing).not.toHaveBeenCalled()
+    })
+
+    it('AI 브리핑이 꺼져 있거나 Claude CLI 가 없으면 LLM 을 부르지 않고 off 다', async () => {
+      saveSettings({ llmEnabled: false })
+      const a = await runDueMeetingBriefings(MON_1001)
+      calendar.getTodayEvents.mockImplementation(async () => [calEvent('m2', '10:30')])
+      saveSettings({ llmEnabled: true })
+      headless.isHeadlessAvailable.mockReturnValue(false)
+      const b = await runDueMeetingBriefings(new Date(2026, 10, 2, 10, 16, 0))
+      await waitForAssistantBackground()
+      expect(payloadOf(a[0].eventId).llmStatus).toBe('off')
+      expect(payloadOf(b[0].eventId).llmStatus).toBe('off')
+      expect(briefing.requestLlmMeetingBriefing).not.toHaveBeenCalled()
+    })
+
+    it('계획이 없어도 보낸다. 관련 항목 수집에 빈 목록을 넘긴다', async () => {
+      const notices = await runDueMeetingBriefings(MON_1001)
+      expect(notices).toHaveLength(1)
+      expect(sources.collectMeetingContext.mock.calls[0][2]).toEqual([])
+    })
+
+    it('계획이 있으면 오늘 계획 항목을 수집에 넘긴다', async () => {
+      headless.isHeadlessAvailable.mockReturnValue(false)
+      const started = await startDay(MON_0940)
+      await runDueMeetingBriefings(MON_1001)
+      expect((sources.collectMeetingContext.mock.calls[0][2] as PlanItem[]).map((i) => i.id)).toEqual(started.items.map((i) => i.id))
+    })
+
+    it('예정 시각보다 2분 이상 늦으면 status 는 late 다', async () => {
+      const notices = await runDueMeetingBriefings(MON_1003)
+      expect(getEventById(getDatabase(), notices[0].eventId)?.status).toBe('late')
+      const ok = await runDueMeetingBriefings(MON_1002)
+      expect(ok).toEqual([])
+    })
+
+    it('창 전에는 행을 만들지 않고 알리지 않는다', async () => {
+      expect(await runDueMeetingBriefings(MON_0955)).toEqual([])
+      expect(meetingRows()).toHaveLength(0)
+      expect(changed.filter((e) => e.reason === 'meeting')).toHaveLength(0)
+    })
+
+    it('A47: 창이 지났으면 skipped 행을 fired_at null 로 남기고 알리지 않는다', async () => {
+      expect(await runDueMeetingBriefings(MON_1020)).toEqual([])
+      expect(meetingRows()).toEqual([
+        expect.objectContaining({
+          event_key: 'meeting_briefing:2026-11-02:m1',
+          status: 'skipped',
+          fired_at: null,
+          scheduled_at: '2026-11-02 10:00:00',
+          payload: JSON.stringify({ reason: 'window' })
+        })
+      ])
+      expect(sources.collectMeetingContext).not.toHaveBeenCalled()
+      expect(changed.filter((e) => e.reason === 'meeting')).toHaveLength(0)
+      // 다음 틱은 같은 회의를 다시 보지 않는다
+      expect(await runDueMeetingBriefings(new Date(2026, 10, 2, 10, 21, 0))).toEqual([])
+      expect(meetingRows()).toHaveLength(1)
+    })
+
+    it('A47: 하루 6건을 넘는 회의는 cap 으로 skipped 다', async () => {
+      headless.isHeadlessAvailable.mockReturnValue(false)
+      calendar.getTodayEvents.mockImplementation(async () =>
+        ['10:02', '10:03', '10:04', '10:05', '10:06', '10:07', '10:08'].map((t, i) => calEvent(`c${i}`, t))
+      )
+      const notices = await runDueMeetingBriefings(MON_1001)
+      expect(notices).toHaveLength(6)
+      const rows = meetingRows()
+      expect(rows.filter((r) => r.status === 'sent' || r.status === 'late')).toHaveLength(6)
+      expect(rows.find((r) => r.event_key.endsWith(':c6'))).toMatchObject({ status: 'skipped', fired_at: null, payload: JSON.stringify({ reason: 'cap' }) })
+    })
+
+    it('A5: 같은 회의의 두 번째 틱은 행을 더 만들지 않고 빈 목록이다', async () => {
+      expect(await runDueMeetingBriefings(MON_1001)).toHaveLength(1)
+      expect(await runDueMeetingBriefings(MON_1002)).toEqual([])
+      expect(meetingRows()).toHaveLength(1)
+    })
+
+    it('A5: 판정이 같은 키를 다시 돌려줘도 UNIQUE 충돌이면 알림 목록에 넣지 않고 LLM 을 부르지 않는다', async () => {
+      const meeting: MeetingRef = { id: 'm1', title: '회의 m1', startAt: '2026-11-02 10:15:00', endAt: '2026-11-02 10:59:00' }
+      const due: DueMeetingBriefing = { action: 'send', meeting, eventKey: 'meeting_briefing:2026-11-02:m1', scheduledAt: '2026-11-02 10:00:00', late: false }
+      schedule.computeDueMeetingBriefings.mockReturnValueOnce([due]).mockReturnValueOnce([due])
+      expect(await runDueMeetingBriefings(MON_1001)).toHaveLength(1)
+      await waitForAssistantBackground()
+      changed.length = 0
+      briefing.requestLlmMeetingBriefing.mockClear()
+      expect(await runDueMeetingBriefings(MON_1002)).toEqual([])
+      await waitForAssistantBackground()
+      expect(meetingRows()).toHaveLength(1)
+      expect(changed).toEqual([])
+      expect(briefing.requestLlmMeetingBriefing).not.toHaveBeenCalled()
+    })
+
+    it('여러 회의가 창 안이면 시작 오름차순으로 모두 보낸다', async () => {
+      headless.isHeadlessAvailable.mockReturnValue(false)
+      calendar.getTodayEvents.mockImplementation(async () => [calEvent('b', '10:14'), calEvent('a', '10:10')])
+      const notices = await runDueMeetingBriefings(MON_1001)
+      expect(notices.map((n) => n.title)).toEqual(['회의 a 15분 전', '회의 b 15분 전'])
+      expect(changed.filter((e) => e.reason === 'meeting')).toHaveLength(1)
+    })
+
+    it('종일 일정은 판정하지 않는다', async () => {
+      calendar.getTodayEvents.mockImplementation(async () => [calEvent('all', '10:15', { allDay: true })])
+      expect(await runDueMeetingBriefings(MON_1001)).toEqual([])
+      expect(meetingRows()).toHaveLength(0)
+    })
+
+    it('회의 브리핑이 꺼져 있으면 캘린더를 읽지 않는다', async () => {
+      saveSettings({ meetingBriefingEnabled: false })
+      expect(await runDueMeetingBriefings(MON_1001)).toEqual([])
+      expect(calendar.getTodayEvents).not.toHaveBeenCalled()
+      saveSettings({ meetingBriefingEnabled: true, enabled: false })
+      expect(await runDueMeetingBriefings(MON_1001)).toEqual([])
+      expect(calendar.getTodayEvents).not.toHaveBeenCalled()
+    })
+
+    it('A46: 캘린더는 getTodayEvents 캐시만 쓰고, 조회가 reject 해도 throw 하지 않는다', async () => {
+      calendar.getTodayEvents.mockRejectedValueOnce(new Error('network'))
+      await expect(runDueMeetingBriefings(MON_1001)).resolves.toEqual([])
+      expect(calendar.getTodayEvents).toHaveBeenCalledWith()
+      expect(sources.collectSources).not.toHaveBeenCalled()
+    })
+
+    it('수집이 throw 해도 그 회의만 건너뛰고 다음 회의는 보낸다', async () => {
+      calendar.getTodayEvents.mockImplementation(async () => [calEvent('a', '10:10'), calEvent('b', '10:14')])
+      sources.collectMeetingContext.mockImplementationOnce(() => {
+        throw new Error('db')
+      })
+      const notices = await runDueMeetingBriefings(MON_1001)
+      expect(notices.map((n) => n.title)).toEqual(['회의 b 15분 전'])
+    })
+
+    it('날짜 경계 직전·직후 틱이 같은 회의를 다른 날짜 키로 두 번 보내지 않는다', async () => {
+      // 경계 04:00, lead 15분, 11-03 04:10 회의. 03:56 은 논리 날짜 11-02, 04:00 은 11-03 이다
+      headless.isHeadlessAvailable.mockReturnValue(false)
+      calendar.getTodayEvents.mockImplementation(async () => [
+        { id: 'dawn', summary: '새벽 회의', start: '2026-11-03 04:10:00', end: '2026-11-03 04:40:00', allDay: false }
+      ])
+      expect(await runDueMeetingBriefings(new Date(2026, 10, 3, 3, 56, 0))).toEqual([])
+      expect(meetingRows()).toHaveLength(0)
+      const notices = await runDueMeetingBriefings(new Date(2026, 10, 3, 4, 0, 0))
+      expect(notices).toHaveLength(1)
+      expect(meetingRows().map((r) => r.event_key)).toEqual(['meeting_briefing:2026-11-03:dawn'])
+      expect(await runDueMeetingBriefings(new Date(2026, 10, 3, 4, 1, 0))).toEqual([])
+      expect(meetingRows()).toHaveLength(1)
+    })
+
+    it('캘린더 조회는 serialized 줄 밖이다. 조회를 기다리는 동안 사용자 쓰기가 막히지 않는다', async () => {
+      headless.isHeadlessAvailable.mockReturnValue(false)
+      const started = await startDay(MON_0940)
+      const gate = deferred()
+      calendar.getTodayEvents.mockImplementation(async () => {
+        await gate.promise
+        return [calEvent('m1', '10:15')]
+      })
+      const pending = runDueMeetingBriefings(MON_1001)
+      await vi.waitFor(() => expect(calendar.getTodayEvents).toHaveBeenCalledTimes(1))
+      // 조회가 끝나지 않았어도 사용자 쓰기는 완료된다
+      const written = await setItemStatus(started.items[0].id, 'in_progress', null, MON_1001)
+      expect(written.items.find((i) => i.id === started.items[0].id)?.status).toBe('in_progress')
+      gate.resolve()
+      expect(await pending).toHaveLength(1)
+    })
+
+    it('시각을 넘기지 않으면 줄 안에서 현재 시각을 잡는다 (H.16)', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      try {
+        vi.setSystemTime(MON_1001)
+        const notices = await runDueMeetingBriefings()
+        expect(getEventById(getDatabase(), notices[0].eventId)?.fired_at).toBe('2026-11-02 10:01:00')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
+  describe('LLM 직렬화 (A32)', () => {
+    it('A32: 회의 LLM 은 llmSerialized 줄에서 앞 브리핑 LLM 이 끝난 뒤 실행된다', async () => {
+      const gate = deferred()
+      const log: string[] = []
+      briefing.requestLlmBriefing.mockImplementation(async () => {
+        log.push('briefing:start')
+        await gate.promise
+        log.push('briefing:end')
+        return { ok: true, markdown: '# 오늘', model: 'claude-sonnet-5-5' }
+      })
+      briefing.requestLlmMeetingBriefing.mockImplementation(async () => {
+        log.push('meeting:start')
+        return { ok: true, markdown: '# AI 회의 브리핑', model: 'claude-sonnet-5-5' }
+      })
+
+      await startDay(MON_0940)
+      const notices = await runDueMeetingBriefings(MON_1001)
+      // 알림은 LLM 을 기다리지 않는다
+      expect(notices).toHaveLength(1)
+      expect(payloadOf(notices[0].eventId).llmStatus).toBe('pending')
+      await new Promise((r) => setTimeout(r, 5))
+      expect(log).toEqual(['briefing:start'])
+
+      gate.resolve()
+      await waitForAssistantBackground()
+      expect(log).toEqual(['briefing:start', 'briefing:end', 'meeting:start'])
+      expect(payloadOf(notices[0].eventId).llmStatus).toBe('done')
+    })
+
+    it('A32: 회의 브리핑 다시 만들기도 같은 줄을 거친다', async () => {
+      headless.isHeadlessAvailable.mockReturnValue(false)
+      const [n] = await runDueMeetingBriefings(MON_1001)
+      await startDay(MON_0940)
+      headless.isHeadlessAvailable.mockReturnValue(true)
+      const gate = deferred()
+      const log: string[] = []
+      briefing.requestLlmBriefing.mockImplementation(async () => {
+        log.push('briefing:start')
+        await gate.promise
+        log.push('briefing:end')
+        return { ok: true, markdown: '# 오늘', model: 'claude-sonnet-5-5' }
+      })
+      briefing.requestLlmMeetingBriefing.mockImplementation(async () => {
+        log.push('meeting:start')
+        return { ok: true, markdown: '# 다시 만든 회의 브리핑', model: 'claude-sonnet-5-5' }
+      })
+
+      const refreshed = refreshBriefing(MON_1002)
+      const regenerated = regenerateMeetingBriefing(n.eventId, MON_1002)
+      await new Promise((r) => setTimeout(r, 5))
+      expect(log).toEqual(['briefing:start'])
+      gate.resolve()
+      await Promise.all([refreshed, regenerated])
+      expect(log).toEqual(['briefing:start', 'briefing:end', 'meeting:start'])
+    })
+  })
+
+  describe('regenerateMeetingBriefing (I.11.8)', () => {
+    async function sentBriefing(): Promise<number> {
+      headless.isHeadlessAvailable.mockReturnValue(false)
+      const [n] = await runDueMeetingBriefings(MON_1001)
+      headless.isHeadlessAvailable.mockReturnValue(true)
+      return n.eventId
+    }
+
+    it('LLM 결과를 기다려 같은 행에 쓰고 규칙 본문은 그대로 둔다. 맥락은 다시 수집한다', async () => {
+      const id = await sentBriefing()
+      const before = payloadOf(id)
+      expect(before.llmStatus).toBe('off')
+      sources.collectMeetingContext.mockClear()
+      briefing.requestLlmMeetingBriefing.mockResolvedValue({ ok: true, markdown: '# 다시 만든 회의 브리핑', model: 'claude-sonnet-5-5' })
+
+      const today = await regenerateMeetingBriefing(id, MON_1002)
+      const after = payloadOf(id)
+      expect(after).toMatchObject({ llmStatus: 'done', llmMarkdown: '# 다시 만든 회의 브리핑', ruleMarkdown: before.ruleMarkdown, title: before.title })
+      expect(sources.collectMeetingContext).toHaveBeenCalledTimes(1)
+      expect(sources.collectMeetingContext.mock.calls[0][1]).toEqual(before.meeting)
+      expect(changed).toContainEqual({ date: '2026-11-02', reason: 'meeting' })
+      expect(JSON.parse(today.events.find((e) => e.id === id)!.payload!).llmStatus).toBe('done')
+    })
+
+    it('LLM 호출 전에 payload 를 pending 으로 바꾸고 meeting 변경을 알린다', async () => {
+      const id = await sentBriefing()
+      changed.length = 0
+      let atLlm: { status: string; changed: number } | null = null
+      briefing.requestLlmMeetingBriefing.mockImplementation(async () => {
+        atLlm = { status: payloadOf(id).llmStatus, changed: changed.filter((e) => e.reason === 'meeting').length }
+        return { ok: true, markdown: '# 다시 만든 회의 브리핑', model: 'claude-sonnet-5-5' }
+      })
+      await regenerateMeetingBriefing(id, MON_1002)
+      expect(atLlm).toEqual({ status: 'pending', changed: 1 })
+      expect(payloadOf(id).llmStatus).toBe('done')
+    })
+
+    it('LLM 이 실패하면 failed 와 오류를 쓰고 이전 AI 본문을 비운다', async () => {
+      const id = await sentBriefing()
+      await regenerateMeetingBriefing(id, MON_1002)
+      expect(payloadOf(id).llmStatus).toBe('done')
+      briefing.requestLlmMeetingBriefing.mockResolvedValue({ ok: false, error: 'BUSY' })
+      await regenerateMeetingBriefing(id, MON_1002)
+      expect(payloadOf(id)).toMatchObject({ llmStatus: 'failed', llmError: 'BUSY', llmMarkdown: null, llmModel: null })
+    })
+
+    it('Claude CLI 가 없으면 LLM 을 부르지 않고 failed 와 안내 문구를 쓴다', async () => {
+      const id = await sentBriefing()
+      headless.isHeadlessAvailable.mockReturnValue(false)
+      await regenerateMeetingBriefing(id, MON_1002)
+      expect(payloadOf(id)).toMatchObject({ llmStatus: 'failed', llmError: 'Claude Code 를 찾을 수 없습니다. 설치와 로그인을 확인하세요.' })
+      expect(briefing.requestLlmMeetingBriefing).not.toHaveBeenCalled()
+    })
+
+    it('AI 브리핑이 꺼져 있으면 throw 한다', async () => {
+      const id = await sentBriefing()
+      saveSettings({ llmEnabled: false })
+      await expect(regenerateMeetingBriefing(id, MON_1002)).rejects.toThrow('AI 브리핑이 꺼져 있습니다')
+      expect(briefing.requestLlmMeetingBriefing).not.toHaveBeenCalled()
+    })
+
+    it('행이 없거나, skipped 거나, 회의 브리핑이 아니면 throw 한다', async () => {
+      await expect(regenerateMeetingBriefing(999, MON_1002)).rejects.toThrow('회의 브리핑을 찾을 수 없습니다')
+      await runDueMeetingBriefings(MON_1020)
+      const skipped = meetingRows()[0]
+      expect(skipped.status).toBe('skipped')
+      await expect(regenerateMeetingBriefing(skipped.id, MON_1020)).rejects.toThrow('회의 브리핑을 찾을 수 없습니다')
+      const other = insertEvent(getDatabase(), {
+        event_key: 'checkin:2026-11-02:1100', kind: 'checkin', plan_date: '2026-11-02',
+        scheduled_at: '2026-11-02 10:55:00', fired_at: '2026-11-02 10:56:00', status: 'sent', ref_id: '1', payload: '{}'
+      })
+      await expect(regenerateMeetingBriefing(other!.id, MON_1020)).rejects.toThrow('회의 브리핑을 찾을 수 없습니다')
+      await expect(regenerateMeetingBriefing(1.5 as never, MON_1020)).rejects.toThrow('회의 브리핑 ID 가 올바르지 않습니다')
+      expect(briefing.requestLlmMeetingBriefing).not.toHaveBeenCalled()
     })
   })
 })

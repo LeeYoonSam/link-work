@@ -7,7 +7,7 @@ const SETTINGS: AssistantSettings = {
   planSize: 5, llmEnabled: true, llmModel: 'sonnet', jiraScope: 'all', openAtLogin: false,
   refreshCalendarMin: 5, refreshJiraMin: 15, refreshNotify: true,
   checkinMinGap: 45, checkinDailyCap: 4, meetingLeadMin: 15, startView: 'auto',
-  checkinEnabled: true
+  checkinEnabled: true, meetingBriefingEnabled: true
 }
 
 const plan = (over: Partial<DailyPlan> = {}): DailyPlan => ({

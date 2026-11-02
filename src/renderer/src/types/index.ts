@@ -1185,6 +1185,8 @@ export interface AssistantSettings {
   meetingLeadMin: number
   // 작업 경계 체크인 켜기 (부록 H.9.3)
   checkinEnabled: boolean
+  // 회의 전 브리핑 켜기 (부록 I.11.4)
+  meetingBriefingEnabled: boolean
   // 첫 화면 (docs/ASSISTANT.md 부록 C)
   startView: 'auto' | 'dashboard' | 'today'
 }
@@ -1214,11 +1216,14 @@ export interface RecoveryState {
 
 export interface AssistantChangedEvent {
   date: string
-  reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' | 'checkin'
+  reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' | 'checkin' | 'meeting'
 }
 export interface AssistantNavigateEvent {
   view: 'today'
-  focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'checkin'; id?: string }
+  focus?: {
+    kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'checkin' | 'meeting'
+    id?: string
+  }
 }
 
 // 트레이 오늘 계획 섹션 (부록 E.6.1 과 같은 모양)
@@ -1297,6 +1302,34 @@ export interface CheckinPayload {
   body: string
 }
 
+// ── 회의 전 브리핑 (부록 I.11.1 복제) ──
+// 시각은 'YYYY-MM-DD HH:mm:ss' 다. 종일 일정은 없다
+export interface MeetingRef {
+  id: string
+  title: string
+  startAt: string
+  endAt: string
+}
+export interface MeetingProjectRef {
+  id: number
+  name: string
+}
+export type MeetingLlmStatus = 'off' | 'pending' | 'done' | 'failed'
+export interface MeetingBriefingPayload {
+  meeting: MeetingRef
+  // 알림 문구
+  title: string
+  body: string
+  projects: MeetingProjectRef[]
+  hasContext: boolean
+  ruleMarkdown: string
+  llmStatus: MeetingLlmStatus
+  llmMarkdown: string | null
+  llmModel: string | null
+  llmAt: string | null
+  llmError: string | null
+}
+
 export type AssistantResult<T> = ({ success: true } & T) | { success: false; error: string }
 export type TodayResult = AssistantResult<{ today: TodayPayload }>
 
@@ -1337,4 +1370,6 @@ export interface AssistantAPI {
     status: CheckinStatus | null,
     note?: string
   ) => Promise<TodayResult>
+  // 회의 브리핑의 AI 본문을 다시 만든다 (부록 I.11.10). 결과를 기다린다
+  regenerateMeetingBriefing: (eventId: number) => Promise<TodayResult>
 }

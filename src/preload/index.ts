@@ -311,6 +311,8 @@ const api = {
     // 체크인 패널 버튼 (부록 H.9.7). 넘기기는 status null 이다
     respondCheckin: (eventId: number, status: CheckinStatus | null, note?: string) =>
       ipcRenderer.invoke('assistant:respondCheckin', eventId, status, note),
+    // 회의 브리핑 AI 본문 다시 만들기 (부록 I.11.10)
+    regenerateMeetingBriefing: (eventId: number) => ipcRenderer.invoke('assistant:regenerateMeetingBriefing', eventId),
     getSettings: () => ipcRenderer.invoke('assistant:getSettings'),
     saveSettings: (patch: Record<string, unknown>) => ipcRenderer.invoke('assistant:saveSettings', patch),
     takePendingNavigate: () => ipcRenderer.invoke('assistant:takePendingNavigate'),

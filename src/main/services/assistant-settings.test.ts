@@ -13,9 +13,9 @@ describe('ASSISTANT_SETTING_KEYS', () => {
     }
   })
 
-  it('§3.2 키 15개, 부록 C.2 키 1개, 부록 H 키 1개, 모두 17개를 가진다. 3판에서 assistant_slot_min 을 없앴다 (부록 B.6)', () => {
-    expect(Object.keys(ASSISTANT_SETTING_KEYS)).toHaveLength(17)
-    expect(new Set(Object.values(ASSISTANT_SETTING_KEYS)).size).toBe(17)
+  it('§3.2 키 15개, 부록 C.2 키 1개, 부록 H 키 1개, 부록 I 키 1개, 모두 18개를 가진다. 3판에서 assistant_slot_min 을 없앴다 (부록 B.6)', () => {
+    expect(Object.keys(ASSISTANT_SETTING_KEYS)).toHaveLength(18)
+    expect(new Set(Object.values(ASSISTANT_SETTING_KEYS)).size).toBe(18)
     expect(Object.values(ASSISTANT_SETTING_KEYS)).not.toContain('assistant_slot_min')
     expect(ASSISTANT_SETTING_KEYS.dayRollover).toBe('assistant_day_rollover')
     expect(ASSISTANT_SETTING_KEYS.refreshCalendarMin).toBe('assistant_refresh_calendar_min')
@@ -23,6 +23,7 @@ describe('ASSISTANT_SETTING_KEYS', () => {
     expect(ASSISTANT_SETTING_KEYS.refreshNotify).toBe('assistant_refresh_notify')
     expect(ASSISTANT_SETTING_KEYS.startView).toBe('assistant_start_view')
     expect(ASSISTANT_SETTING_KEYS.checkinEnabled).toBe('assistant_checkin_enabled')
+    expect(ASSISTANT_SETTING_KEYS.meetingBriefingEnabled).toBe('assistant_meeting_briefing_enabled')
   })
 })
 
@@ -45,7 +46,8 @@ describe('parseAssistantSettings', () => {
       checkinDailyCap: 4,
       meetingLeadMin: 15,
       startView: 'auto',
-      checkinEnabled: true
+      checkinEnabled: true,
+      meetingBriefingEnabled: true
     })
   })
 
@@ -78,7 +80,9 @@ describe('parseAssistantSettings', () => {
       { key: 'assistant_start_view', value: 'calendar' },
       { key: 'assistant_checkin_enabled', value: 'yes' },
       { key: 'assistant_checkin_min_gap', value: '4' },
-      { key: 'assistant_checkin_daily_cap', value: '21' }
+      { key: 'assistant_checkin_daily_cap', value: '21' },
+      { key: 'assistant_meeting_briefing_enabled', value: 'true' },
+      { key: 'assistant_meeting_lead_min', value: '0' }
     ])
     expect(s).toEqual(DEFAULT_ASSISTANT_SETTINGS)
   })
@@ -87,6 +91,22 @@ describe('parseAssistantSettings', () => {
     expect(parseAssistantSettings([]).checkinEnabled).toBe(true)
     expect(parseAssistantSettings([{ key: 'assistant_checkin_enabled', value: '0' }]).checkinEnabled).toBe(false)
     expect(parseAssistantSettings([{ key: 'assistant_checkin_enabled', value: '1' }]).checkinEnabled).toBe(true)
+  })
+
+  it('I.11.4: assistant_meeting_briefing_enabled 는 0·1 을 읽는다. 기본값은 켬이다', () => {
+    expect(parseAssistantSettings([]).meetingBriefingEnabled).toBe(true)
+    expect(
+      parseAssistantSettings([{ key: 'assistant_meeting_briefing_enabled', value: '0' }]).meetingBriefingEnabled
+    ).toBe(false)
+    expect(
+      parseAssistantSettings([{ key: 'assistant_meeting_briefing_enabled', value: '1' }]).meetingBriefingEnabled
+    ).toBe(true)
+  })
+
+  it('I.10.4: 회의 전 알림 분은 1~120 경계값을 읽는다', () => {
+    expect(parseAssistantSettings([{ key: 'assistant_meeting_lead_min', value: '1' }]).meetingLeadMin).toBe(1)
+    expect(parseAssistantSettings([{ key: 'assistant_meeting_lead_min', value: '120' }]).meetingLeadMin).toBe(120)
+    expect(parseAssistantSettings([{ key: 'assistant_meeting_lead_min', value: '121' }]).meetingLeadMin).toBe(15)
   })
 
   it('H.8.4: 체크인 상한 0~20, 최소 간격 5~480 경계값을 읽는다', () => {
@@ -181,6 +201,18 @@ describe('serializeAssistantSettingsPatch', () => {
     ])
     expect(parseAssistantSettings(serializeAssistantSettingsPatch({ checkinEnabled: false })).checkinEnabled).toBe(false)
     expect(() => serializeAssistantSettingsPatch({ checkinEnabled: 1 })).toThrow()
+  })
+
+  it('I.11.4: meetingBriefingEnabled 를 assistant_meeting_briefing_enabled 행으로 바꾼다', () => {
+    expect(serializeAssistantSettingsPatch({ meetingBriefingEnabled: false })).toEqual([
+      { key: 'assistant_meeting_briefing_enabled', value: '0' }
+    ])
+    expect(
+      parseAssistantSettings(serializeAssistantSettingsPatch({ meetingBriefingEnabled: false })).meetingBriefingEnabled
+    ).toBe(false)
+    expect(() => serializeAssistantSettingsPatch({ meetingBriefingEnabled: 'yes' })).toThrow()
+    expect(() => serializeAssistantSettingsPatch({ meetingLeadMin: 0 })).toThrow()
+    expect(() => serializeAssistantSettingsPatch({ meetingLeadMin: 121 })).toThrow()
   })
 
   it('H.8.4: 체크인 상한·간격이 범위 밖이면 throw 한다', () => {

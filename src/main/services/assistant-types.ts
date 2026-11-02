@@ -125,6 +125,7 @@ export interface AssistantSettings {
   checkinMinGap: number; checkinDailyCap: number; meetingLeadMin: number
   startView: 'auto' | 'dashboard' | 'today'   // 첫 화면 (부록 C)
   checkinEnabled: boolean                      // 작업 경계 체크인 (부록 H)
+  meetingBriefingEnabled: boolean              // 회의 전 브리핑 (부록 I)
 }
 
 export type TimelineEntry =
@@ -153,8 +154,8 @@ export interface TodayPayload {
   lastErrors: string[]             // 마지막 수집에서 실패한 출처의 사용자용 문구
   recovery: RecoveryState          // 맥락 복구 진행·실패 상태 (부록 F.6)
 }
-export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' | 'checkin' }
-export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'checkin'; id?: string } }
+export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' | 'checkin' | 'meeting' }
+export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'checkin' | 'meeting'; id?: string } }
 
 // ── MVP2 (부록 E.6.1) ──
 export type RefreshMode = 'full' | 'local' | 'calendar' | 'jira'
@@ -323,3 +324,40 @@ export interface SentCheckinNotice {
   focus: { kind: 'checkin'; id: string }
 }
 export interface CheckinAnswer { status: CheckinStatus | null; note: string | null; raw: string | null }
+
+// ── MVP5 (부록 I) ──
+export interface MeetingRef { id: string; title: string; startAt: string; endAt: string }   // 'YYYY-MM-DD HH:mm:ss'. 종일 제외
+export interface MeetingDecisionInput {
+  today: string; at: string                                   // at 은 'YYYY-MM-DD HH:mm:ss'
+  settings: Pick<AssistantSettings, 'enabled' | 'meetingBriefingEnabled' | 'meetingLeadMin'>
+  meetings: MeetingRef[]
+  events: AssistantEvent[]
+}
+export type DueMeetingBriefing =
+  | { action: 'send'; meeting: MeetingRef; eventKey: string; scheduledAt: string; late: boolean }
+  | { action: 'skip'; meeting: MeetingRef; eventKey: string; scheduledAt: string; reason: 'window' | 'cap' }
+
+export interface MeetingProjectRef { id: number; name: string }
+export interface MeetingPastRef { meetingId: number; title: string; startedAt: string; tldr: string | null; openActionItems: string[] }
+export interface MeetingContext {
+  meeting: MeetingRef
+  projects: MeetingProjectRef[]            // 최대 3
+  pastMeetings: MeetingPastRef[]           // 최대 3. startedAt 내림차순
+  openActionItems: string[]                // 최대 10
+  relatedItems: Pick<PlanItem, 'id' | 'title' | 'status'>[]   // 최대 5
+  errors: string[]
+}
+export type MeetingLlmStatus = 'off' | 'pending' | 'done' | 'failed'
+export interface MeetingBriefingPayload {
+  meeting: MeetingRef
+  title: string; body: string              // 알림 문구
+  projects: MeetingProjectRef[]
+  hasContext: boolean
+  ruleMarkdown: string
+  llmStatus: MeetingLlmStatus
+  llmMarkdown: string | null; llmModel: string | null; llmAt: string | null; llmError: string | null
+}
+export interface SentMeetingNotice {
+  eventId: number; title: string; body: string
+  focus: { kind: 'meeting'; id: string }
+}

@@ -20,6 +20,8 @@ export type FormSettingKey =
   | 'checkinEnabled'
   | 'checkinDailyCap'
   | 'checkinMinGap'
+  | 'meetingBriefingEnabled'
+  | 'meetingLeadMin'
 
 export type FormSettings = Pick<AssistantSettings, FormSettingKey>
 
@@ -39,7 +41,9 @@ export const FORM_SETTING_KEYS: FormSettingKey[] = [
   'refreshNotify',
   'checkinEnabled',
   'checkinDailyCap',
-  'checkinMinGap'
+  'checkinMinGap',
+  'meetingBriefingEnabled',
+  'meetingLeadMin'
 ]
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
@@ -65,7 +69,8 @@ const NUMBER_FIELDS: Array<[keyof FormSettings, string]> = [
   ['refreshCalendarMin', '캘린더 확인 주기'],
   ['refreshJiraMin', 'Jira 확인 주기'],
   ['checkinDailyCap', '하루 체크인 상한'],
-  ['checkinMinGap', '체크인 최소 간격']
+  ['checkinMinGap', '체크인 최소 간격'],
+  ['meetingLeadMin', '회의 전 알림']
 ]
 
 export function validateSettings(s: FormSettings): string | null {
@@ -82,6 +87,8 @@ export function validateSettings(s: FormSettings): string | null {
   // 체크인 상한·간격 (부록 H.8.4)
   if (!isIntIn(s.checkinDailyCap, 0, 20)) return '하루 체크인 상한은 0~20 사이여야 합니다'
   if (!isIntIn(s.checkinMinGap, 5, 480)) return '체크인 최소 간격은 5~480분 사이여야 합니다'
+  // 회의 전 브리핑 시각 (부록 I.10.4)
+  if (!isIntIn(s.meetingLeadMin, 1, 120)) return '회의 전 알림은 1~120분 사이여야 합니다'
   return null
 }
 
@@ -163,6 +170,9 @@ export default function AssistantSettingsModal({
     init.startView ??= 'auto'
     // 이전 버전 main 이 체크인 켜기를 주지 않으면 기본값 켬을 쓴다 (부록 H.9.3)
     init.checkinEnabled ??= true
+    // 이전 버전 main 이 회의 브리핑 키를 주지 않으면 기본값을 쓴다 (부록 I.11.4)
+    init.meetingBriefingEnabled ??= true
+    init.meetingLeadMin ??= 15
     return init as FormSettings
   })
   const [error, setError] = useState('')
@@ -225,6 +235,12 @@ export default function AssistantSettingsModal({
               hint="빈 시간 블록이 끝나기 5분 전에 진행 상황을 묻습니다"
               checked={form.checkinEnabled}
               onChange={(v) => set('checkinEnabled', v)}
+            />
+            <Toggle
+              label="회의 전 브리핑"
+              hint="회의 시작 전에 관련 프로젝트·지난 회의·액션아이템을 알립니다"
+              checked={form.meetingBriefingEnabled}
+              onChange={(v) => set('meetingBriefingEnabled', v)}
             />
             <Toggle
               label="AI 브리핑"
@@ -349,6 +365,19 @@ export default function AssistantSettingsModal({
                 max={480}
                 value={numberInputValue(form.checkinMinGap)}
                 onChange={(e) => set('checkinMinGap', parseNumberInput(e.target.value))}
+                className={inputClass}
+              />
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <Field label="회의 전 알림(분)" hint="권장 15분. 기존 10분 전 일정 알림보다 앞서게 두세요">
+              <input
+                type="number"
+                min={1}
+                max={120}
+                value={numberInputValue(form.meetingLeadMin)}
+                onChange={(e) => set('meetingLeadMin', parseNumberInput(e.target.value))}
                 className={inputClass}
               />
             </Field>

@@ -30,7 +30,8 @@ const SETTINGS: AssistantSettings = {
   checkinDailyCap: 4,
   meetingLeadMin: 15,
   startView: 'auto',
-  checkinEnabled: true
+  checkinEnabled: true,
+  meetingBriefingEnabled: true
 }
 
 const plan = (over: Partial<DailyPlan> = {}): DailyPlan => ({
@@ -179,6 +180,8 @@ vi.mock('../../stores/assistantStore', async (importOriginal) => ({
     setFocus: () => {},
     clearError: () => {},
     respondCheckin: async () => {},
+    regenerateMeetingBriefing: async () => {},
+    meetingRegeneratingIds: [],
     subscribe: () => () => {}
   })
 }))
@@ -194,6 +197,7 @@ const { originTarget } = await import('../../stores/assistantStore')
 const { validateSettings, diffSettings, parseNumberInput, numberInputValue } = await import('./AssistantSettingsModal')
 const AssistantSettingsModal = (await import('./AssistantSettingsModal')).default
 const { recoveryButtonLabel } = await import('./RecoveryCard')
+const { localNow } = await import('./TodayView')
 
 const render = (): string => renderToStaticMarkup(<TodayView />)
 
@@ -476,6 +480,66 @@ describe('TodayView 상태별 렌더링', () => {
     const html = render()
     expect(html).toContain('id="today-checkin"')
     expect(html).not.toContain('>넘기기<')
+  })
+
+  // 부록 I.10 회의 브리핑 카드. 체크인 아래, 맥락 복구 위다. 계획이 없어도 보인다
+  const meetingEvent = (over: Partial<AssistantEvent> = {}): AssistantEvent =>
+    event({
+      id: 40,
+      event_key: 'meeting_briefing:2026-11-02:cal-1',
+      kind: 'meeting_briefing',
+      scheduled_at: '2026-11-02 10:45:00',
+      fired_at: '2026-11-02 10:45:10',
+      status: 'sent',
+      ref_id: 'cal-1',
+      payload: JSON.stringify({
+        meeting: { id: 'cal-1', title: '주간 스프린트', startAt: '2099-01-01 23:59:00', endAt: '2099-01-01 23:59:59' },
+        title: '주간 스프린트 15분 전',
+        body: '결제 · 미완료 액션 1건',
+        projects: [{ id: 3, name: '결제' }],
+        hasContext: true,
+        ruleMarkdown: '# 주간 스프린트 23:59\n- 관련 프로젝트: 결제',
+        llmStatus: 'off',
+        llmMarkdown: null,
+        llmModel: null,
+        llmAt: null,
+        llmError: null
+      }),
+      ...over
+    })
+
+  it('회의 브리핑: 계획이 없어도 카드와 meeting-briefing- 행을 보여 준다', () => {
+    state.today = payload({ plan: null, events: [meetingEvent()] })
+    const html = render()
+    expect(html).toContain('id="meeting-briefing-40"')
+    expect(html).toContain('주간 스프린트')
+    expect(html).toContain('규칙 브리핑')
+    expect(html).toContain('다시 만들기')
+  })
+
+  it('회의 브리핑: 체크인 아래, 맥락 복구 위에 놓인다', () => {
+    state.today = payload({
+      plan: plan(),
+      items: [item({ id: 1, title: '결제 API 리팩터링', status: 'in_progress' })],
+      events: [checkinEvent(), meetingEvent()]
+    })
+    const html = render()
+    expect(html.indexOf('today-checkin')).toBeLessThan(html.indexOf('meeting-briefing-40'))
+    expect(html.indexOf('meeting-briefing-40')).toBeLessThan(html.indexOf('맥락 복구'))
+  })
+
+  it('회의 브리핑: 행이 없거나 skipped 뿐이면 카드가 없다', () => {
+    state.today = payload({ plan: plan(), events: [meetingEvent({ status: 'skipped', payload: '{"reason":"window"}' })] })
+    const html = render()
+    expect(html).not.toContain('meeting-briefing-')
+    expect(html).not.toContain('회의 브리핑')
+  })
+
+  it('회의 브리핑: AI 를 쓸 수 없거나 AI 브리핑이 꺼져 있으면 다시 만들기를 숨긴다', () => {
+    state.today = payload({ plan: null, aiAvailable: false, events: [meetingEvent()] })
+    expect(render()).not.toContain('다시 만들기')
+    state.today = payload({ plan: null, settings: { ...SETTINGS, llmEnabled: false }, events: [meetingEvent()] })
+    expect(render()).not.toContain('다시 만들기')
   })
 
   it('불러오기 실패: 오류 문구와 다시 시도를 보여 준다', () => {
@@ -763,6 +827,13 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(focusTargetId({ kind: 'item', id: '7' })).toBe('plan-item-7')
     // 체크인 알림 클릭 (부록 H.6.3)
     expect(focusTargetId({ kind: 'checkin', id: '42' })).toBe('today-checkin')
+    // 회의 브리핑 알림 클릭 (부록 I.10.2)
+    expect(focusTargetId({ kind: 'meeting', id: '40' })).toBe('meeting-briefing-40')
+  })
+
+  it('localNow: 지금 로컬 시각을 YYYY-MM-DD HH:mm:ss 로 만든다', () => {
+    expect(localNow(new Date(2026, 10, 2, 9, 5, 7))).toBe('2026-11-02 09:05:07')
+    expect(localNow(new Date(2026, 0, 31, 23, 59, 0))).toBe('2026-01-31 23:59:00')
   })
 
   it('todayNotices: 연결 상태와 수집 실패를 안내한다', () => {
@@ -855,7 +926,7 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(parseNumberInput('12')).toBe(12)
     expect(numberInputValue(Number.NaN)).toBe('')
     expect(numberInputValue(0)).toBe(0)
-    for (const key of ['planSize', 'refreshCalendarMin', 'refreshJiraMin', 'checkinDailyCap', 'checkinMinGap'] as const) {
+    for (const key of ['planSize', 'refreshCalendarMin', 'refreshJiraMin', 'checkinDailyCap', 'checkinMinGap', 'meetingLeadMin'] as const) {
       expect(validateSettings({ ...SETTINGS, [key]: parseNumberInput('') })).toMatch(/입력하세요/)
     }
   })
@@ -872,6 +943,27 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(html).toContain('value="4"')
   })
 
+  it('설정: 회의 전 알림은 1~120분 정수만 받고 회의 브리핑 키도 patch 에 담는다 (부록 I.10.4)', () => {
+    expect(validateSettings({ ...SETTINGS, meetingLeadMin: 0 })).not.toBeNull()
+    expect(validateSettings({ ...SETTINGS, meetingLeadMin: 121 })).not.toBeNull()
+    expect(validateSettings({ ...SETTINGS, meetingLeadMin: 10.5 })).not.toBeNull()
+    expect(validateSettings({ ...SETTINGS, meetingLeadMin: 1 })).toBeNull()
+    expect(validateSettings({ ...SETTINGS, meetingLeadMin: 120 })).toBeNull()
+    expect(
+      diffSettings(SETTINGS, { ...SETTINGS, meetingBriefingEnabled: false, meetingLeadMin: 20 })
+    ).toEqual({ meetingBriefingEnabled: false, meetingLeadMin: 20 })
+  })
+
+  it('설정 모달: 회의 브리핑 설정 2개를 보여 준다', () => {
+    const html = renderToStaticMarkup(
+      <AssistantSettingsModal settings={SETTINGS} busy={false} onClose={() => {}} onSave={async () => true} />
+    )
+    expect(html).toContain('회의 전 브리핑')
+    expect(html).toContain('회의 시작 전에 관련 프로젝트·지난 회의·액션아이템을 알립니다')
+    expect(html).toContain('회의 전 알림(분)')
+    expect(html).toContain('권장 15분. 기존 10분 전 일정 알림보다 앞서게 두세요')
+  })
+
   it('설정 모달: 노출 키만 보여 준다', () => {
     const html = renderToStaticMarkup(
       <AssistantSettingsModal settings={SETTINGS} busy={false} onClose={() => {}} onSave={async () => true} />
@@ -879,8 +971,9 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(html).toContain('비서 설정')
     expect(html).toContain('날짜 경계')
     expect(html).toContain('시작 알림')
-    // 회의 브리핑 시각(meetingLeadMin)은 MVP4 에서도 노출하지 않는다 (부록 H.8.4)
-    expect(html).not.toContain('회의 브리핑')
+    // MVP5 가 회의 브리핑 설정 2개를 노출한다 (부록 I.10.4)
+    expect(html).toContain('회의 전 브리핑')
+    expect(html).toContain('회의 전 알림(분)')
     // 3판은 항목 소요 분 설정을 없앴다
     expect(html).not.toContain('소요 분')
   })

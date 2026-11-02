@@ -88,6 +88,7 @@ const service = vi.hoisted(() => ({
   getSourceCheckTimes: vi.fn(() => ({ calendarAt: null, jiraAt: null })),
   setAssistantChangedListener: vi.fn(),
   runDueCheckin: vi.fn(async (): Promise<unknown> => null),
+  runDueMeetingBriefings: vi.fn(async (): Promise<unknown[]> => []),
   respondCheckin: vi.fn(async (): Promise<unknown> => ({}))
 }))
 vi.mock('./assistant-service', () => service)
@@ -174,6 +175,7 @@ beforeEach(() => {
   store.findEventByKey.mockReturnValue(null)
   service.runAutoRefresh.mockImplementation(async () => null)
   service.runDueCheckin.mockImplementation(async () => null)
+  service.runDueMeetingBriefings.mockImplementation(async () => [])
   service.respondCheckin.mockImplementation(async () => ({}))
   command.interpretReplyRule.mockImplementation((text: string) => ({ status: 'in_progress', note: text.trim() }))
   store.insertEvent.mockImplementation((_db: unknown, ev: { event_key: string }) => {
@@ -737,5 +739,150 @@ describe('A13: 체크인 예외를 삼킨다', () => {
     })
     await expect(onCheckinReply(31, '완료')).resolves.toBeUndefined()
     expect(service.respondCheckin).not.toHaveBeenCalled()
+  })
+})
+
+function meetingNotice(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    eventId: 41,
+    title: '주간 회의 15분 전',
+    body: '링크워크 · 미완료 액션 2건',
+    focus: { kind: 'meeting', id: '41' },
+    ...over
+  }
+}
+
+// 서비스가 회의 브리핑 행을 INSERT 한 뒤 결과를 돌려준다 (I.9.1)
+function dueMeetingsReturn(notices: Record<string, unknown>[]): void {
+  service.runDueMeetingBriefings.mockImplementation(async () => {
+    order.push('runDueMeetingBriefings')
+    for (const _ of notices) order.push('insertEvent')
+    return notices
+  })
+}
+
+describe('회의 브리핑 발송 (부록 I.9.2)', () => {
+  it('A5: 회의 브리핑은 서비스 INSERT 뒤에 Notification show() 를 한다. 답장 입력이 없다', async () => {
+    dueMeetingsReturn([meetingNotice()])
+    await runTick()
+    expect(order).toEqual(['decideRefresh', 'runDueMeetingBriefings', 'insertEvent', 'new Notification', 'show'])
+    expect(electron.notifications[0].opts).toEqual({ title: '주간 회의 15분 전', body: '링크워크 · 미완료 액션 2건' })
+  })
+
+  it('A5: 서비스가 돌려준 회의 알림이 없으면 Notification 을 만들지 않는다', async () => {
+    dueMeetingsReturn([])
+    await runTick()
+    expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1)
+    expect(electron.notifications).toHaveLength(0)
+  })
+
+  it('A5: 회의 브리핑 show() 가 실패하면 그 행마다 failed 로 바꾼다', async () => {
+    electron.state.throwOnShow = true
+    dueMeetingsReturn([meetingNotice({ eventId: 41 }), meetingNotice({ eventId: 42 })])
+    await runTick()
+    expect(store.updateEventStatus).toHaveBeenCalledWith({}, 41, 'failed')
+    expect(store.updateEventStatus).toHaveBeenCalledWith({}, 42, 'failed')
+  })
+
+  it('여러 건이면 모두 알린다', async () => {
+    dueMeetingsReturn([meetingNotice({ eventId: 41 }), meetingNotice({ eventId: 42, title: '설계 리뷰 15분 전' })])
+    await runTick()
+    expect(electron.notifications.map((n) => n.opts.title)).toEqual(['주간 회의 15분 전', '설계 리뷰 15분 전'])
+  })
+
+  it('회의 브리핑 알림 클릭은 meeting focus 로 이동한다 (I.2)', async () => {
+    const win = fakeWindow()
+    startAssistantScheduler({ getMainWindow: () => win as never, createWindow: vi.fn() })
+    dueMeetingsReturn([meetingNotice()])
+    await runTick()
+    electron.notifications[0].listeners.get('click')?.()
+    expect(win.webContents.send).toHaveBeenLastCalledWith('assistant:navigate', {
+      view: 'today',
+      focus: { kind: 'meeting', id: '41' }
+    })
+  })
+
+  it('창이 없을 때 회의 브리핑 알림을 클릭하면 meeting focus 를 보관 신호에 둔다 (부록 D.4)', async () => {
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
+    dueMeetingsReturn([meetingNotice()])
+    await runTick()
+    electron.notifications[0].listeners.get('click')?.()
+    expect(takePendingNavigate()).toEqual({ view: 'today', focus: { kind: 'meeting', id: '41' } })
+  })
+
+  it('runDueMeetingBriefings 에 테스트가 주입한 now 를 넘기고, 실제 틱은 시각을 넘기지 않는다', async () => {
+    const now = new Date(2026, 10, 2, 10, 1, 0)
+    await runTick(false, now)
+    expect(service.runDueMeetingBriefings).toHaveBeenLastCalledWith(now)
+    await runTick()
+    expect(service.runDueMeetingBriefings.mock.calls[1]).toEqual([undefined])
+  })
+})
+
+describe('A42: 회의 브리핑은 체크인 뒤 같은 dueInFlight 안에서 실행한다', () => {
+  beforeEach(() => {
+    store.getPlanByDate.mockReturnValue({ id: 9, status: 'active' } as never)
+  })
+
+  it('A42: 7단계 회의 브리핑은 4단계 최신화 알림과 6단계 체크인 뒤에 실행한다', async () => {
+    autoRefreshReturns([notice()])
+    dueCheckinReturns(checkinNotice())
+    dueMeetingsReturn([meetingNotice()])
+    await runTick()
+    expect(order).toEqual([
+      'decideRefresh',
+      'insertEvent', 'new Notification', 'show',
+      'runDueCheckin', 'insertEvent', 'new Notification', 'show',
+      'runDueMeetingBriefings', 'insertEvent', 'new Notification', 'show'
+    ])
+  })
+
+  it('A42: 체크인이 진행 중(dueInFlight)이면 두 번째 틱은 회의 브리핑도 부르지 않는다', async () => {
+    store.getPlanByDate.mockReturnValue(null)
+    const gate = deferred()
+    service.runDueCheckin.mockImplementationOnce(async () => {
+      await gate.promise
+      return null
+    })
+    const first = runTick()
+    await runTick()
+    expect(service.runDueMeetingBriefings).not.toHaveBeenCalled()
+    gate.resolve(null)
+    await first
+    expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1)
+  })
+
+  it('A42: 회의 브리핑이 진행 중이면 두 번째 틱은 6·7단계를 건너뛴다', async () => {
+    store.getPlanByDate.mockReturnValue(null)
+    const gate = deferred()
+    service.runDueMeetingBriefings.mockImplementationOnce(async () => {
+      await gate.promise
+      return []
+    })
+    const first = runTick()
+    await vi.waitFor(() => expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1))
+    await runTick()
+    expect(service.runDueCheckin).toHaveBeenCalledTimes(1)
+    expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1)
+    gate.resolve([])
+    await first
+    await runTick()
+    expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('A13: 회의 브리핑 예외를 삼킨다', () => {
+  it('A13: runDueMeetingBriefings 가 reject 해도 runTick 은 throw 하지 않고 가드를 푼다', async () => {
+    service.runDueMeetingBriefings.mockRejectedValueOnce(new Error('Database not initialized'))
+    await expect(runTick()).resolves.toBeUndefined()
+    await runTick()
+    expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(2)
+  })
+
+  it('A13: runDueCheckin 이 reject 해도 7단계 회의 브리핑은 실행한다', async () => {
+    service.runDueCheckin.mockRejectedValueOnce(new Error('boom'))
+    dueMeetingsReturn([meetingNotice()])
+    await expect(runTick()).resolves.toBeUndefined()
+    expect(electron.notifications).toHaveLength(1)
   })
 })

@@ -11,6 +11,7 @@ import {
   respondCheckin,
   runAutoRefresh,
   runDueCheckin,
+  runDueMeetingBriefings,
   runRefresh,
   setAssistantChangedListener
 } from './assistant-service'
@@ -19,6 +20,7 @@ import type {
   AssistantNavigateEvent,
   CheckinAnswer,
   SentCheckinNotice,
+  SentMeetingNotice,
   SentPlanUpdateNotice
 } from './assistant-types'
 
@@ -52,7 +54,7 @@ let pendingNavigate: { payload: AssistantNavigateEvent; at: number } | null = nu
 let tickTimer: ReturnType<typeof setInterval> | null = null
 // A26: 자동 최신화는 동시에 1개만 실행한다. 서비스의 serialized 는 큐라서 중복 실행을 막지 못한다
 let autoRefreshInFlight = false
-// A42: 체크인 판정은 동시에 1개만 실행한다. autoRefreshInFlight 와 같은 이유다
+// A42: 체크인·회의 브리핑 판정은 동시에 1개만 실행한다. autoRefreshInFlight 와 같은 이유다
 let dueInFlight = false
 
 function logError(where: string, err: unknown): void {
@@ -276,25 +278,63 @@ function showCheckinNotice(notice: SentCheckinNotice): void {
 }
 
 /**
- * 틱 6단계 (H.5). 체크인 판정과 발송. A42: dueInFlight 로 동시에 1개만 실행한다.
- * now 가 undefined 면 서비스가 serialized 줄 안에서 현재 시각을 잡는다. 최신화 대기로 시각이 낡지 않는다.
- * A13: 이 함수는 throw 하지 않는다.
+ * 회의 브리핑 알림 발송 (I.9.2). 서비스가 INSERT 에 성공한 알림만 받는다 (A5).
+ * 답장 입력이 없다. 클릭은 오늘 화면의 회의 브리핑 카드로 이동한다.
+ * show() 가 실패하면 그 알림 행을 'failed' 로 바꾼다.
  */
-async function runCheckinStep(now: Date | undefined): Promise<void> {
+function showMeetingNotices(notices: SentMeetingNotice[]): void {
+  for (const notice of notices) {
+    try {
+      const n = new Notification({ title: notice.title, body: notice.body })
+      liveNotifications.add(n)
+      n.on('click', () => {
+        liveNotifications.delete(n)
+        navigateToToday(notice.focus)
+      })
+      n.on('close', () => {
+        liveNotifications.delete(n)
+      })
+      n.show()
+    } catch (err) {
+      logError('meeting briefing show', err)
+      try {
+        updateEventStatus(getDatabase(), notice.eventId, 'failed')
+      } catch (e2) {
+        logError('meeting briefing mark failed', e2)
+      }
+    }
+  }
+}
+
+/**
+ * 틱 6·7단계 (H.5, I.9.2). 체크인 다음 회의 브리핑의 판정과 발송이다.
+ * A42: 두 단계는 같은 dueInFlight 안에서 동시에 1개만 실행한다.
+ * now 가 undefined 면 서비스가 serialized 줄 안에서 현재 시각을 잡는다. 최신화 대기로 시각이 낡지 않는다.
+ * A13: 이 함수는 throw 하지 않는다. 6단계가 실패해도 7단계는 실행한다.
+ */
+async function runDueSteps(now: Date | undefined): Promise<void> {
   if (dueInFlight) return
   dueInFlight = true
   try {
-    const notice = await runDueCheckin(now)
-    if (notice) showCheckinNotice(notice)
-  } catch (err) {
-    logError('checkin', err)
+    try {
+      const notice = await runDueCheckin(now)
+      if (notice) showCheckinNotice(notice)
+    } catch (err) {
+      logError('checkin', err)
+    }
+    try {
+      const notices = await runDueMeetingBriefings(now)
+      showMeetingNotices(notices)
+    } catch (err) {
+      logError('meeting briefing', err)
+    }
   } finally {
     dueInFlight = false
   }
 }
 
 /**
- * 틱 1회 (부록 E.2.1, H.5). 판정은 decideRefresh 가 한다 (A25). 이 함수는 throw 하지 않는다 (A13).
+ * 틱 1회 (부록 E.2.1, H.5, I.9.2). 판정은 decideRefresh 가 한다 (A25). 이 함수는 throw 하지 않는다 (A13).
  * wake 는 resume·unlock-screen 에서 불렀는지다. 테스트용으로 export 한다.
  * injectedNow 는 테스트가 주입하는 시각이다. 실제 틱은 넘기지 않는다.
  */
@@ -334,9 +374,9 @@ export async function runTick(wake: boolean = false, injectedNow?: Date): Promis
     logError(`tick${wake ? '(wake)' : ''}`, err)
     return
   }
-  // A42: 6단계는 4단계 뒤다. 4단계를 건너뛰어도 실행한다. 서비스의 serialized 줄이 진행 중 최신화 뒤에 세운다
+  // A42: 6·7단계는 4단계 뒤다. 4단계를 건너뛰어도 실행한다. 서비스의 serialized 줄이 진행 중 최신화 뒤에 세운다
   // 실제 틱은 undefined 를 넘긴다. 4단계 await 로 틱 시작 시각이 낡았을 수 있다
-  await runCheckinStep(injectedNow)
+  await runDueSteps(injectedNow)
 }
 
 // A26: 시작 알림 판정 뒤에 최신화를 한다. 순서를 고정해 결과를 결정론적으로 만든다

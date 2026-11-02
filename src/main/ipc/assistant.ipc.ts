@@ -12,6 +12,7 @@ import {
   interpretCommand,
   listCandidates,
   refreshBriefing,
+  regenerateMeetingBriefing,
   reopenDay,
   respondCheckin,
   runRefresh,
@@ -101,6 +102,11 @@ export function registerAssistantIpc(): void {
   // 체크인 패널 버튼 (부록 H.9.7). 넘기기는 status null 이다. 인자 검증은 서비스가 한다
   ipcMain.handle('assistant:respondCheckin', (_e, eventId: number, status: CheckinStatus | null, note?: string) =>
     wrap(async () => ({ today: await respondCheckin(eventId, { status, note: note ?? null, raw: null }) }))
+  )
+
+  // 회의 브리핑 AI 본문 다시 만들기 (부록 I.11.10). 버튼은 결과를 기다린다. 인자 검증은 서비스가 한다
+  ipcMain.handle('assistant:regenerateMeetingBriefing', (_e, eventId: number) =>
+    wrap(async () => ({ today: await regenerateMeetingBriefing(eventId) }))
   )
 
   ipcMain.handle('assistant:getSettings', () => getSettings())

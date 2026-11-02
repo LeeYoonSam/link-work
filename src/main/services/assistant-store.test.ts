@@ -73,6 +73,7 @@ import {
   setBriefingInstruction,
   setEventResponse,
   setRecovery,
+  updateEventPayload,
   updateEventStatus,
   updatePlanItems,
   writeAssistantSettings
@@ -734,6 +735,34 @@ describe('비서 이벤트', () => {
     const a = insertEvent(db, ev)
     expect(() => setEventResponse(db, a!.id, 'skip', '2026-11-02T10:58:00')).toThrow()
     expect(getEventById(db, a!.id)?.response).toBeNull()
+  })
+
+  it('updateEventPayload: 지정한 행의 payload 만 바꾼다 (부록 I.8)', () => {
+    const meeting = insertEvent(db, {
+      ...ev,
+      event_key: 'meeting_briefing:2026-11-02:evt-1',
+      kind: 'meeting_briefing',
+      scheduled_at: '2026-11-02 13:45:00',
+      fired_at: '2026-11-02 13:45:10',
+      ref_id: 'evt-1',
+      payload: '{"llmStatus":"pending"}'
+    })
+    const other = insertEvent(db, ev)
+    updateEventPayload(db, meeting!.id, '{"llmStatus":"done"}')
+    const row = getEventById(db, meeting!.id)
+    expect(row?.payload).toBe('{"llmStatus":"done"}')
+    // 다른 컬럼과 다른 행은 그대로다
+    expect(row?.status).toBe('sent')
+    expect(row?.scheduled_at).toBe('2026-11-02 13:45:00')
+    expect(row?.fired_at).toBe('2026-11-02 13:45:10')
+    expect(row?.ref_id).toBe('evt-1')
+    expect(getEventById(db, other!.id)?.payload).toBe(ev.payload)
+  })
+
+  it('updateEventPayload: 없는 id 는 아무 행도 바꾸지 않는다', () => {
+    const a = insertEvent(db, ev)
+    updateEventPayload(db, 9999, '{}')
+    expect(getEventById(db, a!.id)?.payload).toBe(ev.payload)
   })
 })
 

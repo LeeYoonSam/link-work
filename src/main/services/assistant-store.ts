@@ -490,6 +490,11 @@ export function setEventResponse(db: Db, eventId: number, response: string, at: 
   db.prepare('UPDATE assistant_events SET response = ?, responded_at = ? WHERE id = ?').run(response, at, eventId)
 }
 
+// 회의 브리핑 LLM 결과 기록 (부록 I.8). payload 만 바꾼다. 상태·시각 컬럼은 그대로 둔다.
+export function updateEventPayload(db: Db, eventId: number, payload: string): void {
+  db.prepare('UPDATE assistant_events SET payload = ? WHERE id = ?').run(payload, eventId)
+}
+
 export function listEventsByDate(db: Db, planDate: string): AssistantEvent[] {
   const rows = db
     .prepare('SELECT * FROM assistant_events WHERE plan_date = ? ORDER BY scheduled_at, id')

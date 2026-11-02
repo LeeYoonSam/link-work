@@ -34,6 +34,9 @@ interface AssistantStore {
   commandResult: Pick<CommandApplyOutcome, 'results' | 'applied' | 'failed'> | null
   // 마지막 해석·적용 요청의 범위 항목. 진행 중·오류·결과를 요청한 입력창에만 보인다
   commandScope: number | null
+  // 회의 브리핑을 다시 만드는 중인 이벤트 id. 전역 busy 를 쓰지 않는다.
+  // 이유: LLM 줄이 길면 오늘 화면 전체 버튼이 오래 잠긴다
+  meetingRegeneratingIds: number[]
 
   load: () => Promise<void>
   startDay: () => Promise<void>
@@ -63,6 +66,8 @@ interface AssistantStore {
   clearCommand: () => void
   // 체크인에 응답한다 (부록 H.8.3). 넘기기는 status null 이다. 성공하면 true
   respondCheckin: (eventId: number, status: CheckinStatus | null, note?: string) => Promise<boolean>
+  // 회의 브리핑의 AI 본문을 다시 만든다 (부록 I.10.3). 결과를 기다린다
+  regenerateMeetingBriefing: (eventId: number) => Promise<void>
   // assistant:changed 를 구독한다. 해제 함수를 돌려준다
   subscribe: () => () => void
 }
@@ -133,6 +138,7 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
     commandError: '',
     commandResult: null,
     commandScope: null,
+    meetingRegeneratingIds: [],
 
     load: async () => {
       set({ loading: true })
@@ -345,6 +351,25 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
       )
     },
 
+    // 행 단위 상태를 쓴다. 같은 행의 중복 클릭만 막는다
+    regenerateMeetingBriefing: async (eventId) => {
+      if (get().meetingRegeneratingIds.includes(eventId)) return
+      const fallback = '회의 브리핑을 다시 만들지 못했습니다'
+      set({ meetingRegeneratingIds: [...get().meetingRegeneratingIds, eventId], error: '' })
+      const finish = (): void =>
+        set({ meetingRegeneratingIds: get().meetingRegeneratingIds.filter((id) => id !== eventId) })
+      try {
+        const res = await window.api.assistant.regenerateMeetingBriefing(eventId)
+        finish()
+        if (res.success) setToday(res.today)
+        else set({ error: res.error || fallback })
+      } catch (e) {
+        finish()
+        set({ error: errorText(e, fallback) })
+      }
+    },
+
+    // reason 과 무관하게 다시 읽는다. 'meeting' 도 같다 (부록 I.10.3)
     subscribe: () => {
       const api = window.api?.assistant
       if (!api) return () => {}

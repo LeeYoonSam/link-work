@@ -19,7 +19,8 @@ export const ASSISTANT_SETTING_KEYS: Record<keyof AssistantSettings, string> = {
   checkinDailyCap: 'assistant_checkin_daily_cap',
   meetingLeadMin: 'assistant_meeting_lead_min',
   startView: 'assistant_start_view',
-  checkinEnabled: 'assistant_checkin_enabled'
+  checkinEnabled: 'assistant_checkin_enabled',
+  meetingBriefingEnabled: 'assistant_meeting_briefing_enabled'
 }
 
 export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
@@ -39,7 +40,8 @@ export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
   checkinDailyCap: 4,
   meetingLeadMin: 15,
   startView: 'auto',
-  checkinEnabled: true
+  checkinEnabled: true,
+  meetingBriefingEnabled: true
 }
 
 type FieldSpec =
@@ -68,7 +70,8 @@ const FIELD_SPECS: Record<keyof AssistantSettings, FieldSpec> = {
   checkinDailyCap: { kind: 'int', min: 0, max: 20 },
   meetingLeadMin: { kind: 'int', min: 1, max: 120 },
   startView: { kind: 'enum', values: ['auto', 'dashboard', 'today'] },
-  checkinEnabled: { kind: 'bool' }
+  checkinEnabled: { kind: 'bool' },
+  meetingBriefingEnabled: { kind: 'bool' }
 }
 
 const FIELD_NAMES = Object.keys(ASSISTANT_SETTING_KEYS) as (keyof AssistantSettings)[]

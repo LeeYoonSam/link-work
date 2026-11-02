@@ -6,8 +6,11 @@ import {
   checkinEventKey,
   checkinNoticeText,
   computeDueCheckin,
+  computeDueMeetingBriefings,
   decideRefresh,
   LATE_AFTER_MIN,
+  MEETING_BRIEFING_DAILY_CAP,
+  meetingEventKey,
   minutesBetween,
   TICK_MS,
   WAKE_MIN_GAP_MS
@@ -17,6 +20,8 @@ import type {
   AssistantEvent,
   CalendarRef,
   CheckinDecisionInput,
+  MeetingDecisionInput,
+  MeetingRef,
   PlanItem,
   RefreshDecisionInput
 } from './assistant-types'
@@ -332,5 +337,160 @@ describe('computeDueCheckin', () => {
     expect(a).not.toBeNull()
     expect(b).toEqual(a)
     expect(input).toEqual(snapshot)
+  })
+})
+
+// ── MVP5 회의 전 브리핑 (부록 I) ──
+
+function mtg(id: string, start: string, end = '23:00'): MeetingRef {
+  return { id, title: `회의 ${id}`, startAt: `${TODAY} ${start}:00`, endAt: `${TODAY} ${end}:00` }
+}
+
+function mev(over: Partial<AssistantEvent> & Pick<AssistantEvent, 'id'>): AssistantEvent {
+  return ev({
+    event_key: `meeting_briefing:${TODAY}:x${over.id}`, kind: 'meeting_briefing', ref_id: null,
+    ...over
+  })
+}
+
+// 기본: 14:00 회의, lead 15분 → 창은 [13:45, 14:00)
+function min(at: string, over: Partial<MeetingDecisionInput> = {}): MeetingDecisionInput {
+  return {
+    today: TODAY,
+    at: `${TODAY} ${at}`,
+    settings: { enabled: true, meetingBriefingEnabled: true, meetingLeadMin: 15 },
+    meetings: [mtg('a', '14:00')],
+    events: [],
+    ...over
+  }
+}
+
+describe('회의 브리핑 상수와 키', () => {
+  it('상수는 계약 값이다', () => {
+    expect(MEETING_BRIEFING_DAILY_CAP).toBe(6)
+  })
+
+  it('meetingEventKey 는 meeting_briefing:<date>:<id> 이다', () => {
+    expect(meetingEventKey(TODAY, 'abc_20261102T050000Z')).toBe('meeting_briefing:2026-11-02:abc_20261102T050000Z')
+  })
+})
+
+describe('computeDueMeetingBriefings', () => {
+  it('A47: 비서나 회의 브리핑이 꺼져 있으면 빈 배열이다', () => {
+    const off1 = min('13:50:00', { settings: { enabled: false, meetingBriefingEnabled: true, meetingLeadMin: 15 } })
+    const off2 = min('13:50:00', { settings: { enabled: true, meetingBriefingEnabled: false, meetingLeadMin: 15 } })
+    expect(computeDueMeetingBriefings(off1)).toEqual([])
+    expect(computeDueMeetingBriefings(off2)).toEqual([])
+    // 창이 지난 회의도 skipped 를 만들지 않는다
+    expect(computeDueMeetingBriefings(min('15:00:00', { settings: off2.settings }))).toEqual([])
+  })
+
+  it('A47: 창 전 (예정 시각 1초 전) 이면 결과가 없다. 행을 만들지 않는다', () => {
+    expect(computeDueMeetingBriefings(min('13:44:59'))).toEqual([])
+    expect(computeDueMeetingBriefings(min('09:00:00'))).toEqual([])
+  })
+
+  it('A47: 창 안이면 send 다. 예정 시각 경계값은 창 안이다', () => {
+    const r = computeDueMeetingBriefings(min('13:45:00'))
+    expect(r).toEqual([
+      {
+        action: 'send', meeting: mtg('a', '14:00'), eventKey: 'meeting_briefing:2026-11-02:a',
+        scheduledAt: '2026-11-02 13:45:00', late: false
+      }
+    ])
+    // 시작 1초 전도 창 안이다
+    expect(computeDueMeetingBriefings(min('13:59:59'))[0]).toMatchObject({ action: 'send' })
+  })
+
+  it('A47: 예정 시각보다 2분 이상 늦으면 late 다. 2분 미만이면 late 가 아니다', () => {
+    expect(computeDueMeetingBriefings(min('13:47:00'))[0]).toMatchObject({ action: 'send', late: true })
+    expect(computeDueMeetingBriefings(min('13:46:59'))[0]).toMatchObject({ action: 'send', late: false })
+  })
+
+  it('A47: 시작이 지났고 행이 없으면 skip window 다. 시작 시각 경계값은 창 밖이다', () => {
+    expect(computeDueMeetingBriefings(min('14:00:00'))).toEqual([
+      {
+        action: 'skip', meeting: mtg('a', '14:00'), eventKey: 'meeting_briefing:2026-11-02:a',
+        scheduledAt: '2026-11-02 13:45:00', reason: 'window'
+      }
+    ])
+    expect(computeDueMeetingBriefings(min('20:00:00'))[0]).toMatchObject({ action: 'skip', reason: 'window' })
+  })
+
+  it('A47: 오늘 sent·late 6건이면 창 안 회의는 skip cap 이다. skipped·failed 는 세지 않는다', () => {
+    const six = Array.from({ length: 6 }, (_, i) => mev({ id: i + 1, status: i % 2 === 0 ? 'sent' : 'late' }))
+    expect(computeDueMeetingBriefings(min('13:50:00', { events: six }))).toEqual([
+      expect.objectContaining({ action: 'skip', reason: 'cap', eventKey: 'meeting_briefing:2026-11-02:a' })
+    ])
+    const notCounted = [
+      ...six.slice(0, 5),
+      mev({ id: 7, status: 'skipped' }),
+      mev({ id: 8, status: 'failed' }),
+      // 다른 날짜와 다른 종류는 세지 않는다
+      mev({ id: 9, plan_date: '2026-11-01' }),
+      ev({ id: 10, kind: 'checkin' })
+    ]
+    expect(computeDueMeetingBriefings(min('13:50:00', { events: notCounted }))[0]).toMatchObject({ action: 'send' })
+  })
+
+  it('A47: 이번 결과의 send 수도 상한에 더한다. 순서는 startAt 오름차순이다', () => {
+    // 5건 보낸 날, 창 안 회의 3건 → 첫 1건 send, 나머지 cap
+    const five = Array.from({ length: 5 }, (_, i) => mev({ id: i + 1 }))
+    const meetings = [mtg('c', '14:10'), mtg('a', '14:00'), mtg('b', '14:05')]
+    const r = computeDueMeetingBriefings(min('13:58:00', { meetings, events: five }))
+    expect(r.map((d) => [d.meeting.id, d.action, d.action === 'skip' ? d.reason : d.late])).toEqual([
+      ['a', 'send', true],
+      ['b', 'skip', 'cap'],
+      ['c', 'skip', 'cap']
+    ])
+  })
+
+  it('A47: 같은 키의 행이 이미 있으면 건너뛴다. status 와 무관하다', () => {
+    for (const status of ['sent', 'late', 'skipped', 'failed'] as const) {
+      const events = [mev({ id: 1, event_key: 'meeting_briefing:2026-11-02:a', status })]
+      expect(computeDueMeetingBriefings(min('13:50:00', { events }))).toEqual([])
+      expect(computeDueMeetingBriefings(min('15:00:00', { events }))).toEqual([])
+    }
+  })
+
+  it('A47: 여러 회의를 한 틱에 판정한다. 창 전 회의는 결과에 없다. 회의 중 여부를 보지 않는다', () => {
+    // 13:00–14:30 회의 중이어도 14:00 회의 브리핑을 보낸다
+    const meetings = [mtg('later', '16:00'), mtg('a', '14:00'), mtg('now', '13:00', '14:30'), mtg('past', '09:00')]
+    const r = computeDueMeetingBriefings(min('13:50:00', { meetings }))
+    expect(r.map((d) => [d.meeting.id, d.action])).toEqual([
+      ['past', 'skip'],
+      ['now', 'skip'],
+      ['a', 'send']
+    ])
+  })
+
+  it('A47: lead 를 바꾸면 예정 시각이 바뀐다. 날짜를 넘는 예정 시각도 계산한다', () => {
+    const settings = { enabled: true, meetingBriefingEnabled: true, meetingLeadMin: 120 }
+    expect(computeDueMeetingBriefings(min('11:59:00', { settings }))).toEqual([])
+    expect(computeDueMeetingBriefings(min('12:00:00', { settings }))[0]).toMatchObject({
+      action: 'send', scheduledAt: '2026-11-02 12:00:00', late: false
+    })
+    const early = computeDueMeetingBriefings(
+      min('00:10:00', { settings: { ...settings, meetingLeadMin: 30 }, meetings: [mtg('e', '00:20')] })
+    )
+    expect(early[0]).toMatchObject({ action: 'send', scheduledAt: '2026-11-01 23:50:00', late: true })
+  })
+
+  it('A47: 시작 시각을 읽지 못하는 회의와 중복 id 는 1건만 판정하거나 건너뛴다', () => {
+    const bad: MeetingRef = { id: 'bad', title: 'x', startAt: '14:00', endAt: '15:00' }
+    const r = computeDueMeetingBriefings(min('13:50:00', { meetings: [bad, mtg('a', '14:00'), mtg('a', '14:00')] }))
+    expect(r.map((d) => d.meeting.id)).toEqual(['a'])
+  })
+
+  it('A14: 같은 입력에 같은 출력이고 입력 배열을 바꾸지 않는다', () => {
+    const meetings = [mtg('c', '14:10'), mtg('a', '14:00'), mtg('p', '09:00')]
+    const events = [mev({ id: 1 })]
+    const input = min('13:58:00', { meetings, events })
+    const snapshot = JSON.parse(JSON.stringify(input))
+    const r1 = computeDueMeetingBriefings(input)
+    const r2 = computeDueMeetingBriefings(input)
+    expect(r1).toEqual(r2)
+    expect(input).toEqual(snapshot)
+    expect(meetings.map((m) => m.id)).toEqual(['c', 'a', 'p'])
   })
 })
