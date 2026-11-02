@@ -80,6 +80,7 @@ export function diffSources(prev: SourceSnapshot, current: CurrentSources, items
   const vanishedCandidateIds: string[] = []
   for (const it of items) {
     if (!VANISH_TARGET.has(it.status)) continue
+    if (it.source === 'manual') continue   // 임시 항목은 후보 출처가 없다 (A37)
     if (curById.has(it.candidate_id)) continue
     if (it.source === 'jira' && current.jira === null) continue
     if (!vanishedCandidateIds.includes(it.candidate_id)) vanishedCandidateIds.push(it.candidate_id)

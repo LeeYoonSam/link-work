@@ -59,8 +59,13 @@ function parseSnapshot(raw: string | null): SourceSnapshot | null {
   }
 }
 
+// briefing_instruction 은 migrateAssistantSchema 가 더한 컬럼이다 (부록 G.7.1). 값이 없으면 null 로 맞춘다.
 function toPlan(row: PlanRow): DailyPlan {
-  return { ...row, source_snapshot: parseSnapshot(row.source_snapshot) }
+  return {
+    ...row,
+    source_snapshot: parseSnapshot(row.source_snapshot),
+    briefing_instruction: row.briefing_instruction ?? null
+  }
 }
 
 function toItem(row: ItemRow): PlanItem {
@@ -262,6 +267,16 @@ export function setBriefingError(db: Db, planId: number, error: string): void {
   db.prepare(
     "UPDATE daily_plans SET briefing_error = ?, updated_at = datetime('now','localtime') WHERE id = ?"
   ).run(error, planId)
+}
+
+// 브리핑 지시 (부록 G.7.1). null 이면 지시를 지운다. 브리핑 본문은 건드리지 않는다.
+export function setBriefingInstruction(db: Db, planId: number, instruction: string | null, at: string): void {
+  assertDateTime(at, 'at')
+  db.prepare('UPDATE daily_plans SET briefing_instruction = ?, updated_at = ? WHERE id = ?').run(
+    instruction,
+    at,
+    planId
+  )
 }
 
 // 맥락 복구 본문 (부록 F.6). plan_id 로 쓴다. 수집 중 하루가 닫혀도 같은 행에 저장한다.

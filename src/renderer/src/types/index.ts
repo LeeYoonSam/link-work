@@ -1026,7 +1026,8 @@ export interface BackupAPI {
 // ── 개인 비서 (docs/ASSISTANT.md 부록 A.1·A.5·B.7 복제) ──
 // main 의 src/main/services/assistant-types.ts 와 같은 모양을 유지한다.
 
-export type CandidateSource = 'jira' | 'task' | 'todo' | 'action_item'
+// 'manual' 은 명령으로 만든 임시 항목이다 (부록 G.6)
+export type CandidateSource = 'jira' | 'task' | 'todo' | 'action_item' | 'manual'
 export type CandidatePriority = 'high' | 'medium' | 'low'
 
 export interface Candidate {
@@ -1071,6 +1072,8 @@ export interface DailyPlan {
   briefing_model: string | null
   briefing_error: string | null
   briefing_at: string | null
+  // 사용자가 명령으로 저장한 브리핑 지시 (부록 G.7)
+  briefing_instruction: string | null
   recovery_text: string | null
   recovery_source: 'rules' | 'llm' | null
   recovery_at: string | null
@@ -1126,7 +1129,12 @@ export interface DayTimeline {
   unplacedDeadlineItemIds: number[]
 }
 
-export type AssistantEventKind = 'start_nudge' | 'plan_update' | 'checkin' | 'meeting_briefing'
+export type AssistantEventKind =
+  | 'start_nudge'
+  | 'plan_update'
+  | 'checkin'
+  | 'meeting_briefing'
+  | 'command'
 export type AssistantEventStatus = 'sent' | 'late' | 'skipped' | 'failed' | 'logged'
 export interface AssistantEvent {
   id: number
@@ -1204,7 +1212,7 @@ export interface RecoveryState {
 
 export interface AssistantChangedEvent {
   date: string
-  reason: 'refresh' | 'briefing' | 'day' | 'recovery'
+  reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command'
 }
 export interface AssistantNavigateEvent {
   view: 'today'
@@ -1233,6 +1241,46 @@ export interface TrayAssistant {
   freeMinutesLeft: number
 }
 
+// ── 명령 입력 (부록 G.3.1·G.3.4 복제) ──
+export type CommandStatus = 'planned' | 'in_progress' | 'done' | 'deferred' | 'dropped'
+export type CommandOp =
+  | { kind: 'set_status'; itemId: number; status: CommandStatus; note: string | null }
+  | { kind: 'focus'; itemId: number }
+  | { kind: 'accept_suggestion'; itemId: number }
+  | { kind: 'dismiss_suggestion'; itemId: number }
+  | { kind: 'add_candidate'; candidateId: string }
+  | { kind: 'add_manual'; title: string; dueDate: string | null }
+  | { kind: 'regenerate_briefing'; instruction: string | null }
+  | { kind: 'unsupported'; reason: string }
+export interface CommandPreviewOp {
+  op: CommandOp
+  label: string
+  executable: boolean
+}
+export interface CommandInterpretation {
+  // 공백 정리한 명령 원문
+  text: string
+  scopeItemId: number | null
+  ops: CommandPreviewOp[]
+  source: 'llm' | 'rules'
+  // LLM 실패 사유. 성공이거나 LLM 을 건너뛰면 null
+  error: string | null
+  // 검증에서 뺀 조작 수
+  dropped: number
+}
+export interface CommandOpResult {
+  op: CommandOp
+  label: string
+  ok: boolean
+  error: string | null
+}
+export interface CommandApplyOutcome {
+  today: TodayPayload
+  results: CommandOpResult[]
+  applied: number
+  failed: number
+}
+
 export type AssistantResult<T> = ({ success: true } & T) | { success: false; error: string }
 export type TodayResult = AssistantResult<{ today: TodayPayload }>
 
@@ -1258,4 +1306,13 @@ export interface AssistantAPI {
   ) => Promise<AssistantResult<{ settings: AssistantSettings }>>
   onNavigate: (cb: (p: AssistantNavigateEvent) => void) => () => void
   onChanged: (cb: (p: AssistantChangedEvent) => void) => () => void
+  // 명령 입력 (부록 G.9). 해석은 DB 를 쓰지 않는다
+  interpretCommand: (
+    text: string,
+    scopeItemId?: number
+  ) => Promise<AssistantResult<{ interpretation: CommandInterpretation }>>
+  applyCommand: (
+    ops: CommandOp[],
+    text: string
+  ) => Promise<AssistantResult<Omit<CommandApplyOutcome, never>>>
 }

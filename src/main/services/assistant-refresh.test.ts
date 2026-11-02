@@ -78,6 +78,22 @@ describe('diffSources §8.3', () => {
     expect(diff.vanishedCandidateIds).toEqual(['todo:2'])
   })
 
+  it('A37: manual 임시 항목은 후보에 없어도 사라진 항목이 아니다', () => {
+    const items = [
+      item({ id: 1, candidate_id: 'manual:1:1', source: 'manual', title: '견적서 보내기' }),
+      item({ id: 2, candidate_id: 'manual:1:2', source: 'manual', status: 'in_progress' }),
+      item({ id: 3, candidate_id: 'todo:3' })
+    ]
+    const current: CurrentSources = { candidates: [], calendar: [], jira: [] }
+    const diff = diffSources(snapshot(), current, items)
+    expect(diff.vanishedCandidateIds).toEqual(['todo:3'])
+    expect(diff.updatedCandidates).toEqual([])
+    // A37: 반영 계획도 임시 항목의 상태를 바꾸지 않는다
+    const plan = planRefresh(diff, current, snapshot(), items, ctx())
+    const touched = plan.updates.filter((u) => u.id === 1 || u.id === 2).map((u) => u.patch.status)
+    expect(touched.every((s) => s === undefined)).toBe(true)
+  })
+
   it('계획 항목의 제목·마감·Jira 상태 변경을 찾는다', () => {
     const items = [
       item({ id: 1, candidate_id: 'todo:1', title: '옛 제목' }),

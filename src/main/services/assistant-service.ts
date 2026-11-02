@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { z } from 'zod'
 import { getDatabase } from '../db/database'
 import { getTodayEvents } from './google-calendar'
 import { isHeadlessAvailable } from './ai-headless'
@@ -26,6 +27,20 @@ import {
   planRefresh,
   rerank
 } from './assistant-refresh'
+import {
+  buildCommandContext,
+  COMMAND_INSTRUCTION_MAX,
+  COMMAND_OPS_MAX,
+  COMMAND_TITLE_MAX,
+  CommandOpSchema,
+  describeCommandOp,
+  interpretCommandRule,
+  nextManualCandidateId,
+  normalizeCommandOps,
+  normalizeCommandText,
+  toManualCandidate
+} from './assistant-command'
+import { requestLlmCommand } from './assistant-command-llm'
 import { isUrgent } from './assistant-candidates'
 import { rankCandidates, scoreCandidate } from './assistant-score'
 import {
@@ -45,6 +60,7 @@ import {
   saveWrapupNote,
   setBriefing,
   setBriefingError,
+  setBriefingInstruction,
   setRecovery,
   updatePlanItems,
   writeAssistantSettings
@@ -54,6 +70,11 @@ import type {
   AssistantSettings,
   AutoRefreshOutcome,
   Candidate,
+  CommandApplyOutcome,
+  CommandContext,
+  CommandInterpretation,
+  CommandOp,
+  CommandOpResult,
   DailyPlan,
   DayTimeline,
   NewPlanItem,
@@ -256,7 +277,9 @@ function briefingInputOf(
     items,
     calendar: plan.source_snapshot?.calendar ?? [],
     timeline: timelineOf(plan, items, settings, today, now),
-    errors
+    errors,
+    // G.7: 저장된 브리핑 지시. 하루 시작·다시 생성·명령 적용이 모두 이 1곳을 거친다
+    instruction: plan.briefing_instruction ?? null
   }
 }
 
@@ -605,15 +628,27 @@ function insertPlanUpdateNotices(
 
 // 변경 기록 행이다. 알림 행과 다른 행이다(status 'logged', ref_id null). 같은 초에 두 번 돌면 접미어로 키를 나눈다
 function logPlanUpdate(db: Db, today: string, at: string, payload: string): void {
-  const base = `plan_update:${today}:${at}`
+  insertLoggedEvent(db, 'plan_update', today, at, payload)
+}
+
+// 기록 전용 행을 INSERT 한다. 키는 '<kind>:<date>:<at>' 이다. UNIQUE 충돌이면 접미어 :1~:4 로 피한다
+function insertLoggedEvent(
+  db: Db,
+  kind: 'plan_update' | 'command',
+  today: string,
+  at: string,
+  payload: string
+): void {
+  const base = `${kind}:${today}:${at}`
   for (let i = 0; i < 5; i++) {
     const key = i === 0 ? base : `${base}:${i}`
     const ev = insertEvent(db, {
       event_key: key,
-      kind: 'plan_update',
+      kind,
       plan_date: today,
       scheduled_at: at,
-      fired_at: null,
+      // command 행은 적용 시각을 fired_at 에 둔다. 변경 내역이 이 시각을 보인다 (G.10.4)
+      fired_at: kind === 'command' ? at : null,
       status: 'logged',
       ref_id: null,
       payload
@@ -789,6 +824,253 @@ async function focusItemImpl(itemId: number, now: Date): Promise<TodayPayload> {
   const updates = focusUpdates(listPlanItems(db, plan.id), item.id)
   if (updates.length > 0) updatePlanItems(db, updates, at)
   return buildPayload(db, settings, today, now)
+}
+
+// ── 명령 입력 (부록 G) ──
+
+const UNSUPPORTED_OP_ERROR = '지원하지 않는 조작입니다.'
+const CommandOpsSchema = z.array(CommandOpSchema).max(COMMAND_OPS_MAX)
+
+function normalizeScopeItemId(scopeItemId: unknown): number | null {
+  if (scopeItemId === undefined || scopeItemId === null) return null
+  if (typeof scopeItemId !== 'number' || !Number.isInteger(scopeItemId) || scopeItemId <= 0) {
+    throw new Error('범위 항목 ID 가 올바르지 않습니다.')
+  }
+  return scopeItemId
+}
+
+// 해석용 후보. local 은 네트워크를 쓰지 않는다. 수집이 실패해도 항목 조작은 해석한다
+async function localCandidates(db: Db, settings: AssistantSettings, now: Date): Promise<Candidate[]> {
+  try {
+    return (await collectSources(db, settings, 'local', now)).candidates
+  } catch (err) {
+    console.error('[assistant] command collect(local)', err)
+    return []
+  }
+}
+
+/**
+ * 명령 해석 (G.8.1). 조작 목록만 돌려준다.
+ * A34: DB 를 쓰지 않는다. 그래서 todayOf 의 closeStalePlans 도 거치지 않는다. serialized 를 거치지 않는다.
+ * A36: LLM 은 llmSerialized 로 1건씩 실행한다. 꺼져 있거나 실패하면 규칙 해석으로 폴백한다.
+ */
+export async function interpretCommand(
+  text: unknown,
+  scopeItemId?: unknown,
+  now: Date = new Date()
+): Promise<CommandInterpretation> {
+  const clean = normalizeCommandText(text)
+  const scope = normalizeScopeItemId(scopeItemId)
+
+  const db = getDatabase()
+  const settings = readAssistantSettings(db)
+  const today = logicalDate(now, settings.dayRollover)
+  const plan = requireActivePlan(db, today)
+  if (scope !== null) {
+    const item = requireItemOfPlan(db, scope, plan)
+    if (item.status === 'dismissed') throw new Error('무시한 제안 항목은 명령으로 바꿀 수 없습니다.')
+  }
+
+  // scope 모드의 ctx 는 후보를 비운다. 수집하지 않는다
+  const candidates = scope === null ? await localCandidates(db, settings, now) : []
+  const ctx: CommandContext = buildCommandContext({
+    today,
+    items: listPlanItems(db, plan.id),
+    candidates,
+    scopeItemId: scope,
+    briefingInstruction: plan.briefing_instruction ?? null
+  })
+
+  let raw: unknown[] | null = null
+  let source: CommandInterpretation['source'] = 'rules'
+  let error: string | null = null
+  if (settings.llmEnabled && safeHeadlessAvailable()) {
+    try {
+      const r = await llmSerialized(() => requestLlmCommand({ ctx, text: clean }, settings.llmModel))
+      if (r.ok) {
+        raw = r.raw
+        source = 'llm'
+      } else {
+        error = r.error
+      }
+    } catch (err) {
+      // requestLlmCommand 는 throw 하지 않는다. 그래도 reject 하면 실패로 본다
+      error = toMessage(err)
+    }
+  }
+  if (raw === null) raw = interpretCommandRule(clean, ctx)
+
+  const { ops, dropped } = normalizeCommandOps(raw, ctx)
+  return { text: clean, scopeItemId: scope, ops, source, error, dropped }
+}
+
+export function applyCommand(ops: unknown, text: unknown, now: Date = new Date()): Promise<CommandApplyOutcome> {
+  return serialized(() => applyCommandImpl(ops, text, now))
+}
+
+// 조작 1개의 실행 결과. rerank·briefing 은 조작 뒤 1회 처리할 일이다
+interface OpEffect { rerank: boolean; briefing: boolean }
+
+/**
+ * 명령 적용 (G.8.1 순서 1~10). 공개 함수는 serialized 라 줄 안에서 부르면 교착한다.
+ * 그래서 같은 파일의 *Impl 을 직접 부르고, 그 payload 는 버린다.
+ */
+async function applyCommandImpl(rawOps: unknown, text: unknown, now: Date): Promise<CommandApplyOutcome> {
+  const clean = normalizeCommandText(text)
+  const parsed = CommandOpsSchema.safeParse(rawOps)
+  if (!parsed.success) throw new Error('조작 형식이 올바르지 않습니다.')
+  const ops: CommandOp[] = parsed.data.map(squashOpText)
+
+  const db = getDatabase()
+  const { settings, today, at } = todayOf(db, now)
+  const plan = requireActivePlan(db, today)
+
+  // label 은 적용 전 상태로 만든다. 후보 제목은 add_candidate 가 있을 때만 읽는다
+  const labelCtx = buildCommandContext({
+    today,
+    items: listPlanItems(db, plan.id),
+    candidates: ops.some((op) => op.kind === 'add_candidate') ? await localCandidates(db, settings, now) : [],
+    scopeItemId: null,
+    briefingInstruction: plan.briefing_instruction ?? null
+  })
+
+  const results: CommandOpResult[] = []
+  let needsRerank = false
+  let briefingIndex: number | null = null
+  for (const op of ops) {
+    const label = describeCommandOp(op, labelCtx)
+    // A40: unsupported 는 실행하지 않는다
+    if (op.kind === 'unsupported') {
+      results.push({ op, label, ok: false, error: UNSUPPORTED_OP_ERROR })
+      continue
+    }
+    // A39: 조작 1개의 실패가 다음 조작을 막지 않는다
+    try {
+      const effect = await executeCommandOp(db, op, plan, today, at, now)
+      if (effect.rerank) needsRerank = true
+      if (effect.briefing) briefingIndex = results.length
+      results.push({ op, label, ok: true, error: null })
+    } catch (err) {
+      results.push({ op, label, ok: false, error: toMessage(err) })
+    }
+  }
+
+  if (needsRerank) applyRerank(db, plan, at)
+
+  // G.7.4 2~3: 모든 조작을 반영한 상태로 규칙 브리핑을 저장하고 LLM 브리핑을 백그라운드로 만든다
+  if (briefingIndex !== null) {
+    try {
+      const fresh = requireActivePlan(db, today)
+      const input = briefingInputOf(db, fresh, settings, today, now, lastCollected?.errors ?? [])
+      setBriefing(db, fresh.id, { text: renderRuleBriefing(input), source: 'rules', model: null, at })
+      startBackgroundBriefing(fresh.id, input, settings, today)
+    } catch (err) {
+      const r = results[briefingIndex]
+      results[briefingIndex] = { ...r, ok: false, error: toMessage(err) }
+    }
+  }
+
+  const applied = results.filter((r) => r.ok).length
+  const failed = results.length - applied
+  const payload = JSON.stringify({
+    text: clean,
+    applied,
+    failed,
+    results: results.map((r) => ({ kind: r.op.kind, label: r.label, ok: r.ok, error: r.error }))
+  })
+  insertLoggedEvent(db, 'command', today, at, payload)
+  emitChanged({ date: today, reason: 'command' })
+
+  return { today: buildPayload(db, settings, today, now), results, applied, failed }
+}
+
+function squashText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+// 미리보기를 거치지 않은 렌더러 값도 label·저장 값이 같게 공백을 정리한다
+// set_status.note·unsupported.reason 의 상한이다. normalizeCommandOps 와 같은 200자다 (G.3.3)
+const COMMAND_NOTE_MAX = 200
+
+// CommandOpSchema 는 원문 길이만 넓게 막는다. 실제 상한은 공백 정리 뒤 여기서 다시 적용한다.
+// add_manual.title 은 자르지 않는다. 120자를 넘으면 insertManualItem 이 그 조작을 실패시킨다
+function squashOpText(op: CommandOp): CommandOp {
+  if (op.kind === 'add_manual') return { ...op, title: squashText(op.title) }
+  if (op.kind === 'set_status' && op.note !== null) {
+    const note = squashText(op.note).slice(0, COMMAND_NOTE_MAX)
+    return { ...op, note: note.length > 0 ? note : null }
+  }
+  if (op.kind === 'unsupported') return { ...op, reason: squashText(op.reason).slice(0, COMMAND_NOTE_MAX) }
+  if (op.kind === 'regenerate_briefing' && op.instruction !== null) {
+    const instruction = squashText(op.instruction).slice(0, COMMAND_INSTRUCTION_MAX)
+    return { ...op, instruction: instruction.length > 0 ? instruction : null }
+  }
+  return op
+}
+
+// G.8.2. A35: 각 *Impl 이 requireItemOfPlan 과 상태 검사로 id 를 다시 검증한다
+async function executeCommandOp(
+  db: Db,
+  op: CommandOp,
+  plan: DailyPlan,
+  today: string,
+  at: string,
+  now: Date
+): Promise<OpEffect> {
+  const none: OpEffect = { rerank: false, briefing: false }
+  switch (op.kind) {
+    case 'set_status':
+      await setItemStatusImpl(op.itemId, op.status, op.note, now)
+      return none
+    case 'focus':
+      await focusItemImpl(op.itemId, now)
+      return none
+    case 'accept_suggestion':
+      await acceptSuggestionImpl(op.itemId, now)
+      return none
+    case 'dismiss_suggestion':
+      await dismissSuggestionImpl(op.itemId, now)
+      return none
+    case 'add_candidate':
+      await addItemImpl(op.candidateId, now)
+      return none
+    case 'add_manual':
+      insertManualItem(db, op.title, op.dueDate, plan, today)
+      return { rerank: true, briefing: false }
+    case 'regenerate_briefing':
+      // G.7.4 1: null 이면 기존 지시를 유지한다
+      if (op.instruction !== null) setBriefingInstruction(db, plan.id, op.instruction, at)
+      return { rerank: false, briefing: true }
+    case 'unsupported':
+      throw new Error(UNSUPPORTED_OP_ERROR)
+  }
+}
+
+// G.6.1 임시 항목. A37: plan_items 에만 쓴다. A2: todos·tasks 를 쓰지 않는다
+function insertManualItem(db: Db, title: string, dueDate: string | null, plan: DailyPlan, today: string): void {
+  if (title.length === 0) throw new Error('임시 항목 제목이 비어 있습니다.')
+  if (title.length > COMMAND_TITLE_MAX) throw new Error(`임시 항목 제목은 ${COMMAND_TITLE_MAX}자 이하로 입력하세요.`)
+  const candidateId = nextManualCandidateId(plan.id, listPlanItems(db, plan.id))
+  const c = toManualCandidate(title, dueDate, candidateId)
+  const item: NewPlanItem = {
+    candidate_id: candidateId,
+    source: 'manual',
+    title,
+    link: null,
+    jira_issue_key: null,
+    project_id: null,
+    due_date: dueDate,
+    score: scoreCandidate(c, today),
+    rank: null,
+    slot_start: null,
+    slot_end: null,
+    pinned: false,
+    added_by: 'user',
+    urgent: isUrgent(c, today),
+    status: 'planned',
+    status_note: null
+  }
+  insertPlanItems(db, plan.id, [item])
 }
 
 export function getSettings(): AssistantSettings {

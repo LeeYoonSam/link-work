@@ -14,6 +14,7 @@ export const ASSISTANT_SCHEMA = `
     briefing_model TEXT,
     briefing_error TEXT,
     briefing_at TEXT,
+    briefing_instruction TEXT,
     recovery_text TEXT,
     recovery_source TEXT,
     recovery_at TEXT,
@@ -68,3 +69,22 @@ export const ASSISTANT_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_assistant_events_date ON assistant_events(plan_date, kind);
 `
+
+// 기존 DB 에 없는 비서 컬럼을 더한다. 여러 번 실행해도 결과가 같다 (부록 G.7.1).
+// database.ts 가 db.exec(ASSISTANT_SCHEMA) 다음 줄에서 부른다. 새 DB 는 DDL 에 이미 컬럼이 있다.
+const ADDED_DAILY_PLAN_COLUMNS: { name: string; ddl: string }[] = [
+  { name: 'briefing_instruction', ddl: 'ALTER TABLE daily_plans ADD COLUMN briefing_instruction TEXT' }
+]
+
+export function migrateAssistantSchema(db: {
+  prepare(sql: string): { all(): unknown[] }
+  exec(sql: string): void
+}): void {
+  const rows = db.prepare('PRAGMA table_info(daily_plans)').all() as { name: string }[]
+  // 테이블이 없으면 할 일이 없다. ASSISTANT_SCHEMA 가 먼저 만든다.
+  if (rows.length === 0) return
+  const existing = new Set(rows.map((r) => r.name))
+  for (const col of ADDED_DAILY_PLAN_COLUMNS) {
+    if (!existing.has(col.name)) db.exec(col.ddl)
+  }
+}

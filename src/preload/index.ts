@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import type { CommandOp } from '../main/services/assistant-types'
 
 const api = {
   project: {
@@ -303,6 +304,10 @@ const api = {
     setItemStatus: (itemId: number, status: string, note?: string) =>
       ipcRenderer.invoke('assistant:setItemStatus', itemId, status, note),
     focusItem: (itemId: number) => ipcRenderer.invoke('assistant:focusItem', itemId),
+    // 명령 입력 (부록 G.9). 조작 형식 검증은 서비스가 한다
+    interpretCommand: (text: string, scopeItemId?: number) =>
+      ipcRenderer.invoke('assistant:interpretCommand', text, scopeItemId),
+    applyCommand: (ops: CommandOp[], text: string) => ipcRenderer.invoke('assistant:applyCommand', ops, text),
     getSettings: () => ipcRenderer.invoke('assistant:getSettings'),
     saveSettings: (patch: Record<string, unknown>) => ipcRenderer.invoke('assistant:saveSettings', patch),
     takePendingNavigate: () => ipcRenderer.invoke('assistant:takePendingNavigate'),

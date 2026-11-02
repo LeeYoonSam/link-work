@@ -15,7 +15,7 @@ const plan = (over: Partial<DailyPlan> = {}): DailyPlan => ({
   source_snapshot: null,
   briefing_text: null, briefing_source: null, briefing_model: null, briefing_error: null, briefing_at: null,
   recovery_text: null, recovery_source: null, recovery_at: null,
-  wrapup_note: null, wrapup_at: null, last_refresh_at: null,
+  wrapup_note: null, wrapup_at: null, last_refresh_at: null, briefing_instruction: null,
   created_at: '2026-11-02 09:40:12', updated_at: '2026-11-02 09:40:12',
   ...over
 })

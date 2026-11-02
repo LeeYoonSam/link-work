@@ -73,15 +73,22 @@ vi.mock('./assistant-briefing', async (importOriginal) => {
   return { ...actual, requestLlmBriefing: briefing.requestLlmBriefing, requestLlmRecovery: briefing.requestLlmRecovery }
 })
 
+// 명령 LLM 은 픽스처로 답한다. assistant-command.ts 는 실제 구현을 쓴다 (G.11.5)
+const commandLlm = vi.hoisted(() => ({ requestLlmCommand: vi.fn() }))
+vi.mock('./assistant-command-llm', () => commandLlm)
+
 import { closeDatabase, getDatabase, initDatabase } from '../db/database'
 import {
   acceptSuggestion,
+  applyCommand,
   closeDay,
+  dismissSuggestion,
   focusItem,
   generateRecovery,
   getRecoveryState,
   getSourceCheckTimes,
   getToday,
+  interpretCommand,
   refreshBriefing,
   runAutoRefresh,
   runRefresh,
@@ -91,11 +98,12 @@ import {
   startDay,
   waitForAssistantBackground
 } from './assistant-service'
-import { getPlanByDate } from './assistant-store'
+import { getPlanByDate, listPlanItems } from './assistant-store'
 import type {
   AssistantChangedEvent,
   CalendarRef,
   Candidate,
+  CommandOp,
   PlanItem,
   RecoveryContext,
   RecoveryInput,
@@ -934,5 +942,359 @@ describe('수동 맥락 복구 generateRecovery (F.2)', () => {
     await waitForAssistantBackground()
     expect((await getToday(MON_0940)).recovery.error).toBe('수집 폭발')
     expect((await getToday(TUE_1000)).recovery).toEqual({ inFlight: false, error: null })
+  })
+})
+
+describe('명령 입력 (부록 G)', () => {
+  const MON_1105 = new Date(2026, 10, 2, 11, 5, 0)
+  const keyed = (): Candidate[] => [
+    candidate(1, { jiraKey: 'PROJ-1', dueDate: '2026-11-02' }),
+    candidate(2, { jiraKey: 'PROJ-2' })
+  ]
+
+  // LLM 없이 하루를 시작한다. 명령 테스트는 그 뒤 헤드리스 가용 여부를 정한다
+  async function startKeyed(): Promise<PlanItem[]> {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    sources.collectSources.mockResolvedValue(collected(keyed()))
+    const started = await startDay(MON_0940)
+    return started.items
+  }
+
+  function itemOf(items: PlanItem[], candidateId: string): PlanItem {
+    const found = items.find((i) => i.candidate_id === candidateId)
+    if (!found) throw new Error(`no item ${candidateId}`)
+    return found
+  }
+
+  function countRows(table: string): number {
+    return (getDatabase().prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n
+  }
+
+  function planItemsNow(): PlanItem[] {
+    const plan = getPlanByDate(getDatabase(), '2026-11-02')
+    return plan ? listPlanItems(getDatabase(), plan.id) : []
+  }
+
+  it('A34: interpretCommand 는 plan_items·assistant_events·daily_plans 를 쓰지 않는다', async () => {
+    await startKeyed()
+    const beforeItems = planItemsNow()
+    const beforeEvents = countRows('assistant_events')
+    const beforePlan = getPlanByDate(getDatabase(), '2026-11-02')
+
+    const r = await interpretCommand('PROJ-1 끝났어', undefined, MON_1100)
+    expect(r.source).toBe('rules')
+    expect(r.ops).toHaveLength(1)
+    expect(r.ops[0].op).toMatchObject({ kind: 'set_status', status: 'done' })
+    expect(r.ops[0].executable).toBe(true)
+
+    expect(planItemsNow()).toEqual(beforeItems)
+    expect(countRows('assistant_events')).toBe(beforeEvents)
+    expect(getPlanByDate(getDatabase(), '2026-11-02')).toEqual(beforePlan)
+  })
+
+  it('A34·A40: unsupported 조작은 적용에서 실행하지 않고 ok:false 로 남긴다', async () => {
+    const items = await startKeyed()
+    const before = planItemsNow()
+    const out = await applyCommand(
+      [{ kind: 'unsupported', reason: '캘린더에서 바꿔 주세요.' }],
+      '3시 회의 취소됐어',
+      MON_1100
+    )
+    expect(out.results).toEqual([
+      {
+        op: { kind: 'unsupported', reason: '캘린더에서 바꿔 주세요.' },
+        label: '지원하지 않음: 캘린더에서 바꿔 주세요.',
+        ok: false,
+        error: '지원하지 않는 조작입니다.'
+      }
+    ])
+    expect(out.applied).toBe(0)
+    expect(out.failed).toBe(1)
+    expect(planItemsNow()).toEqual(before)
+    expect(items.length).toBeGreaterThan(0)
+  })
+
+  it('A36: LLM 이 실패하면 규칙 해석으로 폴백하고 source rules 와 error 를 돌려준다', async () => {
+    await startKeyed()
+    headless.isHeadlessAvailable.mockReturnValue(true)
+    commandLlm.requestLlmCommand.mockResolvedValue({ ok: false, error: '명령 해석 시간이 초과했습니다.' })
+
+    const r = await interpretCommand('  PROJ-1   끝났어 ', undefined, MON_1100)
+    expect(commandLlm.requestLlmCommand).toHaveBeenCalledTimes(1)
+    const [input, model] = commandLlm.requestLlmCommand.mock.calls[0] as [{ text: string; ctx: { items: unknown[] } }, string]
+    expect(input.text).toBe('PROJ-1 끝났어')
+    expect(input.ctx.items).toHaveLength(2)
+    expect(model).toBe('sonnet')
+    expect(r.text).toBe('PROJ-1 끝났어')
+    expect(r.source).toBe('rules')
+    expect(r.error).toBe('명령 해석 시간이 초과했습니다.')
+    expect(r.ops[0].op).toMatchObject({ kind: 'set_status', status: 'done' })
+  })
+
+  it('A36: llmEnabled 가 false 면 requestLlmCommand 를 부르지 않는다. error 는 null 이다', async () => {
+    await startKeyed()
+    saveSettings({ llmEnabled: false })
+    headless.isHeadlessAvailable.mockReturnValue(true)
+
+    const r = await interpretCommand('PROJ-2 내일 할게', undefined, MON_1100)
+    expect(commandLlm.requestLlmCommand).not.toHaveBeenCalled()
+    expect(r.source).toBe('rules')
+    expect(r.error).toBeNull()
+    expect(r.ops[0].op).toMatchObject({ kind: 'set_status', status: 'deferred' })
+  })
+
+  it('A35·A36: LLM 출력은 normalizeCommandOps 를 거친다. 계획에 없는 itemId 는 dropped 로 센다', async () => {
+    const items = await startKeyed()
+    const item2 = itemOf(items, 'todo:2')
+    headless.isHeadlessAvailable.mockReturnValue(true)
+    commandLlm.requestLlmCommand.mockResolvedValue({
+      ok: true,
+      model: 'claude-sonnet-5-5',
+      raw: [
+        { kind: 'set_status', itemId: 99999, status: 'done', note: null },
+        { kind: 'focus', itemId: item2.id },
+        { kind: 'focus', itemId: String(item2.id) }
+      ]
+    })
+
+    const r = await interpretCommand('결제 작업에 집중할래', undefined, MON_1100)
+    expect(r.source).toBe('llm')
+    expect(r.error).toBeNull()
+    expect(r.ops.map((o) => o.op)).toEqual([{ kind: 'focus', itemId: item2.id }])
+    expect(r.dropped).toBe(2)
+  })
+
+  it('A32·A36: 명령 LLM 은 llmSerialized 줄에서 앞 브리핑 LLM 이 끝난 뒤 실행된다', async () => {
+    await startKeyed()
+    headless.isHeadlessAvailable.mockReturnValue(true)
+    let release: (v: unknown) => void = () => undefined
+    briefing.requestLlmBriefing.mockImplementation(() => new Promise((r) => (release = r)))
+    commandLlm.requestLlmCommand.mockResolvedValue({ ok: true, model: 'm', raw: [] })
+
+    const briefingRun = refreshBriefing(MON_1100)
+    const interpreting = interpretCommand('PROJ-1 끝났어', undefined, MON_1100)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(commandLlm.requestLlmCommand).not.toHaveBeenCalled()
+
+    release({ ok: false, error: 'x' })
+    await briefingRun
+    const r = await interpreting
+    expect(commandLlm.requestLlmCommand).toHaveBeenCalledTimes(1)
+    expect(r.source).toBe('llm')
+    expect(r.ops).toEqual([])
+  })
+
+  it('scope 모드는 범위 항목 1개만 규칙 답장 해석으로 다룬다', async () => {
+    const items = await startKeyed()
+    const item1 = itemOf(items, 'todo:1')
+    const r = await interpretCommand('반쯤 했어', item1.id, MON_1100)
+    expect(r.scopeItemId).toBe(item1.id)
+    expect(r.ops.map((o) => o.op)).toEqual([
+      { kind: 'set_status', itemId: item1.id, status: 'in_progress', note: '반쯤 했어' }
+    ])
+    expect(sources.collectSources).toHaveBeenCalledTimes(1)
+  })
+
+  it('입력 검증: 빈 문장·잘못된 scopeItemId·근무 중이 아님은 throw 한다', async () => {
+    await expect(interpretCommand('PROJ-1 끝', undefined, MON_1100)).rejects.toThrow('근무 중')
+    await startKeyed()
+    await expect(interpretCommand('   ', undefined, MON_1100)).rejects.toThrow()
+    await expect(interpretCommand('x'.repeat(501), undefined, MON_1100)).rejects.toThrow()
+    await expect(interpretCommand('완료', 0, MON_1100)).rejects.toThrow('범위 항목')
+    await expect(interpretCommand('완료', '3', MON_1100)).rejects.toThrow('범위 항목')
+    await expect(interpretCommand('완료', 99999, MON_1100)).rejects.toThrow('오늘 계획의 항목')
+  })
+
+  it('applyCommand 는 형식이 틀리거나 10개를 넘는 ops 를 거부한다', async () => {
+    const items = await startKeyed()
+    const id = itemOf(items, 'todo:1').id
+    await expect(applyCommand([{ kind: 'set_status', itemId: String(id), status: 'done', note: null }], '끝', MON_1100))
+      .rejects.toThrow('조작 형식')
+    const many: CommandOp[] = Array.from({ length: 11 }, () => ({ kind: 'focus', itemId: id }))
+    await expect(applyCommand(many, '많이', MON_1100)).rejects.toThrow('조작 형식')
+    await expect(applyCommand('nope', '끝', MON_1100)).rejects.toThrow('조작 형식')
+    expect(countRows('assistant_events')).toBe(0)
+  })
+
+  it('A35: 해석 뒤 바뀌거나 계획에 없는 항목의 조작은 적용에서 실패로 기록한다', async () => {
+    await startKeyed()
+    sources.collectSources.mockResolvedValue(collected([...keyed(), candidate(3, { jiraKey: 'PROJ-3' })]))
+    const refreshed = await runRefresh('local', MON_1100)
+    const suggested = itemOf(refreshed?.items ?? [], 'todo:3')
+    expect(suggested.status).toBe('suggested')
+
+    const interp = await interpretCommand('PROJ-3 넣어줘', undefined, MON_1100)
+    expect(interp.ops.map((o) => o.op)).toEqual([{ kind: 'accept_suggestion', itemId: suggested.id }])
+
+    // 해석과 적용 사이에 사용자가 제안을 무시한다
+    await dismissSuggestion(suggested.id, MON_1105)
+    const ops: CommandOp[] = [...interp.ops.map((o) => o.op), { kind: 'set_status', itemId: 99999, status: 'done', note: null }]
+    const out = await applyCommand(ops, interp.text, MON_1105)
+    expect(out.results.map((r) => [r.ok, r.error])).toEqual([
+      [false, '제안 항목이 아닙니다.'],
+      [false, '오늘 계획의 항목이 아닙니다.']
+    ])
+    expect(out.applied).toBe(0)
+    expect(out.failed).toBe(2)
+    expect(out.today.items.find((i) => i.id === suggested.id)?.status).toBe('dismissed')
+  })
+
+  it("A37: add_manual 은 plan_items 에 source='manual' 1행만 넣고 todos·tasks 행 수는 그대로다", async () => {
+    await startKeyed()
+    const plan = getPlanByDate(getDatabase(), '2026-11-02')!
+    const todosBefore = countRows('todos')
+    const tasksBefore = countRows('tasks')
+    const itemsBefore = planItemsNow().length
+
+    const out = await applyCommand(
+      [{ kind: 'add_manual', title: '  견적서   보내기 ', dueDate: '2026-11-03' }],
+      '내일까지 견적서 보내기 추가',
+      MON_1100
+    )
+    expect(out.results).toHaveLength(1)
+    expect(out.results[0]).toMatchObject({ ok: true, error: null, label: "'견적서 보내기' 임시 항목으로 추가 · 마감 2026-11-03" })
+    const manual = out.today.items.filter((i) => i.source === 'manual')
+    expect(manual).toHaveLength(1)
+    expect(manual[0]).toMatchObject({
+      candidate_id: `manual:${plan.id}:1`,
+      title: '견적서 보내기',
+      link: null,
+      jira_issue_key: null,
+      project_id: null,
+      due_date: '2026-11-03',
+      added_by: 'user',
+      status: 'planned'
+    })
+    // 삽입 뒤 applyRerank 가 rank 를 매긴다
+    expect(manual[0].rank).not.toBeNull()
+    expect(planItemsNow()).toHaveLength(itemsBefore + 1)
+    expect(countRows('todos')).toBe(todosBefore)
+    expect(countRows('tasks')).toBe(tasksBefore)
+
+    const again = await applyCommand([{ kind: 'add_manual', title: '회의록 정리', dueDate: null }], '회의록 정리 추가', MON_1105)
+    expect(again.today.items.filter((i) => i.source === 'manual').map((i) => i.candidate_id).sort()).toEqual([
+      `manual:${plan.id}:1`,
+      `manual:${plan.id}:2`
+    ])
+  })
+
+  it('A37·G.3.3: 적용은 공백 정리 뒤 길이 상한을 다시 적용한다. 120자 초과 제목은 실패, note 는 200자로 자른다', async () => {
+    const items = await startKeyed()
+    const item1 = itemOf(items, 'todo:1')
+    const itemsBefore = planItemsNow().length
+
+    const out = await applyCommand(
+      [
+        { kind: 'add_manual', title: '가'.repeat(121), dueDate: null },
+        { kind: 'add_manual', title: `  ${'나'.repeat(60)}     ${'다'.repeat(59)}  `, dueDate: null },
+        { kind: 'set_status', itemId: item1.id, status: 'in_progress', note: `  ${'메'.repeat(250)}  ` }
+      ],
+      '긴 항목 추가',
+      MON_1100
+    )
+    expect(out.results.map((r) => r.ok)).toEqual([false, true, true])
+    expect(out.results[0].error).toContain('120자')
+    // 공백 정리 뒤 120자인 제목은 들어간다
+    const manual = out.today.items.filter((i) => i.source === 'manual')
+    expect(manual.map((i) => i.title)).toEqual([`${'나'.repeat(60)} ${'다'.repeat(59)}`])
+    expect(planItemsNow()).toHaveLength(itemsBefore + 1)
+    expect(out.today.items.find((i) => i.id === item1.id)?.status_note).toBe('메'.repeat(200))
+  })
+
+  it('A39: 2번째 조작이 실패해도 3번째 조작을 실행한다. 공개 함수 줄에서 교착하지 않는다', async () => {
+    const items = await startKeyed()
+    const item1 = itemOf(items, 'todo:1')
+    const item2 = itemOf(items, 'todo:2')
+
+    const out = await applyCommand(
+      [
+        { kind: 'set_status', itemId: item1.id, status: 'done', note: null },
+        { kind: 'set_status', itemId: 99999, status: 'done', note: null },
+        { kind: 'focus', itemId: item2.id }
+      ],
+      'PROJ-1 끝, 결제 집중',
+      MON_1100
+    )
+    expect(out.results.map((r) => r.ok)).toEqual([true, false, true])
+    expect(out.applied).toBe(2)
+    expect(out.failed).toBe(1)
+    expect(out.today.items.find((i) => i.id === item1.id)?.status).toBe('done')
+    const focused = out.today.items.find((i) => i.id === item2.id)
+    expect(focused).toMatchObject({ status: 'in_progress', rank: 1 })
+
+    // 같은 쓰기 줄의 다음 공개 함수도 끝난다
+    const after = await setItemStatus(item2.id, 'done', null, MON_1105)
+    expect(after.items.find((i) => i.id === item2.id)?.status).toBe('done')
+  })
+
+  it("A39: 적용은 command 이벤트 1건을 logged 로 기록하고 reason 'command' 를 보낸다. 같은 초는 접미어로 나눈다", async () => {
+    const items = await startKeyed()
+    const item1 = itemOf(items, 'todo:1')
+    changed.length = 0
+
+    const out = await applyCommand(
+      [
+        { kind: 'set_status', itemId: item1.id, status: 'deferred', note: '자료 대기' },
+        { kind: 'unsupported', reason: 'Jira 에서 바꿔 주세요.' }
+      ],
+      'PROJ-1 미뤄',
+      MON_1100
+    )
+    const commands = out.today.events.filter((e) => e.kind === 'command')
+    expect(commands).toHaveLength(1)
+    expect(commands[0]).toMatchObject({
+      event_key: 'command:2026-11-02:2026-11-02 11:00:00',
+      fired_at: '2026-11-02 11:00:00',
+      status: 'logged',
+      ref_id: null,
+      plan_date: '2026-11-02'
+    })
+    expect(JSON.parse(commands[0].payload ?? '{}')).toEqual({
+      text: 'PROJ-1 미뤄',
+      applied: 1,
+      failed: 1,
+      results: [
+        { kind: 'set_status', label: `'할 일 1' 미룸 · 메모: 자료 대기`, ok: true, error: null },
+        { kind: 'unsupported', label: '지원하지 않음: Jira 에서 바꿔 주세요.', ok: false, error: '지원하지 않는 조작입니다.' }
+      ]
+    })
+    expect(changed).toContainEqual({ date: '2026-11-02', reason: 'command' })
+
+    const second = await applyCommand([], '아무것도', MON_1100)
+    const keys = second.today.events.filter((e) => e.kind === 'command').map((e) => e.event_key).sort()
+    expect(keys).toEqual(['command:2026-11-02:2026-11-02 11:00:00', 'command:2026-11-02:2026-11-02 11:00:00:1'])
+  })
+
+  it('A38·G.7.4: regenerate_briefing 은 지시를 저장하고 규칙 브리핑에 방침을 넣은 뒤 LLM 브리핑을 백그라운드로 만든다', async () => {
+    await startKeyed()
+    headless.isHeadlessAvailable.mockReturnValue(true)
+    briefing.requestLlmBriefing.mockResolvedValue({ ok: true, markdown: '# AI 브리핑', model: 'claude-sonnet-5-5' })
+
+    const out = await applyCommand(
+      [{ kind: 'regenerate_briefing', instruction: '배포 준비 위주로' }],
+      '오늘은 배포 준비 위주로 정리해줘',
+      MON_1100
+    )
+    expect(out.results[0]).toMatchObject({ ok: true, error: null })
+    expect(out.today.plan?.briefing_instruction).toBe('배포 준비 위주로')
+    // 적용 응답은 LLM 을 기다리지 않는다. 규칙 브리핑이 먼저다
+    expect(out.today.plan?.briefing_source).toBe('rules')
+    expect(out.today.plan?.briefing_text).toContain('오늘 방침')
+    expect(out.today.plan?.briefing_text).toContain('배포 준비 위주로')
+
+    await waitForAssistantBackground()
+    const input = briefing.requestLlmBriefing.mock.calls[0][0] as { instruction: string | null }
+    expect(input.instruction).toBe('배포 준비 위주로')
+    expect((await getToday(MON_1105)).plan?.briefing_source).toBe('llm')
+    expect(changed).toContainEqual({ date: '2026-11-02', reason: 'briefing' })
+
+    // instruction 이 null 이면 기존 지시를 유지한다. 수동 다시 생성도 저장된 지시를 쓴다
+    await applyCommand([{ kind: 'regenerate_briefing', instruction: null }], '브리핑 다시 만들어줘', MON_1105)
+    await waitForAssistantBackground()
+    expect(getPlanByDate(getDatabase(), '2026-11-02')?.briefing_instruction).toBe('배포 준비 위주로')
+    briefing.requestLlmBriefing.mockClear()
+    await refreshBriefing(MON_1105)
+    const manual = briefing.requestLlmBriefing.mock.calls[0][0] as { instruction: string | null }
+    expect(manual.instruction).toBe('배포 준비 위주로')
   })
 })

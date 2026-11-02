@@ -2,12 +2,14 @@ import { ipcMain } from 'electron'
 import {
   acceptSuggestion,
   addItem,
+  applyCommand,
   closeDay,
   dismissSuggestion,
   focusItem,
   generateRecovery,
   getSettings,
   getToday,
+  interpretCommand,
   listCandidates,
   refreshBriefing,
   reopenDay,
@@ -83,6 +85,16 @@ export function registerAssistantIpc(): void {
 
   ipcMain.handle('assistant:focusItem', (_e, itemId: number) =>
     wrap(async () => ({ today: await focusItem(itemId) }))
+  )
+
+  // 명령 입력 (부록 G.9). 해석은 DB 를 쓰지 않는다. 적용은 사용자가 미리보기에서 확인한 조작만 받는다 (A34)
+  ipcMain.handle('assistant:interpretCommand', (_e, text: unknown, scopeItemId?: unknown) =>
+    wrap(async () => ({ interpretation: await interpretCommand(text, scopeItemId) }))
+  )
+
+  // { today, results, applied, failed }
+  ipcMain.handle('assistant:applyCommand', (_e, ops: unknown, text: unknown) =>
+    wrap(async () => await applyCommand(ops, text))
   )
 
   ipcMain.handle('assistant:getSettings', () => getSettings())

@@ -53,7 +53,7 @@ vi.mock('electron', () => ({
 
 import Database from 'better-sqlite3'
 import { closeDatabase, getDatabase, initDatabase } from '../db/database'
-import { ASSISTANT_SCHEMA } from './assistant-schema'
+import { ASSISTANT_SCHEMA, migrateAssistantSchema } from './assistant-schema'
 
 function names(db: Database.Database, type: 'table' | 'index'): string[] {
   return (
@@ -134,6 +134,62 @@ describe('ASSISTANT_SCHEMA', () => {
   })
 })
 
+// briefing_instruction 컬럼이 없던 MVP3 시점 DDL 이다 (부록 G.7.1)
+const OLD_SCHEMA = ASSISTANT_SCHEMA.replace('    briefing_instruction TEXT,\n', '')
+
+describe('migrateAssistantSchema', () => {
+  it('새 DDL 의 daily_plans 에 briefing_instruction 컬럼이 있다', () => {
+    const db = new Database(':memory:')
+    db.exec(ASSISTANT_SCHEMA)
+    expect(columns(db, 'daily_plans')).toContain('briefing_instruction')
+    db.close()
+  })
+
+  it('migrateAssistantSchema 는 옛 DDL 의 daily_plans 에 briefing_instruction 을 더하고 기존 행을 지킨다', () => {
+    expect(OLD_SCHEMA).not.toBe(ASSISTANT_SCHEMA)
+    const db = new Database(':memory:')
+    db.exec(OLD_SCHEMA)
+    expect(columns(db, 'daily_plans')).not.toContain('briefing_instruction')
+    db.prepare(
+      "INSERT INTO daily_plans (plan_date, started_at, briefing_text) VALUES ('2026-11-01', '2026-11-01 09:00:00', '본문')"
+    ).run()
+
+    migrateAssistantSchema(db)
+
+    expect(columns(db, 'daily_plans')).toContain('briefing_instruction')
+    expect(
+      db.prepare('SELECT briefing_text, briefing_instruction FROM daily_plans WHERE plan_date = ?').get('2026-11-01')
+    ).toEqual({ briefing_text: '본문', briefing_instruction: null })
+    db.close()
+  })
+
+  it('migrateAssistantSchema 를 2회 실행해도 오류가 없고 컬럼 목록이 같다 (멱등성)', () => {
+    const db = new Database(':memory:')
+    db.exec(OLD_SCHEMA)
+    migrateAssistantSchema(db)
+    const once = columns(db, 'daily_plans')
+    expect(() => migrateAssistantSchema(db)).not.toThrow()
+    expect(columns(db, 'daily_plans')).toEqual(once)
+    expect(once.filter((c) => c === 'briefing_instruction')).toHaveLength(1)
+
+    // 새 DDL 로 만든 DB 에서도 바꾸지 않는다
+    const fresh = new Database(':memory:')
+    fresh.exec(ASSISTANT_SCHEMA)
+    const before = columns(fresh, 'daily_plans')
+    migrateAssistantSchema(fresh)
+    expect(columns(fresh, 'daily_plans')).toEqual(before)
+    db.close()
+    fresh.close()
+  })
+
+  it('migrateAssistantSchema 는 daily_plans 가 없으면 아무것도 하지 않는다', () => {
+    const db = new Database(':memory:')
+    expect(() => migrateAssistantSchema(db)).not.toThrow()
+    expect(names(db, 'table')).not.toContain('daily_plans')
+    db.close()
+  })
+})
+
 describe('initDatabase', () => {
   afterAll(() => closeDatabase())
 
@@ -144,5 +200,7 @@ describe('initDatabase', () => {
       expect.arrayContaining(['daily_plans', 'plan_items', 'assistant_events', 'app_settings'])
     )
     expect(names(db, 'index')).toContain('idx_daily_plans_one_active')
+    // database.ts 가 ASSISTANT_SCHEMA 다음에 migrateAssistantSchema 를 부른다
+    expect(columns(db, 'daily_plans')).toContain('briefing_instruction')
   })
 })

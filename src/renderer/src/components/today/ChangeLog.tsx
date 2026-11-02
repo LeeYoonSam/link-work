@@ -64,19 +64,46 @@ export function describePlanUpdate(ev: Pick<AssistantEvent, 'scheduled_at' | 'fi
   return `${time} ${body}${notified}`.trim()
 }
 
+// 이벤트를 시각 순으로 정렬한다. 시각이 같으면 id 순이다
+const byTime = (a: AssistantEvent, b: AssistantEvent): number => {
+  const ta = a.fired_at ?? a.scheduled_at
+  const tb = b.fired_at ?? b.scheduled_at
+  return ta < tb ? -1 : ta > tb ? 1 : a.id - b.id
+}
+
 // 변경 기록 행만 고른다. 알림 행은 ref_id 가 있다 (부록 E.3.3)
 export function planUpdateEvents(events: AssistantEvent[]): AssistantEvent[] {
-  return events
-    .filter((e) => e.kind === 'plan_update' && e.ref_id === null)
-    .sort((a, b) => {
-      const ta = a.fired_at ?? a.scheduled_at
-      const tb = b.fired_at ?? b.scheduled_at
-      return ta < tb ? -1 : ta > tb ? 1 : a.id - b.id
-    })
+  return events.filter((e) => e.kind === 'plan_update' && e.ref_id === null).sort(byTime)
+}
+
+// 명령 적용 기록 행만 시각 순으로 고른다 (부록 G.10.4)
+export function commandEvents(events: AssistantEvent[]): AssistantEvent[] {
+  return events.filter((e) => e.kind === 'command').sort(byTime)
+}
+
+const COMMAND_TEXT_SHOWN = 30
+
+// command 이벤트 1건을 문장으로 바꾼다. 예: "10:42 명령 'PROJ-12 끝났어' · 1건 적용"
+export function describeCommand(ev: Pick<AssistantEvent, 'scheduled_at' | 'fired_at' | 'payload'>): string {
+  const time = hhmmOf(ev.fired_at ?? ev.scheduled_at)
+  let obj: Record<string, unknown> = {}
+  try {
+    const raw = ev.payload ? (JSON.parse(ev.payload) as unknown) : null
+    if (raw && typeof raw === 'object') obj = raw as Record<string, unknown>
+  } catch {
+    // payload 가 깨졌으면 건수 0 으로 보인다
+  }
+  const text = typeof obj.text === 'string' ? obj.text : ''
+  const shown =
+    text.length > COMMAND_TEXT_SHOWN ? `${text.slice(0, COMMAND_TEXT_SHOWN)}…` : text
+  const failed = n(obj.failed)
+  const tail = failed > 0 ? ` · ${failed}건 실패` : ''
+  return `${time} 명령 '${shown}' · ${n(obj.applied)}건 적용${tail}`.trim()
 }
 
 export default function ChangeLog({ events }: { events: AssistantEvent[] }): React.ReactNode {
-  const list = planUpdateEvents(events)
+  // 최신화 기록과 명령 기록을 시각 순으로 합친다
+  const list = [...planUpdateEvents(events), ...commandEvents(events)].sort(byTime)
   if (list.length === 0) return null
   return (
     <Card padding="sm">
@@ -84,7 +111,7 @@ export default function ChangeLog({ events }: { events: AssistantEvent[] }): Rea
       <ul className="space-y-1">
         {list.map((ev) => (
           <li key={ev.id} className="text-xs text-gray-600 tabular-nums">
-            {describePlanUpdate(ev)}
+            {ev.kind === 'command' ? describeCommand(ev) : describePlanUpdate(ev)}
           </li>
         ))}
       </ul>

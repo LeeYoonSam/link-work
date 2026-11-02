@@ -10,6 +10,7 @@ import PlanItemRow, { freeTimeLabel, isActiveItem } from './PlanItemRow'
 import Timeline from './Timeline'
 import ChangeLog from './ChangeLog'
 import CandidatePicker from './CandidatePicker'
+import CommandInput from './CommandInput'
 import AssistantSettingsModal from './AssistantSettingsModal'
 
 // '오늘 할 일' 순서 목록. 제안·무시 항목은 뺀다.
@@ -184,6 +185,13 @@ export default function TodayView(): React.ReactNode {
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {/* 명령 입력은 근무 중에만 보인다. 닫힌 날은 interpretCommand 가 거절한다 (부록 G.10.1) */}
+      {plan?.status === 'active' ? (
+        <Card padding="sm">
+          <CommandInput />
+        </Card>
       ) : null}
 
       {plan ? (

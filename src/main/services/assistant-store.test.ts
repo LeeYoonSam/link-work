@@ -48,7 +48,7 @@ vi.mock('better-sqlite3', async () => {
 })
 
 import Database from 'better-sqlite3'
-import { ASSISTANT_SCHEMA } from './assistant-schema'
+import { ASSISTANT_SCHEMA, migrateAssistantSchema } from './assistant-schema'
 import { DEFAULT_ASSISTANT_SETTINGS } from './assistant-settings'
 import {
   applyRefreshPlan,
@@ -69,6 +69,7 @@ import {
   saveWrapupNote,
   setBriefing,
   setBriefingError,
+  setBriefingInstruction,
   setRecovery,
   updateEventStatus,
   updatePlanItems,
@@ -144,6 +145,8 @@ beforeEach(() => {
   db = new Database(':memory:')
   db.exec(`CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT DEFAULT (datetime('now')))`)
   db.exec(ASSISTANT_SCHEMA)
+  // database.ts 와 같은 순서다. 옛 DB 에서만 컬럼을 더한다 (부록 G.16 위험 13)
+  migrateAssistantSchema(db)
 })
 
 function startPlan(date = '2026-11-02', items: NewPlanItem[] = [item('todo:1')]) {
@@ -585,6 +588,50 @@ describe('브리핑', () => {
     expect(p?.briefing_source).toBe('llm')
     expect(p?.briefing_model).toBe('claude-sonnet-5-5')
     expect(p?.briefing_error).toBeNull()
+  })
+})
+
+describe('브리핑 지시 저장 (부록 G.7.1)', () => {
+  it('새 계획의 briefing_instruction 은 null 이다', () => {
+    startPlan()
+    expect(getPlanByDate(db, '2026-11-02')?.briefing_instruction).toBeNull()
+  })
+
+  it('setBriefingInstruction 은 briefing_instruction 과 updated_at 만 쓰고 브리핑 본문은 건드리지 않는다', () => {
+    const plan = startPlan()
+    setBriefing(db, plan.id, { text: '규칙 본문', source: 'rules', model: null, at: '2026-11-02 09:41:00' })
+    setBriefingInstruction(db, plan.id, '배포 준비 위주', '2026-11-02 10:00:00')
+    let p = getPlanByDate(db, '2026-11-02')
+    expect(p?.briefing_instruction).toBe('배포 준비 위주')
+    expect(p?.updated_at).toBe('2026-11-02 10:00:00')
+    expect(p?.briefing_text).toBe('규칙 본문')
+    expect(p?.briefing_at).toBe('2026-11-02 09:41:00')
+    expect(getActivePlan(db)?.briefing_instruction).toBe('배포 준비 위주')
+    expect(getLastPlanBefore(db, '2026-11-03')?.briefing_instruction).toBe('배포 준비 위주')
+
+    setBriefingInstruction(db, plan.id, null, '2026-11-02 10:05:00')
+    p = getPlanByDate(db, '2026-11-02')
+    expect(p?.briefing_instruction).toBeNull()
+    expect(p?.updated_at).toBe('2026-11-02 10:05:00')
+  })
+
+  it('A12: setBriefingInstruction 은 로컬 형식이 아닌 at 을 거부한다', () => {
+    const plan = startPlan()
+    expect(() => setBriefingInstruction(db, plan.id, '방침', '2026-11-02T10:00:00Z')).toThrow()
+    expect(getPlanByDate(db, '2026-11-02')?.briefing_instruction).toBeNull()
+  })
+
+  it('옛 DDL 에 migrateAssistantSchema 를 실행한 DB 에서도 저장·조회한다', () => {
+    const old = new Database(':memory:')
+    old.exec(ASSISTANT_SCHEMA.replace('    briefing_instruction TEXT,\n', ''))
+    migrateAssistantSchema(old)
+    const plan = createPlan(old, {
+      plan_date: '2026-11-02', started_at: '2026-11-02 09:40:00', source_snapshot: SNAPSHOT, items: []
+    })
+    expect(plan.briefing_instruction).toBeNull()
+    setBriefingInstruction(old, plan.id, '리뷰 먼저', '2026-11-02 10:00:00')
+    expect(getPlanByDate(old, '2026-11-02')?.briefing_instruction).toBe('리뷰 먼저')
+    old.close()
   })
 })
 

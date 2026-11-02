@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
 import { RECOGNITION_AIDS_SCHEMA } from '../services/recognition-aids'
-import { ASSISTANT_SCHEMA } from '../services/assistant-schema'
+import { ASSISTANT_SCHEMA, migrateAssistantSchema } from '../services/assistant-schema'
 
 let db: Database.Database | null = null
 let aiReadOnlyDb: Database.Database | null = null
@@ -436,6 +436,7 @@ export function initDatabase(): void {
   db.exec(RECOGNITION_AIDS_SCHEMA)
   // 비서 테이블(daily_plans·plan_items·assistant_events). 정의는 services/assistant-schema.ts.
   db.exec(ASSISTANT_SCHEMA)
+  migrateAssistantSchema(db)
 
   // Migrations for existing databases
   const memoColumns = db.prepare("PRAGMA table_info(memos)").all() as { name: string }[]

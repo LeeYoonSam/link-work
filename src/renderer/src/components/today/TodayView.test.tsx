@@ -45,6 +45,7 @@ const plan = (over: Partial<DailyPlan> = {}): DailyPlan => ({
   briefing_model: null,
   briefing_error: null,
   briefing_at: '2026-11-02 09:40:05',
+  briefing_instruction: null,
   recovery_text: null,
   recovery_source: null,
   recovery_at: null,
@@ -149,6 +150,14 @@ vi.mock('../../stores/assistantStore', async (importOriginal) => ({
     candidatesLoading: false,
     candidatesError: '',
     focus: null,
+    command: null,
+    commandPhase: 'idle',
+    commandError: '',
+    commandResult: null,
+    commandScope: null,
+    interpretCommand: async () => {},
+    applyCommand: async () => true,
+    clearCommand: () => {},
     load: async () => {},
     startDay: async () => {},
     closeDay: async () => {},
@@ -176,7 +185,7 @@ const TodayView = (await import('./TodayView')).default
 const { orderPlanItems, todayNotices, unplacedDeadlineItems, focusTargetId } = await import('./TodayView')
 const { dayCountLabel, dueLabel, durationLabel, freeTimeLabel } = await import('./PlanItemRow')
 const { blockItemMeta } = await import('./Timeline')
-const { describePlanUpdate, planUpdateEvents } = await import('./ChangeLog')
+const { describePlanUpdate, planUpdateEvents, commandEvents, describeCommand } = await import('./ChangeLog')
 const { sortSuggestions } = await import('./InboxSection')
 const { candidatesNotInPlan } = await import('./CandidatePicker')
 const { originTarget } = await import('../../stores/assistantStore')
@@ -385,6 +394,24 @@ describe('TodayView 상태별 렌더링', () => {
     expect(html).not.toContain('후보 더 보기')
   })
 
+  // 부록 G.10.1 명령 입력창. 근무 중에만 보인다
+  it('명령 입력: 근무 중이면 비서에게 말하기 입력창이 DayHeader 아래, 맥락 복구 위에 있다', () => {
+    state.today = payload({ plan: plan() })
+    const html = render()
+    expect(html).toContain('비서에게 말하기')
+    expect(html.indexOf('비서에게 말하기')).toBeLessThan(html.indexOf('맥락 복구'))
+    expect(html.indexOf('>퇴근</button>')).toBeLessThan(html.indexOf('비서에게 말하기'))
+  })
+
+  it('명령 입력: 계획 없음·닫힘이면 비서에게 말하기 입력창이 없다', () => {
+    state.today = payload({ plan: null })
+    expect(render()).not.toContain('비서에게 말하기')
+    state.today = payload({
+      plan: plan({ status: 'closed', closed_at: '2026-11-02 18:30:00', closed_by: 'button' })
+    })
+    expect(render()).not.toContain('비서에게 말하기')
+  })
+
   it('불러오기 실패: 오류 문구와 다시 시도를 보여 준다', () => {
     state.error = '데이터베이스를 열 수 없습니다'
     const html = render()
@@ -563,6 +590,45 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(describePlanUpdate(event({ id: 4, payload: JSON.stringify({ summary: { dropped: 1 } }) }))).toBe(
       '10:42 1건 제외'
     )
+  })
+
+  it('describeCommand: 시각·명령 30자·적용 건수, 실패가 있으면 실패 건수 (부록 G.10.4)', () => {
+    const ok = event({
+      id: 20,
+      kind: 'command',
+      event_key: 'command:2026-11-02:2026-11-02 11:05:00',
+      scheduled_at: '2026-11-02 11:05:00',
+      payload: JSON.stringify({ text: 'PROJ-12 끝났어', applied: 1, failed: 0, results: [] })
+    })
+    expect(describeCommand(ok)).toBe("11:05 명령 'PROJ-12 끝났어' · 1건 적용")
+    const long = event({
+      id: 21,
+      kind: 'command',
+      scheduled_at: '2026-11-02 11:10:00',
+      payload: JSON.stringify({ text: '가'.repeat(40), applied: 2, failed: 1, results: [] })
+    })
+    expect(describeCommand(long)).toBe(`11:10 명령 '${'가'.repeat(30)}…' · 2건 적용 · 1건 실패`)
+    expect(describeCommand(event({ id: 22, kind: 'command', payload: '{깨짐' }))).toBe(
+      "10:42 명령 '' · 0건 적용"
+    )
+  })
+
+  it('commandEvents: command 만 고르고 변경 내역에 plan_update 와 시각 순으로 합친다', () => {
+    const events = [
+      event({ id: 30, kind: 'command', scheduled_at: '2026-11-02 11:00:00', payload: JSON.stringify({ text: '명령 B', applied: 1, failed: 0 }) }),
+      event({ id: 31, scheduled_at: '2026-11-02 10:00:00' }),
+      event({ id: 32, kind: 'command', scheduled_at: '2026-11-02 09:50:00', payload: JSON.stringify({ text: '명령 A', applied: 1, failed: 0 }) }),
+      event({ id: 33, kind: 'checkin', scheduled_at: '2026-11-02 09:00:00' })
+    ]
+    expect(commandEvents(events).map((e) => e.id)).toEqual([32, 30])
+    state.today = payload({ plan: plan(), events })
+    const html = render()
+    const a = html.indexOf("09:50 명령 &#x27;명령 A&#x27;")
+    const mid = html.indexOf('10:00 계획 최신화')
+    const b = html.indexOf("11:00 명령 &#x27;명령 B&#x27;")
+    expect(a).toBeGreaterThan(-1)
+    expect(a).toBeLessThan(mid)
+    expect(mid).toBeLessThan(b)
   })
 
   it('planUpdateEvents: plan_update 만 시각 순으로 고른다', () => {

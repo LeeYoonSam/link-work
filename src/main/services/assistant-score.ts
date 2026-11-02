@@ -42,7 +42,8 @@ export const SOURCE_ORDER: Record<CandidateSource, number> = {
   jira: 0,
   task: 1,
   todo: 2,
-  action_item: 3
+  action_item: 3,
+  manual: 4 // 'manual' 임시 항목은 출처 순서의 마지막이다 (부록 G.6.1)
 }
 
 /** 마감 오름차순. null 은 뒤로 간다. */

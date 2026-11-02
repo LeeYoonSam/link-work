@@ -1,4 +1,4 @@
-export type CandidateSource = 'jira' | 'task' | 'todo' | 'action_item'
+export type CandidateSource = 'jira' | 'task' | 'todo' | 'action_item' | 'manual'
 export type CandidatePriority = 'high' | 'medium' | 'low'
 export type JiraCategory = 'new' | 'indeterminate' | 'done'
 export type AiModelName = 'opus' | 'sonnet' | 'haiku'
@@ -61,6 +61,7 @@ export interface DailyPlan {
   briefing_error: string | null; briefing_at: string | null
   recovery_text: string | null; recovery_source: 'rules' | 'llm' | null; recovery_at: string | null
   wrapup_note: string | null; wrapup_at: string | null; last_refresh_at: string | null
+  briefing_instruction: string | null   // 사용자 브리핑 방침 (부록 G.7)
   created_at: string; updated_at: string
 }
 
@@ -80,7 +81,7 @@ export interface PlanItemUpdate {
     | 'score' | 'rank' | 'slot_start' | 'slot_end' | 'pinned' | 'urgent' | 'status' | 'status_note'>>
 }
 
-export type AssistantEventKind = 'start_nudge' | 'plan_update' | 'checkin' | 'meeting_briefing'
+export type AssistantEventKind = 'start_nudge' | 'plan_update' | 'checkin' | 'meeting_briefing' | 'command'
 export type AssistantEventStatus = 'sent' | 'late' | 'skipped' | 'failed' | 'logged'
 export interface AssistantEvent {
   id: number; event_key: string; kind: AssistantEventKind; plan_date: string; scheduled_at: string
@@ -151,7 +152,7 @@ export interface TodayPayload {
   lastErrors: string[]             // 마지막 수집에서 실패한 출처의 사용자용 문구
   recovery: RecoveryState          // 맥락 복구 진행·실패 상태 (부록 F.6)
 }
-export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' | 'recovery' }
+export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' }
 export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline'; id?: string } }
 
 // ── MVP2 (부록 E.6.1) ──
@@ -255,3 +256,43 @@ export type RecoverySectionKey = 'last_day' | 'unfinished' | 'done' | 'meetings'
 export interface RecoverySection { key: RecoverySectionKey; title: string; lines: string[] }
 
 export interface RecoveryState { inFlight: boolean; error: string | null }
+
+// ── 명령 입력 (부록 G) ──
+export type CommandStatus = 'planned' | 'in_progress' | 'done' | 'deferred' | 'dropped'
+export type CommandOp =
+  | { kind: 'set_status'; itemId: number; status: CommandStatus; note: string | null }
+  | { kind: 'focus'; itemId: number }
+  | { kind: 'accept_suggestion'; itemId: number }
+  | { kind: 'dismiss_suggestion'; itemId: number }
+  | { kind: 'add_candidate'; candidateId: string }
+  | { kind: 'add_manual'; title: string; dueDate: string | null }
+  | { kind: 'regenerate_briefing'; instruction: string | null }
+  | { kind: 'unsupported'; reason: string }
+
+export interface CommandItemRef {
+  itemId: number; candidateId: string; title: string; status: PlanItemStatus
+  jiraKey: string | null; dueDate: string | null; rank: number | null
+}
+export interface CommandCandidateRef {
+  candidateId: string; title: string; source: CandidateSource; jiraKey: string | null; dueDate: string | null
+}
+export interface CommandContext {
+  today: string
+  scopeItemId: number | null
+  items: CommandItemRef[]           // dismissed 제외. scope 모드면 범위 항목 1건
+  candidates: CommandCandidateRef[] // 계획 항목이 아닌 후보. scope 모드면 빈 배열. 최대 50건
+  briefingInstruction: string | null
+}
+
+export interface CommandPreviewOp { op: CommandOp; label: string; executable: boolean }
+export interface CommandInterpretation {
+  text: string                      // 공백 정리한 명령 원문
+  scopeItemId: number | null
+  ops: CommandPreviewOp[]
+  source: 'llm' | 'rules'
+  error: string | null              // LLM 실패 사유. 성공이거나 LLM 을 건너뛰면 null
+  dropped: number                   // 검증에서 뺀 조작 수
+}
+export interface CommandOpResult { op: CommandOp; label: string; ok: boolean; error: string | null }
+export interface CommandApplyOutcome { today: TodayPayload; results: CommandOpResult[]; applied: number; failed: number }
+export interface CommandLlmInput { ctx: CommandContext; text: string }

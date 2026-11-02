@@ -8,7 +8,9 @@ export const SOURCE_BADGE: Record<CandidateSource, { label: string; color: strin
   jira: { label: 'Jira', color: 'bg-indigo-50 text-indigo-600' },
   task: { label: '작업', color: 'bg-green-50 text-green-700' },
   todo: { label: 'TODO', color: 'bg-blue-50 text-blue-600' },
-  action_item: { label: '액션아이템', color: 'bg-amber-50 text-amber-700' }
+  action_item: { label: '액션아이템', color: 'bg-amber-50 text-amber-700' },
+  // source 가 'manual' 인 임시 항목. 명령으로 만든다 (부록 G.6)
+  manual: { label: '임시', color: 'bg-gray-100 text-gray-600' }
 }
 
 export function SourceBadge({ source }: { source: CandidateSource }): React.ReactNode {

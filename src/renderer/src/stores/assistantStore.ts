@@ -3,6 +3,8 @@ import type {
   AssistantNavigateEvent,
   AssistantSettings,
   Candidate,
+  CommandApplyOutcome,
+  CommandInterpretation,
   PlanItem,
   PlanItemStatus,
   TodayPayload,
@@ -24,6 +26,13 @@ interface AssistantStore {
   skippedWrapupDate: string | null
   // 알림 클릭으로 열린 영역
   focus: Focus | null
+  // 명령 입력 (부록 G.10.2). 한 번에 해석 1건만 둔다
+  command: CommandInterpretation | null
+  commandPhase: 'idle' | 'interpreting' | 'applying'
+  commandError: string
+  commandResult: Pick<CommandApplyOutcome, 'results' | 'applied' | 'failed'> | null
+  // 마지막 해석·적용 요청의 범위 항목. 진행 중·오류·결과를 요청한 입력창에만 보인다
+  commandScope: number | null
 
   load: () => Promise<void>
   startDay: () => Promise<void>
@@ -46,6 +55,11 @@ interface AssistantStore {
   saveSettings: (patch: Partial<AssistantSettings>) => Promise<boolean>
   setFocus: (focus: Focus | null) => void
   clearError: () => void
+  // 명령을 해석한다. DB 를 쓰지 않는다. busy 를 바꾸지 않는다
+  interpretCommand: (text: string, scopeItemId?: number) => Promise<void>
+  // 미리보기의 실행 가능한 조작을 적용한다. 성공하면 true
+  applyCommand: () => Promise<boolean>
+  clearCommand: () => void
   // assistant:changed 를 구독한다. 해제 함수를 돌려준다
   subscribe: () => () => void
 }
@@ -62,7 +76,27 @@ export function originTarget(
   return { kind: m[1] as 'todo' | 'task', id: Number(m[2]) }
 }
 
+// 명령 미리보기를 버려야 하는지 판정한다.
+// 새 today 의 계획이 근무 중이 아니거나 계획 id 가 바뀌면, 예전 미리보기는 쓸 수 없다
+export function isCommandStale(prev: TodayPayload | null, next: TodayPayload): boolean {
+  if (next.plan?.status !== 'active') return true
+  return (prev?.plan?.id ?? null) !== next.plan.id
+}
+
+const EMPTY_COMMAND = {
+  command: null,
+  commandError: '',
+  commandResult: null,
+  commandScope: null
+} as const
+
 export const useAssistantStore = create<AssistantStore>((set, get) => {
+  // today 를 바꾼다. 계획이 닫히거나 바뀌면 명령 상태도 비운다 (부록 G.10.2)
+  const setToday = (today: TodayPayload, extra: Partial<AssistantStore> = {}): void => {
+    const stale = isCommandStale(get().today, today)
+    set({ ...extra, today, ...(stale ? EMPTY_COMMAND : {}) })
+  }
+
   // today 를 돌려주는 동작의 공통 처리. 성공하면 today 를 바꾸고, 실패하면 error 를 둔다
   const run = async (call: () => Promise<TodayResult>, fallback: string): Promise<boolean> => {
     if (get().busy) return false
@@ -70,7 +104,7 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
     try {
       const res = await call()
       if (res.success) {
-        set({ today: res.today, busy: false })
+        setToday(res.today, { busy: false })
         return true
       }
       set({ error: res.error || fallback, busy: false })
@@ -91,12 +125,17 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
     candidatesError: '',
     skippedWrapupDate: null,
     focus: null,
+    command: null,
+    commandPhase: 'idle',
+    commandError: '',
+    commandResult: null,
+    commandScope: null,
 
     load: async () => {
       set({ loading: true })
       try {
         const res = await window.api.assistant.getToday()
-        if (res.success) set({ today: res.today, loading: false, error: '' })
+        if (res.success) setToday(res.today, { loading: false, error: '' })
         else set({ error: res.error || '오늘 계획을 불러오지 못했습니다', loading: false })
       } catch (e) {
         set({ error: errorText(e, '오늘 계획을 불러오지 못했습니다'), loading: false })
@@ -233,6 +272,67 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
     setFocus: (focus) => set({ focus }),
 
     clearError: () => set({ error: '' }),
+
+    interpretCommand: async (text, scopeItemId) => {
+      const trimmed = text.replace(/\s+/g, ' ').trim()
+      if (!trimmed || get().commandPhase !== 'idle') return
+      set({
+        command: null,
+        commandPhase: 'interpreting',
+        commandError: '',
+        commandResult: null,
+        commandScope: scopeItemId ?? null
+      })
+      try {
+        const res = await window.api.assistant.interpretCommand(trimmed, scopeItemId)
+        // 해석 중에 하루가 닫혔으면 결과를 버린다
+        if (res.success && get().today?.plan?.status === 'active')
+          set({ command: res.interpretation, commandPhase: 'idle' })
+        else if (res.success) set({ commandPhase: 'idle' })
+        else set({ commandError: res.error || '명령을 해석하지 못했습니다', commandPhase: 'idle' })
+      } catch (e) {
+        set({ commandError: errorText(e, '명령을 해석하지 못했습니다'), commandPhase: 'idle' })
+      }
+    },
+
+    applyCommand: async () => {
+      const { command, busy, commandPhase } = get()
+      if (!command || busy || commandPhase !== 'idle') return false
+      // 실행 가능한 조작만 보낸다. unsupported 는 화면 안내용이다 (A40)
+      const ops = command.ops.filter((o) => o.executable).map((o) => o.op)
+      if (ops.length === 0) return false
+      set({
+        busy: true,
+        commandPhase: 'applying',
+        commandError: '',
+        commandResult: null,
+        commandScope: command.scopeItemId
+      })
+      try {
+        const res = await window.api.assistant.applyCommand(ops, command.text)
+        if (res.success) {
+          set({
+            today: res.today,
+            command: null,
+            commandResult: { results: res.results, applied: res.applied, failed: res.failed },
+            busy: false,
+            commandPhase: 'idle'
+          })
+          return true
+        }
+        set({ commandError: res.error || '명령을 적용하지 못했습니다', busy: false, commandPhase: 'idle' })
+        return false
+      } catch (e) {
+        set({
+          commandError: errorText(e, '명령을 적용하지 못했습니다'),
+          busy: false,
+          commandPhase: 'idle'
+        })
+        return false
+      }
+    },
+
+    clearCommand: () => set({ command: null, commandError: '', commandResult: null }),
 
     subscribe: () => {
       const api = window.api?.assistant
