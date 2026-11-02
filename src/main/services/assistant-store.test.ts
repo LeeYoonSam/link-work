@@ -69,6 +69,7 @@ import {
   saveWrapupNote,
   setBriefing,
   setBriefingError,
+  setRecovery,
   updateEventStatus,
   updatePlanItems,
   writeAssistantSettings
@@ -584,6 +585,43 @@ describe('브리핑', () => {
     expect(p?.briefing_source).toBe('llm')
     expect(p?.briefing_model).toBe('claude-sonnet-5-5')
     expect(p?.briefing_error).toBeNull()
+  })
+})
+
+describe('맥락 복구 저장', () => {
+  it('setRecovery 는 recovery_* 3개 컬럼과 updated_at 을 쓰고 브리핑은 건드리지 않는다', () => {
+    const plan = startPlan()
+    setBriefing(db, plan.id, { text: '브리핑', source: 'rules', model: null, at: '2026-11-02 09:41:00' })
+    setRecovery(db, plan.id, { text: '# 규칙 복구', source: 'rules', at: '2026-11-02 09:42:00' })
+    let p = getPlanByDate(db, '2026-11-02')
+    expect(p?.recovery_text).toBe('# 규칙 복구')
+    expect(p?.recovery_source).toBe('rules')
+    expect(p?.recovery_at).toBe('2026-11-02 09:42:00')
+    expect(p?.updated_at).toBe('2026-11-02 09:42:00')
+    expect(p?.briefing_text).toBe('브리핑')
+
+    setRecovery(db, plan.id, { text: '# AI 복구', source: 'llm', at: '2026-11-02 09:43:00' })
+    p = getPlanByDate(db, '2026-11-02')
+    expect(p?.recovery_text).toBe('# AI 복구')
+    expect(p?.recovery_source).toBe('llm')
+    expect(p?.recovery_at).toBe('2026-11-02 09:43:00')
+  })
+
+  it('setRecovery 는 닫힌 계획에도 plan_id 로 저장한다', () => {
+    const plan = startPlan()
+    closePlan(db, plan.id, 'button', '2026-11-02 18:00:00', null)
+    setRecovery(db, plan.id, { text: '본문', source: 'rules', at: '2026-11-02 18:01:00' })
+    const p = getPlanByDate(db, '2026-11-02')
+    expect(p?.status).toBe('closed')
+    expect(p?.recovery_text).toBe('본문')
+  })
+
+  it('A12: setRecovery 는 로컬 형식이 아닌 at 을 거부한다', () => {
+    const plan = startPlan()
+    expect(() =>
+      setRecovery(db, plan.id, { text: '본문', source: 'rules', at: '2026-11-02T09:42:00Z' })
+    ).toThrow()
+    expect(getPlanByDate(db, '2026-11-02')?.recovery_text).toBeNull()
   })
 })
 

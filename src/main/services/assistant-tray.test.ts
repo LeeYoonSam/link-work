@@ -39,6 +39,7 @@ const payload = (over: Partial<TodayPayload> = {}): TodayPayload => ({
   missingWrapupDate: null,
   aiAvailable: true, jiraConnected: true, calendarConnected: true, jiraTruncated: false,
   lastErrors: [],
+  recovery: { inFlight: false, error: null },
   ...over
 })
 

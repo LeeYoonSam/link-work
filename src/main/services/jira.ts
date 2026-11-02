@@ -826,3 +826,21 @@ export async function listMyOpenIssues(
     `${scope}assignee = currentUser() AND statusCategory != Done ORDER BY priority DESC, duedate ASC`
   )
 }
+
+/** 맥락 복구가 조회하는 최근 변경 기간 상한(일) */
+export const MAX_RECENT_DAYS = 30
+
+/** 내게 할당된 이슈 중 최근 days 일 안에 바뀐 것. 맥락 복구가 쓴다 (부록 F.9.3) */
+export async function listMyRecentlyUpdatedIssues(
+  days: number,
+  projectKey: string | null
+): Promise<{ issues: JiraMyIssue[]; truncated: boolean }> {
+  // JQL 에 들어가는 값이다. 네트워크 전에 검증한다
+  if (!Number.isInteger(days) || days < 1 || days > MAX_RECENT_DAYS) {
+    throw new Error('잘못된 조회 기간')
+  }
+  const scope = projectKey === null ? '' : `project = ${assertProjectKey(projectKey)} AND `
+  return searchMyIssues(
+    `${scope}assignee = currentUser() AND updated >= -${days}d ORDER BY updated DESC`
+  )
+}

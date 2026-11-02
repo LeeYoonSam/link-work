@@ -33,6 +33,8 @@ interface AssistantStore {
   skipWrapup: (date: string) => void
   refresh: () => Promise<void>
   refreshBriefing: () => Promise<void>
+  // 맥락 복구 본문을 만든다 (부록 F.7)
+  generateRecovery: () => Promise<void>
   loadCandidates: () => Promise<void>
   addItem: (candidateId: string) => Promise<void>
   acceptSuggestion: (itemId: number) => Promise<void>
@@ -146,6 +148,10 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
 
     refreshBriefing: async () => {
       await run(() => window.api.assistant.refreshBriefing(), '브리핑 생성에 실패했습니다')
+    },
+
+    generateRecovery: async () => {
+      await run(() => window.api.assistant.generateRecovery(), '맥락 복구에 실패했습니다')
     },
 
     loadCandidates: async () => {

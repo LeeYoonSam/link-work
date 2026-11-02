@@ -95,6 +95,16 @@ describe('ASSISTANT_SCHEMA', () => {
     db.close()
   })
 
+  it('MVP3 맥락 복구 컬럼 3개가 daily_plans 에 있다 (부록 F.6)', () => {
+    const db = new Database(':memory:')
+    db.exec(ASSISTANT_SCHEMA)
+    // 복구는 새 마이그레이션 없이 이 컬럼만 쓴다. 지우면 setRecovery 가 깨진다
+    expect(columns(db, 'daily_plans')).toEqual(
+      expect.arrayContaining(['recovery_text', 'recovery_source', 'recovery_at'])
+    )
+    db.close()
+  })
+
   it('A17: 부분 UNIQUE 인덱스가 active 계획 2개를 막는다', () => {
     const db = new Database(':memory:')
     db.exec(ASSISTANT_SCHEMA)

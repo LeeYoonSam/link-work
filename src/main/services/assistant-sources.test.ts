@@ -32,7 +32,11 @@ const state = vi.hoisted(() => ({
   rangeFail: false,
   myAccountId: 'acc-me' as string | null,
   myCalls: 0,
-  assignee: {} as Record<string, string | null>
+  assignee: {} as Record<string, string | null>,
+  recentCalls: [] as [number, string | null][],
+  recentFail: false,
+  recentIssues: [] as unknown[],
+  recentTruncated: false
 }))
 
 vi.mock('./jira', () => ({
@@ -72,6 +76,11 @@ vi.mock('./jira', () => ({
       truncated: false
     }
   },
+  listMyRecentlyUpdatedIssues: async (days: number, projectKey: string | null) => {
+    state.recentCalls.push([days, projectKey])
+    if (state.recentFail) throw new Error('401 Unauthorized')
+    return { issues: state.recentIssues, truncated: state.recentTruncated }
+  },
   getJiraMyAccountId: async () => {
     state.myCalls++
     return state.myAccountId
@@ -89,12 +98,15 @@ vi.mock('./google-calendar', () => ({
 import Database from 'better-sqlite3'
 import { DEFAULT_ASSISTANT_SETTINGS } from './assistant-settings'
 import { toLocalDateTime } from './assistant-day'
-import type { Candidate } from './assistant-types'
+import { RECOVERY_LIMITS } from './assistant-recovery'
+import type { Candidate, PlanItem, RecoveryContext } from './assistant-types'
 import {
   clearJiraCache,
+  collectRecovery,
   collectSources,
   getSourceCheckTimes,
   resetSourceCheckTimes,
+  readRecoveryLocal,
   resolveVanished,
   toCalendarRef
 } from './assistant-sources'
@@ -183,6 +195,10 @@ beforeEach(() => {
   state.myAccountId = 'acc-me'
   state.myCalls = 0
   state.assignee = {}
+  state.recentCalls = []
+  state.recentFail = false
+  state.recentIssues = []
+  state.recentTruncated = false
 })
 
 describe('collectSources 로컬 출처', () => {
@@ -607,5 +623,326 @@ describe('resolveVanished', () => {
 
   it('형식이 틀린 ID 는 무시한다', async () => {
     expect(await resolveVanished(makeDb(), ['weird', 'task:abc', 'action_item:7'], [])).toEqual({})
+  })
+})
+
+// ── 맥락 복구 수집 (부록 F.3) ──
+
+// 복구 쿼리가 읽는 컬럼을 가진 스키마. 실제 database.ts 의 해당 컬럼과 같다.
+function makeRecoveryDb(): Database.Database {
+  const db = new Database(':memory:')
+  db.exec(`
+    CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT);
+    CREATE TABLE tasks (id INTEGER PRIMARY KEY, project_id INTEGER, name TEXT);
+    CREATE TABLE todos (id INTEGER PRIMARY KEY, title TEXT, is_completed INTEGER, completed_at TEXT);
+    CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT, started_at TEXT, project_id INTEGER);
+    CREATE TABLE meeting_summaries (id INTEGER PRIMARY KEY, meeting_id INTEGER UNIQUE, tldr TEXT,
+      action_items TEXT, generated_at TEXT);
+    CREATE TABLE activity_log (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT, entity_id INTEGER,
+      entity_name TEXT, action TEXT, details TEXT, created_at TEXT);
+  `)
+  return db
+}
+
+// 로컬 'YYYY-MM-DD HH:mm:ss' 를 activity_log 기본값과 같은 UTC 문자열로 바꾼다.
+function utcOf(local: string): string {
+  const [d, t] = local.split(' ')
+  const [y, mo, da] = d.split('-').map(Number)
+  const [h, mi, se] = t.split(':').map(Number)
+  return new Date(y, mo - 1, da, h, mi, se).toISOString().slice(0, 19).replace('T', ' ')
+}
+
+function logRow(type: string, id: number | null, name: string | null, action: string, local: string): string {
+  const q = (v: string | null): string => (v === null ? 'NULL' : `'${v.replace(/'/g, "''")}'`)
+  return `(NULL, ${q(type)}, ${id === null ? 'NULL' : id}, ${q(name)}, ${q(action)}, NULL, ${q(utcOf(local))})`
+}
+
+const LAST_PLAN = {
+  id: 1,
+  plan_date: '2026-10-30',
+  started_at: '2026-10-30 09:00:00',
+  closed_at: '2026-10-30 18:00:00',
+  wrapup_note: '결제 API 검토 이어서',
+  wrapup_at: '2026-10-30 18:00:00'
+}
+
+function recoveryCtx(patch: Partial<RecoveryContext> = {}): RecoveryContext {
+  return {
+    today: TODAY,
+    weekday: 1,
+    lastPlan: LAST_PLAN,
+    gapDays: 3,
+    since: LAST_PLAN.started_at,
+    sinceDate: LAST_PLAN.plan_date,
+    jiraDays: 4,
+    ...patch
+  }
+}
+
+function planItem(id: number, patch: Partial<PlanItem> = {}): PlanItem {
+  return {
+    id,
+    plan_id: 1,
+    candidate_id: `todo:${id}`,
+    source: 'todo',
+    title: `항목 ${id}`,
+    link: null,
+    jira_issue_key: null,
+    project_id: null,
+    due_date: null,
+    score: 0,
+    rank: id,
+    slot_start: null,
+    slot_end: null,
+    pinned: false,
+    added_by: 'start',
+    urgent: false,
+    status: 'planned',
+    status_note: null,
+    status_at: null,
+    first_planned_date: '2026-10-30',
+    ...patch
+  }
+}
+
+function recentIssue(n: number): Record<string, unknown> {
+  return {
+    key: `PROJ-${n}`,
+    summary: `변경 ${n}`,
+    status: '진행 중',
+    statusCategory: 'indeterminate',
+    priority: null,
+    duedate: null,
+    updated: new Date(2026, 10, 1, 10, 0).toISOString(),
+    issueType: 'Task'
+  }
+}
+
+describe('readRecoveryLocal', () => {
+  it('A33: 소스별 건수 상한을 지킨다', () => {
+    const db = makeRecoveryDb()
+    seed(db, 'todos', Array.from({ length: 60 }, (_, i) =>
+      `(${i + 1}, '완료 ${i + 1}', 1, '2026-10-31 ${String(10 + (i % 10)).padStart(2, '0')}:${String(i).padStart(2, '0')}:00')`))
+    seed(db, 'meetings', Array.from({ length: 15 }, (_, i) =>
+      `(${i + 1}, '회의 ${i + 1}', '2026-10-31 ${String(i + 8).padStart(2, '0')}:00:00', NULL)`))
+    const manyActions = JSON.stringify(Array.from({ length: 8 }, (_, i) => ({ text: `액션 ${i}` })))
+    seed(db, 'meeting_summaries', Array.from({ length: 15 }, (_, i) =>
+      `(${i + 1}, ${i + 1}, '${'가'.repeat(500)}', '${manyActions}', '2026-10-31 20:00:00')`))
+    seed(db, 'activity_log', Array.from({ length: 60 }, (_, i) =>
+      logRow('task', i + 1, `작업 ${i + 1}`, 'update', `2026-10-31 ${String(10 + (i % 10)).padStart(2, '0')}:${String(i).padStart(2, '0')}:00`)))
+    const items = Array.from({ length: 25 }, (_, i) => planItem(i + 1))
+    const ctx = recoveryCtx({ lastPlan: { ...LAST_PLAN, wrapup_note: '메'.repeat(3000) } })
+
+    const r = readRecoveryLocal(db, ctx, items)
+
+    expect(r.completedTodos).toHaveLength(RECOVERY_LIMITS.todos)
+    expect(r.meetings).toHaveLength(RECOVERY_LIMITS.meetings)
+    expect(r.activity).toHaveLength(RECOVERY_LIMITS.activity)
+    expect(r.unfinishedItems).toHaveLength(RECOVERY_LIMITS.unfinished)
+    expect(r.wrapupNote).toHaveLength(2000)
+    expect(r.meetings[0].tldr).toHaveLength(300)
+    expect(r.meetings[0].openActionItems).toHaveLength(RECOVERY_LIMITS.actionItemsPerMeeting)
+    expect(r.meetings[0].openActionCount).toBe(8)
+    // 정렬: 완료 todo·회의는 최신순이다
+    expect(r.completedTodos[0].completedAt >= r.completedTodos[1].completedAt).toBe(true)
+    expect(r.meetings[0].title).toBe('회의 15')
+  })
+
+  it('A33: activity_log 는 최근 500행만 읽는다', () => {
+    const db = makeRecoveryDb()
+    seed(db, 'activity_log', Array.from({ length: 600 }, (_, i) => {
+      const at = new Date(2026, 9, 31, 0, 0, i)
+      const local = `2026-10-31 ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}:${String(at.getSeconds()).padStart(2, '0')}`
+      return logRow('task', 1, '큰 작업', 'update', local)
+    }))
+    const [g] = readRecoveryLocal(db, recoveryCtx({ since: '2026-10-30 00:00:00' }), []).activity
+    expect(g.count).toBe(RECOVERY_LIMITS.activityRows)
+    // 가장 오래된 100행(00:00:00~00:01:39)이 빠진다
+    expect(g.firstAt).toBe('2026-10-31 00:01:40')
+    expect(g.lastAt).toBe('2026-10-31 00:09:59')
+  })
+
+  it('activity_log 의 UTC created_at 을 로컬로 바꿔 since 와 비교한다', () => {
+    const db = makeRecoveryDb()
+    seed(db, 'activity_log', [
+      logRow('task', 1, '기준 전', 'update', '2026-10-30 08:59:59'),
+      logRow('task', 2, '기준 직후', 'update', '2026-10-30 09:00:00'),
+      logRow('todo', 3, '오전', 'create', '2026-10-30 10:00:00')
+    ])
+    const r = readRecoveryLocal(db, recoveryCtx(), [])
+    expect(r.activity.map((g) => g.name)).toEqual(['오전', '기준 직후'])
+    // firstAt·lastAt 은 로컬 시각이다
+    expect(r.activity[0].firstAt).toBe('2026-10-30 10:00:00')
+    expect(r.activity[1].lastAt).toBe('2026-10-30 09:00:00')
+  })
+
+  it('activity_log 를 엔티티별로 묶고 삭제된 엔티티도 남긴다', () => {
+    const db = makeRecoveryDb()
+    seed(db, 'projects', [`(1, '원본 프로젝트')`])
+    seed(db, 'todos', [`(9, '원본 할 일', 1, NULL)`])
+    seed(db, 'activity_log', [
+      // 작업 5: 이름이 바뀐 뒤 삭제됐다. 마지막 행은 이름이 없다
+      logRow('task', 5, '옛 이름', 'create', '2026-10-31 09:00:00'),
+      logRow('task', 5, '새 이름', 'update', '2026-10-31 10:00:00'),
+      logRow('task', 5, null, 'update', '2026-10-31 10:30:00'),
+      logRow('task', 5, null, 'delete', '2026-10-31 11:00:00'),
+      // 할 일 9: 이름이 없다. 원본 테이블에서 읽는다
+      logRow('todo', 9, null, 'complete', '2026-10-31 12:00:00'),
+      // 프로젝트 1: 원본 이름
+      logRow('project', 1, null, 'update', '2026-10-31 08:00:00'),
+      // 작업 77: 이름도 원본도 없다
+      logRow('task', 77, null, 'delete', '2026-10-31 07:00:00'),
+      // entity_id 가 없으면 이름으로 묶는다
+      logRow('todo', null, '아이디 없음', 'create', '2026-10-31 06:00:00'),
+      logRow('todo', null, '아이디 없음', 'update', '2026-10-31 06:30:00'),
+      // 대상이 아닌 종류는 뺀다
+      logRow('meeting', 3, '회의', 'create', '2026-10-31 13:00:00')
+    ])
+
+    const groups = readRecoveryLocal(db, recoveryCtx(), []).activity
+
+    expect(groups.map((g) => g.name)).toEqual([
+      '원본 할 일', '새 이름', '원본 프로젝트', '(이름 없음)', '아이디 없음'
+    ])
+    const task = groups[1]
+    expect(task).toEqual({
+      entityType: 'task',
+      entityId: 5,
+      name: '새 이름',
+      actions: ['create', 'update', 'delete'],
+      count: 4,
+      firstAt: '2026-10-31 09:00:00',
+      lastAt: '2026-10-31 11:00:00',
+      deleted: true
+    })
+    expect(groups[0].deleted).toBe(false)
+    expect(groups[3]).toMatchObject({ entityId: 77, deleted: true })
+    expect(groups[4]).toMatchObject({ entityType: 'todo', entityId: null, count: 2, actions: ['create', 'update'] })
+  })
+
+  it('남은 작업은 planned·in_progress·deferred 만 rank 순으로 둔다. null 은 뒤다', () => {
+    const items = [
+      planItem(1, { rank: 3 }),
+      planItem(2, { rank: null, status: 'in_progress' }),
+      planItem(3, { rank: 1, status: 'done' }),
+      planItem(4, { rank: 2, status: 'deferred' }),
+      planItem(5, { rank: null, status: 'suggested' }),
+      planItem(6, { rank: 4, status: 'dropped' })
+    ]
+    const r = readRecoveryLocal(makeRecoveryDb(), recoveryCtx(), items)
+    expect(r.unfinishedItems.map((i) => i.id)).toEqual([4, 1, 2])
+  })
+
+  it('퇴근 메모는 공백 7일 이하일 때만 쓴다. 이전 계획이 없으면 남은 작업도 없다', () => {
+    const db = makeRecoveryDb()
+    expect(readRecoveryLocal(db, recoveryCtx({ gapDays: 7 }), []).wrapupNote).toBe('결제 API 검토 이어서')
+    expect(readRecoveryLocal(db, recoveryCtx({ gapDays: 8 }), []).wrapupNote).toBeNull()
+    const none = readRecoveryLocal(db, recoveryCtx({ lastPlan: null, gapDays: null }), [planItem(1)])
+    expect(none.wrapupNote).toBeNull()
+    expect(none.unfinishedItems).toEqual([])
+  })
+
+  it('회의 요약은 since 이후 생성분만 읽고 프로젝트 이름과 미완료 액션을 붙인다', () => {
+    const db = makeRecoveryDb()
+    seed(db, 'projects', [`(1, '결제 개편')`])
+    seed(db, 'meetings', [
+      `(1, '주간 회의', '2026-10-31 10:00:00', 1)`,
+      `(2, '지난 회의', '2026-10-29 10:00:00', NULL)`,
+      `(3, '요약 없음', '2026-10-31 11:00:00', 99)`
+    ])
+    seed(db, 'meeting_summaries', [
+      `(1, 1, '  ', '[{"text":"남은 액션"},{"text":"옮긴 액션","todo_id":4},{"text":" "}]', '2026-10-31 11:00:00')`,
+      `(2, 2, '오래됨', '[]', '2026-10-29 11:00:00')`,
+      `(3, 3, '요약', NULL, '2026-10-31 12:00:00')`
+    ])
+    const r = readRecoveryLocal(db, recoveryCtx(), [])
+    expect(r.meetings).toEqual([
+      { meetingId: 3, title: '요약 없음', startedAt: '2026-10-31 11:00:00', projectName: null, tldr: '요약', openActionItems: [], openActionCount: 0 },
+      { meetingId: 1, title: '주간 회의', startedAt: '2026-10-31 10:00:00', projectName: '결제 개편', tldr: null, openActionItems: ['남은 액션'], openActionCount: 1 }
+    ])
+  })
+
+  it('완료 todo 는 since 이후 완료분만 읽는다', () => {
+    const db = makeRecoveryDb()
+    seed(db, 'todos', [
+      `(1, '전', 1, '2026-10-30 08:00:00')`,
+      `(2, '후', 1, '2026-10-30 09:30:00')`,
+      `(3, '미완료', 0, NULL)`
+    ])
+    expect(readRecoveryLocal(db, recoveryCtx(), []).completedTodos).toEqual([
+      { id: 2, title: '후', completedAt: '2026-10-30 09:30:00' }
+    ])
+  })
+
+  it('로컬 출처 조회가 실패하면 readRecoveryLocal 은 throw 한다', () => {
+    const db = new Database(':memory:')
+    expect(() => readRecoveryLocal(db, recoveryCtx(), [])).toThrow()
+  })
+})
+
+describe('collectRecovery', () => {
+  it('Jira 미연결이면 jira 는 null 이고 errors 에 넣지 않는다', async () => {
+    state.jiraConnected = false
+    const r = await collectRecovery(makeRecoveryDb(), DEFAULT_ASSISTANT_SETTINGS, recoveryCtx(), [planItem(1)])
+    expect(r.jira).toBeNull()
+    expect(r.jiraConnected).toBe(false)
+    expect(r.errors).toEqual([])
+    expect(r.unfinishedItems).toHaveLength(1)
+    expect(state.recentCalls).toEqual([])
+  })
+
+  it('Jira 조회가 실패하면 jira 는 null 이고 errors 에 문구를 넣는다. throw 하지 않는다', async () => {
+    state.recentFail = true
+    const r = await collectRecovery(makeRecoveryDb(), DEFAULT_ASSISTANT_SETTINGS, recoveryCtx(), [])
+    expect(r.jira).toBeNull()
+    expect(r.jiraConnected).toBe(true)
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0]).toContain('Jira 조회에 실패했습니다.')
+    expect(r.errors[0]).toContain('401')
+  })
+
+  it('jiraDays 와 범위 키로 조회하고 50건까지 변환한다. 캐시·확인 시각을 건드리지 않는다', async () => {
+    state.recentIssues = Array.from({ length: 60 }, (_, i) => recentIssue(i + 1))
+    const settings = { ...DEFAULT_ASSISTANT_SETTINGS, jiraScope: 'default_project' as const }
+    const ctx = recoveryCtx({ jiraDays: 4 })
+
+    const r = await collectRecovery(makeRecoveryDb(), settings, ctx, [])
+
+    expect(state.recentCalls).toEqual([[4, 'PROJ']])
+    expect(r.jira).toHaveLength(RECOVERY_LIMITS.jira)
+    expect(r.jiraTruncated).toBe(true)
+    expect(r.jira?.[0]).toEqual({
+      key: 'PROJ-1',
+      summary: '변경 1',
+      status: '진행 중',
+      statusCategory: 'indeterminate',
+      priority: null,
+      duedate: null,
+      updatedLocal: '2026-11-01 10:00:00',
+      url: 'https://acme.atlassian.net/browse/PROJ-1'
+    })
+    expect(r.ctx).toBe(ctx)
+    expect(r.errors).toEqual([])
+    expect(getSourceCheckTimes()).toEqual({ calendarAt: null, jiraAt: null })
+    expect(state.openCalls).toEqual([])
+  })
+
+  it('전체 범위면 프로젝트 키 없이 조회한다. 조회 truncated 를 그대로 전한다', async () => {
+    state.recentIssues = [recentIssue(1)]
+    state.recentTruncated = true
+    const r = await collectRecovery(makeRecoveryDb(), DEFAULT_ASSISTANT_SETTINGS, recoveryCtx({ jiraDays: 14 }), [])
+    expect(state.recentCalls).toEqual([[14, null]])
+    expect(r.jira).toHaveLength(1)
+    expect(r.jiraTruncated).toBe(true)
+  })
+
+  it('로컬 출처 하나가 실패해도 throw 하지 않고 그 출처만 비운다', async () => {
+    const db = makeRecoveryDb()
+    db.exec('DROP TABLE meeting_summaries')
+    seed(db, 'todos', [`(1, '후', 1, '2026-10-30 09:30:00')`])
+    const r = await collectRecovery(db, DEFAULT_ASSISTANT_SETTINGS, recoveryCtx(), [])
+    expect(r.meetings).toEqual([])
+    expect(r.completedTodos).toHaveLength(1)
+    expect(r.errors).toEqual(['회의 요약 조회에 실패했습니다.'])
   })
 })

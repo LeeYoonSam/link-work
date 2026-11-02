@@ -4,6 +4,7 @@ import { useAssistantStore } from '../../stores/assistantStore'
 import { Card, EmptyState, SectionTitle, button } from '../ui'
 import DayHeader from './DayHeader'
 import BriefingCard from './BriefingCard'
+import RecoveryCard from './RecoveryCard'
 import InboxSection from './InboxSection'
 import PlanItemRow, { freeTimeLabel, isActiveItem } from './PlanItemRow'
 import Timeline from './Timeline'
@@ -74,6 +75,7 @@ export default function TodayView(): React.ReactNode {
     skipWrapup,
     refresh,
     refreshBriefing,
+    generateRecovery,
     loadCandidates,
     addItem,
     acceptSuggestion,
@@ -186,6 +188,14 @@ export default function TodayView(): React.ReactNode {
 
       {plan ? (
         <>
+          <RecoveryCard
+            plan={plan}
+            state={today.recovery ?? { inFlight: false, error: null }}
+            busy={busy}
+            canGenerate={today.settings.enabled}
+            onGenerate={() => void generateRecovery()}
+          />
+
           <BriefingCard
             plan={plan}
             canRegenerate={canRegenerate}

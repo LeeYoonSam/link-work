@@ -5,6 +5,7 @@ import { MEMO_WITH_CATEGORY_SELECT } from '../utils/memo-helpers'
 import { applyProjectAutoStatus, type ProjectStatusFields } from '../utils/project-dates'
 import { TODO_TAGS_SUBQUERY } from '../utils/todo-helpers'
 import { getEventsInRange } from './google-calendar'
+import { buildAssistantTools } from './ai-assistant-tools'
 import { buildWriteTools, maskSecretVariable, TRUNCATION_MARKER } from './ai-write-tools'
 import {
   getNotionDatabaseEntries,
@@ -48,7 +49,11 @@ export const LINKWORK_TOOL_NAMES = [
   'get_release_note',
   // Notion은 사용자 자신의 워크스페이스를 읽기 전용으로 조회하므로 자동 허용
   'search_notion',
-  'get_notion_page'
+  'get_notion_page',
+  // 비서 도구는 읽기 전용 로컬 DB 만 읽는다. Jira 를 호출하지 않는다 (AI_GUARDRAILS 8.6)
+  'get_today_plan',
+  'get_recent_work',
+  'list_meeting_action_items'
 ].map((name) => `mcp__linkwork__${name}`)
 
 // fetch_url은 의도적으로 LINKWORK_TOOL_NAMES(자동 허용)에 넣지 않는다.
@@ -621,6 +626,7 @@ const getActivityLog = tool(
   // 쓰기 도구는 서버에 항상 등록하되, 실행 게이트(opt-in + 사용자 승인)는
   // ai-agent.ts의 canUseTool에서 강제한다 — docs/AI_GUARDRAILS.md 7절
   const writeTools = await buildWriteTools()
+  const assistantTools = buildAssistantTools(tool)
 
   return createSdkMcpServer({
     name: 'linkwork',
@@ -636,6 +642,7 @@ const getActivityLog = tool(
       listVariables,
       getActivityLog,
       getCalendarEvents,
+      ...assistantTools,
       listReleaseNotes,
       getReleaseNote,
       searchNotionTool,

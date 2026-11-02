@@ -1,5 +1,5 @@
 // 비서의 수집 지점. DB·Jira·캘린더에서 후보와 오늘 일정을 모은다.
-// SSOT: docs/ASSISTANT.md §8.4, §9.1, 부록 A.4
+// SSOT: docs/ASSISTANT.md §8.4, §9.1, 부록 A.4, 부록 F.3 (맥락 복구 수집)
 //
 // [가드레일]
 // - A2: 이 파일은 DB 를 읽기만 한다. 원본 테이블에 쓰지 않는다.
@@ -10,6 +10,7 @@ import { ACTIVE_STATUSES } from '../../renderer/src/utils/projectOrder'
 import { applyProjectAutoStatus } from '../utils/project-dates'
 import { buildCandidates } from './assistant-candidates'
 import { isoToLocalDateTime, logicalDate, toLocalDateTime } from './assistant-day'
+import { RECOVERY_LIMITS, RECOVERY_WRAPUP_MAX_DAYS } from './assistant-recovery'
 import { calendarToBusy } from './assistant-slots'
 import type {
   ActionItemRow,
@@ -20,6 +21,15 @@ import type {
   CurrentSources,
   JiraCandidateInput,
   JiraSnapshotRef,
+  PlanItem,
+  RecoveryActivityGroup,
+  RecoveryContext,
+  RecoveryEntityType,
+  RecoveryInput,
+  RecoveryJiraIssue,
+  RecoveryLocalInput,
+  RecoveryMeeting,
+  RecoveryTodoDone,
   RefreshMode,
   SourceCheckTimes,
   TaskRow,
@@ -35,6 +45,7 @@ import {
   isJiraConnected,
   listIssuesByKeys,
   listMyOpenIssues,
+  listMyRecentlyUpdatedIssues,
   type JiraMyIssue
 } from './jira'
 import { parseJsonArray, type NoteActionItem } from './meeting-notes'
@@ -506,4 +517,249 @@ export async function resolveVanished(
 
   if (jiraIds.length > 0) Object.assign(out, await resolveJira(jiraIds, current, network))
   return out
+}
+
+// ── 맥락 복구 수집 (부록 F.3, F.9.4) ──
+// 모두 읽기 전용 SELECT 다. checkTimes·jiraCache 를 건드리지 않는다.
+
+const WRAPUP_MAX_CHARS = 2000
+const TLDR_MAX_CHARS = 300
+const NO_NAME = '(이름 없음)'
+const UNFINISHED_STATUSES = new Set<string>(['planned', 'in_progress', 'deferred'])
+const RECOVERY_ENTITY_TYPES: readonly RecoveryEntityType[] = ['project', 'task', 'todo']
+
+const ACTIVITY_FAILED = '활동 기록 조회에 실패했습니다.'
+const MEETINGS_FAILED = '회의 요약 조회에 실패했습니다.'
+const TODOS_FAILED = '완료한 할 일 조회에 실패했습니다.'
+
+function nonBlank(value: string | null | undefined): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value : null
+}
+
+function readUnfinishedItems(lastItems: PlanItem[]): PlanItem[] {
+  return lastItems
+    .filter((i) => UNFINISHED_STATUSES.has(i.status))
+    .sort((a, b) => {
+      if (a.rank === b.rank) return a.id - b.id
+      if (a.rank === null) return 1
+      if (b.rank === null) return -1
+      return a.rank - b.rank
+    })
+    .slice(0, RECOVERY_LIMITS.unfinished)
+}
+
+interface ActivityRow {
+  entity_type: RecoveryEntityType
+  entity_id: number | null
+  entity_name: string | null
+  action: string
+  at: string
+}
+
+const NAME_SQL: Record<RecoveryEntityType, string> = {
+  project: 'SELECT name AS name FROM projects WHERE id = ?',
+  task: 'SELECT name AS name FROM tasks WHERE id = ?',
+  todo: 'SELECT title AS name FROM todos WHERE id = ?'
+}
+
+// activity_log 에 이름이 없을 때 원본 테이블에서 읽는다. 삭제됐으면 null 이다.
+function readEntityName(db: Database.Database, type: RecoveryEntityType, id: number | null): string | null {
+  if (id === null) return null
+  const row = db.prepare(NAME_SQL[type]).get(id) as { name: string | null } | undefined
+  return nonBlank(row?.name)
+}
+
+// created_at 은 UTC 기본값이다. 로컬로 바꿔 since 와 비교한다 (F.13 위험 2).
+function readActivityGroups(db: Database.Database, since: string): RecoveryActivityGroup[] {
+  const placeholders = RECOVERY_ENTITY_TYPES.map(() => '?').join(', ')
+  const rows = db
+    .prepare(
+      `SELECT entity_type, entity_id, entity_name, action, at FROM (
+         SELECT id, entity_type, entity_id, entity_name, action,
+                datetime(created_at, 'localtime') AS at
+         FROM activity_log
+         WHERE entity_type IN (${placeholders}) AND datetime(created_at, 'localtime') >= ?
+         ORDER BY at DESC, id DESC
+         LIMIT ?
+       ) ORDER BY at ASC, id ASC`
+    )
+    .all(...RECOVERY_ENTITY_TYPES, since, RECOVERY_LIMITS.activityRows) as unknown as ActivityRow[]
+
+  // 행은 시각 오름차순이다. 묶음 안의 마지막 값이 가장 늦은 값이다.
+  const groups = new Map<string, RecoveryActivityGroup & { latestName: string | null }>()
+  for (const r of rows) {
+    const key =
+      r.entity_id !== null
+        ? `${r.entity_type}:id:${r.entity_id}`
+        : `${r.entity_type}:name:${r.entity_name ?? ''}`
+    let g = groups.get(key)
+    if (!g) {
+      g = {
+        entityType: r.entity_type,
+        entityId: r.entity_id,
+        name: NO_NAME,
+        actions: [],
+        count: 0,
+        firstAt: r.at,
+        lastAt: r.at,
+        deleted: false,
+        latestName: null
+      }
+      groups.set(key, g)
+    }
+    g.count++
+    g.lastAt = r.at
+    if (!g.actions.includes(r.action)) g.actions.push(r.action)
+    const name = nonBlank(r.entity_name)
+    if (name !== null) g.latestName = name
+  }
+
+  const out: RecoveryActivityGroup[] = []
+  for (const { latestName, ...g } of groups.values()) {
+    out.push({
+      ...g,
+      name: latestName ?? readEntityName(db, g.entityType, g.entityId) ?? NO_NAME,
+      deleted: g.actions.includes('delete')
+    })
+  }
+  out.sort((a, b) => {
+    if (a.lastAt !== b.lastAt) return a.lastAt < b.lastAt ? 1 : -1
+    if (a.entityType !== b.entityType) return a.entityType < b.entityType ? -1 : 1
+    return (a.entityId ?? 0) - (b.entityId ?? 0)
+  })
+  return out.slice(0, RECOVERY_LIMITS.activity)
+}
+
+function readRecoveryMeetings(db: Database.Database, since: string): RecoveryMeeting[] {
+  const rows = db
+    .prepare(
+      `SELECT m.id AS meeting_id, m.title, m.started_at, p.name AS project_name,
+              ms.tldr, ms.action_items
+       FROM meeting_summaries ms
+       JOIN meetings m ON m.id = ms.meeting_id
+       LEFT JOIN projects p ON p.id = m.project_id
+       WHERE ms.generated_at >= ?
+       ORDER BY m.started_at DESC, m.id DESC
+       LIMIT ?`
+    )
+    .all(since, RECOVERY_LIMITS.meetings) as {
+    meeting_id: number
+    title: string | null
+    started_at: string | null
+    project_name: string | null
+    tldr: string | null
+    action_items: string | null
+  }[]
+
+  return rows.map((r) => {
+    const open = parseJsonArray<NoteActionItem>(r.action_items)
+      .filter((a) => a && a.todo_id == null && nonBlank(a.text) !== null)
+      .map((a) => a.text)
+    const tldr = nonBlank(r.tldr)
+    return {
+      meetingId: r.meeting_id,
+      title: r.title ?? '',
+      startedAt: r.started_at ?? '',
+      projectName: nonBlank(r.project_name),
+      tldr: tldr === null ? null : tldr.slice(0, TLDR_MAX_CHARS),
+      openActionItems: open.slice(0, RECOVERY_LIMITS.actionItemsPerMeeting),
+      openActionCount: open.length
+    }
+  })
+}
+
+// completed_at 은 로컬 시각이다. since 와 그대로 비교한다.
+function readCompletedTodos(db: Database.Database, since: string): RecoveryTodoDone[] {
+  const rows = db
+    .prepare(
+      `SELECT id, title, completed_at
+       FROM todos
+       WHERE is_completed = 1 AND completed_at >= ?
+       ORDER BY completed_at DESC, id DESC
+       LIMIT ?`
+    )
+    .all(since, RECOVERY_LIMITS.todos) as { id: number; title: string | null; completed_at: string }[]
+  return rows.map((r) => ({ id: r.id, title: r.title ?? '', completedAt: r.completed_at }))
+}
+
+// onError 가 있으면 출처별 실패를 넘기고 그 출처를 비운다. 없으면 throw 한다.
+function readLocal(
+  db: Database.Database,
+  ctx: RecoveryContext,
+  lastItems: PlanItem[],
+  onError?: (message: string, err: unknown) => void
+): RecoveryLocalInput {
+  function guard<T>(message: string, empty: T, read: () => T): T {
+    if (!onError) return read()
+    try {
+      return read()
+    } catch (err) {
+      onError(message, err)
+      return empty
+    }
+  }
+
+  const note = ctx.lastPlan ? nonBlank(ctx.lastPlan.wrapup_note) : null
+  const useNote = note !== null && ctx.gapDays !== null && ctx.gapDays <= RECOVERY_WRAPUP_MAX_DAYS
+  return {
+    wrapupNote: useNote ? note.slice(0, WRAPUP_MAX_CHARS) : null,
+    unfinishedItems: ctx.lastPlan ? readUnfinishedItems(lastItems) : [],
+    activity: guard(ACTIVITY_FAILED, [], () => readActivityGroups(db, ctx.since)),
+    meetings: guard(MEETINGS_FAILED, [], () => readRecoveryMeetings(db, ctx.since)),
+    completedTodos: guard(TODOS_FAILED, [], () => readCompletedTodos(db, ctx.since))
+  }
+}
+
+/** 동기. SELECT 만 한다. 읽기 전용 커넥션도 받는다. AI 채팅 도구가 쓴다 */
+export function readRecoveryLocal(
+  db: Database.Database,
+  ctx: RecoveryContext,
+  lastItems: PlanItem[]
+): RecoveryLocalInput {
+  return readLocal(db, ctx, lastItems)
+}
+
+function toRecoveryJiraIssue(issue: JiraMyIssue): RecoveryJiraIssue {
+  return {
+    key: issue.key,
+    summary: issue.summary,
+    status: issue.status,
+    statusCategory: issue.statusCategory,
+    priority: issue.priority,
+    duedate: issue.duedate,
+    updatedLocal: isoToLocalDateTime(issue.updated),
+    url: getJiraIssueUrl(issue.key)
+  }
+}
+
+/** 로컬 + Jira. throw 하지 않는다. 실패한 출처는 비우고 errors 에 문구를 넣는다 */
+export async function collectRecovery(
+  db: Database.Database,
+  settings: AssistantSettings,
+  ctx: RecoveryContext,
+  lastItems: PlanItem[]
+): Promise<RecoveryInput> {
+  const errors: string[] = []
+  const local = readLocal(db, ctx, lastItems, (message, err) => {
+    console.error('[assistant-sources] collectRecovery', message, err)
+    errors.push(message)
+  })
+
+  let jira: RecoveryJiraIssue[] | null = null
+  let jiraConnected = false
+  let jiraTruncated = false
+  try {
+    jiraConnected = isJiraConnected()
+    if (jiraConnected) {
+      // 캐시를 쓰지 않는다. 복구는 하루에 1~2회다.
+      const found = await listMyRecentlyUpdatedIssues(ctx.jiraDays, jiraScopeKey(settings))
+      jira = found.issues.slice(0, RECOVERY_LIMITS.jira).map(toRecoveryJiraIssue)
+      jiraTruncated = found.truncated || found.issues.length > RECOVERY_LIMITS.jira
+    }
+  } catch (err) {
+    jira = null
+    errors.push(errorText(JIRA_FAILED, err))
+  }
+
+  return { ...local, ctx, jira, jiraConnected, jiraTruncated, errors }
 }

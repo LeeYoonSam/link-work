@@ -3,12 +3,19 @@ import { getDatabase } from '../db/database'
 import { getTodayEvents } from './google-calendar'
 import { isHeadlessAvailable } from './ai-headless'
 import {
+  collectRecovery,
   collectSources,
   getSourceCheckTimes as getSourcesCheckTimes,
   resolveVanished,
   type CollectedSources
 } from './assistant-sources'
-import { renderRuleBriefing, requestLlmBriefing, type BriefingInput } from './assistant-briefing'
+import {
+  renderRuleBriefing,
+  requestLlmBriefing,
+  requestLlmRecovery,
+  type BriefingInput
+} from './assistant-briefing'
+import { buildRecovery, recoveryContextOf, recoveryToMarkdown, shouldAutoRecover } from './assistant-recovery'
 import { logicalDate, toLocalDateTime, toHHmm } from './assistant-day'
 import { buildStartPlanItems, buildTimeline, roundUpToQuarter } from './assistant-slots'
 import {
@@ -38,6 +45,7 @@ import {
   saveWrapupNote,
   setBriefing,
   setBriefingError,
+  setRecovery,
   updatePlanItems,
   writeAssistantSettings
 } from './assistant-store'
@@ -53,6 +61,7 @@ import type {
   PlanItemStatus,
   PlanItemUpdate,
   PlanUpdateRecord,
+  RecoveryState,
   RefreshDiff,
   RefreshMode,
   RefreshSummary,
@@ -93,6 +102,23 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 const backgroundTasks = new Set<Promise<void>>()
+
+// A32: 헤드리스 LLM 은 한 줄로 실행한다. ai-headless 잠금이 두 번째 실행을 BUSY 로 실패시키지 않게 한다
+let llmChain: Promise<unknown> = Promise.resolve()
+
+function llmSerialized<T>(fn: () => Promise<T>): Promise<T> {
+  const run = llmChain.then(fn)
+  llmChain = run.catch(() => undefined)
+  return run
+}
+
+// 맥락 복구 job. 동시에 1개만 돈다. 상태는 메모리에만 둔다 (F.6)
+let recoveryJob: Promise<void> | null = null
+let recoveryState: { date: string | null; inFlight: boolean; error: string | null } = {
+  date: null,
+  inFlight: false,
+  error: null
+}
 
 export function setAssistantChangedListener(fn: ((e: AssistantChangedEvent) => void) | null): void {
   changedListener = fn
@@ -194,7 +220,11 @@ function buildPayload(db: Db, settings: AssistantSettings, today: string, now: D
     jiraConnected: lastCollected?.jiraConnected ?? false,
     calendarConnected: lastCollected?.calendarConnected ?? false,
     jiraTruncated: lastCollected?.jiraTruncated ?? false,
-    lastErrors: lastCollected?.errors ?? []
+    lastErrors: lastCollected?.errors ?? [],
+    recovery:
+      recoveryState.date === today
+        ? { inFlight: recoveryState.inFlight, error: recoveryState.error }
+        : { inFlight: false, error: null }
   }
 }
 
@@ -251,17 +281,98 @@ async function runLlmBriefing(planId: number, input: BriefingInput, settings: As
 // A8: LLM 브리핑은 계획 생성을 막지 않는다. 결과를 기다리지 않는다
 function startBackgroundBriefing(planId: number, input: BriefingInput, settings: AssistantSettings, date: string): void {
   if (!settings.llmEnabled || !safeHeadlessAvailable()) return
-  const task = runLlmBriefing(planId, input, settings).finally(() => {
+  // 줄에 동기로 선다. 하루 시작 때 복구 LLM 보다 먼저 실행된다 (F.5)
+  const task = llmSerialized(() => runLlmBriefing(planId, input, settings)).finally(() => {
     backgroundTasks.delete(task)
     emitChanged({ date, reason: 'briefing' })
   })
   backgroundTasks.add(task)
 }
 
-/** 테스트용: 진행 중인 백그라운드 브리핑이 끝날 때까지 기다린다 */
+// 맥락 복구 job 본문 (F.9.7). 규칙 본문을 먼저 저장하고 LLM 은 그 뒤다.
+// A30: 모든 예외를 여기서 잡는다. throw 하지 않는다
+async function runRecoveryJob(
+  db: Db,
+  settings: AssistantSettings,
+  today: string,
+  now: Date,
+  plan: DailyPlan
+): Promise<void> {
+  recoveryState = { date: today, inFlight: true, error: null }
+  const at = toLocalDateTime(now)
+  try {
+    const lastPlan = getLastPlanBefore(db, today)
+    const lastItems = lastPlan ? listPlanItems(db, lastPlan.id) : []
+    const ctx = recoveryContextOf({ today, lastPlan })
+    const input = await collectRecovery(db, settings, ctx, lastItems)
+    const sections = buildRecovery(input)
+    // 수집 중 하루가 닫혀도 같은 plan_id 행에 쓴다
+    setRecovery(getDatabase(), plan.id, { text: recoveryToMarkdown(sections, ctx), source: 'rules', at })
+    emitChanged({ date: today, reason: 'recovery' })
+
+    if (settings.llmEnabled && safeHeadlessAvailable()) {
+      const r = await llmSerialized(() => requestLlmRecovery({ ctx, sections }, settings.llmModel))
+      if (r.ok) setRecovery(getDatabase(), plan.id, { text: r.markdown, source: 'llm', at })
+      else recoveryState.error = r.error
+    }
+  } catch (err) {
+    console.error('[assistant] recovery', err)
+    recoveryState.error = toMessage(err)
+  } finally {
+    recoveryState.inFlight = false
+    emitChanged({ date: today, reason: 'recovery' })
+  }
+}
+
+function startRecoveryJob(db: Db, settings: AssistantSettings, today: string, now: Date, plan: DailyPlan): Promise<void> {
+  const job: Promise<void> = runRecoveryJob(db, settings, today, now, plan)
+    .catch(() => undefined)
+    .finally(() => {
+      if (recoveryJob === job) recoveryJob = null
+    })
+  recoveryJob = job
+  return job
+}
+
+// A29: 자동 맥락 복구. 결과를 기다리지 않는다. 진행 중인 job 이 있으면 건너뛴다 (F.2).
+// A30: 판정 실패도 하루 시작을 막지 않는다
+function maybeStartAutoRecovery(db: Db, settings: AssistantSettings, today: string, now: Date, plan: DailyPlan): void {
+  try {
+    if (recoveryJob) return
+    // 오늘 계획은 plan_date < today 가 아니므로 createPlan 뒤에 읽어도 결과가 같다
+    const lastPlan = getLastPlanBefore(db, today)
+    if (shouldAutoRecover(recoveryContextOf({ today, lastPlan })) === null) return
+    void startRecoveryJob(db, settings, today, now, plan)
+  } catch (err) {
+    console.error('[assistant] auto recovery', err)
+  }
+}
+
+/** 테스트용: 현재 맥락 복구 상태 */
+export function getRecoveryState(): RecoveryState {
+  return { inFlight: recoveryState.inFlight, error: recoveryState.error }
+}
+
+/**
+ * 수동 맥락 복구 (F.2). 조건과 무관하게 만든다. 오늘 계획이 없으면 throw 한다.
+ * 진행 중인 job 이 있으면 새로 만들지 않고 그것을 기다린다. 규칙 저장과 LLM 완료까지 기다린다.
+ */
+export async function generateRecovery(now: Date = new Date()): Promise<TodayPayload> {
+  const db = getDatabase()
+  const { settings, today } = todayOf(db, now)
+  const plan = getPlanByDate(db, today)
+  if (!plan) throw new Error(NO_PLAN_TODAY)
+  // 다른 날짜의 job 이 남아 있으면 끝난 뒤 오늘 job 을 새로 만든다
+  if (recoveryJob && recoveryState.date !== today) await recoveryJob
+  if (recoveryJob) await recoveryJob
+  else await startRecoveryJob(db, settings, today, now, plan)
+  return buildPayload(getDatabase(), settings, today, now)
+}
+
+/** 테스트용: 진행 중인 백그라운드 브리핑·맥락 복구가 끝날 때까지 기다린다 */
 export async function waitForAssistantBackground(): Promise<void> {
-  while (backgroundTasks.size > 0) {
-    await Promise.allSettled([...backgroundTasks])
+  while (backgroundTasks.size > 0 || recoveryJob) {
+    await Promise.allSettled([...backgroundTasks, ...(recoveryJob ? [recoveryJob] : [])])
   }
 }
 
@@ -306,8 +417,12 @@ async function startDayImpl(now: Date): Promise<TodayPayload> {
   const input = briefingInputOf(db, plan, settings, today, now, sources.errors)
   setBriefing(db, plan.id, { text: renderRuleBriefing(input), source: 'rules', model: null, at })
 
-  const payload = buildPayload(db, settings, today, now)
   emitChanged({ date: today, reason: 'day' })
+
+  maybeStartAutoRecovery(db, settings, today, now, plan)
+
+  // payload 는 job 시작 뒤에 만든다. recovery.inFlight 가 true 다
+  const payload = buildPayload(db, settings, today, now)
   startBackgroundBriefing(plan.id, input, settings, today)
   return payload
 }
@@ -519,7 +634,8 @@ export async function refreshBriefing(now: Date = new Date()): Promise<TodayPayl
     return buildPayload(db, settings, today, now)
   }
   // 버튼은 결과를 기다린다. 실패해도 규칙 브리핑은 그대로 남는다
-  await runLlmBriefing(plan.id, briefingInputOf(db, plan, settings, today, now, lastCollected?.errors ?? []), settings)
+  const input = briefingInputOf(db, plan, settings, today, now, lastCollected?.errors ?? [])
+  await llmSerialized(() => runLlmBriefing(plan.id, input, settings))
   emitChanged({ date: today, reason: 'briefing' })
   return buildPayload(getDatabase(), settings, today, now)
 }

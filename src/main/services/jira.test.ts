@@ -46,10 +46,12 @@ import {
   listJiraProjects,
   listJiraVersions,
   listMyOpenIssues,
+  listMyRecentlyUpdatedIssues,
   listMyTodoIssues,
   listRemoteLinks,
   MAX_ISSUES,
   MAX_MY_ISSUES,
+  MAX_RECENT_DAYS,
   MAX_SYNC_ISSUES,
   saveJiraCredentials,
   setDefaultJiraProjectKey,
@@ -874,5 +876,71 @@ describe('개인 비서 조회 listMyOpenIssues', () => {
     for (const call of fetchMock.mock.calls) {
       expect(call[1]?.method).toBe('GET')
     }
+  })
+})
+
+describe('맥락 복구 조회 listMyRecentlyUpdatedIssues', () => {
+  beforeEach(connect)
+
+  it('listMyRecentlyUpdatedIssues: JQL 은 내 이슈를 최근 변경 순으로 조회하고 필드를 명시한다', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ issues: [] }))
+
+    const result = await listMyRecentlyUpdatedIssues(3, null)
+
+    expect(result).toEqual({ issues: [], truncated: false })
+    const params = new URL(calledUrls()[0]).searchParams
+    expect(params.get('jql')).toBe(
+      'assignee = currentUser() AND updated >= -3d ORDER BY updated DESC'
+    )
+    expect(params.get('fields')).toBe('summary,status,issuetype,priority,duedate,updated')
+  })
+
+  it('listMyRecentlyUpdatedIssues: 프로젝트 키가 있으면 project 조건을 앞에 붙인다', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ issues: [] }))
+    await listMyRecentlyUpdatedIssues(14, 'PROJ')
+    expect(new URL(calledUrls()[0]).searchParams.get('jql')).toBe(
+      'project = PROJ AND assignee = currentUser() AND updated >= -14d ORDER BY updated DESC'
+    )
+  })
+
+  it('listMyRecentlyUpdatedIssues: 잘못된 프로젝트 키는 네트워크 전에 거부한다', async () => {
+    await expect(listMyRecentlyUpdatedIssues(3, 'PROJ OR project = SECRET')).rejects.toThrow(
+      '잘못된 Jira 프로젝트 키'
+    )
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it.each([0, -1, 31, 1.5, Number.NaN])(
+    'listMyRecentlyUpdatedIssues: days=%s 는 네트워크 전에 거부한다',
+    async (days) => {
+      await expect(listMyRecentlyUpdatedIssues(days, null)).rejects.toThrow('잘못된 조회 기간')
+      expect(fetchMock).not.toHaveBeenCalled()
+    }
+  )
+
+  it('listMyRecentlyUpdatedIssues: 경계값 1 과 MAX_RECENT_DAYS(30) 는 허용한다', async () => {
+    fetchMock.mockImplementation(async () => jsonResponse({ issues: [] }))
+    expect(MAX_RECENT_DAYS).toBe(30)
+    await listMyRecentlyUpdatedIssues(1, null)
+    await listMyRecentlyUpdatedIssues(MAX_RECENT_DAYS, null)
+    expect(new URL(calledUrls()[1]).searchParams.get('jql')).toContain('updated >= -30d')
+  })
+
+  it('A1: listMyRecentlyUpdatedIssues 요청도 GET 이고 MAX_MY_ISSUES 상한을 공유한다', async () => {
+    for (let page = 0; page < 5; page++) {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({
+          issues: Array.from({ length: 100 }, (_, i) => ({
+            key: `PROJ-${page * 100 + i + 1}`,
+            fields: { summary: 'x' }
+          })),
+          nextPageToken: `token-${page + 1}`
+        })
+      )
+    }
+    const { issues, truncated } = await listMyRecentlyUpdatedIssues(7, null)
+    expect(issues).toHaveLength(MAX_MY_ISSUES)
+    expect(truncated).toBe(true)
+    for (const call of fetchMock.mock.calls) expect(call[1]?.method).toBe('GET')
   })
 })

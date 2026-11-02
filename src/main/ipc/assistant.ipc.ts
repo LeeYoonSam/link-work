@@ -5,6 +5,7 @@ import {
   closeDay,
   dismissSuggestion,
   focusItem,
+  generateRecovery,
   getSettings,
   getToday,
   listCandidates,
@@ -58,6 +59,9 @@ export function registerAssistantIpc(): void {
   )
 
   ipcMain.handle('assistant:refreshBriefing', () => wrap(async () => ({ today: await refreshBriefing() })))
+
+  // 수동 맥락 복구. 진행 중인 job 이 있으면 그것을 기다린다 (F.2)
+  ipcMain.handle('assistant:generateRecovery', () => wrap(async () => ({ today: await generateRecovery() })))
 
   ipcMain.handle('assistant:listCandidates', () => wrap(async () => ({ candidates: await listCandidates() })))
 

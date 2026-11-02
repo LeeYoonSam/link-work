@@ -1192,11 +1192,19 @@ export interface TodayPayload {
   jiraTruncated: boolean
   lastErrors: string[]
   timeline: DayTimeline
+  // 맥락 복구 진행·실패 상태 (부록 F.6). 메모리 값이다
+  recovery: RecoveryState
+}
+
+// 맥락 복구 상태 (부록 F.9.1)
+export interface RecoveryState {
+  inFlight: boolean
+  error: string | null
 }
 
 export interface AssistantChangedEvent {
   date: string
-  reason: 'refresh' | 'briefing' | 'day'
+  reason: 'refresh' | 'briefing' | 'day' | 'recovery'
 }
 export interface AssistantNavigateEvent {
   view: 'today'
@@ -1236,6 +1244,8 @@ export interface AssistantAPI {
   saveWrapup: (note: string, date: string) => Promise<AssistantResult<{ plan: DailyPlan }>>
   refresh: () => Promise<TodayResult>
   refreshBriefing: () => Promise<TodayResult>
+  // 맥락 복구 본문을 만든다 (부록 F.7)
+  generateRecovery: () => Promise<TodayResult>
   listCandidates: () => Promise<AssistantResult<{ candidates: Candidate[] }>>
   addItem: (candidateId: string) => Promise<TodayResult>
   acceptSuggestion: (itemId: number) => Promise<TodayResult>

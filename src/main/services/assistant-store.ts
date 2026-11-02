@@ -264,6 +264,18 @@ export function setBriefingError(db: Db, planId: number, error: string): void {
   ).run(error, planId)
 }
 
+// 맥락 복구 본문 (부록 F.6). plan_id 로 쓴다. 수집 중 하루가 닫혀도 같은 행에 저장한다.
+export function setRecovery(
+  db: Db,
+  planId: number,
+  r: { text: string; source: 'rules' | 'llm'; at: string }
+): void {
+  assertDateTime(r.at, 'at')
+  db.prepare(
+    'UPDATE daily_plans SET recovery_text = ?, recovery_source = ?, recovery_at = ?, updated_at = ? WHERE id = ?'
+  ).run(r.text, r.source, r.at, r.at, planId)
+}
+
 // ── 계획 항목 ───────────────────────────────────────────
 
 // 항목 조회 SELECT. first_planned_date 를 상관 서브쿼리로 한 문장 안에서 계산한다 (부록 B.5).

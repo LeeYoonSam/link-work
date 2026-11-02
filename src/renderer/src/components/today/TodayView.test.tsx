@@ -114,6 +114,7 @@ const payload = (over: Partial<TodayPayload> = {}): TodayPayload => ({
   jiraTruncated: false,
   lastErrors: [],
   timeline: EMPTY_TIMELINE,
+  recovery: { inFlight: false, error: null },
   ...over
 })
 
@@ -156,6 +157,7 @@ vi.mock('../../stores/assistantStore', async (importOriginal) => ({
     skipWrapup: () => {},
     refresh: async () => {},
     refreshBriefing: async () => {},
+    generateRecovery: async () => {},
     loadCandidates: async () => {},
     addItem: async () => {},
     acceptSuggestion: async () => {},
@@ -180,6 +182,7 @@ const { candidatesNotInPlan } = await import('./CandidatePicker')
 const { originTarget } = await import('../../stores/assistantStore')
 const { validateSettings, diffSettings } = await import('./AssistantSettingsModal')
 const AssistantSettingsModal = (await import('./AssistantSettingsModal')).default
+const { recoveryButtonLabel } = await import('./RecoveryCard')
 
 const render = (): string => renderToStaticMarkup(<TodayView />)
 
@@ -387,6 +390,88 @@ describe('TodayView 상태별 렌더링', () => {
     const html = render()
     expect(html).toContain('데이터베이스를 열 수 없습니다')
     expect(html).toContain('다시 시도')
+  })
+})
+
+// 부록 F.7 맥락 복구 카드. 브리핑 바로 위에 둔다
+describe('맥락 복구 카드 렌더링', () => {
+  const RECOVERY_MD = '# 2026-11-02 맥락 복구\n\n## 남은 작업\n\n- 결제 모듈 리팩토링 · 진행 중\n'
+
+  it('맥락 복구 본문 없음: 제목과 만들기 버튼 1줄만 보이고 브리핑 위에 놓인다', () => {
+    state.today = payload({ plan: plan() })
+    const html = render()
+    expect(html).toContain('맥락 복구')
+    expect(html).toContain('id="today-recovery"')
+    expect(html).toMatch(/<button[^>]*>만들기<\/button>/)
+    expect(html).not.toContain('다시 만들기')
+    expect(html).not.toContain('만드는 중…')
+    expect(html).not.toContain('AI 복구')
+    expect(html).not.toContain('규칙 복구')
+    expect(html).not.toContain('>접기<')
+    expect(html.indexOf('today-recovery')).toBeLessThan(html.indexOf('today-briefing'))
+  })
+
+  it('맥락 복구 진행 중: 만드는 중… 을 보이고 버튼을 비활성으로 둔다', () => {
+    state.today = payload({ plan: plan(), recovery: { inFlight: true, error: null } })
+    const html = render()
+    expect(html).toContain('만드는 중…')
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>만들기<\/button>/)
+  })
+
+  it('맥락 복구 오류: amber 경고 아래에 규칙 본문을 그대로 보인다', () => {
+    state.today = payload({
+      plan: plan({
+        recovery_text: RECOVERY_MD,
+        recovery_source: 'rules',
+        recovery_at: '2026-11-02 09:40:30'
+      }),
+      recovery: { inFlight: false, error: 'Claude Code 로그인이 필요합니다.' }
+    })
+    const html = render()
+    expect(html).toContain('맥락 복구를 마치지 못했습니다. Claude Code 로그인이 필요합니다.')
+    expect(html).toContain('bg-amber-50')
+    expect(html).toContain('규칙 복구')
+    expect(html).toContain('09:40')
+    expect(html).toContain('결제 모듈 리팩토링 · 진행 중')
+    expect(html.indexOf('맥락 복구를 마치지 못했습니다')).toBeLessThan(html.indexOf('결제 모듈 리팩토링 · 진행 중'))
+  })
+
+  it('맥락 복구 본문 있음: AI 복구 배지·시각·다시 만들기·접기를 보인다. 닫힌 날에도 버튼이 있다', () => {
+    state.today = payload({
+      plan: plan({
+        status: 'closed',
+        closed_at: '2026-11-02 18:30:00',
+        closed_by: 'button',
+        recovery_text: RECOVERY_MD,
+        recovery_source: 'llm',
+        recovery_at: '2026-11-02 09:41:10'
+      })
+    })
+    const html = render()
+    expect(html).toContain('AI 복구')
+    expect(html).not.toContain('규칙 복구')
+    expect(html).toContain('09:41')
+    expect(html).toMatch(/<button[^>]*>다시 만들기<\/button>/)
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>다시 만들기<\/button>/)
+    expect(html).toContain('>접기<')
+    expect(html).toContain('결제 모듈 리팩토링 · 진행 중')
+    expect(html).not.toContain('맥락 복구를 마치지 못했습니다')
+  })
+
+  it('맥락 복구: 비서가 꺼져 있으면 버튼을 숨기고, 계획이 없으면 카드를 그리지 않는다', () => {
+    state.today = payload({ plan: plan(), settings: { ...SETTINGS, enabled: false } })
+    let html = render()
+    expect(html).toContain('today-recovery')
+    expect(html).not.toMatch(/<button[^>]*>만들기<\/button>/)
+
+    state.today = payload({ plan: null })
+    html = render()
+    expect(html).not.toContain('today-recovery')
+  })
+
+  it('recoveryButtonLabel: 본문이 있으면 다시 만들기, 없으면 만들기', () => {
+    expect(recoveryButtonLabel(true)).toBe('다시 만들기')
+    expect(recoveryButtonLabel(false)).toBe('만들기')
   })
 })
 

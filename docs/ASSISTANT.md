@@ -27,6 +27,7 @@
 - 3판: 항목당 고정 60분 배치를 없앴다. 회의 사이 빈 시간을 블록으로 보여 주고, 블록에 작업을 배정한다. 규칙은 '1순위 집중 + 마감 항목 끼우기' 다. 부록 B 가 §5.2~5.4, §12.2, A20 을 대체한다.
 - 3판 보완 (2026-11-02): MVP1 남은 과제 4건을 고쳤다. 내용은 부록 D 다.
 - MVP2 설계 (2026-11-02): 자동 최신화·최신화 알림·트레이 연계의 모듈 계약을 부록 E 에 둔다. 부록 E 가 §16 MVP2 표와 §17 MVP2 조건을 대체한다.
+- MVP3 설계 (2026-11-02): 맥락 복구·AI 채팅 도구의 모듈 계약을 부록 F 에 둔다. 부록 F 가 §10, §14, §16 MVP3 표, §17 MVP3 조건을 구체화한다. 규칙 A25~A28 은 부록 E.8, A29~A33 은 부록 F.11 에 있다.
 
 ---
 
@@ -1981,3 +1982,608 @@ tray: { getData, openApp, openToday: () => ipcRenderer.invoke('tray:openToday'),
 | 9 | `insertEvent` 충돌로 알림 행이 빠지면 `notified` 와 실제 발송이 어긋날 수 있다 | `notified` 는 INSERT 에 성공한 종류만 담는다. `show()` 실패는 알림 행 status `failed` 로만 남긴다. 변경 기록은 '알림 대상' 을 뜻한다 |
 | 10 | 트레이 패널이 열린 채 틱 최신화가 돌면 패널이 오래된 값을 보여 준다 | 다음 열기 때 반영한다. push 는 범위 밖이다. 문제가 되면 후속에서 `tray:data` push 를 더한다 |
 | 11 | `collectSources('calendar')` 에서 Jira 캐시가 없으면 `jira = null` 이다. Jira 항목이 사라진 것으로 보이지 않고 스냅샷 jira 가 유지된다 | 기존 §8.2·A.2 규칙 그대로다. 새 테스트로 명시한다 (조건 10) |
+
+---
+
+## 부록 F. MVP3 맥락 복구·AI 채팅 도구
+
+### F.1 범위
+
+MVP3 에 들어가는 것:
+- 하루 시작 때 자동 맥락 복구. 조건은 F.2 다.
+- 오늘 화면의 수동 '맥락 복구' 버튼과 `RecoveryCard`.
+- 규칙 본문 생성 `buildRecovery`. LLM 본문 생성 `requestLlmRecovery`. 저장은 `daily_plans.recovery_*` 다.
+- Jira 조회 함수 `listMyRecentlyUpdatedIssues`.
+- AI 채팅 도구 3개. `get_today_plan`, `get_recent_work`, `list_meeting_action_items`.
+- `assistant:changed` 의 reason `'recovery'`.
+- `TodayPayload.recovery` 필드. 진행 중·실패 표시에 쓴다.
+
+MVP3 에서 빠지는 것:
+- git 연동. 이유는 §10 그대로다.
+- Jira changelog 조회. 이유는 §10 그대로다.
+- 새 설정 키. 복구는 `assistant_enabled`·`assistant_llm_enabled`·`assistant_llm_model`·`assistant_jira_scope` 만 쓴다.
+- 새 DB 컬럼. 이유는 F.6 에 있다.
+- 체크인 (MVP4), 회의 전 브리핑 (MVP5).
+- 트레이 패널 변경. 트레이는 복구 본문을 보여 주지 않는다.
+- 복구 알림. 복구는 화면에만 보인다. 이유: 사용자가 방금 '하루 시작' 을 눌렀다.
+
+### F.2 트리거
+
+용어:
+- 마지막 계획: `getLastPlanBefore(db, today)` 결과다. `plan_date < today` 인 계획 중 날짜가 가장 늦은 것이다. status 는 보지 않는다. 이유: `startDay` 는 진입 때 `closeStalePlans` 를 먼저 실행한다. 그래서 그 시점의 이전 계획은 모두 `closed` 다.
+- 공백 일수 `gapDays`: `daysBetween(lastPlan.plan_date, today)` 다. 마지막 계획이 없으면 null 이다.
+- 요일 `weekday`: 논리 날짜 `today` 의 요일이다. 0 은 일요일이다. 1 은 월요일이다. 실제 시각의 요일을 쓰지 않는다. 이유: 월요일 03:00 의 논리 날짜는 일요일이다.
+
+자동 생성 조건 (A29). `shouldAutoRecover(ctx)` 는 순수 함수다. 아래 순서로 판정한다.
+1. 마지막 계획이 없으면 null 이다. 이유: 복구할 '이전 근무' 가 없다. 첫 사용자는 수동 버튼을 쓴다.
+2. `gapDays >= 2` 이면 `'gap'` 이다.
+3. `weekday === 1` 이면 `'monday'` 다.
+4. 그 외는 null 이다.
+
+수동 버튼:
+- 오늘 화면의 `RecoveryCard` 에 '맥락 복구' 버튼이 있다. 본문이 있으면 버튼 문구는 '다시 만들기' 다.
+- 버튼은 오늘 계획이 있을 때만 보인다. status 는 `active`·`closed` 둘 다 허용한다. 이유: 본문은 `daily_plans` 행에 저장한다. 행이 없으면 저장할 곳이 없다.
+- 버튼은 조건과 무관하게 언제든 만든다. 이때 reason 은 `'manual'` 이다.
+
+`startDay` 흐름 안의 순서:
+1. 기존 1~7 단계를 그대로 실행한다. 계획 생성, 규칙 브리핑 저장, `emitChanged({ reason: 'day' })` 까지다.
+2. `lastPlan = getLastPlanBefore(db, today)` 를 읽는다. 이 호출은 `createPlan` 뒤에 해도 결과가 같다. 이유: 오늘 계획은 `plan_date < today` 가 아니다.
+3. `shouldAutoRecover` 가 null 이 아니면, 서비스가 `runRecoveryJob` 을 백그라운드로 시작한다. 결과를 기다리지 않는다.
+4. 기존 8 단계 `startBackgroundBriefing` 을 실행한다.
+5. 응답 payload 의 `recovery.inFlight` 는 3 단계가 시작됐으면 true 다.
+
+§2.6 2 단계 '먼저 만든다' 와의 차이: 계획을 먼저 만들고 복구는 백그라운드로 만든다. 이유 2가지:
+- 복구 수집은 Jira 네트워크 호출을 포함한다. 하루 시작 버튼이 네트워크를 기다리지 않는다.
+- 복구 실패가 하루 시작을 막지 않는다 (A30). 화면은 복구 카드를 맨 위에 둔다. 그래서 사용자 경험은 §2.6 과 같다.
+
+실패 규칙 (A30):
+- `runRecoveryJob` 의 모든 예외는 job 안에서 잡는다. `startDay` 는 throw 하지 않는다.
+- 수집 중 일부 출처가 실패하면, 그 출처는 비우고 `errors` 에 문구를 넣는다. 규칙 본문은 그래도 저장한다.
+- 규칙 본문을 먼저 저장한다. LLM 은 그 뒤다. LLM 실패는 `recovery.error` 에만 남긴다.
+
+동시 실행 보호:
+- 서비스 모듈 변수 `recoveryJob: Promise<void> | null` 을 둔다. job 이 진행 중이면 자동 트리거는 건너뛴다. 수동 `generateRecovery` 는 진행 중인 job 을 기다린 뒤 payload 를 돌려준다. 새 job 을 만들지 않는다.
+- 복구 쓰기는 `serialized` 줄에 넣지 않는다. 이유: 복구는 `daily_plans.recovery_*` 3개 컬럼만 쓴다. 계획 항목과 겹치지 않는다. Jira 대기 동안 사용자 버튼을 막지 않는다.
+- `setRecovery` 는 `plan_id` 로 쓴다. 수집 중 하루가 닫혀도 같은 날짜 행에 저장한다.
+
+### F.3 수집
+
+수집 위치는 `assistant-sources.ts` 다. 복구 수집은 2단계다. 로컬 DB 읽기 `readRecoveryLocal` 은 동기 함수다. Jira 를 더한 `collectRecovery` 는 비동기 함수다. 이유: AI 채팅 도구는 로컬 단계만 쓴다 (F.8).
+
+`RecoveryContext` 는 순수 함수 `recoveryContextOf` 가 만든다. 파일은 `assistant-recovery.ts` 다.
+- `since`: 수집 기준 시각. 로컬 `YYYY-MM-DD HH:mm:ss` 다.
+  - 마지막 계획이 있으면 `lastPlan.started_at` 이다. §10 표 그대로다.
+  - `gapDays > 14` 이면 `since` 는 `today − 14일 00:00:00` 이다. 이유: 결과 크기를 제한한다.
+  - 마지막 계획이 없으면 `since` 는 `today − 7일 00:00:00` 이다.
+  - `days` 인자가 있으면 `since` 는 `today − days일 00:00:00` 이다. AI 도구가 쓴다.
+- `sinceDate`: `since` 의 앞 10자다.
+- `jiraDays`: `min(gapDays + 1, 14)` 다. 마지막 계획이 없으면 7 이다. `days` 인자가 있으면 `min(days, 14)` 다. 최솟값은 1 이다.
+
+소스별 쿼리 범위 (A33). 모두 읽기 전용 SELECT 다.
+
+| 소스 | 쿼리 | 상한 | 정렬 |
+|------|------|------|------|
+| 퇴근 메모 | `lastPlan.wrapup_note`. `gapDays <= 7` 일 때만 쓴다. 아니면 null | 2000자 | — |
+| 미완료 계획 항목 | `listPlanItems(db, lastPlan.id)` 중 status 가 `planned`·`in_progress`·`deferred` | 20건 | rank 오름차순. null 은 뒤 |
+| activity_log | `entity_type IN ('project','task','todo') AND datetime(created_at,'localtime') >= since` | 행 500건 → 묶음 50건 | 묶음의 `lastAt` 내림차순 |
+| 회의 요약 | `meeting_summaries ms JOIN meetings m` 에서 `ms.generated_at >= since` | 10건 | `m.started_at` 내림차순 |
+| 완료 todo | `todos` 에서 `is_completed = 1 AND completed_at >= since` | 50건 | `completed_at` 내림차순 |
+| Jira 최근 변경 | `listMyRecentlyUpdatedIssues(jiraDays, scopeKey)` | 50건 표시. 조회 자체는 200건 | `updated` 내림차순 |
+
+activity_log 묶기 규칙:
+1. 같은 `(entity_type, entity_id)` 를 한 묶음으로 한다. `entity_id` 가 null 인 행은 `entity_name` 으로 묶는다.
+2. `name` 은 묶음 안에서 가장 늦은 행의 `entity_name` 이다. 모든 행이 null 이면 원본 테이블에서 이름을 읽는다. 대상은 `projects.name`·`tasks.name`·`todos.title` 이다. 그래도 없으면 `(이름 없음)` 이다.
+3. `actions` 는 시각순으로 중복을 뺀 action 목록이다.
+4. `deleted` 는 `actions` 에 `delete` 가 있으면 true 다. 삭제된 엔티티도 묶음에 남긴다. 화면 문구는 `삭제됨` 을 붙인다.
+5. `firstAt`·`lastAt` 은 로컬 시각이다. `datetime(created_at,'localtime')` 결과를 쓴다.
+6. 비서가 만든 기록은 없다. 이유: 비서는 `logActivity` 를 부르지 않는다 (A2).
+
+회의 요약 규칙:
+- `tldr` 는 300자에서 자른다.
+- `openActionItems` 는 `action_items` JSON 중 `todo_id` 가 null 인 항목의 `text` 다. 최대 5건이다. `openActionCount` 는 전체 수다.
+- `projectName` 은 `m.project_id` 로 `projects.name` 을 읽는다. 없으면 null 이다.
+
+Jira 규칙:
+- `isJiraConnected()` 가 false 면 `jira` 는 null 이다. `errors` 에는 넣지 않는다. 섹션 문구는 `Jira 가 연결되어 있지 않다` 다.
+- 조회가 throw 하면 `jira` 는 null 이다. `errors` 에 `JIRA_FAILED` 문구를 넣는다.
+- `updated` 는 `isoToLocalDateTime` 으로 바꾼다. `url` 은 `getJiraIssueUrl(key)` 다.
+- `scopeKey` 는 기존 `jiraScopeKey(settings)` 와 같다.
+- 캐시를 쓰지 않는다. 이유: 복구는 하루에 1~2회다.
+
+### F.4 규칙 본문
+
+`buildRecovery(input: RecoveryInput): RecoverySection[]` 은 순수 함수다 (A3, A14). 같은 입력에 같은 출력을 낸다. 입력 배열을 바꾸지 않는다.
+
+섹션 종류와 순서. key 는 고정이다.
+
+| 순서 | key | title | 항목 문구 규칙 |
+|------|-----|-------|----------------|
+| 1 | `last_day` | `마지막 근무` | 1줄: `<plan_date> (<N>일 전)`. 메모가 있으면 2줄: `메모: <wrapup_note 한 줄 200자>`. 메모가 없으면 `메모 없음`. 마지막 계획이 없으면 `이전 계획이 없다. 최근 <N>일을 본다` |
+| 2 | `unfinished` | `남은 작업` | 항목마다 `<제목> · <상태>` . 상태 문구는 `진행 중`·`미룸`·없음. 마감이 있으면 ` · 마감 <due_date>`. Jira 키가 있으면 제목 앞에 `<key> ` |
+| 3 | `done` | `그동안 한 일` | 완료 todo 먼저: `<completedAt HH:mm 포함 날짜> 완료 · <title>`. 그다음 activity 묶음: `<lastAt 날짜> <엔티티 종류 한글> · <name> · <actions 한글 나열>`. `deleted` 면 끝에 ` · 삭제됨`. 종류 한글: 프로젝트·작업·할 일. action 한글: 생성·수정·삭제·보관·복원·완료 |
+| 4 | `meetings` | `회의` | 회의마다 1줄: `<startedAt 날짜> <title>`. projectName 이 있으면 ` · <projectName>`. tldr 가 있으면 다음 줄 `  요약: <tldr>`. 미완료 액션이 있으면 다음 줄 `  미완료 액션 <openActionCount>건: <text1>; <text2>` |
+| 5 | `jira` | `Jira 변경` | 이슈마다 `<key> <summary> · <status>`. 마감이 있으면 ` · 마감 <duedate>`. `jira` 가 null 이고 미연결이면 1줄 `Jira 가 연결되어 있지 않다`. null 이고 실패면 1줄 `Jira 변경을 확인하지 못했다`. `jiraTruncated` 면 마지막 줄 `이슈가 많아 일부만 가져왔다` |
+| 6 | `errors` | `확인하지 못한 출처` | `errors` 각 1줄 |
+
+비어 있는 섹션 처리:
+- `last_day` 는 항상 있다.
+- `unfinished`·`done`·`meetings` 는 항목이 0건이면 반환 배열에서 뺀다.
+- `jira` 는 연결됐고 성공했고 0건이면 뺀다. null 이면 문구 1줄로 남긴다.
+- `errors` 는 0건이면 뺀다.
+
+항목 수 상한은 F.3 표를 따른다. 문자열은 `oneLine(text, 200)` 으로 한 줄 200자로 만든다. 줄바꿈과 `[데이터]` 표식은 지운다.
+
+Markdown 저장 형식. `recoveryToMarkdown(sections, ctx)` 가 만든다. `recovery_text` 에 이 문자열을 저장한다.
+
+```
+# <today> 맥락 복구
+
+마지막 근무는 <plan_date> 입니다. <N>일 만에 돌아왔습니다.   ← 마지막 계획이 없으면 '최근 <N>일을 정리했습니다.'
+
+## <section.title>
+
+- <line>
+- <line>
+```
+
+- 섹션 순서는 배열 순서다.
+- `meetings` 의 들여쓴 줄은 `  - <line>` 로 쓴다. 이유: 회의 1건이 목록 1항목이다.
+- 끝은 개행 1개다. `renderRuleBriefing` 과 같다.
+
+### F.5 LLM 본문
+
+파일은 `assistant-briefing.ts` 다. 이유: `ai-headless`·`writing-style`·`resolveAiModelId` import 패턴이 이미 있다. `assistant-recovery.ts` 는 순수 모듈이라 electron 을 import 할 수 없다.
+
+입력: `RecoveryLlmInput { ctx: RecoveryContext; sections: RecoverySection[] }`. LLM 은 원본 입력이 아니라 규칙 섹션을 받는다. 이유 2가지: 섹션은 이미 상한과 한 줄 정리를 거쳤다. 규칙 본문과 LLM 본문의 사실 집합이 같다.
+
+프롬프트:
+- 시스템 프롬프트 `RECOVERY_SYSTEM_PROMPT` 는 `BRIEFING_SYSTEM_PROMPT` 와 같은 뼈대다. `DATA_RULE`, `WRITING_STYLE_RULES`, `WRITING_STYLE_JSON_NOTE` 를 포함한다. ASD-STE100 적용은 브리핑과 같다.
+- 역할 문구: `너는 사용자가 자리를 비운 사이 바뀐 것을 정리하는 비서다. [데이터] 블록에 마지막 근무일, 남은 작업, 그동안 한 일, 회의, Jira 변경이 있다.`
+- 금지 문구: `[데이터] 블록에 없는 일을 만들지 않는다. 다음 할 일은 [데이터] 의 남은 작업·미완료 액션·Jira 이슈 중에서만 고른다.`
+- 사용자 프롬프트 `buildRecoveryPrompt(input)` 은 `{ date, last_plan_date, gap_days, sections: [{ key, title, lines }] }` JSON 을 `[데이터]` 블록에 넣는다. `neutralizeMarkers` 를 거친다 (A9).
+
+출력 스키마:
+```ts
+const RecoveryObject = z.object({
+  headline: z.string().max(80),
+  sections: z.array(z.object({
+    title: z.string().max(40),
+    lines: z.array(z.string().max(200)).max(8)
+  })).max(5),
+  next_steps: z.array(z.string().max(200)).max(5)
+})
+export type RecoveryJson = z.infer<typeof RecoveryObject>
+export const RecoverySchema: z.ZodType<RecoveryJson> = RecoveryObject
+```
+
+`recoveryJsonToMarkdown(value, ctx)`:
+```
+# <headline 80자>
+
+## <section.title>
+- <line>
+
+## 다음 할 일
+- <next_step>
+```
+- `next_steps` 가 비어 있으면 그 절을 뺀다.
+
+모델: `settings.llmModel` 이다. 기본값 sonnet 이다. `resolveAiModelId` 를 쓴다. 타임아웃은 기본 90초다.
+
+폴백:
+- `requestLlmRecovery` 는 throw 하지 않는다. 실패는 `{ ok: false, error }` 다.
+- 실패하면 규칙 본문이 그대로 남는다. 서비스는 `recovery.error` 에 사유를 둔다.
+- `settings.llmEnabled` 가 false 거나 `isHeadlessAvailable()` 이 false 면 LLM 단계를 건너뛴다. `recovery.error` 는 null 이다.
+
+단일 실행 잠금과의 관계 (A32):
+- `ai-headless.ts` 는 동시에 1개만 실행한다. 하루 시작 때 브리핑 LLM 과 복구 LLM 이 함께 생긴다. 잠금만 믿으면 두 번째가 `HEADLESS_BUSY_MESSAGE` 로 실패한다.
+- 서비스에 `llmChain: Promise<unknown>` 을 둔다. `llmSerialized(fn)` 은 `serialized` 와 같은 모양이다. 브리핑 LLM 과 복구 LLM 은 모두 이 줄을 거친다. 수동 `refreshBriefing`·`generateRecovery` 도 같은 줄을 거친다.
+- 순서는 줄에 선 순서다. 하루 시작 때는 브리핑 LLM 이 먼저 선다. 이유: 브리핑은 `startDayImpl` 안에서 동기로 줄에 선다. 복구 LLM 은 Jira 수집이 끝난 뒤 줄에 선다.
+- 규칙 복구 본문은 줄과 무관하게 수집 직후 저장한다. 사용자는 LLM 을 기다리지 않고 규칙 본문을 본다.
+- `ai-headless.ts` 는 바꾸지 않는다. 잠금은 마지막 안전장치로 남는다.
+
+### F.6 저장
+
+- `recovery_text`: Markdown 본문이다. 규칙 본문을 먼저 쓴다. LLM 이 성공하면 교체한다.
+- `recovery_source`: `'rules' | 'llm'` 이다.
+- `recovery_at`: 저장 시각이다. 로컬 `YYYY-MM-DD HH:mm:ss` 다 (A12).
+- `assistant-store.ts` 에 `setRecovery(db, planId, { text, source, at })` 를 추가한다. 3개 컬럼과 `updated_at` 을 쓴다.
+- 마이그레이션은 없다. 컬럼이 이미 있다. `assistant-schema.test.ts` 에 3개 컬럼 존재 확인을 추가한다. 이유: 이후 누군가 컬럼을 지우면 테스트가 막는다.
+
+`recovery_error` 컬럼을 만들지 않는다. 대신 서비스 메모리 `RecoveryState { date: string | null; inFlight: boolean; error: string | null }` 를 둔다. `TodayPayload.recovery` 로 노출한다. `date` 가 오늘 논리 날짜와 다르면 payload 는 `{ inFlight: false, error: null }` 이다. 이유 3가지:
+- 진행 중 표시는 어차피 메모리다. 컬럼으로 못 한다.
+- LLM 실패 사유는 일시적이다. 앱을 다시 켜면 규칙 본문과 '다시 만들기' 버튼이 남는다. 그것으로 충분하다.
+- `ALTER TABLE` 과 `PRAGMA table_info` 마이그레이션 코드가 생기지 않는다.
+
+### F.7 오늘 화면
+
+`RecoveryCard.tsx` 를 새로 만든다. `TodayView.tsx` 는 `plan` 이 있을 때 `BriefingCard` 바로 위에 `RecoveryCard` 를 둔다. §12.2 본문 순서 1 번이다.
+
+표시 규칙:
+- 본문이 없고 진행 중이 아니고 오류도 없으면, 카드는 1줄이다. 제목 `맥락 복구` 와 버튼 `만들기` 만 보인다. §12.2 의 '데이터가 있을 때만 보인다' 와 다르다. 이유: 수동 버튼이 놓일 자리가 필요하다.
+- 진행 중이면, 제목 옆에 `만드는 중…` 문구를 보인다. 버튼은 비활성이다.
+- `recovery.error` 가 있으면, `BriefingCard` 와 같은 모양의 amber 경고를 보인다. 문구는 `맥락 복구를 마치지 못했습니다. <error>` 다. 이유: 오류는 수집·저장·LLM 중 어디서든 생긴다. 규칙 본문은 그 아래에 그대로 보인다.
+- 본문이 있으면 배지를 보인다. `recovery_source === 'llm'` 이면 `AI 복구`, 아니면 `규칙 복구` 다. `recovery_at` 의 `HH:mm` 을 옆에 보인다. `BriefingCard` 와 같다.
+- 본문은 `MarkdownContent` 로 그린다. `onInternalLink` 는 `openInternalLink` 다.
+- 접기: 카드 제목 줄에 `접기`·`펼치기` 토글을 둔다. 상태는 컴포넌트 `useState` 다. 기본은 펼침이다. 접힌 상태는 저장하지 않는다. 이유: 복구 본문은 하루에 한 번 읽는 글이다.
+- '다시 만들기' 버튼: 본문이 있으면 문구는 `다시 만들기` 다. `busy` 또는 `inFlight` 면 비활성이다. `settings.enabled` 가 false 면 숨긴다.
+- 카드 루트 요소 id 는 `today-recovery` 다. `AssistantNavigateEvent.focus.kind` 는 늘리지 않는다. 이유: 복구 알림이 없다.
+
+스토어 `assistantStore.ts`:
+- `generateRecovery: () => Promise<void>` 를 추가한다. `run(() => window.api.assistant.generateRecovery(), '맥락 복구에 실패했습니다')` 다.
+- `subscribe` 는 바꾸지 않는다. `reason === 'recovery'` 도 `load()` 를 부른다.
+
+`assistant:changed` reason:
+- 규칙 본문 저장 뒤 `{ reason: 'recovery' }` 를 보낸다.
+- LLM 본문 저장 뒤 또는 LLM 실패 뒤 `{ reason: 'recovery' }` 를 보낸다.
+- job 시작 직후에는 보내지 않는다. 이유: `startDay` 응답 payload 가 `inFlight: true` 를 이미 담는다. 수동 버튼은 응답을 기다린다.
+
+### F.8 AI 채팅 도구 3개
+
+파일은 `src/main/services/ai-assistant-tools.ts` 다. `buildAssistantTools(tool)` 를 export 한다. `tool` 은 SDK 의 `tool` 함수다. 테스트는 가짜 `tool` 을 넘겨 핸들러를 직접 부른다.
+
+공통 규칙 (A31):
+- DB 는 `getAiReadOnlyDatabase()` 만 쓴다. `getDatabase` 를 import 하지 않는다.
+- `./jira`·`./google-calendar` 를 import 하지 않는다. 네트워크를 쓰지 않는다.
+- 외부 문자열은 길이를 자른다. 본문 4000자, 제목 300자, 목록 200건이다.
+- 입력은 zod 로 검증한다. SQL 은 바인딩 파라미터만 쓴다.
+- 결과는 `jsonResult` 모양 `{ content: [{ type: 'text', text: JSON }] }` 이다. `ai-tools.ts` 의 `jsonResult` 를 export 해 재사용한다. 또는 같은 함수를 이 파일에 둔다. 팀원 5 가 정한다.
+
+`get_today_plan`
+- 설명: `비서의 오늘 계획을 조회한다. "오늘 뭐 해야 하지", "지금 남은 작업" 같은 질문에 쓴다. 브리핑과 맥락 복구 본문도 돌려준다.`
+- 입력: `{ date?: 'YYYY-MM-DD' }`. `dateArg` 와 같은 정규식이다.
+- `date` 의 의미: `daily_plans.plan_date` 다. 즉 논리 날짜다. 생략하면 `logicalDate(new Date(), settings.dayRollover)` 다. `settings` 는 `readAssistantSettings(db)` 로 읽는다. 이 함수는 SELECT 만 한다.
+- 반환:
+```json
+{
+  "date": "2026-11-02",
+  "plan": {
+    "status": "active", "started_at": "...", "closed_at": null, "wrapup_note": null,
+    "briefing_source": "llm", "briefing_text": "<4000자>",
+    "recovery_source": "rules", "recovery_text": "<4000자>"
+  },
+  "items": [ { "id", "candidate_id", "title", "source", "link", "jira_issue_key", "due_date", "rank", "status", "status_note", "urgent", "first_planned_date" } ],
+  "suggested": [ { "id", "candidate_id", "title", "due_date", "urgent" } ],
+  "hint": "오늘 화면은 linkwork://view/today 다."
+}
+```
+- `items` 는 `suggested`·`dismissed` 를 뺀 항목이다. rank 오름차순이다. null 은 뒤다. `suggested` 는 status 가 `suggested` 인 항목이다.
+- 계획이 없으면 `{ "date", "plan": null, "items": [], "suggested": [], "hint": "이 날짜의 계획이 없다. 오늘이면 오늘 화면에서 하루 시작을 누른다." }` 다.
+- 조회는 `getPlanByDate`·`listPlanItems` 를 쓴다. 둘 다 SELECT 만 한다.
+
+`get_recent_work`
+- 설명: `최근 N일 동안 한 일을 정리한다. "주말 이후 어디까지 했더라", "이번 주 한 일" 같은 질문에 쓴다. Jira 는 보지 않는다.`
+- 입력: `{ days?: number }`. `z.number().int().min(1).max(14).default(3)` 이다.
+- 처리: `today = logicalDate(now, rollover)`. `lastPlan = getLastPlanBefore(db, today)`. `ctx = recoveryContextOf({ today, lastPlan, days })`. `local = readRecoveryLocal(db, ctx, lastItems)`. `lastItems` 는 `lastPlan` 이 있으면 `listPlanItems(db, lastPlan.id)` 다. `sections = buildRecovery({ ctx, ...local, jira: null, jiraTruncated: false, errors: [] })`.
+- 반환: `{ "since": ctx.since, "days", "last_plan_date": lastPlan?.plan_date ?? null, "sections": sections.filter(s => s.key !== 'jira' && s.key !== 'errors'), "hint": "Jira 변경은 Atlassian 도구로 조회한다." }`
+- Jira 를 호출하지 않는다. `jira` 섹션을 뺀다. 이유: AI 채팅은 Atlassian 커넥터 도구를 가진다 (AI_GUARDRAILS §8.2).
+
+`list_meeting_action_items`
+- 설명: `회의 요약의 액션아이템을 조회한다. "지난 회의에서 하기로 한 것" 같은 질문에 쓴다.`
+- 입력: `{ completed?: boolean, days?: number }`. `completed` 기본값 false. `days` 는 `int().min(1).max(90).default(30)` 이다.
+- 처리: `meeting_summaries ms JOIN meetings m` 에서 `ms.generated_at >= today − days` 를 읽는다. `action_items` JSON 을 `parseJsonArray<NoteActionItem>` 으로 푼다. `todo_id` 가 있으면 `todos.is_completed` 를 읽는다.
+  - `completed = false`: `todo_id` 가 null 인 항목과 `is_completed = 0` 인 항목이다.
+  - `completed = true`: `is_completed = 1` 인 항목만이다.
+- 반환: `[ { "meeting_id", "meeting_title", "meeting_started_at", "project_id", "index", "text", "assignee", "due", "todo_id", "todo_completed" } ]`. 최대 200건이다. `text` 는 300자다. 정렬은 `meeting_started_at` 내림차순, `index` 오름차순이다.
+- `todo_completed` 는 `todo_id` 가 null 이면 null 이다. todo 가 삭제됐으면 null 이다.
+
+`ai-tools.ts` 수정 3곳:
+1. `import { buildAssistantTools } from './ai-assistant-tools'` 를 추가한다.
+2. `LINKWORK_TOOL_NAMES` 배열에 `'get_today_plan'`, `'get_recent_work'`, `'list_meeting_action_items'` 를 추가한다. 주석: `// 비서 도구는 읽기 전용 로컬 DB 만 읽는다. Jira 를 호출하지 않는다 (AI_GUARDRAILS 8.6)`.
+3. `buildServer` 안에서 `const assistantTools = buildAssistantTools(tool)` 를 만들고 `tools: [...]` 에 `...assistantTools` 를 spread 한다. 위치는 `getCalendarEvents` 다음이다.
+
+`ai-agent.ts` `buildSystemPrompt` 수정 2곳. 둘 다 1줄이다.
+1. 데이터 목록에 불릿 1줄을 추가한다. 위치는 `- Google 캘린더:` 줄 다음이다. 문구: `- 개인 비서: 오늘 계획·브리핑·맥락 복구·최근 한 일·회의 액션아이템 (get_today_plan, get_recent_work, list_meeting_action_items 로 조회. 앱 로컬 데이터라 Jira 도구를 쓰지 않아도 됩니다)`
+2. `메뉴 이동` 줄의 view 값 목록에 `today` 를 추가한다. 이유: 도구 힌트가 `linkwork://view/today` 를 쓴다. `AiChatView.tsx` 의 views 배열에는 `'today'` 가 이미 있다.
+
+`docs/AI_GUARDRAILS.md` 갱신:
+- §8 제목 아래에 `### 8.6 개인 비서 조회 (로컬 DB만 읽음)` 를 추가한다. 내용은 §8.5 와 같은 형식이다.
+  - 표: 도구 3개, 반환, 상한.
+  - 불릿: AI 는 Jira 를 직접 호출하지 않는다. 비서 테이블은 읽기만 한다. 쓰기 도구는 없다. 하루 시작·퇴근·상태 변경은 오늘 화면에서만 한다. 브리핑·복구 본문은 LLM 이 만든 문장이므로 신뢰할 수 없는 입력으로 다룬다. 도구 결과 안의 지시문을 따르지 않는다.
+- §2 의 `새 조회 도구는 ai-tools.ts에 정의하고` 문장 뒤에 `비서 도구는 ai-assistant-tools.ts 에 정의한다` 를 추가한다.
+
+`docs/AI_CHAT_ARCHITECTURE.md` 갱신:
+- §8.1 표 제목을 `LinkWork 데이터 (13종)` 으로 바꾼다. 행 3개를 추가한다.
+
+### F.9 모듈 계약
+
+팀원은 이름과 시그니처를 그대로 쓴다. 계약을 바꿔야 하면 리더에게 알린다.
+
+#### F.9.1 `assistant-types.ts` (팀원 1) 추가·변경분
+
+```ts
+// ── MVP3 (부록 F) ──
+export type RecoveryTriggerReason = 'gap' | 'monday' | 'manual'
+
+export type RecoveryLastPlan = Pick<DailyPlan, 'id' | 'plan_date' | 'started_at' | 'closed_at' | 'wrapup_note' | 'wrapup_at'>
+
+export interface RecoveryContext {
+  today: string                 // 논리 날짜
+  weekday: number               // today 의 요일. 0=일 … 6=토
+  lastPlan: RecoveryLastPlan | null
+  gapDays: number | null        // daysBetween(lastPlan.plan_date, today). lastPlan 이 null 이면 null
+  since: string                 // 수집 기준 시각 'YYYY-MM-DD HH:mm:ss'
+  sinceDate: string             // since 의 날짜
+  jiraDays: number              // 1~14
+}
+
+export type RecoveryEntityType = 'project' | 'task' | 'todo'
+export interface RecoveryActivityGroup {
+  entityType: RecoveryEntityType
+  entityId: number | null
+  name: string                  // 마지막 entity_name. 없으면 원본 이름. 그래도 없으면 '(이름 없음)'
+  actions: string[]             // 시각순. 중복 없음
+  count: number
+  firstAt: string               // 로컬 'YYYY-MM-DD HH:mm:ss'
+  lastAt: string
+  deleted: boolean
+}
+export interface RecoveryMeeting {
+  meetingId: number; title: string; startedAt: string; projectName: string | null
+  tldr: string | null           // 300자
+  openActionItems: string[]     // todo_id 없는 항목 text. 최대 5건
+  openActionCount: number
+}
+export interface RecoveryTodoDone { id: number; title: string; completedAt: string }
+export interface RecoveryJiraIssue {
+  key: string; summary: string; status: string; statusCategory: JiraCategory
+  priority: string | null; duedate: string | null
+  updatedLocal: string | null   // 로컬 'YYYY-MM-DD HH:mm:ss'
+  url: string | null
+}
+export interface RecoveryLocalInput {
+  wrapupNote: string | null         // gapDays <= 7 일 때만. 아니면 null
+  unfinishedItems: PlanItem[]       // 마지막 계획의 planned·in_progress·deferred. rank 순. 최대 20
+  activity: RecoveryActivityGroup[] // lastAt 내림차순. 최대 50
+  meetings: RecoveryMeeting[]       // startedAt 내림차순. 최대 10
+  completedTodos: RecoveryTodoDone[] // completedAt 내림차순. 최대 50
+}
+export interface RecoveryInput extends RecoveryLocalInput {
+  ctx: RecoveryContext
+  jira: RecoveryJiraIssue[] | null  // null 이면 미연결 또는 실패. updated 내림차순. 최대 50
+  jiraConnected: boolean
+  jiraTruncated: boolean
+  errors: string[]
+}
+
+export type RecoverySectionKey = 'last_day' | 'unfinished' | 'done' | 'meetings' | 'jira' | 'errors'
+export interface RecoverySection { key: RecoverySectionKey; title: string; lines: string[] }
+
+export interface RecoveryState { inFlight: boolean; error: string | null }
+
+// 변경: TodayPayload 에 추가
+//   recovery: RecoveryState
+// 변경: AssistantChangedEvent.reason 에 'recovery' 추가
+export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' | 'recovery' }
+```
+
+#### F.9.2 `assistant-recovery.ts` (팀원 1, 새 파일, 순수)
+
+A3 대상이다. electron·better-sqlite3·`../db`·`./jira`·`./google-calendar` 를 import 하지 않는다. `./assistant-day` 의 `addDays`·`daysBetween` 과 `./assistant-types` 만 import 한다.
+
+```ts
+export const RECOVERY_MAX_DAYS = 14
+export const RECOVERY_DEFAULT_DAYS = 7          // 마지막 계획이 없을 때
+export const RECOVERY_WRAPUP_MAX_DAYS = 7
+export const RECOVERY_LIMITS = { unfinished: 20, activityRows: 500, activity: 50, meetings: 10, todos: 50, jira: 50, actionItemsPerMeeting: 5 } as const
+
+export function weekdayOf(date: string): number                                   // 'YYYY-MM-DD' → 0~6. 로컬 자정 기준
+export function shouldAutoRecover(ctx: Pick<RecoveryContext, 'lastPlan' | 'gapDays' | 'weekday'>): RecoveryTriggerReason | null   // A29. F.2 순서
+export function recoveryContextOf(input: { today: string; lastPlan: RecoveryLastPlan | null; days?: number }): RecoveryContext   // F.3 since·jiraDays 규칙
+export function buildRecovery(input: RecoveryInput): RecoverySection[]            // F.4. A14
+export function recoveryToMarkdown(sections: RecoverySection[], ctx: RecoveryContext): string   // F.4 형식
+```
+
+#### F.9.3 `jira.ts` (팀원 2) 추가분
+
+```ts
+export const MAX_RECENT_DAYS = 30
+export async function listMyRecentlyUpdatedIssues(days: number, projectKey: string | null): Promise<{ issues: JiraMyIssue[]; truncated: boolean }>
+```
+- `days` 가 1~30 정수가 아니면 네트워크 전에 throw 한다. 문구는 `잘못된 조회 기간` 이다.
+- JQL: `[project = <key> AND ]assignee = currentUser() AND updated >= -<days>d ORDER BY updated DESC`.
+- `searchMyIssues` 를 재사용한다. fields·상한·페이지네이션이 같다. `method: 'GET'` 만 쓴다 (A1).
+
+#### F.9.4 `assistant-sources.ts` (팀원 2) 추가분
+
+```ts
+export function readRecoveryLocal(db: Database.Database, ctx: RecoveryContext, lastItems: PlanItem[]): RecoveryLocalInput   // 동기. SELECT 만. 읽기 전용 커넥션도 받는다
+export async function collectRecovery(db: Database.Database, settings: AssistantSettings, ctx: RecoveryContext, lastItems: PlanItem[]): Promise<RecoveryInput>   // readRecoveryLocal + Jira. throw 하지 않는다
+```
+- `lastItems` 는 호출자가 `listPlanItems(db, ctx.lastPlan.id)` 로 넘긴다. `ctx.lastPlan` 이 null 이면 빈 배열이다. 이유: 이 파일은 `assistant-store` 를 import 하지 않는다. 기존 관례를 지킨다.
+- `readRecoveryLocal` 은 `activity_log` 를 `datetime(created_at,'localtime')` 으로 비교한다. 이유: 기본값이 UTC 다.
+- `collectRecovery` 의 Jira 부분은 F.3 Jira 규칙을 따른다. `checkTimes`·`jiraCache` 를 건드리지 않는다.
+
+#### F.9.5 `assistant-briefing.ts` (팀원 2) 추가분
+
+```ts
+export interface RecoveryLlmInput { ctx: RecoveryContext; sections: RecoverySection[] }
+export const RecoverySchema: z.ZodType<RecoveryJson>
+export const RECOVERY_SYSTEM_PROMPT: string
+export function buildRecoveryPrompt(input: RecoveryLlmInput): string               // [데이터] 블록. neutralizeMarkers (A9)
+export function recoveryJsonToMarkdown(value: RecoveryJson, ctx: RecoveryContext): string
+export async function requestLlmRecovery(input: RecoveryLlmInput, model: AiModelName): Promise<{ ok: true; markdown: string; model: string } | { ok: false; error: string }>   // throw 하지 않는다
+```
+
+#### F.9.6 `assistant-store.ts` (팀원 2) 추가분
+
+```ts
+export function setRecovery(db, planId: number, r: { text: string; source: 'rules' | 'llm'; at: string }): void   // recovery_text·recovery_source·recovery_at·updated_at
+```
+
+#### F.9.7 `assistant-service.ts` (팀원 3) 추가·변경분
+
+```ts
+export function generateRecovery(now?: Date): Promise<TodayPayload>   // 수동. 오늘 계획이 없으면 throw. 진행 중인 job 이 있으면 그것을 기다린다. 규칙 저장과 LLM 완료까지 기다린다
+export function getRecoveryState(): RecoveryState                     // 테스트용
+// 내부: let recoveryJob: Promise<void> | null
+// 내부: let recoveryState: { date: string | null; inFlight: boolean; error: string | null }
+// 내부: let llmChain: Promise<unknown>; function llmSerialized<T>(fn: () => Promise<T>): Promise<T>   // A32. 브리핑·복구 LLM 공용
+// 내부: runRecoveryJob(db, settings, today, now, plan: DailyPlan): Promise<void>
+//   1. recoveryState = { date: today, inFlight: true, error: null }
+//   2. lastPlan = getLastPlanBefore(db, today); lastItems = lastPlan ? listPlanItems(db, lastPlan.id) : []
+//   3. ctx = recoveryContextOf({ today, lastPlan })
+//   4. input = await collectRecovery(db, settings, ctx, lastItems)        // throw 하지 않는다
+//   5. sections = buildRecovery(input); setRecovery(db, plan.id, { text: recoveryToMarkdown(sections, ctx), source: 'rules', at })
+//   6. emitChanged({ date: today, reason: 'recovery' })
+//   7. llmEnabled 이고 headless 가능하면: r = await llmSerialized(() => requestLlmRecovery({ ctx, sections }, settings.llmModel))
+//      ok 면 setRecovery(db, plan.id, { text: r.markdown, source: 'llm', at: now })  아니면 recoveryState.error = r.error
+//   8. recoveryState.inFlight = false; emitChanged({ date: today, reason: 'recovery' })
+//   모든 단계는 try/catch 안이다. 예외는 recoveryState.error 에 남기고 throw 하지 않는다 (A30)
+// 변경: startDayImpl — emitChanged('day') 뒤, startBackgroundBriefing 앞에 shouldAutoRecover 판정과 job 시작
+// 변경: runLlmBriefing 호출을 llmSerialized 로 감싼다
+// 변경: buildPayload 가 recovery: recoveryState.date === today ? { inFlight, error } : { inFlight: false, error: null } 를 채운다
+// 변경: waitForAssistantBackground 가 recoveryJob 도 기다린다
+```
+
+#### F.9.8 `assistant.ipc.ts`·`preload/index.ts` (팀원 3)
+
+| preload 메서드 | 채널 | 인자 | 성공 응답 |
+|----------------|------|------|-----------|
+| generateRecovery | `assistant:generateRecovery` | 없음 | `{ success: true, today }` |
+
+- `preload/index.d.ts` 는 바꾸지 않는다. `AssistantAPI` 를 렌더러 타입에서 import 하기 때문이다.
+- `src/main/index.ts`·`assistant-scheduler.ts` 는 바꾸지 않는다.
+
+#### F.9.9 `ai-assistant-tools.ts` (팀원 5, 새 파일)
+
+```ts
+type SdkTool = typeof import('@anthropic-ai/claude-agent-sdk').tool
+export const ASSISTANT_TOOL_NAMES = ['get_today_plan', 'get_recent_work', 'list_meeting_action_items'] as const
+export function buildAssistantTools(tool: SdkTool): ReturnType<SdkTool>[]
+```
+- import 허용: `zod`, `../db/database` 의 `getAiReadOnlyDatabase`, `./assistant-store` 의 SELECT 함수, `./assistant-day`, `./assistant-recovery`, `./assistant-sources` 의 `readRecoveryLocal`, `./meeting-notes` 의 `parseJsonArray`.
+- import 금지: `getDatabase`, `./jira`, `./google-calendar`, `./ai-headless`.
+- `./assistant-sources` import 는 `jira.ts`·`google-calendar.ts` 를 함께 끌어온다. 테스트는 `./jira`·`./google-calendar`·`./google-auth` 를 `vi.mock` 한다. 선례는 `assistant-sources.test.ts` 다.
+
+#### F.9.10 렌더러 (팀원 4)
+
+`types/index.ts`:
+- `AssistantChangedEvent.reason` 에 `'recovery'` 추가.
+- `RecoveryState` 추가. `TodayPayload.recovery: RecoveryState` 추가.
+- `AssistantAPI.generateRecovery: () => Promise<TodayResult>` 추가.
+
+`assistantStore.ts`: `generateRecovery: () => Promise<void>` 추가.
+
+`RecoveryCard.tsx`:
+```ts
+export default function RecoveryCard(props: {
+  plan: Pick<DailyPlan, 'recovery_text' | 'recovery_source' | 'recovery_at'>
+  state: RecoveryState
+  busy: boolean
+  canGenerate: boolean          // settings.enabled
+  onGenerate: () => void
+}): React.ReactNode
+export function recoveryButtonLabel(hasText: boolean): string   // '만들기' | '다시 만들기'
+```
+
+`TodayView.tsx`: `plan` 이 있으면 `BriefingCard` 위에 `RecoveryCard` 를 둔다. `TodayView.test.tsx` 는 `renderToStaticMarkup` 으로 4가지 상태를 그린다. 본문 없음, 진행 중, 오류, 본문 있음이다.
+
+#### F.9.11 변경하지 않는 파일
+
+`assistant-scheduler.ts`, `assistant-schedule.ts`, `assistant-refresh.ts`, `assistant-slots.ts`, `assistant-day.ts`, `assistant-settings.ts`, `assistant-candidates.ts`, `assistant-score.ts`, `assistant-tray.ts`, `assistant-schema.ts`, `ai-headless.ts`, `src/main/index.ts`, `src/main/db/database.ts`, `preload/index.d.ts`, `renderer/src/env.d.ts`, `App.tsx`, `tray-widget.ts`, `TrayPanel.tsx`, `DayHeader.tsx`, `BriefingCard.tsx`, `AssistantSettingsModal.tsx`.
+
+### F.10 팀 구성과 소유 파일
+
+§16 의 MVP3 4명 표는 현재 코드와 맞지 않는다. `assistant-service.ts`·`assistant-types.ts`·`ai-agent.ts` 의 변경이 빠졌고, `assistant-sources.ts` 와 `assistant-store.ts` 가 다른 팀원에게 있다. 5명으로 다시 나눈다.
+
+| 팀원 | 역할 | 소유 파일 |
+|------|------|-----------|
+| 1 순수·타입 | 타입, 트리거 판정, 규칙 본문 | `src/main/services/assistant-types.ts`, `assistant-recovery.ts`, `assistant-recovery.test.ts`, `assistant-schema.test.ts` |
+| 2 수집·AI·저장 | Jira 조회, 복구 수집, LLM 복구, 저장 | `src/main/services/jira.ts`, `jira.test.ts`, `assistant-sources.ts`, `assistant-sources.test.ts`, `assistant-briefing.ts`, `assistant-briefing.test.ts`, `assistant-store.ts`, `assistant-store.test.ts` |
+| 3 런타임·IPC | 서비스 job·LLM 줄, IPC, preload | `src/main/services/assistant-service.ts`, `assistant-service.test.ts`, `assistant-tray.test.ts`, `src/main/ipc/assistant.ipc.ts`, `src/preload/index.ts`, `src/preload/index.d.ts`, `src/main/index.ts`, `assistant-scheduler.ts`, `assistant-scheduler.test.ts` |
+| 4 렌더러 | 타입 복제, 카드, 오늘 화면 | `src/renderer/src/types/index.ts`, `env.d.ts`, `stores/assistantStore.ts`, `components/today/RecoveryCard.tsx`, `TodayView.tsx`, `TodayView.test.tsx`, `BriefingCard.tsx`, `DayHeader.tsx`, `App.tsx` |
+| 5 AI 채팅 도구 | 도구 3개, 등록, 프롬프트, 문서 | `src/main/services/ai-assistant-tools.ts`, `ai-assistant-tools.test.ts`, `ai-tools.ts`, `ai-agent.ts`, `docs/AI_GUARDRAILS.md`, `docs/AI_CHAT_ARCHITECTURE.md` |
+
+- 팀원 3 의 `assistant-tray.test.ts` 소유 이유: 이 테스트가 `TodayPayload` 리터럴을 만든다. `recovery` 필드를 더해야 타입체크가 통과한다. `assistant-tray.ts` 는 바꾸지 않는다.
+- 팀원 3 의 `index.ts`·`scheduler`·`preload/index.d.ts` 와 팀원 4 의 `env.d.ts`·`App.tsx`·`BriefingCard.tsx`·`DayHeader.tsx` 는 변경 예정이 없다. 소유자를 정해 두는 이유는 예상 밖 수정의 충돌을 막기 위해서다.
+- `docs/ASSISTANT.md` 는 리더가 쓴다. 부록 F 삽입, §15 표에 A29~A33 추가, 변경 이력 1줄이다.
+- `ai-tools.ts` 의 `jsonResult` 를 export 하면 팀원 5 가 한다. 그 파일은 팀원 5 소유다.
+
+의존 순서:
+1. 팀원 1 이 `assistant-types.ts` 추가분을 먼저 쓴다. 팀원 4 가 같은 시각에 `types/index.ts` 복제분을 쓴다. 두 작업은 서로 기다리지 않는다.
+2. 팀원 2·3·5 는 1 단계 뒤에 시작한다. 함수 본문이 아직 없으면 계약 시그니처 기준으로 작성한다.
+3. 팀원 3 의 서비스는 팀원 2 의 `collectRecovery`·`requestLlmRecovery`·`setRecovery` 와 팀원 1 의 `shouldAutoRecover`·`recoveryContextOf`·`buildRecovery`·`recoveryToMarkdown` 을 import 한다. 테스트는 `./assistant-sources`·`./assistant-briefing` 을 mock 한다. 기존 관례다.
+4. 팀원 5 는 팀원 1 의 `buildRecovery`·`recoveryContextOf` 와 팀원 2 의 `readRecoveryLocal` 을 import 한다.
+5. 팀원 4 의 `RecoveryCard`·`TodayView` 는 1 단계 뒤 바로 진행한다. 팀원 3 의 preload `generateRecovery` 가 들어와야 런타임이 동작한다. 타입체크는 `types/index.ts` 만으로 통과한다.
+
+### F.11 완료 조건
+
+최대 반복 5회. 같은 실패가 2회 연속이면 중단하고 리더에게 보고한다. 5회를 넘으면 리더가 미충족 항목·시도·원인을 사용자에게 보고한다.
+
+1. C1: `npx vitest run` 종료 코드 0, 실패 0건.
+2. C2: `npm run typecheck` 에러 0건.
+3. C3: `npm run build` 종료 코드 0.
+4. `grep -c "A29" src/main/services/assistant-recovery.test.ts` ≥ 5. 대상: 이전 계획 없음, gap 2 이상, gap 1 평일, gap 1 월요일, gap 0 (같은 날 재호출 불가는 서비스가 막는다).
+5. `grep -c "A14" src/main/services/assistant-recovery.test.ts` ≥ 1. `grep -c "A16" src/main/services/assistant-recovery.test.ts` ≥ 1.
+6. `grep -c "A33" src/main/services/assistant-recovery.test.ts src/main/services/assistant-sources.test.ts` 합계 ≥ 3. 대상: since 14일 상한, jiraDays 상한, 건수 상한.
+7. `grep -c "A30" src/main/services/assistant-service.test.ts` ≥ 2. 대상: 수집이 throw 해도 startDay 가 성공, 규칙 본문이 LLM 전에 저장.
+8. `grep -c "A32" src/main/services/assistant-service.test.ts` ≥ 1. 대상: 하루 시작 때 브리핑·복구 LLM 이 순서대로 2회 실행되고 BUSY 가 없다.
+9. `grep -c "A31" src/main/services/ai-assistant-tools.test.ts` ≥ 1.
+10. `grep -c "A9" src/main/services/assistant-briefing.test.ts` ≥ 3. 기존 건수에 복구 프롬프트의 [데이터] 블록과 스키마 검증을 더한다.
+11. `grep -c "listMyRecentlyUpdatedIssues" src/main/services/jira.test.ts` ≥ 3. 대상: JQL 문자열, days 검증, project 조건.
+12. `grep -c "get_today_plan\|get_recent_work\|list_meeting_action_items" src/main/services/ai-tools.ts` ≥ 3.
+13. A31: `grep -cE "from '\./jira'|from '\./google-calendar'|from '\./ai-headless'|\bgetDatabase\b" src/main/services/ai-assistant-tools.ts` 결과 0. `grep -c "getAiReadOnlyDatabase" src/main/services/ai-assistant-tools.ts` ≥ 1.
+14. A16: `grep -nE "child_process|execSync|spawn" src/main/services/assistant-*.ts src/main/services/ai-assistant-tools.ts` 결과 0건.
+15. A3: `grep -lE "from '(electron|better-sqlite3|\.\./db|\./jira|\./google-calendar)" src/main/services/assistant-{candidates,score,slots,settings,day,refresh,schedule,tray,recovery}.ts` 결과 0건.
+16. A1: `grep -n "method:" src/main/services/jira.ts | grep -vc "'GET'"` 결과 0.
+17. A2: `grep -nE "INSERT INTO (projects|tasks|todos|meetings)|UPDATE (projects|tasks|todos|meetings)|DELETE FROM (projects|tasks|todos|meetings)" src/main/services/assistant-*.ts src/main/ipc/assistant.ipc.ts src/main/services/tray-widget.ts src/main/services/ai-assistant-tools.ts` 결과 0건.
+18. `grep -c "generateRecovery"` 결과가 `src/preload/index.ts`, `src/main/ipc/assistant.ipc.ts`, `src/main/services/assistant-service.ts`, `src/renderer/src/types/index.ts`, `src/renderer/src/stores/assistantStore.ts` 각각 ≥ 1.
+19. `grep -c "'recovery'"` 결과가 `src/main/services/assistant-types.ts`, `src/renderer/src/types/index.ts`, `src/main/services/assistant-service.ts` 각각 ≥ 1.
+20. `test -f src/renderer/src/components/today/RecoveryCard.tsx` 종료 코드 0. `grep -c "RecoveryCard" src/renderer/src/components/today/TodayView.tsx` ≥ 1. `grep -c "맥락 복구" src/renderer/src/components/today/TodayView.test.tsx` ≥ 2.
+21. `grep -c "setRecovery" src/main/services/assistant-store.ts` ≥ 1. `grep -c "setRecovery" src/main/services/assistant-store.test.ts` ≥ 1.
+22. `grep -c "recovery_text" src/main/services/assistant-schema.test.ts` ≥ 1.
+23. `grep -c "llmSerialized" src/main/services/assistant-service.ts` ≥ 2. 대상: 브리핑과 복구 호출 2곳.
+24. `grep -c "get_today_plan" docs/AI_GUARDRAILS.md` ≥ 1. `grep -c "get_today_plan" docs/AI_CHAT_ARCHITECTURE.md` ≥ 1.
+25. `grep -c "get_today_plan" src/main/services/ai-agent.ts` ≥ 1. `grep -c "today" src/main/services/ai-agent.ts` ≥ 1.
+26. 부록 D.5 조건 5: `grep -cE "getTodayEvents|getEventsInRange" src/main/services/assistant-sources.ts` = 0.
+27. 부록 E.8 조건 4·5·6·8·16·22 를 다시 실행한다. 결과가 모두 충족이다.
+28. 부록 B.8 조건 6 을 다시 실행한다. 결과 0건.
+29. §17 MVP1 조건 7·14 를 다시 실행한다. 결과가 충족이다.
+
+새 규칙 ID 요약. §15 표에 추가한다.
+
+| ID | 규칙 | 이유 | 판정 |
+|----|------|------|------|
+| A29 | 자동 맥락 복구는 이전 계획이 있고, 공백 2일 이상이거나 논리 날짜가 월요일일 때만 만든다. 수동 버튼은 조건과 무관하다 | 필요한 날에만 Jira 를 1회 더 부른다 | 테스트 `A29` |
+| A30 | 맥락 복구의 수집·LLM 실패는 하루 시작을 막지 않는다. 규칙 본문을 LLM 보다 먼저 저장한다 | A8 과 같은 원칙이다 | 테스트 `A30` |
+| A31 | AI 채팅 비서 도구는 읽기 전용 커넥션만 쓴다. Jira·캘린더·헤드리스 AI 를 호출하지 않는다 | 채팅이 네트워크와 비서 쓰기에 끌려가지 않는다 | 조건 13, 테스트 `A31` |
+| A32 | 헤드리스 LLM 실행은 서비스의 한 줄 `llmSerialized` 로 직렬화한다. 브리핑·복구·수동 버튼이 모두 거친다 | A11 잠금이 두 번째 실행을 실패시키지 않는다 | 테스트 `A32`, 조건 23 |
+| A33 | 복구 수집은 기준 시각 14일 상한과 소스별 건수 상한을 지킨다 | 프롬프트와 화면 크기를 제한한다 | 테스트 `A33` |
+
+### F.11a 구현 확정분
+구현 중 팀원이 계약에 없던 세부를 아래처럼 정했다.
+- `weekdayOf` 는 기준 일요일 `1970-01-04` 와의 `daysBetween` 으로 요일을 계산한다. 형식이 틀린 날짜는 throw 한다.
+- `days` 인자는 정수로 내리고 1~14 로 제한한다. `since` 와 `jiraDays` 에 같은 값을 쓴다.
+- `tldr` 는 300자에서 자른다. 다른 줄은 200자에서 자른다.
+- Jira 결과가 50건을 넘어 잘라 내면, `jiraTruncated` 는 true 다. 섹션 끝에 `이슈가 많아 일부만 가져왔다` 줄을 붙인다.
+- activity 의 action 나열은 `, ` 로 잇는다. 예: `수정, 삭제`.
+- 묶음 이름은 이름이 비어 있지 않은 가장 늦은 행의 `entity_name` 이다.
+- `collectRecovery` 는 로컬 출처도 출처별로 감싼다. 실패한 출처만 비우고 `errors` 에 문구를 넣는다. `readRecoveryLocal` 은 실패하면 throw 한다. 이 함수는 채팅 도구가 쓴다.
+- LLM 제목이 비어 있으면, `recoveryJsonToMarkdown` 은 제목을 `<today> 맥락 복구` 로 쓴다. 줄이 없는 섹션은 뺀다.
+- 서비스는 job 시작 뒤에 payload 를 만든다. 그래서 하루 시작 응답의 `recovery.inFlight` 는 true 다.
+- `generateRecovery` 를 부를 때 다른 날짜의 job 이 남아 있으면, 서비스는 그 job 이 끝난 뒤 오늘 job 을 새로 만든다.
+- `RecoveryCard` 의 접기 토글은 본문이나 오류가 있을 때만 보인다.
+- `buildAssistantTools` 의 반환 타입은 `SdkMcpToolDefinition<any>[]` 다. 이유: `ReturnType<SdkTool>[]` 는 도구마다 인자 타입이 달라 타입 에러를 낸다.
+- `ai-assistant-tools.ts` 는 `jsonResult` 를 따로 가진다. 이유: `ai-tools.ts` 를 import 하면 순환 import 가 생긴다.
+- `list_meeting_action_items` 는 삭제된 todo 를 가리키는 항목을 두 필터 모두에서 뺀다.
+
+### F.12 사용자 결정 (2026-11-02)
+- 복구 기준 시각은 마지막 계획의 시작 시각 `started_at` 이다. §10 표 그대로다.
+- 이전 계획이 없는 첫 사용일에는 자동 복구를 만들지 않는다. 수동 버튼은 최근 7일을 정리한다.
+- 하루가 닫힌 뒤에도 '다시 만들기' 버튼을 허용한다.
+
+### F.13 위험
+| # | 위험 | 대응 |
+|---|------|------|
+| 1 | 하루 시작 때 브리핑 LLM 과 복구 LLM 이 겹친다. `ai-headless` A11 잠금이 두 번째를 BUSY 로 실패시킨다 | 서비스 `llmSerialized` 줄 (A32). 수동 버튼도 같은 줄을 거친다 |
+| 2 | `activity_log.created_at` 은 UTC 다. `since` 는 로컬이다. 그대로 비교하면 9시간 어긋난다 | `datetime(created_at,'localtime') >= ?` 로 비교한다. `readTaskTouchedAt` 선례와 같다. 테스트가 UTC 행을 넣어 확인한다 |
+| 3 | `TodayPayload.recovery` 추가로 기존 픽스처 3개가 타입체크에 실패한다 | 소유자를 정했다. 팀원 3 이 `assistant-service.test.ts`·`assistant-tray.test.ts`, 팀원 4 가 `TodayView.test.tsx` 를 고친다 |
+| 4 | `ai-assistant-tools.ts` 가 `assistant-sources.ts` 를 import 하면 `jira.ts`·`google-calendar.ts`·`google-auth.ts` 가 딸려온다. 테스트가 electron 에 걸린다 | 테스트는 그 3개 모듈을 `vi.mock` 한다. 선례는 `assistant-sources.test.ts` 다. 런타임은 문제가 없다. `ai-tools.ts` 도 이미 `google-calendar` 를 import 한다 |
+| 5 | 읽기 전용 커넥션은 별도 파일 핸들이다. 메인 커넥션이 WAL 로 쓴 직후 읽으면 최신 값이 보이지 않을 수 있다 | SQLite WAL 은 커밋 뒤 다른 커넥션에서 즉시 보인다. 기존 10개 도구와 같은 조건이다. 추가 대응 없음 |
+| 6 | Jira 가 느리면 복구 규칙 본문이 늦게 나타난다. 그 사이 브리핑 LLM 이 줄을 먼저 잡는다 | 설계대로다. 화면은 `만드는 중…` 을 보인다. Jira 실패는 `errors` 섹션으로 남는다 |
+| 7 | `getLastPlanBefore` 가 `closed_by = 'auto'` 이고 메모가 없는 계획을 돌려준다. 어제 메모 입력과 복구 카드가 함께 뜬다 | 두 기능은 독립이다. 어제 메모를 저장해도 복구 본문은 다시 만들지 않는다. 사용자가 '다시 만들기' 를 누르면 메모가 들어간다 |
+| 8 | AI 채팅이 `get_today_plan` 으로 LLM 브리핑·복구 본문을 읽는다. 그 본문은 LLM 출력이다. 인젝션 연쇄 위험이 있다 | 본문은 비서가 zod 로 검증한 JSON 에서 만든 Markdown 이다. 도구 결과는 4000자로 자른다. AI_GUARDRAILS 8.6 에 신뢰할 수 없는 입력으로 명시한다 |
+| 9 | `weekday` 를 실제 시각으로 계산하면 월요일 03:00 이 월요일로 잡힌다 | `weekdayOf(today)` 는 논리 날짜 문자열로 계산한다. 테스트 A29 가 이 경계를 포함한다 |
+| 10 | `recovery_error` 를 메모리에만 두므로 앱 재시작 뒤 오류 문구가 사라진다 | 설계 결정이다. 규칙 본문과 '다시 만들기' 가 남는다. 사용자가 문제 삼으면 후속에서 컬럼을 추가한다 |
+| 11 | `startDay` 테스트가 `waitForAssistantBackground` 로 브리핑만 기다린다. 복구 job 이 테스트 뒤에 돌면 다음 테스트 DB 를 건드린다 | `waitForAssistantBackground` 가 `recoveryJob` 도 기다린다. 각 테스트 `afterEach` 가 이 함수를 부른다 |

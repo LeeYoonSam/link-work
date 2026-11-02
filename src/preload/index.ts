@@ -295,6 +295,7 @@ const api = {
     saveWrapup: (note: string, date: string) => ipcRenderer.invoke('assistant:saveWrapup', note, date),
     refresh: () => ipcRenderer.invoke('assistant:refresh'),
     refreshBriefing: () => ipcRenderer.invoke('assistant:refreshBriefing'),
+    generateRecovery: () => ipcRenderer.invoke('assistant:generateRecovery'),
     listCandidates: () => ipcRenderer.invoke('assistant:listCandidates'),
     addItem: (candidateId: string) => ipcRenderer.invoke('assistant:addItem', candidateId),
     acceptSuggestion: (itemId: number) => ipcRenderer.invoke('assistant:acceptSuggestion', itemId),

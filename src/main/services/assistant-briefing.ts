@@ -1,9 +1,9 @@
-// 시작 브리핑. 규칙 본문과 LLM 본문을 만든다.
-// SSOT: docs/ASSISTANT.md §9
+// 시작 브리핑과 맥락 복구의 LLM 본문을 만든다.
+// SSOT: docs/ASSISTANT.md §9, 부록 F.5
 //
 // [가드레일]
 // - A8: renderRuleBriefing 은 LLM 없이 동작한다. 서비스는 이 본문을 항상 먼저 저장한다.
-// - A8: requestLlmBriefing 은 throw 하지 않는다. 실패는 { ok: false, error } 다.
+// - A8: requestLlmBriefing·requestLlmRecovery 는 throw 하지 않는다. 실패는 { ok: false, error } 다.
 // - A9: 외부 문자열은 [데이터] 블록 안에만 넣는다. 출력은 zod 로 검증하고 길이를 제한한다.
 // - A2: 이 파일은 DB 를 쓰지 않는다.
 import { z } from 'zod'
@@ -18,6 +18,8 @@ import type {
   DayTimeline,
   PlanItem,
   PlanItemStatus,
+  RecoveryContext,
+  RecoverySection,
   TimelineEntry
 } from './assistant-types'
 
@@ -306,6 +308,90 @@ export async function requestLlmBriefing(
           : null
     }
     return { ok: true, markdown: briefingToMarkdown(value, input.items), model: modelId }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+// ── LLM 맥락 복구 (부록 F.5) ──
+
+export interface RecoveryLlmInput {
+  ctx: RecoveryContext
+  sections: RecoverySection[]
+}
+
+const RecoveryObject = z.object({
+  headline: z.string().max(80),
+  sections: z
+    .array(
+      z.object({
+        title: z.string().max(40),
+        lines: z.array(z.string().max(200)).max(8)
+      })
+    )
+    .max(5),
+  next_steps: z.array(z.string().max(200)).max(5)
+})
+
+export type RecoveryJson = z.infer<typeof RecoveryObject>
+export const RecoverySchema: z.ZodType<RecoveryJson> = RecoveryObject
+
+export const RECOVERY_SYSTEM_PROMPT = `너는 사용자가 자리를 비운 사이 바뀐 것을 정리하는 비서다. [데이터] 블록에 마지막 근무일, 남은 작업, 그동안 한 일, 회의, Jira 변경이 있다.
+${DATA_RULE}
+[데이터] 블록에 없는 일을 만들지 않는다. 다음 할 일은 [데이터] 의 남은 작업·미완료 액션·Jira 이슈 중에서만 고른다.
+
+한국어 JSON 만 출력한다. 키는 아래와 같다.
+- headline: string. 80자 이하. 자리를 비운 사이의 변화를 한 문장으로 요약한다.
+- sections: {title: string, lines: string[]}[]. 5개 이하. title 은 40자 이하다. lines 는 8개 이하이고 각 200자 이하다.
+- next_steps: string[]. 5개 이하. 각 200자 이하. 지금 이어서 할 일을 쓴다.
+
+${WRITING_STYLE_RULES}
+${WRITING_STYLE_JSON_NOTE}
+
+코드펜스 없이 순수 JSON 만 출력한다.`
+
+export function buildRecoveryPrompt(input: RecoveryLlmInput): string {
+  const data = {
+    date: input.ctx.today,
+    last_plan_date: input.ctx.lastPlan?.plan_date ?? null,
+    gap_days: input.ctx.gapDays,
+    sections: input.sections.map((s) => ({ key: s.key, title: s.title, lines: s.lines }))
+  }
+  const json = neutralizeMarkers(JSON.stringify(data, null, 2))
+  return `아래 [데이터] 로 맥락 복구 JSON 을 만든다.\n\n[데이터]\n${json}\n[/데이터]`
+}
+
+/** 검증된 LLM 복구 출력을 Markdown 으로 만든다 */
+export function recoveryJsonToMarkdown(value: RecoveryJson, ctx: RecoveryContext): string {
+  const headline = oneLine(value.headline, 80)
+  const out: string[] = [`# ${headline || `${ctx.today} 맥락 복구`}`, '']
+
+  for (const section of value.sections) {
+    if (section.lines.length === 0) continue
+    out.push(`## ${oneLine(section.title, 40)}`, ...section.lines.map((l) => `- ${oneLine(l)}`), '')
+  }
+
+  if (value.next_steps.length > 0) {
+    out.push('## 다음 할 일', ...value.next_steps.map((n) => `- ${oneLine(n)}`), '')
+  }
+
+  return out.join('\n').trimEnd() + '\n'
+}
+
+export async function requestLlmRecovery(
+  input: RecoveryLlmInput,
+  model: AiModelName
+): Promise<{ ok: true; markdown: string; model: string } | { ok: false; error: string }> {
+  try {
+    const modelId = resolveAiModelId(model)
+    const result = await runHeadlessJson({
+      systemPrompt: RECOVERY_SYSTEM_PROMPT,
+      prompt: buildRecoveryPrompt(input),
+      model: modelId,
+      schema: RecoverySchema
+    })
+    if (!result.ok) return { ok: false, error: result.error }
+    return { ok: true, markdown: recoveryJsonToMarkdown(result.value, input.ctx), model: modelId }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }

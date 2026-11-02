@@ -149,8 +149,9 @@ export interface TodayPayload {
   missingWrapupDate: string | null
   aiAvailable: boolean; jiraConnected: boolean; calendarConnected: boolean; jiraTruncated: boolean
   lastErrors: string[]             // 마지막 수집에서 실패한 출처의 사용자용 문구
+  recovery: RecoveryState          // 맥락 복구 진행·실패 상태 (부록 F.6)
 }
-export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' }
+export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' | 'recovery' }
 export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline'; id?: string } }
 
 // ── MVP2 (부록 E.6.1) ──
@@ -195,3 +196,62 @@ export interface TrayAssistant {
   suggestedCount: number; urgentSuggestedCount: number
   freeMinutesLeft: number
 }
+
+// ── MVP3 (부록 F) ──
+export type RecoveryTriggerReason = 'gap' | 'monday' | 'manual'
+
+export type RecoveryLastPlan = Pick<DailyPlan, 'id' | 'plan_date' | 'started_at' | 'closed_at' | 'wrapup_note' | 'wrapup_at'>
+
+export interface RecoveryContext {
+  today: string                 // 논리 날짜
+  weekday: number               // today 의 요일. 0=일 … 6=토
+  lastPlan: RecoveryLastPlan | null
+  gapDays: number | null        // daysBetween(lastPlan.plan_date, today). lastPlan 이 null 이면 null
+  since: string                 // 수집 기준 시각 'YYYY-MM-DD HH:mm:ss'
+  sinceDate: string             // since 의 날짜
+  jiraDays: number              // 1~14
+}
+
+export type RecoveryEntityType = 'project' | 'task' | 'todo'
+export interface RecoveryActivityGroup {
+  entityType: RecoveryEntityType
+  entityId: number | null
+  name: string                  // 마지막 entity_name. 없으면 원본 이름. 그래도 없으면 '(이름 없음)'
+  actions: string[]             // 시각순. 중복 없음
+  count: number
+  firstAt: string               // 로컬 'YYYY-MM-DD HH:mm:ss'
+  lastAt: string
+  deleted: boolean
+}
+export interface RecoveryMeeting {
+  meetingId: number; title: string; startedAt: string; projectName: string | null
+  tldr: string | null           // 300자
+  openActionItems: string[]     // todo_id 없는 항목 text. 최대 5건
+  openActionCount: number
+}
+export interface RecoveryTodoDone { id: number; title: string; completedAt: string }
+export interface RecoveryJiraIssue {
+  key: string; summary: string; status: string; statusCategory: JiraCategory
+  priority: string | null; duedate: string | null
+  updatedLocal: string | null   // 로컬 'YYYY-MM-DD HH:mm:ss'
+  url: string | null
+}
+export interface RecoveryLocalInput {
+  wrapupNote: string | null         // gapDays <= 7 일 때만. 아니면 null
+  unfinishedItems: PlanItem[]       // 마지막 계획의 planned·in_progress·deferred. rank 순. 최대 20
+  activity: RecoveryActivityGroup[] // lastAt 내림차순. 최대 50
+  meetings: RecoveryMeeting[]       // startedAt 내림차순. 최대 10
+  completedTodos: RecoveryTodoDone[] // completedAt 내림차순. 최대 50
+}
+export interface RecoveryInput extends RecoveryLocalInput {
+  ctx: RecoveryContext
+  jira: RecoveryJiraIssue[] | null  // null 이면 미연결 또는 실패. updated 내림차순. 최대 50
+  jiraConnected: boolean
+  jiraTruncated: boolean
+  errors: string[]
+}
+
+export type RecoverySectionKey = 'last_day' | 'unfinished' | 'done' | 'meetings' | 'jira' | 'errors'
+export interface RecoverySection { key: RecoverySectionKey; title: string; lines: string[] }
+
+export interface RecoveryState { inFlight: boolean; error: string | null }

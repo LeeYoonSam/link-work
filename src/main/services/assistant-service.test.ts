@@ -61,15 +61,16 @@ vi.mock('./ai-headless', () => headless)
 // 수집 모듈은 네트워크를 쓰므로 픽스처로 답한다
 const sources = vi.hoisted(() => ({
   collectSources: vi.fn(),
+  collectRecovery: vi.fn(),
   resolveVanished: vi.fn(async () => ({})),
   getSourceCheckTimes: vi.fn(() => ({ calendarAt: null as number | null, jiraAt: null as number | null }))
 }))
 vi.mock('./assistant-sources', () => sources)
 
-const briefing = vi.hoisted(() => ({ requestLlmBriefing: vi.fn() }))
+const briefing = vi.hoisted(() => ({ requestLlmBriefing: vi.fn(), requestLlmRecovery: vi.fn() }))
 vi.mock('./assistant-briefing', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./assistant-briefing')>()
-  return { ...actual, requestLlmBriefing: briefing.requestLlmBriefing }
+  return { ...actual, requestLlmBriefing: briefing.requestLlmBriefing, requestLlmRecovery: briefing.requestLlmRecovery }
 })
 
 import { closeDatabase, getDatabase, initDatabase } from '../db/database'
@@ -77,8 +78,11 @@ import {
   acceptSuggestion,
   closeDay,
   focusItem,
+  generateRecovery,
+  getRecoveryState,
   getSourceCheckTimes,
   getToday,
+  refreshBriefing,
   runAutoRefresh,
   runRefresh,
   saveSettings,
@@ -87,7 +91,16 @@ import {
   startDay,
   waitForAssistantBackground
 } from './assistant-service'
-import type { AssistantChangedEvent, CalendarRef, Candidate, TimelineEntry } from './assistant-types'
+import { getPlanByDate } from './assistant-store'
+import type {
+  AssistantChangedEvent,
+  CalendarRef,
+  Candidate,
+  PlanItem,
+  RecoveryContext,
+  RecoveryInput,
+  TimelineEntry
+} from './assistant-types'
 
 // 2026-11-02 는 월요일이다
 const MON_0940 = new Date(2026, 10, 2, 9, 40, 0)
@@ -145,7 +158,27 @@ beforeEach(() => {
   headless.isHeadlessAvailable.mockReturnValue(true)
   sources.collectSources.mockResolvedValue(collected([candidate(1, { dueDate: '2026-11-02' }), candidate(2)]))
   sources.resolveVanished.mockResolvedValue({})
+  sources.collectRecovery.mockImplementation(async (_db: unknown, _s: unknown, ctx: RecoveryContext, lastItems: PlanItem[]) =>
+    recoveryInput(ctx, lastItems)
+  )
+  briefing.requestLlmRecovery.mockResolvedValue({ ok: true, markdown: '# AI 복구', model: 'claude-sonnet-5-5' })
 })
+
+// 수집 결과 픽스처. 로컬 출처는 마지막 계획 항목만 채운다
+function recoveryInput(ctx: RecoveryContext, lastItems: PlanItem[]): RecoveryInput {
+  return {
+    ctx,
+    wrapupNote: null,
+    unfinishedItems: lastItems.filter((i) => ['planned', 'in_progress', 'deferred'].includes(i.status)),
+    activity: [],
+    meetings: [],
+    completedTodos: [],
+    jira: null,
+    jiraConnected: false,
+    jiraTruncated: false,
+    errors: []
+  }
+}
 
 afterEach(async () => {
   await waitForAssistantBackground()
@@ -583,5 +616,323 @@ describe('runAutoRefresh (부록 E.3·E.6.5)', () => {
   it('getSourceCheckTimes 는 assistant-sources 에 위임한다', () => {
     sources.getSourceCheckTimes.mockReturnValue({ calendarAt: 5, jiraAt: 6 })
     expect(getSourceCheckTimes()).toEqual({ calendarAt: 5, jiraAt: 6 })
+  })
+})
+
+// ── MVP3 맥락 복구 (부록 F) ──
+// 2026-10-29 목, 2026-10-30 금, 2026-11-01 일, 2026-11-02 월, 2026-11-03 화
+const THU_0930 = new Date(2026, 9, 29, 9, 30, 0)
+const FRI_0930 = new Date(2026, 9, 30, 9, 30, 0)
+const SUN_0930 = new Date(2026, 10, 1, 9, 30, 0)
+const TUE_1000 = new Date(2026, 10, 3, 10, 0, 0)
+
+function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve: (v: T) => void = () => undefined
+  const promise = new Promise<T>((r) => (resolve = r))
+  return { promise, resolve }
+}
+
+// 이전 날 계획을 만들고 백그라운드를 비운다. LLM 은 끈다
+async function startPrevDay(at: Date): Promise<void> {
+  headless.isHeadlessAvailable.mockReturnValue(false)
+  await startDay(at)
+  await waitForAssistantBackground()
+  vi.clearAllMocks()
+  changed.length = 0
+}
+
+describe('맥락 복구 자동 트리거 (F.2)', () => {
+  it('A29: 이전 계획이 없으면 자동 복구를 만들지 않는다', async () => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    const today = await startDay(MON_0940)
+    expect(today.recovery).toEqual({ inFlight: false, error: null })
+    await waitForAssistantBackground()
+    expect(sources.collectRecovery).not.toHaveBeenCalled()
+    expect(changed.some((e) => e.reason === 'recovery')).toBe(false)
+  })
+
+  it('A29: 공백 2일 이상이면 자동 복구를 시작하고 응답의 recovery.inFlight 가 true 다', async () => {
+    await startPrevDay(FRI_0930)
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    const tue = await startDay(TUE_1000)
+    expect(tue.recovery).toEqual({ inFlight: true, error: null })
+    // 규칙 본문은 백그라운드에서 저장한다
+    expect(tue.plan?.recovery_text).toBeNull()
+
+    await waitForAssistantBackground()
+    expect(sources.collectRecovery).toHaveBeenCalledTimes(1)
+    const [, , ctx, lastItems] = sources.collectRecovery.mock.calls[0] as [unknown, unknown, RecoveryContext, PlanItem[]]
+    expect(ctx.today).toBe('2026-11-03')
+    expect(ctx.lastPlan?.plan_date).toBe('2026-10-30')
+    expect(ctx.gapDays).toBe(4)
+    expect(lastItems).toHaveLength(2)
+
+    const after = await getToday(TUE_1000)
+    expect(after.recovery).toEqual({ inFlight: false, error: null })
+    expect(after.plan?.recovery_source).toBe('rules')
+    expect(after.plan?.recovery_text).toContain('맥락 복구')
+    expect(after.plan?.recovery_at).toBe('2026-11-03 10:00:00')
+    // LLM 이 꺼져 있으면 부르지 않는다
+    expect(briefing.requestLlmRecovery).not.toHaveBeenCalled()
+    expect(changed.filter((e) => e.reason === 'recovery')).toEqual([
+      { date: '2026-11-03', reason: 'recovery' },
+      { date: '2026-11-03', reason: 'recovery' }
+    ])
+  })
+
+  it('A29: 공백 1일이어도 논리 날짜가 월요일이면 자동 복구를 시작한다', async () => {
+    await startPrevDay(SUN_0930)
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(MON_0940)
+    await waitForAssistantBackground()
+    expect(sources.collectRecovery).toHaveBeenCalledTimes(1)
+  })
+
+  it('A29: 평일 공백 1일이면 자동 복구를 만들지 않는다', async () => {
+    await startPrevDay(MON_0940)
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    const tue = await startDay(TUE_1000)
+    expect(tue.recovery.inFlight).toBe(false)
+    await waitForAssistantBackground()
+    expect(sources.collectRecovery).not.toHaveBeenCalled()
+  })
+
+  it('같은 날 startDay 를 다시 불러도 자동 복구를 다시 만들지 않는다', async () => {
+    await startPrevDay(FRI_0930)
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(TUE_1000)
+    await waitForAssistantBackground()
+    await startDay(TUE_1000)
+    await waitForAssistantBackground()
+    expect(sources.collectRecovery).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('맥락 복구 실패 규칙 (A30)', () => {
+  it('A30: 복구 수집이 throw 해도 startDay 는 계획을 돌려주고 오류는 recovery.error 에만 남는다', async () => {
+    await startPrevDay(THU_0930)
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    sources.collectRecovery.mockRejectedValue(new Error('수집 폭발'))
+
+    const mon = await startDay(MON_0940)
+    expect(mon.plan?.status).toBe('active')
+    expect(mon.recovery.inFlight).toBe(true)
+
+    await waitForAssistantBackground()
+    expect(getRecoveryState()).toEqual({ inFlight: false, error: '수집 폭발' })
+    const after = await getToday(MON_0940)
+    expect(after.plan?.recovery_text).toBeNull()
+    expect(after.recovery).toEqual({ inFlight: false, error: '수집 폭발' })
+    // 실패 뒤에도 화면이 다시 읽도록 알린다
+    expect(changed).toContainEqual({ date: '2026-11-02', reason: 'recovery' })
+  })
+
+  it('A30: 규칙 본문을 LLM 호출 전에 저장한다. LLM 실패는 recovery.error 에만 남고 규칙 본문이 남는다', async () => {
+    await startPrevDay(THU_0930)
+    headless.isHeadlessAvailable.mockReturnValue(true)
+    briefing.requestLlmBriefing.mockResolvedValue({ ok: false, error: 'x' })
+    let seenAtLlm: { source: string | null; text: string | null } | null = null
+    let recoveryEventsAtLlm = 0
+    briefing.requestLlmRecovery.mockImplementation(async () => {
+      const p = getPlanByDate(getDatabase(), '2026-11-02')
+      seenAtLlm = { source: p?.recovery_source ?? null, text: p?.recovery_text ?? null }
+      recoveryEventsAtLlm = changed.filter((e) => e.reason === 'recovery').length
+      return { ok: false, error: 'Claude Code 로그인이 필요합니다.' }
+    })
+
+    await startDay(MON_0940)
+    await waitForAssistantBackground()
+
+    expect(seenAtLlm).not.toBeNull()
+    expect(seenAtLlm!.source).toBe('rules')
+    expect(seenAtLlm!.text).toContain('맥락 복구')
+    // 규칙 저장 알림이 LLM 전에 나간다
+    expect(recoveryEventsAtLlm).toBe(1)
+
+    const after = await getToday(MON_0940)
+    expect(after.plan?.recovery_source).toBe('rules')
+    expect(after.plan?.recovery_text).toBe(seenAtLlm!.text)
+    expect(after.recovery).toEqual({ inFlight: false, error: 'Claude Code 로그인이 필요합니다.' })
+  })
+
+  it('A30: LLM 호출이 reject 해도 job 이 오류를 잡는다', async () => {
+    await startPrevDay(THU_0930)
+    headless.isHeadlessAvailable.mockReturnValue(true)
+    briefing.requestLlmBriefing.mockResolvedValue({ ok: false, error: 'x' })
+    briefing.requestLlmRecovery.mockRejectedValue(new Error('boom'))
+    await expect(startDay(MON_0940)).resolves.toBeTruthy()
+    await waitForAssistantBackground()
+    const after = await getToday(MON_0940)
+    expect(after.plan?.recovery_source).toBe('rules')
+    expect(after.recovery.error).toBe('boom')
+  })
+
+  it('LLM 이 성공하면 복구 본문을 llm 으로 바꾼다', async () => {
+    await startPrevDay(THU_0930)
+    headless.isHeadlessAvailable.mockReturnValue(true)
+    briefing.requestLlmBriefing.mockResolvedValue({ ok: false, error: 'x' })
+    await startDay(MON_0940)
+    await waitForAssistantBackground()
+    const after = await getToday(MON_0940)
+    expect(after.plan?.recovery_source).toBe('llm')
+    expect(after.plan?.recovery_text).toBe('# AI 복구')
+    expect(after.recovery).toEqual({ inFlight: false, error: null })
+  })
+})
+
+describe('LLM 직렬화 (A32)', () => {
+  // 실행 구간을 기록한다. 겹치면 ai-headless 잠금처럼 BUSY 로 실패한다
+  function trackLlm(log: string[]): { active: () => number } {
+    let active = 0
+    const run = async <T>(name: string, ok: T): Promise<T | { ok: false; error: string }> => {
+      if (active > 0) {
+        log.push(`${name}:busy`)
+        return { ok: false, error: 'BUSY' }
+      }
+      active++
+      log.push(`${name}:start`)
+      await new Promise((r) => setTimeout(r, 5))
+      log.push(`${name}:end`)
+      active--
+      return ok
+    }
+    briefing.requestLlmBriefing.mockImplementation(() =>
+      run('briefing', { ok: true, markdown: '# AI 브리핑', model: 'claude-sonnet-5-5' })
+    )
+    briefing.requestLlmRecovery.mockImplementation(() =>
+      run('recovery', { ok: true, markdown: '# AI 복구', model: 'claude-sonnet-5-5' })
+    )
+    return { active: () => active }
+  }
+
+  it('A32: 하루 시작 때 브리핑 LLM 다음 복구 LLM 이 순서대로 실행되고 겹치지 않는다', async () => {
+    await startPrevDay(THU_0930)
+    headless.isHeadlessAvailable.mockReturnValue(true)
+    const log: string[] = []
+    trackLlm(log)
+
+    await startDay(MON_0940)
+    await waitForAssistantBackground()
+
+    expect(log).toEqual(['briefing:start', 'briefing:end', 'recovery:start', 'recovery:end'])
+    const after = await getToday(MON_0940)
+    expect(after.plan?.briefing_source).toBe('llm')
+    expect(after.plan?.recovery_source).toBe('llm')
+    expect(after.recovery.error).toBeNull()
+  })
+
+  it('A32: 수동 브리핑 다시 만들기와 수동 맥락 복구도 같은 줄을 거친다', async () => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(MON_0940)
+    await waitForAssistantBackground()
+    headless.isHeadlessAvailable.mockReturnValue(true)
+    const log: string[] = []
+    trackLlm(log)
+
+    await Promise.all([refreshBriefing(MON_1100), generateRecovery(MON_1100)])
+    expect(log).toEqual(['briefing:start', 'briefing:end', 'recovery:start', 'recovery:end'])
+  })
+})
+
+describe('LLM 줄의 reject 처리 (A32)', () => {
+  it('A32: 앞 LLM 작업이 reject 해도 줄에서 기다리던 다음 작업은 실행되고 결과가 저장된다', async () => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(MON_0940)
+    await waitForAssistantBackground()
+    headless.isHeadlessAvailable.mockReturnValue(true)
+
+    // 복구 LLM 은 잠시 뒤 reject 한다. 그 사이 브리핑 LLM 이 줄 뒤에 선다
+    const order: string[] = []
+    briefing.requestLlmRecovery.mockImplementation(async () => {
+      order.push('recovery:start')
+      await new Promise((r) => setTimeout(r, 5))
+      order.push('recovery:reject')
+      throw new Error('복구 LLM 폭발')
+    })
+    briefing.requestLlmBriefing.mockImplementation(async () => {
+      order.push('briefing:start')
+      return { ok: true, markdown: '# 다시 만든 브리핑', model: 'claude-sonnet-5-5' }
+    })
+
+    const manual = generateRecovery(MON_1100)
+    while (briefing.requestLlmRecovery.mock.calls.length === 0) await new Promise((r) => setTimeout(r, 1))
+    const refreshed = refreshBriefing(MON_1100)
+    const [rec, brief] = await Promise.all([manual, refreshed])
+
+    expect(order).toEqual(['recovery:start', 'recovery:reject', 'briefing:start'])
+    expect(rec.recovery).toEqual({ inFlight: false, error: '복구 LLM 폭발' })
+    expect(rec.plan?.recovery_source).toBe('rules')
+    expect(brief.plan?.briefing_source).toBe('llm')
+    expect(brief.plan?.briefing_text).toBe('# 다시 만든 브리핑')
+  })
+})
+
+describe('수동 맥락 복구 generateRecovery (F.2)', () => {
+  it('오늘 계획이 없으면 실패한다', async () => {
+    await expect(generateRecovery(MON_0940)).rejects.toThrow('오늘 계획이 없습니다')
+    expect(sources.collectRecovery).not.toHaveBeenCalled()
+  })
+
+  it('조건과 무관하게 만들고 규칙 저장과 LLM 완료까지 기다린다. 이전 계획이 없으면 lastPlan 이 null 이다', async () => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(MON_0940)
+    await waitForAssistantBackground()
+    headless.isHeadlessAvailable.mockReturnValue(true)
+
+    const r = await generateRecovery(MON_1100)
+    expect(sources.collectRecovery).toHaveBeenCalledTimes(1)
+    const ctx = (sources.collectRecovery.mock.calls[0] as unknown[])[2] as RecoveryContext
+    expect(ctx.lastPlan).toBeNull()
+    expect(r.plan?.recovery_source).toBe('llm')
+    expect(r.plan?.recovery_text).toBe('# AI 복구')
+    expect(r.plan?.recovery_at).toBe('2026-11-02 11:00:00')
+    expect(r.recovery).toEqual({ inFlight: false, error: null })
+  })
+
+  it('진행 중인 자동 job 이 있으면 새 job 을 만들지 않고 그것을 기다린다', async () => {
+    await startPrevDay(THU_0930)
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    const gate = deferred<RecoveryInput>()
+    sources.collectRecovery.mockImplementation(async (_d: unknown, _s: unknown, ctx: RecoveryContext, items: PlanItem[]) => {
+      await gate.promise
+      return recoveryInput(ctx, items)
+    })
+
+    const mon = await startDay(MON_0940)
+    expect(mon.recovery.inFlight).toBe(true)
+    expect(getRecoveryState().inFlight).toBe(true)
+
+    let done = false
+    const manual = generateRecovery(MON_1100).then((p) => {
+      done = true
+      return p
+    })
+    await new Promise((r) => setTimeout(r, 5))
+    expect(done).toBe(false)
+
+    gate.resolve(undefined as unknown as RecoveryInput)
+    const r = await manual
+    expect(sources.collectRecovery).toHaveBeenCalledTimes(1)
+    expect(r.plan?.recovery_source).toBe('rules')
+    expect(r.recovery).toEqual({ inFlight: false, error: null })
+  })
+
+  it('하루를 닫은 뒤에도 다시 만들 수 있다 (F.12)', async () => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(MON_0940)
+    await closeDay(null, MON_1100)
+    const r = await generateRecovery(MON_1100)
+    expect(r.plan?.status).toBe('closed')
+    expect(r.plan?.recovery_source).toBe('rules')
+  })
+
+  it('payload.recovery 는 다른 날짜의 상태를 보이지 않는다', async () => {
+    await startPrevDay(THU_0930)
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    sources.collectRecovery.mockRejectedValue(new Error('수집 폭발'))
+    await startDay(MON_0940)
+    await waitForAssistantBackground()
+    expect((await getToday(MON_0940)).recovery.error).toBe('수집 폭발')
+    expect((await getToday(TUE_1000)).recovery).toEqual({ inFlight: false, error: null })
   })
 })
