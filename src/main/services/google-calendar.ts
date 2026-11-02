@@ -139,26 +139,37 @@ export async function getWeekEvents(
 }
 
 /**
+ * 임의 기간의 일정 조회. 실패를 숨기지 않는다.
+ * 미연결이면 Error 를 던지고, API 오류도 그대로 던진다.
+ * 비서는 '조회 실패'와 '일정 0건'을 구분해야 하므로 이 함수를 쓴다.
+ */
+export async function fetchEventsInRange(timeMin: Date, timeMax: Date): Promise<CalendarEvent[]> {
+  const auth = getAuthenticatedClient()
+  if (!auth) throw new Error('Google 캘린더가 연결되어 있지 않습니다.')
+
+  const calendar = google.calendar({ version: 'v3', auth })
+  const response = await calendar.events.list({
+    calendarId: 'primary',
+    timeMin: timeMin.toISOString(),
+    timeMax: timeMax.toISOString(),
+    singleEvents: true,
+    orderBy: 'startTime'
+  })
+  return dedupEvents((response.data.items || []).map(mapEvent))
+}
+
+/**
  * 임의 기간의 일정 조회 (AI 어시스턴트용).
  * 캘린더 미연동 시 null을 반환해 호출자가 미연동/빈 일정을 구분할 수 있게 한다.
+ * API 오류는 [] 로 바꾼다.
  */
 export async function getEventsInRange(
   timeMin: Date,
   timeMax: Date
 ): Promise<CalendarEvent[] | null> {
-  const auth = getAuthenticatedClient()
-  if (!auth) return null
-
-  const calendar = google.calendar({ version: 'v3', auth })
+  if (!getAuthenticatedClient()) return null
   try {
-    const response = await calendar.events.list({
-      calendarId: 'primary',
-      timeMin: timeMin.toISOString(),
-      timeMax: timeMax.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime'
-    })
-    return dedupEvents((response.data.items || []).map(mapEvent))
+    return await fetchEventsInRange(timeMin, timeMax)
   } catch (error) {
     console.error('Failed to fetch calendar events:', error)
     return []

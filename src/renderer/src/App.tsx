@@ -21,6 +21,7 @@ import { useProjectStore } from './stores/projectStore'
 import { useAssistantStore } from './stores/assistantStore'
 import { installRecorderBridge } from './stores/recorderSession'
 import { resolveStartView } from './utils/startView'
+import type { AssistantNavigateEvent } from './types'
 
 function App(): React.ReactNode {
   // Check if this is the tray panel window
@@ -43,10 +44,22 @@ function App(): React.ReactNode {
   useEffect(() => {
     const api = window.api?.assistant
     if (!api) return
-    return api.onNavigate((p) => {
+    const goToday = (p: AssistantNavigateEvent): void => {
       useProjectStore.getState().setView('today')
       useAssistantStore.getState().setFocus(p.focus ?? null)
-    })
+    }
+    const unsubscribe = api.onNavigate(goToday)
+    // 구독 전에 도착한 이동 신호를 가져간다 (§12.1).
+    // cleanup 후 결과도 적용한다. StrictMode 재마운트 때 신호를 잃지 않기 위해서다
+    if (typeof api.takePendingNavigate === 'function') {
+      api
+        .takePendingNavigate()
+        .then((res) => {
+          if (res?.success && res.pending) goToday(res.pending)
+        })
+        .catch(() => undefined)
+    }
+    return unsubscribe
   }, [])
 
   // 첫 화면 자동 선택 (docs/ASSISTANT.md 부록 C.1, A24).

@@ -16,6 +16,7 @@ import {
   setItemStatus,
   startDay
 } from '../services/assistant-service'
+import { takePendingNavigate } from '../services/assistant-scheduler'
 import type { PlanItemStatus } from '../services/assistant-types'
 
 // project-sync.ipc.ts 처럼 throw 하지 않고 { success, error } 로 감싼다.
@@ -83,4 +84,7 @@ export function registerAssistantIpc(): void {
   ipcMain.handle('assistant:getSettings', () => getSettings())
 
   ipcMain.handle('assistant:saveSettings', (_e, patch: unknown) => wrap(() => ({ settings: saveSettings(patch) })))
+
+  // 렌더러 마운트 직후 1번 부른다. 구독 전에 도착한 알림 클릭 이동을 가져간다 (§12.1)
+  ipcMain.handle('assistant:takePendingNavigate', () => wrap(() => ({ pending: takePendingNavigate() })))
 }

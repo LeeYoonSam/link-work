@@ -23,13 +23,13 @@ const state = vi.hoisted(() => ({
   jiraConnected: true,
   calendarConnected: true,
   defaultProjectKey: 'PROJ' as string | null,
-  events: [] as unknown[],
   openCalls: [] as (string | null)[],
   openFail: false,
   keysCalls: [] as string[][],
   keysFail: false,
   rangeCalls: [] as [Date, Date][],
   rangeEvents: [] as unknown[],
+  rangeFail: false,
   myAccountId: 'acc-me' as string | null,
   myCalls: 0,
   assignee: {} as Record<string, string | null>
@@ -79,9 +79,9 @@ vi.mock('./jira', () => ({
 }))
 vi.mock('./google-auth', () => ({ isConnected: () => state.calendarConnected }))
 vi.mock('./google-calendar', () => ({
-  getTodayEvents: async () => state.events,
-  getEventsInRange: async (from: Date, to: Date) => {
+  fetchEventsInRange: async (from: Date, to: Date) => {
     state.rangeCalls.push([from, to])
+    if (state.rangeFail) throw new Error('503 Service Unavailable')
     return state.rangeEvents
   }
 }))
@@ -95,6 +95,8 @@ import { clearJiraCache, collectSources, resolveVanished, toCalendarRef } from '
 // 로컬 시각 기준. 테스트는 실행 기기의 시간대와 무관하게 동작한다.
 const NOW = new Date(2026, 10, 2, 9, 40)
 const TODAY = '2026-11-02'
+// assistant-sources.ts 의 CALENDAR_FAILED 앞부분. 상수를 export 하지 않으므로 문구로 확인한다.
+const CALENDAR_FAILED_PREFIX = 'Google 캘린더 조회에 실패해'
 
 // 픽스처 행을 넣는다. 테이블 이름을 인자로 받는다.
 // 이유: MVP1 조건 12 의 A2 grep 이 테스트 파일도 검사한다. 원본 테이블 쓰기 문장을 소스에 직접 쓰지 않는다.
@@ -163,13 +165,13 @@ beforeEach(() => {
   state.jiraConnected = true
   state.calendarConnected = true
   state.defaultProjectKey = 'PROJ'
-  state.events = []
   state.openCalls = []
   state.openFail = false
   state.keysCalls = []
   state.keysFail = false
   state.rangeCalls = []
   state.rangeEvents = []
+  state.rangeFail = false
   state.myAccountId = 'acc-me'
   state.myCalls = 0
   state.assignee = {}
@@ -227,7 +229,7 @@ describe('collectSources 로컬 출처', () => {
 
 describe('collectSources 캘린더', () => {
   it('full 모드는 오늘 일정을 HH:mm 으로 바꾸고 종일 일정은 busy 에서 뺀다', async () => {
-    state.events = [
+    state.rangeEvents = [
       { id: 'e1', summary: '회의', start: localIso(14, 0), end: localIso(15, 0), allDay: false },
       { id: 'e2', summary: '종일', start: TODAY, end: '2026-11-03', allDay: true }
     ]
@@ -242,7 +244,6 @@ describe('collectSources 캘린더', () => {
   })
 
   it('날짜 경계 전(00:00~04:00)에는 논리 날짜인 전날 일정을 본다', async () => {
-    state.events = [{ id: 'today', summary: '오늘 회의', start: localIso(10, 0), end: localIso(11, 0), allDay: false }]
     state.rangeEvents = [
       { id: 'late', summary: '어제 늦은 회의', start: localIso(22, 0, 1), end: localIso(23, 0, 1), allDay: false }
     ]
@@ -255,10 +256,43 @@ describe('collectSources 캘린더', () => {
   })
 
   it('날짜 경계가 지나면 오늘 일정을 본다', async () => {
-    state.events = [{ id: 'today', summary: '오늘 회의', start: localIso(10, 0), end: localIso(11, 0), allDay: false }]
+    state.rangeEvents = [{ id: 'today', summary: '오늘 회의', start: localIso(10, 0), end: localIso(11, 0), allDay: false }]
     const r = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'full', new Date(2026, 10, 2, 4, 0))
     expect(r.calendar?.map((c) => c.id)).toEqual(['today'])
-    expect(state.rangeCalls).toHaveLength(0)
+    expect(state.rangeCalls).toHaveLength(1)
+    const [from, to] = state.rangeCalls[0]
+    expect(toLocalDateTime(from)).toBe('2026-11-02 00:00:00')
+    expect(toLocalDateTime(to)).toBe('2026-11-02 23:59:59')
+  })
+
+  it('§8.2: 낮 시간에 캘린더 조회가 실패하면 calendar 는 null 이고 errors 에 CALENDAR_FAILED 문구가 있다', async () => {
+    state.rangeFail = true
+    const r = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'full', NOW)
+    expect(state.rangeCalls).toHaveLength(1)
+    expect(toLocalDateTime(state.rangeCalls[0][0])).toBe('2026-11-02 00:00:00')
+    expect(r.calendar).toBeNull()
+    expect(r.busy).toEqual([])
+    expect(r.calendarConnected).toBe(true)
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0].startsWith(CALENDAR_FAILED_PREFIX)).toBe(true)
+    expect(r.errors[0]).toContain('503')
+  })
+
+  it('§8.2: 날짜 경계 전(02:00)에 캘린더 조회가 실패하면 calendar 는 null 이고 errors 에 CALENDAR_FAILED 문구가 있다', async () => {
+    state.rangeFail = true
+    const r = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'full', new Date(2026, 10, 2, 2, 0))
+    expect(state.rangeCalls).toHaveLength(1)
+    expect(toLocalDateTime(state.rangeCalls[0][0])).toBe('2026-11-01 00:00:00')
+    expect(r.calendar).toBeNull()
+    expect(r.busy).toEqual([])
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0].startsWith(CALENDAR_FAILED_PREFIX)).toBe(true)
+  })
+
+  it('조회에 성공한 일정 0건은 실패가 아니다. calendar 는 빈 배열이고 errors 는 비어 있다', async () => {
+    const r = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'full', NOW)
+    expect(r.calendar).toEqual([])
+    expect(r.errors).toEqual([])
   })
 
   it('local 모드는 캘린더를 보지 않는다', async () => {

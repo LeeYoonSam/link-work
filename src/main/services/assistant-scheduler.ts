@@ -16,6 +16,8 @@ interface SchedulerDeps {
 
 const START_NUDGE_TITLE = '오늘 시작할까요?'
 const LOCAL_REFRESH_DEBOUNCE_MS = 2000
+// 보관 신호 유효 시간. 창 생성·로딩이 이보다 오래 걸리면 이동을 포기한다
+const PENDING_NAVIGATE_TTL_MS = 60_000
 // 비서 후보와 무관한 엔티티는 최신화를 예약하지 않는다
 const IGNORED_ENTITIES: EntityType[] = ['todo_tag', 'memo', 'memo_category', 'document', 'variable', 'release_note']
 
@@ -24,6 +26,8 @@ let unsubscribeActivity: (() => void) | null = null
 let localRefreshTimer: ReturnType<typeof setTimeout> | null = null
 // 알림 객체가 GC 되면 클릭 핸들러가 사라진다. 닫히거나 클릭될 때까지 참조를 잡는다
 const liveNotifications = new Set<Notification>()
+// 렌더러가 아직 받을 수 없을 때 보관하는 navigate 신호
+let pendingNavigate: { payload: AssistantNavigateEvent; at: number } | null = null
 
 function logError(where: string, err: unknown): void {
   console.error(`[assistant-scheduler] ${where}`, err)
@@ -43,6 +47,11 @@ function sendToMainWindow(channel: string, payload: unknown): void {
   }
 }
 
+/**
+ * 알림 클릭 → 오늘 화면 이동 (§12.1).
+ * 렌더러가 아직 구독 전일 수 있다. 그래서 로딩 중이거나 창이 없으면 보관 신호에 두고,
+ * 렌더러가 마운트 직후 takePendingNavigate 로 가져간다.
+ */
 function navigateToToday(): void {
   if (!deps) return
   const payload: AssistantNavigateEvent = { view: 'today' }
@@ -52,24 +61,27 @@ function navigateToToday(): void {
       if (win.isMinimized()) win.restore()
       win.show()
       win.focus()
+      if (win.webContents.isLoading()) {
+        pendingNavigate = { payload, at: Date.now() }
+        return
+      }
+      pendingNavigate = null
       win.webContents.send('assistant:navigate', payload)
       return
     }
-    // 창이 없으면 만든 뒤 렌더러 로드가 끝나면 보낸다
+    pendingNavigate = { payload, at: Date.now() }
     deps.createWindow()
-    const created = deps.getMainWindow()
-    if (created && !created.isDestroyed()) {
-      created.webContents.once('did-finish-load', () => {
-        try {
-          if (!created.isDestroyed()) created.webContents.send('assistant:navigate', payload)
-        } catch (err) {
-          logError('navigate after load', err)
-        }
-      })
-    }
   } catch (err) {
     logError('navigate', err)
   }
+}
+
+/** 보관 신호를 1번만 꺼낸다. 유효 시간이 지났으면 버리고 null 을 돌려준다. */
+export function takePendingNavigate(now: number = Date.now()): AssistantNavigateEvent | null {
+  const p = pendingNavigate
+  pendingNavigate = null
+  if (!p || now - p.at > PENDING_NAVIGATE_TTL_MS) return null
+  return p.payload
 }
 
 function startNudgeBody(content: { candidateCount: number; eventCount: number } | null): string {
@@ -237,5 +249,6 @@ export function stopAssistantScheduler(): void {
   localRefreshTimer = null
   setAssistantChangedListener(null)
   liveNotifications.clear()
+  pendingNavigate = null
   deps = null
 }

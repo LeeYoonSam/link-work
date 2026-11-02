@@ -25,6 +25,7 @@
   - 시작 알림은 그날 첫 활동 때 1회만 보낸다.
   - 최신화를 MVP2 로 올렸다.
 - 3판: 항목당 고정 60분 배치를 없앴다. 회의 사이 빈 시간을 블록으로 보여 주고, 블록에 작업을 배정한다. 규칙은 '1순위 집중 + 마감 항목 끼우기' 다. 부록 B 가 §5.2~5.4, §12.2, A20 을 대체한다.
+- 3판 보완 (2026-11-02): MVP1 남은 과제 4건을 고쳤다. 내용은 부록 D 다.
 
 ---
 
@@ -477,7 +478,7 @@ export function shouldSendStartNudge(input: NudgeInput): boolean
 | 트리거 | 감지 대상 | 최신화 범위 | MVP |
 |--------|-----------|-------------|-----|
 | `logActivity()` 호출 | task·todo·project·meeting 변경 | 로컬 출처만 | 1 |
-| 회의 요약 생성 | 새 액션아이템 | 로컬 출처만 | 1 |
+| 회의 요약 생성 | 새 액션아이템. `runMeetingSummary` 가 저장 후 `logActivity('meeting','update')` 를 호출한다 | 로컬 출처만 | 1 |
 | '새로고침' 버튼 | 전체 | 로컬·캘린더·Jira | 1 |
 | 캘린더 주기 | 일정 추가·변경·취소 | 캘린더 | 2 |
 | Jira 주기 | 새 할당·마감·우선순위·완료 | Jira | 2 |
@@ -503,6 +504,7 @@ interface SourceSnapshot {
 - 하루 시작 때 비서가 첫 스냅샷을 저장한다. `seenCandidateIds` 는 그 시점의 후보 ID 전체다.
 - 최신화가 끝나면, 비서가 스냅샷을 갱신한다.
 - 출처 1개를 조회하지 못하면, 그 출처의 스냅샷은 이전 값을 유지한다.
+- 비서는 오류를 던지는 캘린더 조회 함수 `fetchEventsInRange` 만 쓴다. 이유: `getEventsInRange`·`getTodayEvents` 는 오류가 나도 빈 목록을 돌려준다. 그러면 일시적인 오류가 '일정 0건' 으로 처리된다 (부록 D.2).
 
 ### 8.3 변경 계산
 파일은 `assistant-refresh.ts` 다. 이 파일은 순수 함수만 가진다.
@@ -690,7 +692,7 @@ JQL:
 - 알림은 `actions` 를 쓰지 않는다. 이유: `hasReply` 와 함께 쓰면 macOS 가 첫 action 외에는 무시한다.
 - 체크인 답장 해석: `완료`·`done` 은 `done` 이다. `미룸`·`나중에` 는 `deferred` 다. 나머지는 `in_progress` 와 `status_note` 다.
 - 클릭 처리: 스케줄러가 `mainWindow.show()` 후 `webContents.send('assistant:navigate', { view: 'today', focus })` 를 보낸다.
-- 창이 없으면, 스케줄러가 `createWindow()` 를 호출한다. 그다음 `did-finish-load` 에서 navigate 를 보낸다.
+- 창이 없거나 창이 로딩 중이면, 스케줄러가 navigate 를 '보관 신호'로 저장한다. 창이 없으면, 스케줄러가 `createWindow()` 를 호출한다. 렌더러는 마운트할 때 `assistant:takePendingNavigate` 로 보관 신호를 가져간다. 보관 신호는 60초 뒤 만료된다. 이유: `did-finish-load` 시점에 렌더러의 구독이 아직 없을 수 있다 (부록 D.4).
 
 ### 12.2 오늘 화면 (MVP1)
 - `projectStore.view` 유니온에 `'today'` 를 추가한다.
@@ -774,6 +776,7 @@ export interface AssistantAPI {
   saveSettings: (patch: Partial<AssistantSettings>) => Promise<Result<{ settings: AssistantSettings }>>
   onNavigate: (cb: (p: { view: 'today'; focus?: { kind: string; id: string } }) => void) => () => void
   onChanged: (cb: (p: { date: string; reason: 'refresh' | 'briefing' | 'day' }) => void) => () => void
+  takePendingNavigate?: () => Promise<Result<{ pending: { view: 'today'; focus?: { kind: string; id: string } } | null }>>  // 부록 D.4
   // MVP3
   generateRecovery: () => Promise<Result<{ today: TodayPayload }>>
   // MVP4
@@ -1342,6 +1345,7 @@ IPC 채널 15개와 push 2개:
 | saveSettings | `assistant:saveSettings` | `patch` | `{ success: true, settings }` |
 | onNavigate | push `assistant:navigate` | `AssistantNavigateEvent` | 해제 함수 |
 | onChanged | push `assistant:changed` | `AssistantChangedEvent` | 해제 함수 |
+| takePendingNavigate | `assistant:takePendingNavigate` | 없음 | `{ success: true, pending: AssistantNavigateEvent \| null }`. 부록 D.4 |
 
 실패 응답은 `{ success: false, error: string }` 이다. `getSettings` 만 예외다.
 
@@ -1523,3 +1527,40 @@ IPC·preload: `assistant:setItemSlot` → `assistant:focusItem` (인자 `itemId`
 7. `grep -c "startView" src/renderer/src/components/today/AssistantSettingsModal.tsx` ≥ 1.
 8. `grep -lE "from '(electron|better-sqlite3|\.\./db|\./jira|\./google-calendar)" src/main/services/assistant-settings.ts` 결과 0건 (A3).
 9. `grep -lE "window\.|from 'react'|zustand" src/renderer/src/utils/startView.ts` 결과 0건. 이유: 순수 함수로 테스트한다.
+
+---
+
+## 부록 D. MVP1 남은 과제 정리 (3판 보완)
+
+### D.1 회의 요약 → 최신화
+- 문제: 회의 요약이 끝나도 `logActivity` 가 호출되지 않았다. 그래서 §8.1 의 '회의 요약 생성' 트리거가 동작하지 않았다.
+- 수정: `runMeetingSummary` 가 `meetings.status` 를 `summarized` 로 바꾼 직후 `logActivity('meeting', 'update', meetingId, 제목, '요약 생성')` 을 호출한다. 스케줄러가 2초 디바운스 후 로컬 최신화를 실행한다.
+- 실패 경로와 취소 경로는 `logActivity` 를 호출하지 않는다.
+
+### D.2 캘린더 조회 실패
+- 문제: `getEventsInRange` 는 API 오류에도 `[]` 를 돌려준다. `getTodayEvents` 는 오류에도 캐시를 돌려준다. 그래서 비서가 일시적인 오류를 '일정 0건' 으로 판단할 수 있었다.
+- 수정: `google-calendar.ts` 에 `fetchEventsInRange(timeMin, timeMax)` 를 추가한다. 이 함수는 미연결과 API 오류에서 예외를 던진다. `collectSources` 는 논리 날짜 하루를 이 함수로 조회한다.
+- 조회가 실패하면, `calendar` 는 `null` 이다. §8.2 에 따라 캘린더 스냅샷은 이전 값을 유지한다.
+- 하루 시작 때 조회가 실패하면, 첫 스냅샷의 캘린더는 `[]` 이다. 오늘 화면은 `CALENDAR_FAILED` 오류를 보여 준다. 다음 최신화가 성공하면, 비서가 일정을 `calendarAdded` 로 반영하고 재배치한다.
+- 비서는 `getTodayEvents` 의 공유 캐시를 더 이상 갱신하지 않는다. 트레이와 알림은 각자 5분 캐시로 조회한다.
+- `ai-tools.ts` 의 `get_calendar_events` 는 이번 범위 밖이다. 이 도구는 여전히 `getEventsInRange` 를 쓴다.
+
+### D.3 회의 요약의 내장 도구
+- 문제: `meeting-summary.ts` 의 `query()` 옵션에 `tools: []` 가 없었다. `allowedTools: []` 는 자동 허용 목록이다. 이 값은 도구를 막지 않는다.
+- 수정: `tools: []` 를 추가한다. `ai-headless.ts` 와 같은 설정이다.
+
+### D.4 창이 없을 때 알림 클릭
+- 문제: 스케줄러는 `did-finish-load` 에서 navigate 를 보냈다. 그 시점에 렌더러의 `onNavigate` 구독이 없으면, 신호가 사라졌다.
+- 수정: 창이 없거나 로딩 중이면, 스케줄러가 신호를 메모리에 보관한다. 렌더러는 구독을 등록한 직후 `takePendingNavigate` 로 신호를 가져간다.
+- 보관 신호는 1번만 가져갈 수 있다. 60초가 지나면 만료된다. `stopAssistantScheduler` 는 보관 신호를 비운다.
+- 창이 있고 로딩이 끝났으면, 스케줄러는 기존처럼 push 로 보낸다.
+
+### D.5 완료 조건
+최대 반복 5회. 같은 실패 2회 연속이면 중단하고 보고한다.
+1. `npx vitest run` 종료 코드 0, 실패 0건.
+2. `npm run typecheck` 에러 0건.
+3. `npm run build` 종료 코드 0.
+4. `grep -c "tools: \[\]" src/main/services/meeting-summary.ts` ≥ 1.
+5. `grep -cE "getTodayEvents|getEventsInRange" src/main/services/assistant-sources.ts` = 0.
+6. `grep -c "did-finish-load" src/main/services/assistant-scheduler.ts` = 0.
+7. `takePendingNavigate` 가 `preload/index.ts`·`preload/index.d.ts`·`renderer/src/env.d.ts`·`App.tsx`·`assistant.ipc.ts` 에 각각 1건 이상 있다.

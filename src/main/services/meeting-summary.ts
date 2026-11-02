@@ -9,6 +9,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { z } from 'zod'
 import { getDatabase } from '../db/database'
+import { logActivity } from '../utils/activity-logger'
 import { INTERVIEW_SPEC } from './interview-summary'
 import { buildSummaryContextBlock, loadPromptContext } from './recognition-aids'
 import type { SendStream, MeetingSummaryResult } from './meeting-types'
@@ -209,9 +210,9 @@ export async function runMeetingSummary(
 ): Promise<{ success: boolean; error?: string }> {
   const db = getDatabase()
 
-  // 녹음 종류에 따라 요약 스펙 선택 (기본=회의)
-  const kindRow = db.prepare('SELECT kind FROM meetings WHERE id = ?').get(meetingId) as
-    | { kind: string }
+  // 녹음 종류에 따라 요약 스펙 선택 (기본=회의). 제목은 활동 기록에 쓴다.
+  const kindRow = db.prepare('SELECT kind, title FROM meetings WHERE id = ?').get(meetingId) as
+    | { kind: string; title: string | null }
     | undefined
   const spec: SummarySpec<unknown> =
     kindRow?.kind === 'interview'
@@ -282,6 +283,8 @@ export async function runMeetingSummary(
         model: MODEL,
         maxTurns: 3,
         mcpServers: {},
+        // tools: [] 가 내장 도구 전부를 끈다. allowedTools: [] 만으로는 기본 도구가 남는다.
+        tools: [],
         allowedTools: [],
         disallowedTools: ['Bash', 'Write', 'Edit', 'WebSearch', 'WebFetch', 'Task'],
         settingSources: [],
@@ -336,6 +339,9 @@ export async function runMeetingSummary(
   db.prepare(
     "UPDATE meetings SET status = 'summarized', updated_at = datetime('now','localtime') WHERE id = ?"
   ).run(meetingId)
+
+  // 비서가 새 액션아이템을 반영하도록 활동을 기록한다 (assistant-scheduler 가 구독).
+  logActivity('meeting', 'update', meetingId, kindRow?.title ?? undefined, '요약 생성')
 
   send({ meetingId, phase: 'done', progress: 1, message: '요약 완료' })
   return { success: true }

@@ -25,7 +25,7 @@ import type {
   VanishedResolution
 } from './assistant-types'
 import { isConnected as isCalendarConnected } from './google-auth'
-import { getEventsInRange, getTodayEvents, type CalendarEvent } from './google-calendar'
+import { fetchEventsInRange, type CalendarEvent } from './google-calendar'
 import {
   getDefaultJiraProjectKey,
   getJiraMyAccountId,
@@ -207,12 +207,11 @@ export function toCalendarRef(e: CalendarEvent, today: string): CalendarRef | nu
   }
 }
 
-// 달력 날짜 1일의 일정을 가져온다. 논리 날짜가 오늘 달력 날짜와 다를 때만 쓴다.
+// 논리 날짜 1일(로컬 00:00:00~23:59:59)의 일정을 가져온다.
+// 조회 실패는 throw 한다. 호출자는 calendar 를 null 로 두어 이전 스냅샷을 유지한다 (§8.2).
 async function fetchDayEvents(date: string): Promise<CalendarEvent[]> {
   const [y, m, d] = date.split('-').map(Number)
-  const events = await getEventsInRange(new Date(y, m - 1, d, 0, 0, 0), new Date(y, m - 1, d, 23, 59, 59))
-  if (events === null) throw new Error('')
-  return events
+  return fetchEventsInRange(new Date(y, m - 1, d, 0, 0, 0), new Date(y, m - 1, d, 23, 59, 59))
 }
 
 // ── Jira 캐시 ──
@@ -278,7 +277,6 @@ export async function collectSources(
   const errors: string[] = []
   // 일정은 논리 날짜 기준이다. 날짜 경계 전(예: 00:00~04:00)에는 전날 일정을 본다.
   const today = logicalDate(now, settings.dayRollover)
-  const calendarDay = toLocalDateTime(now).slice(0, 10)
 
   // 로컬 출처
   const tasks = readTasks(db)
@@ -294,8 +292,7 @@ export async function collectSources(
       errors.push(CALENDAR_NOT_CONNECTED)
     } else {
       try {
-        const events =
-          today === calendarDay ? await getTodayEvents(true) : await fetchDayEvents(today)
+        const events = await fetchDayEvents(today)
         calendar = events
           .map((e) => toCalendarRef(e, today))
           .filter((e): e is CalendarRef => e !== null)

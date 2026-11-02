@@ -303,6 +303,7 @@ const api = {
     focusItem: (itemId: number) => ipcRenderer.invoke('assistant:focusItem', itemId),
     getSettings: () => ipcRenderer.invoke('assistant:getSettings'),
     saveSettings: (patch: Record<string, unknown>) => ipcRenderer.invoke('assistant:saveSettings', patch),
+    takePendingNavigate: () => ipcRenderer.invoke('assistant:takePendingNavigate'),
     onNavigate: (callback: (p: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, p: unknown): void => callback(p)
       ipcRenderer.on('assistant:navigate', handler)

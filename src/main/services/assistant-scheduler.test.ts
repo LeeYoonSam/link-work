@@ -82,15 +82,20 @@ const service = vi.hoisted(() => ({
 }))
 vi.mock('./assistant-service', () => service)
 
-import { runStartNudgeCheck, startAssistantScheduler, stopAssistantScheduler } from './assistant-scheduler'
+import {
+  runStartNudgeCheck,
+  startAssistantScheduler,
+  stopAssistantScheduler,
+  takePendingNavigate
+} from './assistant-scheduler'
 
-function fakeWindow(): {
+function fakeWindow(loading = false): {
   isDestroyed: () => boolean
   isMinimized: () => boolean
   restore: () => void
   show: ReturnType<typeof vi.fn>
   focus: ReturnType<typeof vi.fn>
-  webContents: { send: ReturnType<typeof vi.fn>; once: ReturnType<typeof vi.fn> }
+  webContents: { send: ReturnType<typeof vi.fn>; isLoading: () => boolean }
 } {
   return {
     isDestroyed: () => false,
@@ -98,7 +103,7 @@ function fakeWindow(): {
     restore: () => undefined,
     show: vi.fn(),
     focus: vi.fn(),
-    webContents: { send: vi.fn(), once: vi.fn() }
+    webContents: { send: vi.fn(), isLoading: () => loading }
   }
 }
 
@@ -153,28 +158,77 @@ describe('시작 알림 발송 순서', () => {
     expect(electron.notifications).toHaveLength(0)
   })
 
-  it('알림을 클릭하면 메인 창을 띄우고 assistant:navigate 를 보낸다', async () => {
+})
+
+describe('알림 클릭 이동과 보관 신호 (§12.1)', () => {
+  async function clickNudge(): Promise<void> {
+    await runStartNudgeCheck('unlock-screen')
+    electron.notifications[0].listeners.get('click')?.()
+  }
+
+  it('창이 있고 로딩이 끝났으면 바로 navigate 를 보내고 보관 신호는 없다', async () => {
     const win = fakeWindow()
     startAssistantScheduler({ getMainWindow: () => win as never, createWindow: vi.fn() })
-    await runStartNudgeCheck('unlock-screen')
-    electron.notifications[0].listeners.get('click')?.()
+    await clickNudge()
     expect(win.show).toHaveBeenCalled()
     expect(win.webContents.send).toHaveBeenCalledWith('assistant:navigate', { view: 'today' })
+    expect(takePendingNavigate()).toBeNull()
   })
 
-  it('창이 없으면 createWindow 후 did-finish-load 에서 navigate 를 보낸다', async () => {
+  it('창이 없으면 createWindow 를 부르고 보내지 않는다. 보관 신호는 1번만 꺼낸다', async () => {
     let win: ReturnType<typeof fakeWindow> | null = null
     const createWindow = vi.fn(() => {
-      win = fakeWindow()
+      win = fakeWindow(true)
     })
     startAssistantScheduler({ getMainWindow: () => win as never, createWindow })
-    await runStartNudgeCheck('unlock-screen')
-    electron.notifications[0].listeners.get('click')?.()
+    await clickNudge()
     expect(createWindow).toHaveBeenCalledTimes(1)
     const created = win as unknown as ReturnType<typeof fakeWindow>
-    expect(created.webContents.once).toHaveBeenCalledWith('did-finish-load', expect.any(Function))
-    created.webContents.once.mock.calls[0][1]()
-    expect(created.webContents.send).toHaveBeenCalledWith('assistant:navigate', { view: 'today' })
+    expect(created.webContents.send).not.toHaveBeenCalledWith('assistant:navigate', expect.anything())
+    expect(takePendingNavigate()).toEqual({ view: 'today' })
+    expect(takePendingNavigate()).toBeNull()
+  })
+
+  it('창이 로딩 중이면 띄우기만 하고 보내지 않는다. 보관 신호가 남는다', async () => {
+    const win = fakeWindow(true)
+    const createWindow = vi.fn()
+    startAssistantScheduler({ getMainWindow: () => win as never, createWindow })
+    await clickNudge()
+    expect(win.show).toHaveBeenCalled()
+    expect(win.focus).toHaveBeenCalled()
+    expect(createWindow).not.toHaveBeenCalled()
+    expect(win.webContents.send).not.toHaveBeenCalledWith('assistant:navigate', expect.anything())
+    expect(takePendingNavigate()).toEqual({ view: 'today' })
+  })
+
+  it('로딩이 끝난 창으로 다시 이동하면 이전 보관 신호를 비운다', async () => {
+    const win = fakeWindow(true)
+    startAssistantScheduler({ getMainWindow: () => win as never, createWindow: vi.fn() })
+    await clickNudge()
+    win.webContents.isLoading = () => false
+    electron.notifications[0].listeners.get('click')?.()
+    expect(win.webContents.send).toHaveBeenCalledWith('assistant:navigate', { view: 'today' })
+    expect(takePendingNavigate()).toBeNull()
+  })
+
+  it('60초가 지나면 보관 신호를 버리고 null 을 돌려준다', async () => {
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
+    await clickNudge()
+    expect(takePendingNavigate(Date.now() + 60_001)).toBeNull()
+    expect(takePendingNavigate()).toBeNull()
+  })
+
+  it('60초 안이면 보관 신호를 돌려준다', async () => {
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
+    await clickNudge()
+    expect(takePendingNavigate(Date.now() + 59_000)).toEqual({ view: 'today' })
+  })
+
+  it('stopAssistantScheduler 후 보관 신호가 비어 있다', async () => {
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
+    await clickNudge()
+    stopAssistantScheduler()
+    expect(takePendingNavigate()).toBeNull()
   })
 })
 
