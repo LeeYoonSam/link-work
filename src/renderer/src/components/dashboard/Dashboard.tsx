@@ -128,10 +128,12 @@ function TodoRow({ todo }: { todo: Todo }): React.ReactNode {
 // 1등 하나만 크게 두고, 뒷순위는 이름 한 줄로만 흘린다.
 function FocusCard({
   selection,
-  onOpenProjects
+  onOpenProjects,
+  onOpenToday
 }: {
   selection: FocusSelection<Project>
   onOpenProjects: () => void
+  onOpenToday: () => void
 }): React.ReactNode {
   const { focus, upNext, unprioritizedDevCount } = selection
   const status = focus ? (projectStatus[focus.status] ?? projectStatus.cancelled) : null
@@ -139,7 +141,16 @@ function FocusCard({
   return (
     <div className="flex-shrink-0 min-w-0">
       <div className="flex items-center justify-between gap-2 mb-4">
-        <SectionTitle variant="page">지금 할 일</SectionTitle>
+        <div className="flex items-center gap-3">
+          <SectionTitle variant="page">지금 할 일</SectionTitle>
+          <button
+            type="button"
+            onClick={onOpenToday}
+            className="text-xs text-blue-600 hover:text-blue-700 transition-colors"
+          >
+            오늘 계획 보기 →
+          </button>
+        </div>
         {unprioritizedDevCount > 0 ? (
           <Badge
             color="bg-amber-100 text-amber-700"
@@ -292,7 +303,11 @@ export default function Dashboard(): React.ReactNode {
       <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
         {/* 좌측: Project + Schedule */}
         <div className="flex-1 flex flex-col min-h-0 space-y-6 min-w-0">
-          <FocusCard selection={focusSelection} onOpenProjects={() => setView('projects')} />
+          <FocusCard
+            selection={focusSelection}
+            onOpenProjects={() => setView('projects')}
+            onOpenToday={() => setView('today')}
+          />
 
           <div className="flex flex-col min-h-0 min-w-0">
             <SectionTitle variant="page" className="mb-4 flex-shrink-0">

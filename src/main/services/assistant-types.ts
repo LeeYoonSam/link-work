@@ -1,0 +1,154 @@
+export type CandidateSource = 'jira' | 'task' | 'todo' | 'action_item'
+export type CandidatePriority = 'high' | 'medium' | 'low'
+export type JiraCategory = 'new' | 'indeterminate' | 'done'
+export type AiModelName = 'opus' | 'sonnet' | 'haiku'
+
+export interface Candidate {
+  id: string                       // 'task:12' | 'todo:5' | 'jira:PROJ-1' | 'action_item:7:0'
+  source: CandidateSource
+  title: string
+  jiraKey: string | null
+  projectId: number | null
+  projectName: string | null
+  dueDate: string | null           // 'YYYY-MM-DD'
+  dueTime: string | null           // 'HH:mm'. todo 만
+  inProgress: boolean
+  priority: CandidatePriority | null
+  jiraPriority: string | null      // Jira 원본 이름. 긴급 판정용
+  lastTouchedAt: string | null     // 로컬 'YYYY-MM-DD HH:mm:ss'
+  link: string | null
+}
+
+export interface TaskRow {
+  id: number; project_id: number; project_name: string
+  project_priority: 'now' | 'next' | 'later' | null
+  name: string; status: string; end_date: string | null; jira_issue_key: string | null
+}
+export interface TodoRow { id: number; title: string; priority: string; due_date: string | null; updated_at: string | null }
+export interface ActionItemRow { meeting_id: number; index: number; text: string; due: string | null; meeting_title: string }
+export interface JiraCandidateInput {
+  key: string; summary: string; status: string; statusCategory: JiraCategory
+  priority: string | null; duedate: string | null
+  updatedLocal: string | null      // 로컬 'YYYY-MM-DD HH:mm:ss' 로 바꾼 값
+  url: string | null               // getJiraIssueUrl 결과
+}
+export interface CandidateInput {
+  tasks: TaskRow[]                 // 미완료 작업. 활성 프로젝트 소속만
+  todos: TodoRow[]                 // is_completed = 0
+  jiraIssues: JiraCandidateInput[] | null   // null 이면 이번에 Jira 를 보지 않았다
+  actionItems: ActionItemRow[]     // todo_id 없는 항목만. 회의 요약 생성 14일 이내
+  taskTouchedAt: Record<number, string>
+}
+
+export interface ScoredCandidate { candidate: Candidate; score: number }
+export interface BusyBlock { start: string; end: string }     // 'HH:mm'
+export type Slot = BusyBlock
+
+export type PlanStatus = 'active' | 'closed'
+export type PlanClosedBy = 'button' | 'auto'
+export type PlanItemStatus = 'suggested' | 'planned' | 'in_progress' | 'done' | 'deferred' | 'dropped' | 'dismissed'
+export type PlanAddedBy = 'start' | 'user' | 'refresh'
+
+export interface CalendarRef { id: string; title: string; start: string; end: string; allDay: boolean }  // start·end 는 오늘 기준 'HH:mm'
+export interface JiraSnapshotRef { key: string; status: string; priority: string | null; duedate: string | null; updated: string }
+export interface SourceSnapshot { calendar: CalendarRef[]; jira: JiraSnapshotRef[]; seenCandidateIds: string[]; takenAt: string }
+
+export interface DailyPlan {
+  id: number; plan_date: string; status: PlanStatus
+  started_at: string; closed_at: string | null; closed_by: PlanClosedBy | null
+  source_snapshot: SourceSnapshot | null     // 저장소가 JSON 을 파싱해 돌려준다
+  briefing_text: string | null; briefing_source: 'rules' | 'llm' | null; briefing_model: string | null
+  briefing_error: string | null; briefing_at: string | null
+  recovery_text: string | null; recovery_source: 'rules' | 'llm' | null; recovery_at: string | null
+  wrapup_note: string | null; wrapup_at: string | null; last_refresh_at: string | null
+  created_at: string; updated_at: string
+}
+
+export interface PlanItem {
+  id: number; plan_id: number; candidate_id: string; source: CandidateSource; title: string
+  link: string | null; jira_issue_key: string | null; project_id: number | null; due_date: string | null
+  score: number; rank: number | null; slot_start: string | null; slot_end: string | null
+  pinned: boolean; added_by: PlanAddedBy; urgent: boolean
+  status: PlanItemStatus; status_note: string | null; status_at: string | null
+  first_planned_date: string | null   // 조회 전용. 같은 candidate_id 가 처음 계획에 오른 논리 날짜
+}
+export type NewPlanItem = Omit<PlanItem, 'id' | 'plan_id' | 'status_at' | 'first_planned_date'>
+export interface PlanItemUpdate {
+  id: number
+  patch: Partial<Pick<PlanItem,
+    'candidate_id' | 'source' | 'link' | 'title' | 'jira_issue_key' | 'project_id' | 'due_date'
+    | 'score' | 'rank' | 'slot_start' | 'slot_end' | 'pinned' | 'urgent' | 'status' | 'status_note'>>
+}
+
+export type AssistantEventKind = 'start_nudge' | 'plan_update' | 'checkin' | 'meeting_briefing'
+export type AssistantEventStatus = 'sent' | 'late' | 'skipped' | 'failed' | 'logged'
+export interface AssistantEvent {
+  id: number; event_key: string; kind: AssistantEventKind; plan_date: string; scheduled_at: string
+  fired_at: string | null; status: AssistantEventStatus; ref_id: string | null; payload: string | null
+  response: string | null; responded_at: string | null; created_at: string
+}
+export type NewAssistantEvent = Pick<AssistantEvent, 'event_key' | 'kind' | 'plan_date' | 'scheduled_at' | 'fired_at' | 'status' | 'ref_id' | 'payload'>
+
+export interface CurrentSources {
+  candidates: Candidate[]
+  calendar: CalendarRef[] | null   // null 이면 이번에 보지 않았거나 조회에 실패했다
+  jira: JiraSnapshotRef[] | null   // null 이면 이번에 보지 않았거나 조회에 실패했다
+}
+export type VanishedResolution =
+  | { kind: 'done' }
+  | { kind: 'dropped'; note: string }
+  | { kind: 'replace'; candidate: Candidate }
+export interface RefreshDiff {
+  calendarAdded: CalendarRef[]; calendarChanged: CalendarRef[]; calendarRemoved: CalendarRef[]
+  newCandidates: Candidate[]; vanishedCandidateIds: string[]; updatedCandidates: Candidate[]
+}
+export interface RefreshContext {
+  today: string; nowHHmm: string; workEnd: string
+  dayStart: string                 // 타임라인 시작 'HH:mm'. started_at 을 15분 단위로 올린 값
+  resolutions: Record<string, VanishedResolution>
+}
+export interface RefreshSummary {
+  calendarAdded: number; calendarChanged: number; calendarRemoved: number
+  suggested: number; urgentSuggestedIds: string[]
+  completed: number; dropped: number; replaced: number
+  timelineChanged: boolean         // 일정 변경 여부
+  currentOrNextChanged: boolean    // current·다음 future 블록의 itemId 변경 여부
+}
+export interface RefreshPlan { inserts: NewPlanItem[]; updates: PlanItemUpdate[]; snapshot: SourceSnapshot; summary: RefreshSummary }
+
+export interface AssistantSettings {
+  enabled: boolean; dayRollover: string; startNudge: boolean; workEnd: string
+  planSize: number; llmEnabled: boolean; llmModel: AiModelName
+  jiraScope: 'all' | 'default_project'; openAtLogin: boolean
+  refreshCalendarMin: number; refreshJiraMin: number; refreshNotify: boolean
+  checkinMinGap: number; checkinDailyCap: number; meetingLeadMin: number
+  startView: 'auto' | 'dashboard' | 'today'   // 첫 화면 (부록 C)
+}
+
+export type TimelineEntry =
+  | { kind: 'meeting'; start: string; end: string; title: string }
+  | {
+      kind: 'block'; start: string; end: string; minutes: number
+      state: 'past' | 'current' | 'future'
+      itemId: number | null; reason: 'focus' | 'deadline' | null; continued: boolean
+    }
+export interface DayTimeline {
+  entries: TimelineEntry[]         // 시작 시각 오름차순
+  freeMinutesLeft: number
+  focusItemId: number | null
+  unplacedDeadlineItemIds: number[]
+}
+
+export interface TodayPayload {
+  logicalDate: string
+  plan: DailyPlan | null
+  items: PlanItem[]                // suggested·dismissed 포함 전부. rank 순 정렬
+  timeline: DayTimeline
+  events: AssistantEvent[]         // 오늘 논리 날짜의 이벤트
+  settings: AssistantSettings
+  missingWrapupDate: string | null
+  aiAvailable: boolean; jiraConnected: boolean; calendarConnected: boolean; jiraTruncated: boolean
+  lastErrors: string[]             // 마지막 수집에서 실패한 출처의 사용자용 문구
+}
+export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' }
+export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing'; id?: string } }

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import Sidebar from './components/layout/Sidebar'
 import Header from './components/layout/Header'
 import ProjectList from './components/project/ProjectList'
@@ -16,8 +16,11 @@ import AiChatView from './components/ai/AiChatView'
 import RecordingView from './components/recording/RecordingView'
 import MeetingNotesView from './components/notes/MeetingNotesView'
 import ReleasesView from './components/project/ReleasesView'
+import TodayView from './components/today/TodayView'
 import { useProjectStore } from './stores/projectStore'
+import { useAssistantStore } from './stores/assistantStore'
 import { installRecorderBridge } from './stores/recorderSession'
+import { resolveStartView } from './utils/startView'
 
 function App(): React.ReactNode {
   // Check if this is the tray panel window
@@ -30,14 +33,62 @@ function App(): React.ReactNode {
   }
 
   const { view, projectView } = useProjectStore()
+  // 첫 화면 판정을 창마다 1번만 적용한다 (StrictMode 이중 마운트 방지)
+  const startViewDecided = useRef(false)
 
   // 녹음 상태를 main의 창 닫기/앱 종료 가드에 알리고 저장 명령을 받는다(메인 창에서 1회).
   useEffect(() => installRecorderBridge(), [])
+
+  // 비서 알림 클릭 → 오늘 화면으로 이동한다(assistant:navigate)
+  useEffect(() => {
+    const api = window.api?.assistant
+    if (!api) return
+    return api.onNavigate((p) => {
+      useProjectStore.getState().setView('today')
+      useAssistantStore.getState().setFocus(p.focus ?? null)
+    })
+  }, [])
+
+  // 첫 화면 자동 선택 (docs/ASSISTANT.md 부록 C.1, A24).
+  // 판정 중 사용자 이동이나 assistant:navigate 로 화면이 바뀌면 결과를 버린다.
+  // 실패하면 아무것도 하지 않는다. 첫 화면은 dashboard 로 남는다.
+  useEffect(() => {
+    if (startViewDecided.current) return
+    startViewDecided.current = true
+    const api = window.api?.assistant
+    if (!api) return
+    const viewAtStart = useProjectStore.getState().view
+    let moved = false
+    // A→B→A 이동도 '이동함'으로 본다. StrictMode cleanup 에 묶지 않고 판정 끝에 해제한다
+    const unsubscribe = useProjectStore.subscribe((s, prev) => {
+      if (s.view !== prev.view) moved = true
+    })
+    api
+      .getToday()
+      .then((res) => {
+        if (!res.success) return
+        const t = res.today
+        const target = resolveStartView({
+          startView: t.settings.startView ?? 'auto',
+          enabled: t.settings.enabled,
+          planStatus: t.plan ? t.plan.status : 'none',
+          logicalDate: t.logicalDate
+        })
+        if (target !== 'today') return
+        const store = useProjectStore.getState()
+        if (moved || store.view !== viewAtStart) return
+        store.setView('today')
+      })
+      .catch(() => undefined)
+      .finally(unsubscribe)
+  }, [])
 
   const renderContent = (): React.ReactNode => {
     switch (view) {
       case 'dashboard':
         return <Dashboard />
+      case 'today':
+        return <TodayView />
       case 'projects':
         switch (projectView) {
           case 'list':

@@ -45,9 +45,11 @@ import {
   listIssuesByKeys,
   listJiraProjects,
   listJiraVersions,
+  listMyOpenIssues,
   listMyTodoIssues,
   listRemoteLinks,
   MAX_ISSUES,
+  MAX_MY_ISSUES,
   MAX_SYNC_ISSUES,
   saveJiraCredentials,
   setDefaultJiraProjectKey,
@@ -746,6 +748,129 @@ describe('프로젝트 싱크업 조회', () => {
     await listChildIssues(['PROJ-1'])
     fetchMock.mockResolvedValueOnce(jsonResponse([]))
     await listRemoteLinks('PROJ-1')
+    for (const call of fetchMock.mock.calls) {
+      expect(call[1]?.method).toBe('GET')
+    }
+  })
+})
+
+describe('개인 비서 조회 listMyOpenIssues', () => {
+  beforeEach(connect)
+
+  function myPage(count: number, start: number, nextPageToken?: string): Response {
+    return jsonResponse({
+      issues: Array.from({ length: count }, (_, i) => ({
+        key: `PROJ-${start + i}`,
+        fields: { summary: `이슈 ${start + i}` }
+      })),
+      ...(nextPageToken ? { nextPageToken } : {})
+    })
+  }
+
+  it('전체 범위 JQL 은 내 미완료 이슈를 우선순위·마감 순으로 조회하고 필드를 명시한다', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ issues: [] }))
+
+    const result = await listMyOpenIssues(null)
+
+    expect(result).toEqual({ issues: [], truncated: false })
+    const url = calledUrls()[0]
+    expect(url).toContain('/rest/api/3/search/jql?')
+    const params = new URL(url).searchParams
+    expect(params.get('jql')).toBe(
+      'assignee = currentUser() AND statusCategory != Done ORDER BY priority DESC, duedate ASC'
+    )
+    expect(params.get('fields')).toBe('summary,status,issuetype,priority,duedate,updated')
+  })
+
+  it('프로젝트 키가 있으면 project 조건을 앞에 붙인다', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ issues: [] }))
+    await listMyOpenIssues('PROJ')
+    expect(new URL(calledUrls()[0]).searchParams.get('jql')).toBe(
+      'project = PROJ AND assignee = currentUser() AND statusCategory != Done ORDER BY priority DESC, duedate ASC'
+    )
+  })
+
+  it('잘못된 프로젝트 키는 네트워크를 타기 전에 거부한다 (JQL 인젝션 방어)', async () => {
+    await expect(listMyOpenIssues('PROJ OR project = SECRET')).rejects.toThrow(
+      '잘못된 Jira 프로젝트 키'
+    )
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('응답을 비서용 이슈로 정규화한다', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        issues: [
+          {
+            key: 'PROJ-7',
+            fields: {
+              summary: '결제 오류 수정',
+              status: { name: '진행 중', statusCategory: { key: 'indeterminate' } },
+              issuetype: { name: '작업' },
+              priority: { name: 'High' },
+              duedate: '2026-11-03',
+              updated: '2026-11-02T10:15:30.000+0900'
+            }
+          },
+          { key: 'PROJ-8', fields: { summary: '필드 없음' } },
+          { fields: { summary: '키 없는 이슈는 버린다' } }
+        ]
+      })
+    )
+
+    const { issues } = await listMyOpenIssues(null)
+
+    expect(issues).toEqual([
+      {
+        key: 'PROJ-7',
+        summary: '결제 오류 수정',
+        status: '진행 중',
+        statusCategory: 'indeterminate',
+        priority: 'High',
+        duedate: '2026-11-03',
+        updated: '2026-11-02T10:15:30.000+0900',
+        issueType: '작업'
+      },
+      {
+        key: 'PROJ-8',
+        summary: '필드 없음',
+        status: '',
+        statusCategory: 'new',
+        priority: null,
+        duedate: null,
+        updated: '',
+        issueType: ''
+      }
+    ])
+  })
+
+  it('nextPageToken 으로 다음 페이지를 받고 토큰이 없으면 멈춘다', async () => {
+    fetchMock.mockResolvedValueOnce(myPage(100, 1, 'token-1'))
+    fetchMock.mockResolvedValueOnce(myPage(30, 101))
+
+    const { issues, truncated } = await listMyOpenIssues(null)
+
+    expect(issues).toHaveLength(130)
+    expect(truncated).toBe(false)
+    expect(new URL(calledUrls()[1]).searchParams.get('nextPageToken')).toBe('token-1')
+  })
+
+  it('MAX_MY_ISSUES(200) 상한에서 멈추고 truncated 를 알린다', async () => {
+    for (let page = 0; page < 5; page++) {
+      fetchMock.mockResolvedValueOnce(myPage(100, page * 100 + 1, `token-${page + 1}`))
+    }
+    const { issues, truncated } = await listMyOpenIssues(null)
+    expect(MAX_MY_ISSUES).toBe(200)
+    expect(issues).toHaveLength(MAX_MY_ISSUES)
+    expect(truncated).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('A1: 비서 조회 요청도 GET 이다 (Jira 쓰기 금지)', async () => {
+    fetchMock.mockImplementation(async () => jsonResponse({ issues: [] }))
+    await listMyOpenIssues(null)
+    await listMyOpenIssues('PROJ')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     for (const call of fetchMock.mock.calls) {
       expect(call[1]?.method).toBe('GET')
     }

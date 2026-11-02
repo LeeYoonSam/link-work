@@ -7,6 +7,8 @@ import BackupModal from './BackupModal'
 
 const navItems = [
   { id: 'dashboard' as const, label: 'Dashboard', icon: 'dashboard' as MenuIconName },
+  // 오늘 화면 전용 아이콘이 없어 캘린더 아이콘을 함께 쓴다
+  { id: 'today' as const, label: '오늘', icon: 'calendar' as MenuIconName },
   { id: 'projects' as const, label: 'Projects', icon: 'projects' as MenuIconName },
   { id: 'todos' as const, label: 'TODO', icon: 'todos' as MenuIconName },
   { id: 'documents' as const, label: 'Documents', icon: 'documents' as MenuIconName },

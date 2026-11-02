@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
 import { RECOGNITION_AIDS_SCHEMA } from '../services/recognition-aids'
+import { ASSISTANT_SCHEMA } from '../services/assistant-schema'
 
 let db: Database.Database | null = null
 let aiReadOnlyDb: Database.Database | null = null
@@ -433,6 +434,8 @@ export function initDatabase(): void {
   // 한 곳에서 관리한다(services/recognition-aids.ts) — 테스트도 같은 정의를 본다.
   // meeting_attendees가 meetings/meeting_members를 참조하므로 위 DDL 뒤에 실행한다.
   db.exec(RECOGNITION_AIDS_SCHEMA)
+  // 비서 테이블(daily_plans·plan_items·assistant_events). 정의는 services/assistant-schema.ts.
+  db.exec(ASSISTANT_SCHEMA)
 
   // Migrations for existing databases
   const memoColumns = db.prepare("PRAGMA table_info(memos)").all() as { name: string }[]

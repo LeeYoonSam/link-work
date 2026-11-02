@@ -455,6 +455,7 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
     } else if (kind === 'view') {
       const views = [
         'dashboard',
+        'today',
         'projects',
         'todos',
         'documents',
@@ -462,7 +463,8 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
         'memos',
         'calendar',
         'releases',
-        'reports'
+        'reports',
+        'notes'
       ] as const
       const target = views.find((v) => v === rest)
       if (target) setView(target)

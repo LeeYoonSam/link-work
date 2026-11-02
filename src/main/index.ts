@@ -21,8 +21,11 @@ import { registerExportIpc } from './ipc/export.ipc'
 import { registerReleaseNoteIpc } from './ipc/release-note.ipc'
 import { registerBackupIpc } from './ipc/backup.ipc'
 import { registerProjectSyncIpc } from './ipc/project-sync.ipc'
+import { registerAssistantIpc } from './ipc/assistant.ipc'
 import { cancelAllAiQueries } from './services/ai-agent'
+import { cancelAllHeadless } from './services/ai-headless'
 import { startNotificationService, stopNotificationService } from './services/notification'
+import { startAssistantScheduler, stopAssistantScheduler } from './services/assistant-scheduler'
 import { createTrayWidget, destroyTrayWidget } from './services/tray-widget'
 import { onRendererReload } from './services/recording-recovery'
 import {
@@ -359,6 +362,7 @@ app.whenReady().then(() => {
   registerReleaseNoteIpc()
   registerBackupIpc()
   registerProjectSyncIpc()
+  registerAssistantIpc()
   ipcMain.on('recorder:state', (event, payload) => {
     if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents) {
       recordingGuard.setState(payload)
@@ -368,6 +372,7 @@ app.whenReady().then(() => {
     recordingGuard.handleCommandDone(payload)
   })
   startNotificationService()
+  startAssistantScheduler({ getMainWindow: () => mainWindow, createWindow })
   createTrayWidget(() => createWindow())
 
   createWindow()
@@ -392,8 +397,10 @@ app.on('before-quit', (event) => {
   // 아래 정리는 종료가 실제로 진행될 때만 실행한다(위에서 막힌 종료에서는 트레이 등을 살려 둔다).
   // 타이머/트레이 먼저 정지 (in-flight async 콜백이 DB에 접근하는 race 회피)
   stopNotificationService()
+  stopAssistantScheduler()
   destroyTrayWidget()
   cancelAllAiQueries()
+  cancelAllHeadless()
 })
 
 app.on('will-quit', () => {

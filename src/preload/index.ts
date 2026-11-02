@@ -284,6 +284,35 @@ const api = {
       ipcRenderer.on('backup:progress', handler)
       return () => ipcRenderer.removeListener('backup:progress', handler)
     }
+  },
+  // 개인 비서 — 오늘 계획·브리핑·최신화. 응답은 { success, error } 로 감싼다(getSettings 제외)
+  assistant: {
+    getToday: () => ipcRenderer.invoke('assistant:getToday'),
+    startDay: () => ipcRenderer.invoke('assistant:startDay'),
+    closeDay: (note?: string) => ipcRenderer.invoke('assistant:closeDay', note),
+    reopenDay: () => ipcRenderer.invoke('assistant:reopenDay'),
+    saveWrapup: (note: string, date: string) => ipcRenderer.invoke('assistant:saveWrapup', note, date),
+    refresh: () => ipcRenderer.invoke('assistant:refresh'),
+    refreshBriefing: () => ipcRenderer.invoke('assistant:refreshBriefing'),
+    listCandidates: () => ipcRenderer.invoke('assistant:listCandidates'),
+    addItem: (candidateId: string) => ipcRenderer.invoke('assistant:addItem', candidateId),
+    acceptSuggestion: (itemId: number) => ipcRenderer.invoke('assistant:acceptSuggestion', itemId),
+    dismissSuggestion: (itemId: number) => ipcRenderer.invoke('assistant:dismissSuggestion', itemId),
+    setItemStatus: (itemId: number, status: string, note?: string) =>
+      ipcRenderer.invoke('assistant:setItemStatus', itemId, status, note),
+    focusItem: (itemId: number) => ipcRenderer.invoke('assistant:focusItem', itemId),
+    getSettings: () => ipcRenderer.invoke('assistant:getSettings'),
+    saveSettings: (patch: Record<string, unknown>) => ipcRenderer.invoke('assistant:saveSettings', patch),
+    onNavigate: (callback: (p: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, p: unknown): void => callback(p)
+      ipcRenderer.on('assistant:navigate', handler)
+      return () => ipcRenderer.removeListener('assistant:navigate', handler)
+    },
+    onChanged: (callback: (p: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, p: unknown): void => callback(p)
+      ipcRenderer.on('assistant:changed', handler)
+      return () => ipcRenderer.removeListener('assistant:changed', handler)
+    }
   }
 }
 

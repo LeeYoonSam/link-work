@@ -1020,3 +1020,206 @@ export interface BackupAPI {
   /** 진행률 구독. 반환 함수를 호출하면 해제된다. */
   onProgress: (cb: (p: BackupProgress) => void) => () => void
 }
+
+// ── 개인 비서 (docs/ASSISTANT.md 부록 A.1·A.5·B.7 복제) ──
+// main 의 src/main/services/assistant-types.ts 와 같은 모양을 유지한다.
+
+export type CandidateSource = 'jira' | 'task' | 'todo' | 'action_item'
+export type CandidatePriority = 'high' | 'medium' | 'low'
+
+export interface Candidate {
+  id: string
+  source: CandidateSource
+  title: string
+  jiraKey: string | null
+  projectId: number | null
+  projectName: string | null
+  dueDate: string | null
+  dueTime: string | null
+  inProgress: boolean
+  priority: CandidatePriority | null
+  jiraPriority: string | null
+  lastTouchedAt: string | null
+  link: string | null
+}
+
+export type PlanStatus = 'active' | 'closed'
+export type PlanClosedBy = 'button' | 'auto'
+export type PlanItemStatus =
+  | 'suggested'
+  | 'planned'
+  | 'in_progress'
+  | 'done'
+  | 'deferred'
+  | 'dropped'
+  | 'dismissed'
+export type PlanAddedBy = 'start' | 'user' | 'refresh'
+
+export interface DailyPlan {
+  id: number
+  plan_date: string
+  status: PlanStatus
+  started_at: string
+  closed_at: string | null
+  closed_by: PlanClosedBy | null
+  // 렌더러는 출처 스냅샷을 쓰지 않는다
+  source_snapshot: unknown
+  briefing_text: string | null
+  briefing_source: 'rules' | 'llm' | null
+  briefing_model: string | null
+  briefing_error: string | null
+  briefing_at: string | null
+  recovery_text: string | null
+  recovery_source: 'rules' | 'llm' | null
+  recovery_at: string | null
+  wrapup_note: string | null
+  wrapup_at: string | null
+  last_refresh_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PlanItem {
+  id: number
+  plan_id: number
+  candidate_id: string
+  source: CandidateSource
+  title: string
+  link: string | null
+  jira_issue_key: string | null
+  project_id: number | null
+  due_date: string | null
+  score: number
+  rank: number | null
+  slot_start: string | null
+  slot_end: string | null
+  pinned: boolean
+  added_by: PlanAddedBy
+  urgent: boolean
+  status: PlanItemStatus
+  status_note: string | null
+  status_at: string | null
+  // 같은 candidate_id 가 처음 계획에 오른 논리 날짜. 저장소가 조회 시 계산한다 (부록 B.5)
+  first_planned_date: string | null
+}
+
+// 오늘 타임라인 (부록 B.7)
+export type TimelineEntry =
+  | { kind: 'meeting'; start: string; end: string; title: string }
+  | {
+      kind: 'block'
+      start: string
+      end: string
+      minutes: number
+      state: 'past' | 'current' | 'future'
+      itemId: number | null
+      reason: 'focus' | 'deadline' | null
+      continued: boolean
+    }
+export interface DayTimeline {
+  // 시작 시각 오름차순
+  entries: TimelineEntry[]
+  freeMinutesLeft: number
+  focusItemId: number | null
+  unplacedDeadlineItemIds: number[]
+}
+
+export type AssistantEventKind = 'start_nudge' | 'plan_update' | 'checkin' | 'meeting_briefing'
+export type AssistantEventStatus = 'sent' | 'late' | 'skipped' | 'failed' | 'logged'
+export interface AssistantEvent {
+  id: number
+  event_key: string
+  kind: AssistantEventKind
+  plan_date: string
+  scheduled_at: string
+  fired_at: string | null
+  status: AssistantEventStatus
+  ref_id: string | null
+  payload: string | null
+  response: string | null
+  responded_at: string | null
+  created_at: string
+}
+
+// plan_update 이벤트 payload 의 변경 요약
+export interface RefreshSummary {
+  calendarAdded: number
+  calendarChanged: number
+  calendarRemoved: number
+  suggested: number
+  urgentSuggestedIds: string[]
+  completed: number
+  dropped: number
+  replaced: number
+  timelineChanged: boolean
+  currentOrNextChanged: boolean
+}
+
+export interface AssistantSettings {
+  enabled: boolean
+  dayRollover: string
+  startNudge: boolean
+  workEnd: string
+  planSize: number
+  llmEnabled: boolean
+  llmModel: AiModelChoice
+  jiraScope: 'all' | 'default_project'
+  openAtLogin: boolean
+  refreshCalendarMin: number
+  refreshJiraMin: number
+  refreshNotify: boolean
+  checkinMinGap: number
+  checkinDailyCap: number
+  meetingLeadMin: number
+  // 첫 화면 (docs/ASSISTANT.md 부록 C)
+  startView: 'auto' | 'dashboard' | 'today'
+}
+
+export interface TodayPayload {
+  logicalDate: string
+  plan: DailyPlan | null
+  items: PlanItem[]
+  events: AssistantEvent[]
+  settings: AssistantSettings
+  missingWrapupDate: string | null
+  aiAvailable: boolean
+  jiraConnected: boolean
+  calendarConnected: boolean
+  jiraTruncated: boolean
+  lastErrors: string[]
+  timeline: DayTimeline
+}
+
+export interface AssistantChangedEvent {
+  date: string
+  reason: 'refresh' | 'briefing' | 'day'
+}
+export interface AssistantNavigateEvent {
+  view: 'today'
+  focus?: { kind: 'inbox' | 'item' | 'briefing'; id?: string }
+}
+
+export type AssistantResult<T> = ({ success: true } & T) | { success: false; error: string }
+export type TodayResult = AssistantResult<{ today: TodayPayload }>
+
+export interface AssistantAPI {
+  getToday: () => Promise<TodayResult>
+  startDay: () => Promise<TodayResult>
+  closeDay: (note?: string) => Promise<TodayResult>
+  reopenDay: () => Promise<TodayResult>
+  saveWrapup: (note: string, date: string) => Promise<AssistantResult<{ plan: DailyPlan }>>
+  refresh: () => Promise<TodayResult>
+  refreshBriefing: () => Promise<TodayResult>
+  listCandidates: () => Promise<AssistantResult<{ candidates: Candidate[] }>>
+  addItem: (candidateId: string) => Promise<TodayResult>
+  acceptSuggestion: (itemId: number) => Promise<TodayResult>
+  dismissSuggestion: (itemId: number) => Promise<TodayResult>
+  setItemStatus: (itemId: number, status: PlanItemStatus, note?: string) => Promise<TodayResult>
+  focusItem: (itemId: number) => Promise<TodayResult>
+  getSettings: () => Promise<AssistantSettings>
+  saveSettings: (
+    patch: Partial<AssistantSettings>
+  ) => Promise<AssistantResult<{ settings: AssistantSettings }>>
+  onNavigate: (cb: (p: AssistantNavigateEvent) => void) => () => void
+  onChanged: (cb: (p: AssistantChangedEvent) => void) => () => void
+}

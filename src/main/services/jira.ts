@@ -729,3 +729,100 @@ export async function listRemoteLinks(issueKey: string): Promise<JiraRemoteLink[
 export function getJiraSiteUrl(): string | null {
   return getCredentials()?.siteUrl ?? null
 }
+
+// ── 개인 비서용 조회 (services/assistant-sources.ts, docs/ASSISTANT.md §11) ──
+// 비서는 Jira 를 읽기만 한다. 아래 함수도 GET 전용 jiraRequest 만 쓴다 (A1).
+
+/** 비서가 한 번에 가져오는 내 이슈 상한 */
+export const MAX_MY_ISSUES = 200
+
+const MY_ISSUE_FIELDS = 'summary,status,issuetype,priority,duedate,updated'
+
+export interface JiraMyIssue {
+  key: string
+  summary: string
+  status: string
+  statusCategory: JiraStatusCategory
+  priority: string | null
+  duedate: string | null
+  /** Jira 원본 ISO 문자열. 시간대가 붙어 있다 */
+  updated: string
+  issueType: string
+}
+
+interface RawMyIssue {
+  key?: string
+  fields?: {
+    summary?: string
+    status?: { name?: string; statusCategory?: { key?: string } | null } | null
+    issuetype?: { name?: string } | null
+    priority?: { name?: string } | null
+    duedate?: string | null
+    updated?: string | null
+  }
+}
+
+function toMyIssue(raw: RawMyIssue): JiraMyIssue {
+  const f = raw.fields ?? {}
+  return {
+    key: raw.key ?? '',
+    summary: f.summary ?? '',
+    status: f.status?.name ?? '',
+    statusCategory: toStatusCategory(f.status?.statusCategory?.key),
+    priority: f.priority?.name ?? null,
+    duedate: f.duedate ?? null,
+    updated: f.updated ?? '',
+    issueType: f.issuetype?.name ?? ''
+  }
+}
+
+// searchSyncIssues 와 같은 커서 페이지네이션이다. 필드와 상한만 다르다.
+async function searchMyIssues(
+  jql: string
+): Promise<{ issues: JiraMyIssue[]; truncated: boolean }> {
+  const issues: JiraMyIssue[] = []
+  let truncated = false
+  let nextPageToken: string | undefined
+
+  for (let page = 0; page < MAX_ISSUE_PAGES; page++) {
+    const params = new URLSearchParams({
+      jql,
+      fields: MY_ISSUE_FIELDS,
+      maxResults: String(ISSUE_PAGE_SIZE)
+    })
+    if (nextPageToken) params.set('nextPageToken', nextPageToken)
+
+    const data = (await jiraRequest(`/rest/api/3/search/jql?${params}`)) as {
+      issues?: RawMyIssue[]
+      nextPageToken?: string
+    }
+
+    for (const raw of data.issues ?? []) {
+      if (issues.length >= MAX_MY_ISSUES) {
+        truncated = true
+        break
+      }
+      if (raw.key) issues.push(toMyIssue(raw))
+    }
+
+    nextPageToken = data.nextPageToken ?? undefined
+    if (!nextPageToken) break
+    if (issues.length >= MAX_MY_ISSUES) {
+      truncated = true
+      break
+    }
+    if (page === MAX_ISSUE_PAGES - 1) truncated = true
+  }
+
+  return { issues, truncated }
+}
+
+/** 내게 할당된 미완료 이슈. projectKey 가 있으면 그 프로젝트로 좁힌다 */
+export async function listMyOpenIssues(
+  projectKey: string | null
+): Promise<{ issues: JiraMyIssue[]; truncated: boolean }> {
+  const scope = projectKey === null ? '' : `project = ${assertProjectKey(projectKey)} AND `
+  return searchMyIssues(
+    `${scope}assignee = currentUser() AND statusCategory != Done ORDER BY priority DESC, duedate ASC`
+  )
+}
