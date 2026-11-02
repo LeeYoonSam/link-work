@@ -94,6 +94,8 @@ export function interpretReplyRule(text: string): { status: 'done' | 'deferred' 
   const key = normalized.toLowerCase().replace(/[.!~]+$/, '').trim()
   if (key === '완료' || key === 'done') return { status: 'done', note: null }
   if (key === '미룸' || key === '나중에') return { status: 'deferred', note: null }
+  // 체크인 안내 문구 '진행 중' 은 상태 키워드다. 메모로 쓰면 기존 메모를 덮는다.
+  if (key === '진행 중' || key === '진행중' || key === 'in progress') return { status: 'in_progress', note: null }
   return { status: 'in_progress', note: normalized === '' ? null : normalized }
 }
 

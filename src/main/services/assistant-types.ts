@@ -124,6 +124,7 @@ export interface AssistantSettings {
   refreshCalendarMin: number; refreshJiraMin: number; refreshNotify: boolean
   checkinMinGap: number; checkinDailyCap: number; meetingLeadMin: number
   startView: 'auto' | 'dashboard' | 'today'   // 첫 화면 (부록 C)
+  checkinEnabled: boolean                      // 작업 경계 체크인 (부록 H)
 }
 
 export type TimelineEntry =
@@ -152,8 +153,8 @@ export interface TodayPayload {
   lastErrors: string[]             // 마지막 수집에서 실패한 출처의 사용자용 문구
   recovery: RecoveryState          // 맥락 복구 진행·실패 상태 (부록 F.6)
 }
-export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' }
-export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline'; id?: string } }
+export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' | 'checkin' }
+export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'checkin'; id?: string } }
 
 // ── MVP2 (부록 E.6.1) ──
 export type RefreshMode = 'full' | 'local' | 'calendar' | 'jira'
@@ -296,3 +297,29 @@ export interface CommandInterpretation {
 export interface CommandOpResult { op: CommandOp; label: string; ok: boolean; error: string | null }
 export interface CommandApplyOutcome { today: TodayPayload; results: CommandOpResult[]; applied: number; failed: number }
 export interface CommandLlmInput { ctx: CommandContext; text: string }
+
+// ── MVP4 (부록 H) ──
+export type CheckinStatus = 'done' | 'in_progress' | 'deferred'
+export interface CheckinPayload {
+  itemId: number; candidateId: string; itemTitle: string
+  blockStart: string; blockEnd: string      // 'HH:mm'
+  title: string; body: string               // 알림 문구
+}
+export interface CheckinDecisionInput {
+  today: string; nowHHmm: string; at: string          // at 은 'YYYY-MM-DD HH:mm:ss'
+  settings: Pick<AssistantSettings, 'enabled' | 'checkinEnabled' | 'checkinDailyCap' | 'checkinMinGap'>
+  planActive: boolean
+  dayStart: string; workEnd: string
+  calendar: CalendarRef[]                   // 계획 스냅샷의 일정
+  items: PlanItem[]
+  events: AssistantEvent[]                  // 오늘 논리 날짜의 이벤트 전부
+}
+export interface DueCheckin {
+  eventKey: string; refId: string; scheduledAt: string; late: boolean
+  title: string; body: string; payload: CheckinPayload
+}
+export interface SentCheckinNotice {
+  eventId: number; title: string; body: string
+  focus: { kind: 'checkin'; id: string }
+}
+export interface CheckinAnswer { status: CheckinStatus | null; note: string | null; raw: string | null }

@@ -57,6 +57,7 @@ import {
   createPlan,
   findEventByKey,
   getActivePlan,
+  getEventById,
   getLastPlanBefore,
   getPlanByDate,
   getPlanItem,
@@ -70,6 +71,7 @@ import {
   setBriefing,
   setBriefingError,
   setBriefingInstruction,
+  setEventResponse,
   setRecovery,
   updateEventStatus,
   updatePlanItems,
@@ -700,6 +702,38 @@ describe('비서 이벤트', () => {
     expect(list.map((e) => e.event_key)).toEqual(['start_nudge:2026-11-02:-', 'plan_update:2026-11-02:1'])
     expect(list[0].status).toBe('failed')
     expect(findEventByKey(db, 'none')).toBeNull()
+  })
+
+  it('getEventById: id 로 행을 읽는다. 없으면 null 이다', () => {
+    const a = insertEvent(db, ev)
+    expect(getEventById(db, a!.id)?.event_key).toBe(ev.event_key)
+    expect(getEventById(db, a!.id)?.response).toBeNull()
+    expect(getEventById(db, 9999)).toBeNull()
+  })
+
+  it('setEventResponse: response·responded_at 만 쓴다 (부록 H.7)', () => {
+    const checkin = insertEvent(db, {
+      ...ev,
+      event_key: 'checkin:2026-11-02:1100',
+      kind: 'checkin',
+      scheduled_at: '2026-11-02 10:55:00',
+      fired_at: '2026-11-02 10:55:30',
+      ref_id: '7',
+      payload: '{"itemId":7}'
+    })
+    setEventResponse(db, checkin!.id, 'button:done', '2026-11-02 10:58:00')
+    const row = getEventById(db, checkin!.id)
+    expect(row?.response).toBe('button:done')
+    expect(row?.responded_at).toBe('2026-11-02 10:58:00')
+    // 다른 컬럼은 그대로다
+    expect(row?.status).toBe('sent')
+    expect(row?.payload).toBe('{"itemId":7}')
+  })
+
+  it('A12: setEventResponse 는 at 형식이 틀리면 throw 하고 쓰지 않는다', () => {
+    const a = insertEvent(db, ev)
+    expect(() => setEventResponse(db, a!.id, 'skip', '2026-11-02T10:58:00')).toThrow()
+    expect(getEventById(db, a!.id)?.response).toBeNull()
   })
 })
 

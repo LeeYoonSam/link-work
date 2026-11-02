@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { CommandOp } from '../main/services/assistant-types'
+import type { CheckinStatus, CommandOp } from '../main/services/assistant-types'
 
 const api = {
   project: {
@@ -308,6 +308,9 @@ const api = {
     interpretCommand: (text: string, scopeItemId?: number) =>
       ipcRenderer.invoke('assistant:interpretCommand', text, scopeItemId),
     applyCommand: (ops: CommandOp[], text: string) => ipcRenderer.invoke('assistant:applyCommand', ops, text),
+    // 체크인 패널 버튼 (부록 H.9.7). 넘기기는 status null 이다
+    respondCheckin: (eventId: number, status: CheckinStatus | null, note?: string) =>
+      ipcRenderer.invoke('assistant:respondCheckin', eventId, status, note),
     getSettings: () => ipcRenderer.invoke('assistant:getSettings'),
     saveSettings: (patch: Record<string, unknown>) => ipcRenderer.invoke('assistant:saveSettings', patch),
     takePendingNavigate: () => ipcRenderer.invoke('assistant:takePendingNavigate'),

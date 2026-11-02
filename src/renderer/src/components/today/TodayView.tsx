@@ -5,6 +5,7 @@ import { Card, EmptyState, SectionTitle, button } from '../ui'
 import DayHeader from './DayHeader'
 import BriefingCard from './BriefingCard'
 import RecoveryCard from './RecoveryCard'
+import CheckinPanel, { pendingCheckin } from './CheckinPanel'
 import InboxSection from './InboxSection'
 import PlanItemRow, { freeTimeLabel, isActiveItem } from './PlanItemRow'
 import Timeline from './Timeline'
@@ -52,6 +53,8 @@ export function focusTargetId(focus: NonNullable<AssistantNavigateEvent['focus']
       return 'today-briefing'
     case 'timeline':
       return 'today-timeline'
+    case 'checkin':
+      return 'today-checkin'
     default:
       return `plan-item-${focus.id ?? ''}`
   }
@@ -87,6 +90,7 @@ export default function TodayView(): React.ReactNode {
     saveSettings,
     setFocus,
     clearError,
+    respondCheckin,
     subscribe
   } = useAssistantStore()
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -131,6 +135,7 @@ export default function TodayView(): React.ReactNode {
   const timeline = today.timeline
   const unplaced = unplacedDeadlineItems(today)
   const notices = todayNotices(today)
+  const checkin = plan ? pendingCheckin(today.events, items) : null
   const wrapupPromptDate =
     today.missingWrapupDate && today.missingWrapupDate !== skippedWrapupDate
       ? today.missingWrapupDate
@@ -196,6 +201,19 @@ export default function TodayView(): React.ReactNode {
 
       {plan ? (
         <>
+          {/* 시각에 묶인 질문이라 본문 맨 위에 둔다 (부록 H.8.1) */}
+          {checkin ? (
+            <CheckinPanel
+              // 다른 체크인으로 바뀌면 메모 입력을 새로 시작한다
+              key={checkin.event.id}
+              pending={checkin}
+              busy={busy}
+              readOnly={readOnly}
+              onRespond={(eventId, status, note) => respondCheckin(eventId, status, note)}
+              onApplied={() => void load()}
+            />
+          ) : null}
+
           <RecoveryCard
             plan={plan}
             state={today.recovery ?? { inFlight: false, error: null }}

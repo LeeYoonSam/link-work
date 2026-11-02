@@ -1183,6 +1183,8 @@ export interface AssistantSettings {
   checkinMinGap: number
   checkinDailyCap: number
   meetingLeadMin: number
+  // 작업 경계 체크인 켜기 (부록 H.9.3)
+  checkinEnabled: boolean
   // 첫 화면 (docs/ASSISTANT.md 부록 C)
   startView: 'auto' | 'dashboard' | 'today'
 }
@@ -1212,11 +1214,11 @@ export interface RecoveryState {
 
 export interface AssistantChangedEvent {
   date: string
-  reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command'
+  reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' | 'checkin'
 }
 export interface AssistantNavigateEvent {
   view: 'today'
-  focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline'; id?: string }
+  focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'checkin'; id?: string }
 }
 
 // 트레이 오늘 계획 섹션 (부록 E.6.1 과 같은 모양)
@@ -1281,6 +1283,20 @@ export interface CommandApplyOutcome {
   failed: number
 }
 
+// ── 작업 경계 체크인 (부록 H.9.1 복제) ──
+export type CheckinStatus = 'done' | 'in_progress' | 'deferred'
+export interface CheckinPayload {
+  itemId: number
+  candidateId: string
+  itemTitle: string
+  // 'HH:mm'
+  blockStart: string
+  blockEnd: string
+  // 알림 문구
+  title: string
+  body: string
+}
+
 export type AssistantResult<T> = ({ success: true } & T) | { success: false; error: string }
 export type TodayResult = AssistantResult<{ today: TodayPayload }>
 
@@ -1315,4 +1331,10 @@ export interface AssistantAPI {
     ops: CommandOp[],
     text: string
   ) => Promise<AssistantResult<Omit<CommandApplyOutcome, never>>>
+  // 체크인 응답 (부록 H.9.7). 넘기기는 status null 이다
+  respondCheckin: (
+    eventId: number,
+    status: CheckinStatus | null,
+    note?: string
+  ) => Promise<TodayResult>
 }

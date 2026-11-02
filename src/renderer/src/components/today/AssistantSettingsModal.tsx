@@ -17,6 +17,9 @@ export type FormSettingKey =
   | 'refreshCalendarMin'
   | 'refreshJiraMin'
   | 'refreshNotify'
+  | 'checkinEnabled'
+  | 'checkinDailyCap'
+  | 'checkinMinGap'
 
 export type FormSettings = Pick<AssistantSettings, FormSettingKey>
 
@@ -33,21 +36,52 @@ export const FORM_SETTING_KEYS: FormSettingKey[] = [
   'startView',
   'refreshCalendarMin',
   'refreshJiraMin',
-  'refreshNotify'
+  'refreshNotify',
+  'checkinEnabled',
+  'checkinDailyCap',
+  'checkinMinGap'
 ]
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
 
 // 폼 값 검증. 문제가 있으면 사용자용 문구를 돌려준다
 const isRefreshMin = (v: number): boolean => Number.isInteger(v) && v >= 1 && v <= 240
+const isIntIn = (v: number, min: number, max: number): boolean =>
+  Number.isInteger(v) && v >= min && v <= max
+
+// 숫자 입력 칸의 값을 읽는다. 빈 칸은 0 이 아니라 NaN 이다. 이유: Number('') 는 0 이라 빈 칸이 0 으로 저장된다
+export function parseNumberInput(raw: string): number {
+  return raw.trim() === '' ? Number.NaN : Number(raw)
+}
+
+// 숫자 입력 칸에 넣을 값. NaN 은 빈 칸으로 보인다
+export function numberInputValue(v: number): number | '' {
+  return Number.isNaN(v) ? '' : v
+}
+
+// 숫자 설정 키와 빈 칸 오류 문구에 쓸 이름
+const NUMBER_FIELDS: Array<[keyof FormSettings, string]> = [
+  ['planSize', '하루 계획 항목 수'],
+  ['refreshCalendarMin', '캘린더 확인 주기'],
+  ['refreshJiraMin', 'Jira 확인 주기'],
+  ['checkinDailyCap', '하루 체크인 상한'],
+  ['checkinMinGap', '체크인 최소 간격']
+]
 
 export function validateSettings(s: FormSettings): string | null {
+  for (const [key, label] of NUMBER_FIELDS) {
+    const v = s[key]
+    if (typeof v !== 'number' || Number.isNaN(v)) return `${label}을(를) 입력하세요`
+  }
   if (!HHMM.test(s.dayRollover)) return '날짜 경계는 HH:mm 형식이어야 합니다'
   if (!HHMM.test(s.workEnd)) return '근무 종료 시각은 HH:mm 형식이어야 합니다'
   if (!Number.isInteger(s.planSize) || s.planSize < 1 || s.planSize > 20)
     return '계획 항목 수는 1~20 사이여야 합니다'
   if (!isRefreshMin(s.refreshCalendarMin)) return '캘린더 확인 주기는 1~240분 사이여야 합니다'
   if (!isRefreshMin(s.refreshJiraMin)) return 'Jira 확인 주기는 1~240분 사이여야 합니다'
+  // 체크인 상한·간격 (부록 H.8.4)
+  if (!isIntIn(s.checkinDailyCap, 0, 20)) return '하루 체크인 상한은 0~20 사이여야 합니다'
+  if (!isIntIn(s.checkinMinGap, 5, 480)) return '체크인 최소 간격은 5~480분 사이여야 합니다'
   return null
 }
 
@@ -127,6 +161,8 @@ export default function AssistantSettingsModal({
     for (const k of FORM_SETTING_KEYS) init[k] = settings[k]
     // 이전 버전 main 이 startView 를 주지 않아도 select 가 비지 않게 한다
     init.startView ??= 'auto'
+    // 이전 버전 main 이 체크인 켜기를 주지 않으면 기본값 켬을 쓴다 (부록 H.9.3)
+    init.checkinEnabled ??= true
     return init as FormSettings
   })
   const [error, setError] = useState('')
@@ -185,6 +221,12 @@ export default function AssistantSettingsModal({
               onChange={(v) => set('refreshNotify', v)}
             />
             <Toggle
+              label="작업 경계 체크인"
+              hint="빈 시간 블록이 끝나기 5분 전에 진행 상황을 묻습니다"
+              checked={form.checkinEnabled}
+              onChange={(v) => set('checkinEnabled', v)}
+            />
+            <Toggle
               label="AI 브리핑"
               hint="끄면 규칙 기반 브리핑만 만듭니다."
               checked={form.llmEnabled}
@@ -238,8 +280,8 @@ export default function AssistantSettingsModal({
                 type="number"
                 min={1}
                 max={20}
-                value={form.planSize}
-                onChange={(e) => set('planSize', Number(e.target.value))}
+                value={numberInputValue(form.planSize)}
+                onChange={(e) => set('planSize', parseNumberInput(e.target.value))}
                 className={inputClass}
               />
             </Field>
@@ -272,8 +314,8 @@ export default function AssistantSettingsModal({
                 type="number"
                 min={1}
                 max={240}
-                value={form.refreshCalendarMin}
-                onChange={(e) => set('refreshCalendarMin', Number(e.target.value))}
+                value={numberInputValue(form.refreshCalendarMin)}
+                onChange={(e) => set('refreshCalendarMin', parseNumberInput(e.target.value))}
                 className={inputClass}
               />
             </Field>
@@ -282,8 +324,31 @@ export default function AssistantSettingsModal({
                 type="number"
                 min={1}
                 max={240}
-                value={form.refreshJiraMin}
-                onChange={(e) => set('refreshJiraMin', Number(e.target.value))}
+                value={numberInputValue(form.refreshJiraMin)}
+                onChange={(e) => set('refreshJiraMin', parseNumberInput(e.target.value))}
+                className={inputClass}
+              />
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <Field label="하루 체크인 상한" hint="0~20회. 0 이면 보내지 않습니다">
+              <input
+                type="number"
+                min={0}
+                max={20}
+                value={numberInputValue(form.checkinDailyCap)}
+                onChange={(e) => set('checkinDailyCap', parseNumberInput(e.target.value))}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="체크인 최소 간격(분)" hint="5~480분">
+              <input
+                type="number"
+                min={5}
+                max={480}
+                value={numberInputValue(form.checkinMinGap)}
+                onChange={(e) => set('checkinMinGap', parseNumberInput(e.target.value))}
                 className={inputClass}
               />
             </Field>

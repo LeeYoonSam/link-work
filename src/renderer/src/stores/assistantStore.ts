@@ -3,6 +3,7 @@ import type {
   AssistantNavigateEvent,
   AssistantSettings,
   Candidate,
+  CheckinStatus,
   CommandApplyOutcome,
   CommandInterpretation,
   PlanItem,
@@ -60,6 +61,8 @@ interface AssistantStore {
   // 미리보기의 실행 가능한 조작을 적용한다. 성공하면 true
   applyCommand: () => Promise<boolean>
   clearCommand: () => void
+  // 체크인에 응답한다 (부록 H.8.3). 넘기기는 status null 이다. 성공하면 true
+  respondCheckin: (eventId: number, status: CheckinStatus | null, note?: string) => Promise<boolean>
   // assistant:changed 를 구독한다. 해제 함수를 돌려준다
   subscribe: () => () => void
 }
@@ -333,6 +336,14 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
     },
 
     clearCommand: () => set({ command: null, commandError: '', commandResult: null }),
+
+    respondCheckin: async (eventId, status, note) => {
+      const trimmed = note?.trim()
+      return run(
+        () => window.api.assistant.respondCheckin(eventId, status, trimmed ? trimmed : undefined),
+        '체크인 응답에 실패했습니다'
+      )
+    },
 
     subscribe: () => {
       const api = window.api?.assistant

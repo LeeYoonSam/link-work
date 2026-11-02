@@ -29,7 +29,8 @@ const SETTINGS: AssistantSettings = {
   checkinMinGap: 45,
   checkinDailyCap: 4,
   meetingLeadMin: 15,
-  startView: 'auto'
+  startView: 'auto',
+  checkinEnabled: true
 }
 
 const plan = (over: Partial<DailyPlan> = {}): DailyPlan => ({
@@ -177,6 +178,7 @@ vi.mock('../../stores/assistantStore', async (importOriginal) => ({
     saveSettings: async () => true,
     setFocus: () => {},
     clearError: () => {},
+    respondCheckin: async () => {},
     subscribe: () => () => {}
   })
 }))
@@ -189,7 +191,7 @@ const { describePlanUpdate, planUpdateEvents, commandEvents, describeCommand } =
 const { sortSuggestions } = await import('./InboxSection')
 const { candidatesNotInPlan } = await import('./CandidatePicker')
 const { originTarget } = await import('../../stores/assistantStore')
-const { validateSettings, diffSettings } = await import('./AssistantSettingsModal')
+const { validateSettings, diffSettings, parseNumberInput, numberInputValue } = await import('./AssistantSettingsModal')
 const AssistantSettingsModal = (await import('./AssistantSettingsModal')).default
 const { recoveryButtonLabel } = await import('./RecoveryCard')
 
@@ -410,6 +412,70 @@ describe('TodayView 상태별 렌더링', () => {
       plan: plan({ status: 'closed', closed_at: '2026-11-02 18:30:00', closed_by: 'button' })
     })
     expect(render()).not.toContain('비서에게 말하기')
+  })
+
+  // 부록 H.8.2 체크인 패널. 응답 없는 체크인이 있으면 맥락 복구 위에 둔다
+  const checkinEvent = (over: Partial<AssistantEvent> = {}): AssistantEvent =>
+    event({
+      id: 30,
+      event_key: 'checkin:2026-11-02:1100',
+      kind: 'checkin',
+      scheduled_at: '2026-11-02 10:55:00',
+      fired_at: '2026-11-02 10:55:20',
+      status: 'sent',
+      ref_id: '1',
+      payload: JSON.stringify({
+        itemId: 1,
+        candidateId: 'task:1',
+        itemTitle: '결제 API 리팩터링',
+        blockStart: '09:45',
+        blockEnd: '11:00',
+        title: '체크인: 결제 API 리팩터링',
+        body: '지금까지 어떻게 됐나요? 답장하거나 눌러서 고르세요.'
+      }),
+      ...over
+    })
+
+  it('체크인: 응답 없는 체크인이 있으면 맥락 복구 위에 패널을 보여 준다', () => {
+    state.today = payload({
+      plan: plan(),
+      items: [item({ id: 1, title: '결제 API 리팩터링', status: 'in_progress' })],
+      events: [checkinEvent()]
+    })
+    const html = render()
+    expect(html).toContain('id="today-checkin"')
+    expect(html).toContain('체크인 · 10:55')
+    expect(html).toContain('09:45–11:00')
+    expect(html).toContain('>넘기기<')
+    expect(html.indexOf('today-checkin')).toBeLessThan(html.indexOf('맥락 복구'))
+    // 패널에도 범위 지정 명령 입력이 있다
+    expect(html).toContain('완료, 미룸, 또는 진행 상황 한 줄')
+  })
+
+  it('체크인: 응답했거나 항목이 이미 완료면 패널이 없다', () => {
+    state.today = payload({
+      plan: plan(),
+      items: [item({ id: 1 })],
+      events: [checkinEvent({ response: 'button:in_progress', responded_at: '2026-11-02 10:56:00' })]
+    })
+    expect(render()).not.toContain('today-checkin')
+    state.today = payload({
+      plan: plan(),
+      items: [item({ id: 1, status: 'done' })],
+      events: [checkinEvent()]
+    })
+    expect(render()).not.toContain('today-checkin')
+  })
+
+  it('체크인: 닫힌 날은 버튼 없이 오늘 마감만 보여 준다', () => {
+    state.today = payload({
+      plan: plan({ status: 'closed', closed_at: '2026-11-02 18:30:00', closed_by: 'button' }),
+      items: [item({ id: 1 })],
+      events: [checkinEvent()]
+    })
+    const html = render()
+    expect(html).toContain('id="today-checkin"')
+    expect(html).not.toContain('>넘기기<')
   })
 
   it('불러오기 실패: 오류 문구와 다시 시도를 보여 준다', () => {
@@ -695,6 +761,8 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(focusTargetId({ kind: 'inbox' })).toBe('today-inbox')
     expect(focusTargetId({ kind: 'briefing' })).toBe('today-briefing')
     expect(focusTargetId({ kind: 'item', id: '7' })).toBe('plan-item-7')
+    // 체크인 알림 클릭 (부록 H.6.3)
+    expect(focusTargetId({ kind: 'checkin', id: '42' })).toBe('today-checkin')
   })
 
   it('todayNotices: 연결 상태와 수집 실패를 안내한다', () => {
@@ -767,6 +835,43 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(html).toContain('value="15"')
   })
 
+  it('설정: 체크인 상한 0~20, 간격 5~480분 정수만 받고 체크인 키도 patch 에 담는다 (부록 H.8.4)', () => {
+    expect(validateSettings({ ...SETTINGS, checkinDailyCap: -1 })).not.toBeNull()
+    expect(validateSettings({ ...SETTINGS, checkinDailyCap: 21 })).not.toBeNull()
+    expect(validateSettings({ ...SETTINGS, checkinMinGap: 4 })).not.toBeNull()
+    expect(validateSettings({ ...SETTINGS, checkinMinGap: 481 })).not.toBeNull()
+    expect(validateSettings({ ...SETTINGS, checkinMinGap: 30.5 })).not.toBeNull()
+    expect(validateSettings({ ...SETTINGS, checkinDailyCap: 0, checkinMinGap: 5 })).toBeNull()
+    expect(validateSettings({ ...SETTINGS, checkinDailyCap: 20, checkinMinGap: 480 })).toBeNull()
+    expect(
+      diffSettings(SETTINGS, { ...SETTINGS, checkinEnabled: false, checkinDailyCap: 2, checkinMinGap: 60 })
+    ).toEqual({ checkinEnabled: false, checkinDailyCap: 2, checkinMinGap: 60 })
+  })
+
+  it('설정: 빈 숫자 칸은 0 이 아니라 검증 오류다', () => {
+    expect(parseNumberInput('')).toBeNaN()
+    expect(parseNumberInput('  ')).toBeNaN()
+    expect(parseNumberInput('0')).toBe(0)
+    expect(parseNumberInput('12')).toBe(12)
+    expect(numberInputValue(Number.NaN)).toBe('')
+    expect(numberInputValue(0)).toBe(0)
+    for (const key of ['planSize', 'refreshCalendarMin', 'refreshJiraMin', 'checkinDailyCap', 'checkinMinGap'] as const) {
+      expect(validateSettings({ ...SETTINGS, [key]: parseNumberInput('') })).toMatch(/입력하세요/)
+    }
+  })
+
+  it('설정 모달: 체크인 설정 3개를 보여 준다', () => {
+    const html = renderToStaticMarkup(
+      <AssistantSettingsModal settings={SETTINGS} busy={false} onClose={() => {}} onSave={async () => true} />
+    )
+    expect(html).toContain('작업 경계 체크인')
+    expect(html).toContain('빈 시간 블록이 끝나기 5분 전에 진행 상황을 묻습니다')
+    expect(html).toContain('하루 체크인 상한')
+    expect(html).toContain('체크인 최소 간격(분)')
+    expect(html).toContain('value="45"')
+    expect(html).toContain('value="4"')
+  })
+
   it('설정 모달: 노출 키만 보여 준다', () => {
     const html = renderToStaticMarkup(
       <AssistantSettingsModal settings={SETTINGS} busy={false} onClose={() => {}} onSave={async () => true} />
@@ -774,7 +879,8 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(html).toContain('비서 설정')
     expect(html).toContain('날짜 경계')
     expect(html).toContain('시작 알림')
-    expect(html).not.toContain('체크인')
+    // 회의 브리핑 시각(meetingLeadMin)은 MVP4 에서도 노출하지 않는다 (부록 H.8.4)
+    expect(html).not.toContain('회의 브리핑')
     // 3판은 항목 소요 분 설정을 없앴다
     expect(html).not.toContain('소요 분')
   })

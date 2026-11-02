@@ -59,6 +59,13 @@ describe('interpretReplyRule G.5.1', () => {
     expect(interpretReplyRule('나중에.')).toEqual({ status: 'deferred', note: null })
   })
 
+  it('interpretReplyRule: 진행 중·진행중·in progress 는 note 없는 in_progress 다', () => {
+    expect(interpretReplyRule('진행 중')).toEqual({ status: 'in_progress', note: null })
+    expect(interpretReplyRule('  진행중! ')).toEqual({ status: 'in_progress', note: null })
+    expect(interpretReplyRule('In   Progress.')).toEqual({ status: 'in_progress', note: null })
+    expect(interpretReplyRule('진행 중인데 막힘')).toEqual({ status: 'in_progress', note: '진행 중인데 막힘' })
+  })
+
   it('interpretReplyRule: 나머지는 in_progress 와 공백 정리한 note 다', () => {
     expect(interpretReplyRule('  절반   정도 했어 ')).toEqual({ status: 'in_progress', note: '절반 정도 했어' })
     expect(interpretReplyRule('   ')).toEqual({ status: 'in_progress', note: null })

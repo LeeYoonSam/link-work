@@ -29,6 +29,7 @@
 - MVP2 설계 (2026-11-02): 자동 최신화·최신화 알림·트레이 연계의 모듈 계약을 부록 E 에 둔다. 부록 E 가 §16 MVP2 표와 §17 MVP2 조건을 대체한다.
 - MVP3 설계 (2026-11-02): 맥락 복구·AI 채팅 도구의 모듈 계약을 부록 F 에 둔다. 부록 F 가 §10, §14, §16 MVP3 표, §17 MVP3 조건을 구체화한다. 규칙 A25~A28 은 부록 E.8, A29~A33 은 부록 F.11 에 있다.
 - 명령 입력 설계 (2026-11-02): 오늘 화면의 자유 문장 입력을 부록 G 에 둔다. 명령 입력은 MVP4 앞에 구현한다. 규칙 A34~A40 은 부록 G.14 에 있다. IPC 2개는 G.9 에 있다.
+- MVP4 설계 (2026-11-02): 작업 경계 체크인의 모듈 계약을 부록 H 에 둔다. 부록 H 가 §16 MVP4 표와 §17 MVP4 조건을 대체한다. 규칙 A41~A44 는 부록 H.10 에 있다.
 
 ---
 
@@ -3308,3 +3309,425 @@ G.9 그대로다.
 - `command` 이벤트의 `fired_at` 은 적용 시각이다. 변경 내역이 이 시각을 보인다.
 - 렌더러 스토어는 `commandScope` 를 가진다. 계획이 근무 중이 아니거나 계획 id 가 바뀌면 스토어가 명령 상태를 비운다.
 - `CommandInput` 의 Enter 는 `isComposing` 을 검사한다. 이유: 한글 조합을 확정하는 Enter 가 해석을 보내지 않는다.
+
+---
+
+## 부록 H. MVP4 작업 경계 체크인
+
+이 부록이 §16 MVP4 표와 §17 MVP4 조건을 대체한다. §2.7, §7.3 의 checkin 행, §12.1 의 checkin 행, 부록 B.6 마지막 줄을 아래 내용으로 구체화한다. 선행 기능은 명령 입력이다. 부록 G 가 그 계약이다. 부록 G 가 규칙 A34~A40 을 쓰므로 이 부록의 새 규칙은 A41 부터다. MVP4 는 부록 G 의 `interpretReplyRule` 과 `CommandInput` 을 재사용한다.
+
+### H.1 범위
+
+MVP4 에 들어가는 것:
+- 틱이 블록 끝 5분 전에 체크인 알림을 보낸다. 판정은 순수 함수 `computeDueCheckin` 이 한다.
+- 알림 답장 경로와 알림 클릭 경로 2개를 둔다. 둘 다 서비스 `respondCheckin` 으로 모인다.
+- 오늘 화면에 `CheckinPanel` 을 둔다. 패널에 완료·진행 중·미룸·넘기기 버튼과 `CommandInput` 이 있다.
+- 설정 키 `assistant_checkin_enabled` 를 추가한다. 설정 모달에 체크인 설정 3개를 노출한다.
+- `AssistantChangedEvent.reason` 에 `'checkin'` 을 추가한다.
+
+MVP4 에서 빠지는 것:
+- 회의 전 브리핑. 부록 I 가 담당한다.
+- 체크인 답장의 LLM 해석. 이유: 알림 답장에는 확인 단계가 없다.
+- 체크인 이력 화면. 오늘 화면의 변경 내역은 `plan_update` 만 보여 준다.
+- `notification.ts` 수정. §7.1 그대로다.
+
+### H.2 트리거
+
+#### H.2.1 체크인 시각
+
+3판의 트리거는 블록 끝이다. 블록 끝은 대개 다음 회의 시작이다. 규칙 A7 은 회의 중 발송을 금지한다. 대안 3가지를 비교했다.
+
+| 대안 | 장점 | 단점 |
+|------|------|------|
+| 블록 끝 정각 | 규칙이 단순하다 | 사용자가 회의로 이동하는 순간이다. 규칙 A7 과 충돌한다 |
+| 회의 종료 후 첫 틱 | 회의 중 발송이 없다 | 다음 블록이 같은 항목을 이어서 받는다. 지난 블록을 묻는 시점이 늦다. 연속 회의면 2시간 뒤가 된다 |
+| 블록 끝 − 5분 | 사용자가 아직 작업 중이다. 회의 전이다 | 마지막 5분을 끊는다 |
+
+권장안은 블록 끝 − 5분이다. 상수 `CHECKIN_LEAD_MIN = 5` 로 둔다. 설정으로 노출하지 않는다. 이유: 설정 수를 줄인다.
+
+하루 마지막 블록은 `workEnd` 에서 끝난다. 이 블록의 체크인은 `workEnd − 5분` 이다. 별도 규칙이 없다.
+
+#### H.2.2 창과 상태
+
+- 체크인 창은 `[블록 끝 − 5분, 블록 끝)` 이다. 이 창 안의 첫 틱이 보낸다.
+- 창이 지나면 보내지 않는다. 이유: 블록이 끝나면 사용자는 다음 일정에 있다.
+- 체크인은 `skipped` 행을 남기지 않는다. 이유: 블록 끝이 지나면 타임라인이 그 블록을 더 이상 `current` 로 두지 않는다. 다음 틱이 같은 블록을 다시 보지 않는다. 규칙 A6 의 '창 밖은 skipped' 는 회의 브리핑에만 적용한다. 규칙 A41 이 이 예외를 정한다.
+- 발송이 예정 시각보다 2분 이상 늦으면 status 는 `late` 다. 아니면 `sent` 다. 상수 `LATE_AFTER_MIN = 2` 다.
+- 체크인은 틱 1회에 최대 1건이다. 이유: `current` 블록은 동시에 1개다.
+
+#### H.2.3 대상 항목
+
+블록 끝 5분 전에는 `buildTimeline(now)` 의 `current` 블록 `itemId` 가 null 이다. 이유: 남은 길이가 30분 미만인 블록은 배정 가능 블록이 아니다. 부록 B.3 규칙 4 다.
+
+그래서 대상 항목은 아래 순서로 찾는다.
+1. `t0 = buildTimeline({ nowHHmm: now })` 에서 `current` 블록 B 를 찾는다. `B.end − now ≤ 5` 면 창 안이다.
+2. `t1 = buildTimeline({ nowHHmm: fromMinutes(B.end − 30) })` 를 만든다. 다른 입력은 같다.
+3. `t1` 에서 `end === B.end` 인 블록을 찾는다. 그 블록의 `itemId` 가 대상이다.
+4. 블록이 없거나 `itemId` 가 null 이면 체크인이 없다.
+
+이 방법은 블록 B 가 진행되는 동안 화면이 B 에 보인 항목을 묻는다. 부록 B 규칙에서 진행 중인 블록은 첫 배정 가능 블록이다. 그래서 그 블록은 마감 풀에서 빠지고 집중 항목을 받는다. 앞선 예보에서 B 가 마감 항목을 받았어도, 체크인은 진행 중 화면의 항목을 묻는다. 이유: 사용자는 B 동안 화면이 보인 항목을 보고 일했다.
+
+임시 항목도 대상이다. 명령 입력이 추가한 임시 항목은 `source = 'manual'`, `candidate_id = 'manual:<plan_id>:<n>'` 인 `plan_items` 행이다. 규칙 A37 이다. 타임라인이 배정하면 체크인도 묻는다. 출처로 가리지 않는다.
+
+### H.3 판정 규칙
+
+`computeDueCheckin(input)` 은 아래 순서로 판정한다. 하나라도 거짓이면 null 이다. 규칙 A7 과 A44 이다.
+1. `settings.enabled` 와 `settings.checkinEnabled` 가 모두 true 다.
+2. `planActive` 가 true 다.
+3. 창 안의 `current` 블록과 대상 항목이 있다. H.2.3 이다.
+4. 대상 항목의 status 가 `planned` 또는 `in_progress` 다.
+5. `isInMeeting(calendar, nowHHmm)` 이 false 다. calendar 는 계획 스냅샷의 일정이다.
+6. 오늘 `kind === 'checkin'` 이고 status 가 `sent` 또는 `late` 인 행 수가 `checkinDailyCap` 미만이다.
+7. 그 행들 중 가장 늦은 `fired_at` 으로부터 `checkinMinGap` 분이 지났다. 행이 없으면 참이다.
+8. 최근 15분 안에 `status_at` 이 바뀐 항목이 없다. 상수 `CHECKIN_RECENT_STATUS_MIN = 15` 다. 이유: 사용자가 이미 앱에서 계획을 다루고 있다. 규칙 A44 이다.
+9. 같은 `event_key` 의 행이 `events` 에 없다.
+
+조건 5·7·8 이 거짓이면 다음 틱이 다시 판정한다. 창이 남아 있으면 보낼 수 있다.
+
+### H.4 이벤트 키와 중복 방지
+
+| 항목 | 값 |
+|------|-----|
+| event_key | `checkin:<plan_date>:<블록 끝 HHmm>` |
+| ref_id | `String(itemId)` |
+| scheduled_at | `<plan_date> <블록 끝 − 5분 HH:mm>:00` |
+| fired_at | 발송 시각 |
+| status | `sent` 또는 `late` |
+| payload | `CheckinPayload` JSON |
+| response | 답장 원문 또는 `button:<status>` 또는 `skip` |
+
+- 키에 항목 id 를 넣지 않는다. 이유: 블록 끝은 같은데 집중 작업이 바뀔 수 있다. 그때도 체크인은 블록당 1회다.
+- 계획 최신화로 블록이 바뀐 경우: 새 블록 끝은 새 키다. 사라진 블록 끝의 키는 행이 없다. 행이 없어도 문제가 없다. 이유: 체크인은 `current` 블록만 본다.
+- 앱이 꺼졌다 켜진 경우: 첫 틱이 지금의 `current` 블록만 본다. 지난 블록은 묻지 않는다.
+- 퇴근 뒤 다시 열기: 계획 id 와 블록이 같다. 보낸 체크인은 같은 키로 막힌다.
+- INSERT 가 `show()` 보다 먼저다. 규칙 A5 다. INSERT 는 서비스가 하고 `show()` 는 스케줄러가 한다. 부록 E.3.6 과 같다.
+
+### H.5 틱 통합
+
+`runTick` 의 처리 순서를 아래로 바꾼다. 부록 E.2.1 의 1~5 단계는 그대로다.
+1. 설정·논리 날짜·자동 닫기.
+2. 닫힌 계획이 있으면 `assistant:changed { reason: 'day' }`.
+3. 근무 중 여부.
+4. `decideRefresh`. null 이 아니고 진행 중이 아니면 `runAutoRefresh` 를 `await` 한다.
+5. 최신화 알림 발송.
+6. `dueInFlight` 가 false 면 `runDueCheckin(now)` 를 `await` 한다. 결과가 있으면 `showCheckinNotice` 를 부른다.
+
+- 6단계는 4단계 뒤다. 이유: 체크인은 최신 일정으로 만든 타임라인을 쓴다.
+- 4단계가 진행 중이라 건너뛰어도 6단계는 실행한다. 이유: 체크인은 네트워크를 쓰지 않는다. `runDueCheckin` 은 서비스 `serialized` 줄에 선다. 그래서 진행 중인 최신화 뒤에 실행된다.
+- `dueInFlight` 는 스케줄러 모듈 변수다. `autoRefreshInFlight` 와 같은 패턴이다. 규칙 A42 이다.
+- `onWake` 는 `runStartNudgeCheck` 뒤에 `runTick(true)` 를 부른다. 변경 없음. 6단계가 깨어남 직후에도 실행된다.
+- 6단계 전체는 `try/catch` 안이다. 규칙 A13 이다.
+- 부록 I 의 회의 브리핑은 7단계로 들어간다.
+
+### H.6 발송·클릭·답장 흐름
+
+#### H.6.1 발송
+- 서비스 `runDueCheckin` 이 `computeDueCheckin` 을 부른다. 결과가 있으면 `insertEvent` 한다. UNIQUE 충돌이면 null 을 돌려준다.
+- 스케줄러 `showCheckinNotice(n)` 가 `Notification` 을 만든다. 옵션은 `{ title, body, hasReply: true, replyPlaceholder: '완료 / 진행 중 / 미룸' }` 다. `actions` 를 쓰지 않는다. §12.1 그대로다.
+- 제목은 `체크인: <항목 제목 30자>` 다. 본문은 `지금까지 어떻게 됐나요? 답장하거나 눌러서 고르세요.` 다.
+- `liveNotifications` 에 넣는다. `close` 에서 뺀다. `show()` 가 throw 하면 `updateEventStatus(eventId, 'failed')` 다.
+
+#### H.6.2 답장 경로
+- `n.on('reply', (_e, reply) => onCheckinReply(eventId, reply))` 다.
+- `onCheckinReply` 는 `interpretReplyRule(reply)` 를 부른다. 부록 G 의 순수 함수다. LLM 을 쓰지 않는다. 규칙 A43 다.
+- `reply.trim()` 이 비어 있으면 status 는 null 이다. 넘기기와 같다.
+- `respondCheckin(eventId, { status, note, raw: reply })` 를 부른다. 예외는 로그만 남긴다. throw 하지 않는다.
+- 배포 앱은 임시 서명이다. 답장이 동작하지 않을 수 있다. §18 위험 1 이다. 답장이 오지 않아도 클릭 경로와 패널이 기능을 완결한다. `hasReply` 는 항상 true 로 둔다. 이유: 답장을 지원하지 않는 환경에서도 알림 표시는 정상이다.
+
+#### H.6.3 클릭 경로
+- `n.on('click', () => navigateToToday({ kind: 'checkin', id: String(eventId) }))` 다.
+- `AssistantNavigateEvent.focus.kind` 에 `'checkin'` 을 추가한다. 오늘 화면은 `id="today-checkin"` 으로 스크롤한다. 보관 신호 규칙은 부록 D.4 그대로다.
+- 패널 버튼은 `window.api.assistant.respondCheckin(eventId, status, note)` 를 부른다.
+
+#### H.6.4 `respondCheckin`
+서비스 `respondCheckin(eventId, answer, now)` 는 `serialized` 안에서 아래 순서로 처리한다.
+1. `getEventById` 로 행을 읽는다. 없거나 `kind !== 'checkin'` 이면 throw 한다.
+2. `response` 가 이미 있으면 throw 한다. 문구는 `이미 응답한 체크인입니다.` 다. 응답은 1회만 기록한다.
+3. `setEventResponse(db, eventId, responseText, at)` 를 쓴다. `responseText` 는 `answer.raw` 가 있으면 500자로 자른 원문이다. 없고 status 가 있으면 `button:<status>` 다. 둘 다 없으면 `skip` 이다.
+4. `answer.status` 가 null 이면 항목을 바꾸지 않는다.
+5. 오늘 계획이 `active` 가 아니면 항목을 바꾸지 않는다. 이유: 닫힌 하루의 항목은 고정이다.
+6. payload 의 `itemId` 로 항목을 읽는다. 항목이 오늘 계획 소속이 아니면 바꾸지 않는다.
+7. 항목 status 가 `planned` 또는 `in_progress` 일 때만 `updatePlanItems` 로 status 와 `status_note` 를 쓴다. 이유: 사용자가 이미 완료한 항목을 답장이 되돌리지 않는다.
+8. `emitChanged({ date: today, reason: 'checkin' })` 다.
+9. `buildPayload` 를 돌려준다.
+
+### H.7 저장
+
+- 스키마 변경은 없다. `assistant_events` 의 `response`·`responded_at` 컬럼이 이미 있다. 컬럼이 더 필요해지면 부록 G.7.1 의 `migrateAssistantSchema(db)` 에 추가한다. 새 `ALTER TABLE` 경로를 만들지 않는다.
+- 부록 G 의 `kind 'command'` 행과 섞이지 않는다. `computeDueCheckin`·`pendingCheckin` 은 `kind === 'checkin'` 만 본다.
+- `assistant-store.ts` 에 `getEventById`·`setEventResponse` 를 추가한다.
+- 응답 기록은 `plan_items` 쓰기와 같은 트랜잭션이 아니어도 된다. 이유: 응답 행이 남고 항목이 안 바뀌면 사용자가 패널에서 다시 누른다. 패널은 응답 있는 행을 보여 주지 않으므로 다시 누를 수 없다. 그래서 7단계와 3단계를 1개 트랜잭션으로 묶는다. `db.transaction` 을 쓴다.
+
+### H.8 UI
+
+#### H.8.1 `CheckinPanel.tsx`
+- 위치는 본문 맨 위다. `RecoveryCard` 보다 위다. 이유: 시각에 묶인 질문이다.
+- 표시 조건은 `pendingCheckin(events, items)` 가 null 이 아닐 때다. 규칙:
+  1. `kind === 'checkin'` 이고 `response === null` 인 행을 고른다.
+  2. payload 의 `itemId` 가 `items` 에 있고 status 가 `planned` 또는 `in_progress` 인 행만 남긴다. 이유: 사용자가 행에서 이미 상태를 바꿨으면 질문이 무의미하다.
+  3. `fired_at` 이 가장 늦은 1건을 돌려준다.
+- 카드 루트 id 는 `today-checkin` 이다.
+- 제목은 `체크인 · <HH:mm>` 이다. 본문은 `<블록 시작>–<블록 끝> <항목 제목>` 과 질문 `어떻게 됐나요?` 다.
+- 버튼은 완료·진행 중·미룸·넘기기 4개다. 한 줄 메모 입력 1개가 있다. 메모는 완료·진행 중·미룸에 함께 보낸다. 넘기기는 status null 이다.
+- `CommandInput` 을 `scopeItemId={item.id}` 와 `onApplied={load}` 로 넣는다. 부록 G 의 props 다.
+- `readOnly` 면 버튼을 숨기고 `오늘 마감` 문구만 보인다.
+- `busy` 면 버튼을 비활성으로 둔다.
+
+#### H.8.2 `TodayView.tsx`
+- `plan` 이 있을 때 `RecoveryCard` 위에 `CheckinPanel` 을 둔다.
+- `focusTargetId` 에 `case 'checkin': return 'today-checkin'` 을 추가한다.
+
+#### H.8.3 `assistantStore.ts`
+- `respondCheckin: (eventId: number, status: CheckinStatus | null, note?: string) => Promise<boolean>` 를 추가한다. `run(...)` 패턴이다. 반환값은 성공 여부다. 패널은 성공일 때만 메모를 비운다.
+- `subscribe` 는 바꾸지 않는다. `reason === 'checkin'` 도 `load()` 를 부른다.
+
+#### H.8.4 `AssistantSettingsModal.tsx`
+- `checkinEnabled` 토글을 추가한다. 문구는 `작업 경계 체크인` 이다. 힌트는 `빈 시간 블록이 끝나기 5분 전에 진행 상황을 묻습니다` 다.
+- `checkinDailyCap` 숫자 입력을 추가한다. 범위는 0~20 이다. 문구는 `하루 체크인 상한` 이다.
+- `checkinMinGap` 숫자 입력을 추가한다. 범위는 5~480 이다. 문구는 `체크인 최소 간격(분)` 이다.
+- `FORM_SETTING_KEYS` 에 3개를 더한다. `validateSettings` 에 범위 검증 2개를 더한다.
+
+### H.9 모듈 계약
+
+팀원은 이름과 시그니처를 그대로 쓴다. 계약을 바꿔야 하면 리더에게 알린다.
+
+#### H.9.1 `assistant-types.ts` (팀원 H1) 추가·변경분
+```ts
+// ── MVP4 (부록 H) ──
+export type CheckinStatus = 'done' | 'in_progress' | 'deferred'
+export interface CheckinPayload {
+  itemId: number; candidateId: string; itemTitle: string
+  blockStart: string; blockEnd: string      // 'HH:mm'
+  title: string; body: string               // 알림 문구
+}
+export interface CheckinDecisionInput {
+  today: string; nowHHmm: string; at: string          // at 은 'YYYY-MM-DD HH:mm:ss'
+  settings: Pick<AssistantSettings, 'enabled' | 'checkinEnabled' | 'checkinDailyCap' | 'checkinMinGap'>
+  planActive: boolean
+  dayStart: string; workEnd: string
+  calendar: CalendarRef[]                   // 계획 스냅샷의 일정
+  items: PlanItem[]
+  events: AssistantEvent[]                  // 오늘 논리 날짜의 이벤트 전부
+}
+export interface DueCheckin {
+  eventKey: string; refId: string; scheduledAt: string; late: boolean
+  title: string; body: string; payload: CheckinPayload
+}
+export interface SentCheckinNotice {
+  eventId: number; title: string; body: string
+  focus: { kind: 'checkin'; id: string }
+}
+export interface CheckinAnswer { status: CheckinStatus | null; note: string | null; raw: string | null }
+
+// 변경: AssistantSettings 에 checkinEnabled: boolean 추가
+// 변경: AssistantChangedEvent.reason 에 'checkin' 추가
+// 변경: AssistantNavigateEvent.focus.kind 에 'checkin' 추가
+```
+
+#### H.9.2 `assistant-schedule.ts` (팀원 H1) 추가분
+```ts
+export const CHECKIN_LEAD_MIN = 5
+export const CHECKIN_RECENT_STATUS_MIN = 15
+export const LATE_AFTER_MIN = 2
+export const CHECKIN_TITLE_MAX = 30
+export function minutesBetween(fromDateTime: string, toDateTime: string): number   // 'YYYY-MM-DD HH:mm:ss' 2개. 로컬 해석
+export function checkinEventKey(today: string, blockEnd: string): string            // 'checkin:<date>:<HHmm>'
+export function checkinNoticeText(itemTitle: string): { title: string; body: string }
+export function computeDueCheckin(input: CheckinDecisionInput): DueCheckin | null   // H.2·H.3. 입력을 바꾸지 않는다 (A14)
+```
+- 이 파일은 `./assistant-slots` 의 `buildTimeline`·`fromMinutes`·`toMinutes` 와 `./assistant-refresh` 의 `isInMeeting` 을 import 한다. 둘 다 순수 모듈이다. 규칙 A3 을 지킨다.
+
+#### H.9.3 `assistant-settings.ts` (팀원 H1) 변경분
+- `ASSISTANT_SETTING_KEYS.checkinEnabled = 'assistant_checkin_enabled'`.
+- `DEFAULT_ASSISTANT_SETTINGS.checkinEnabled = true`.
+- `FIELD_SPECS.checkinEnabled = { kind: 'bool' }`.
+
+#### H.9.4 `assistant-store.ts` (팀원 H2) 추가분
+```ts
+export function getEventById(db, eventId: number): AssistantEvent | null
+export function setEventResponse(db, eventId: number, response: string, at: string): void   // response·responded_at
+```
+
+#### H.9.5 `assistant-service.ts` (팀원 H2) 추가분
+```ts
+export function runDueCheckin(now?: Date): Promise<SentCheckinNotice | null>   // serialized. computeDueCheckin → insertEvent. 충돌이면 null
+export function respondCheckin(eventId: number, answer: CheckinAnswer, now?: Date): Promise<TodayPayload>   // serialized. H.6.4
+```
+- `runDueCheckin` 의 입력: `today`·`nowHHmm = timelineNow(now, today)`·`at`, `planActive = plan?.status === 'active'`, `dayStart = dayStartOf(plan)`, `workEnd = settings.workEnd`, `calendar = plan.source_snapshot?.calendar ?? []`, `items = listPlanItems`, `events = listEventsByDate(db, today)`.
+- 계획이 없으면 `computeDueCheckin` 을 부르지 않고 null 을 돌려준다.
+- INSERT 값: `kind 'checkin'`, `scheduled_at = due.scheduledAt`, `fired_at = at`, `status = due.late ? 'late' : 'sent'`, `ref_id = due.refId`, `payload = JSON.stringify(due.payload)`.
+- `respondCheckin` 의 인자 검증: `eventId` 는 정수다. `answer.status` 는 `CheckinStatus` 또는 null 이다. `answer.note` 는 500자 이하다. 틀리면 throw 한다.
+
+#### H.9.6 `assistant-scheduler.ts` (팀원 H3) 추가·변경분
+```ts
+export async function onCheckinReply(eventId: number, reply: string): Promise<void>   // 테스트용 export. interpretReplyRule → respondCheckin. throw 하지 않는다
+// 내부: let dueInFlight = false
+// 내부: showCheckinNotice(n: SentCheckinNotice) — Notification({ title, body, hasReply: true, replyPlaceholder }) · click → navigateToToday(n.focus) · reply → onCheckinReply · 실패 시 failed
+// 변경: runTick 6단계 (H.5)
+// 변경: stopAssistantScheduler 가 dueInFlight 를 false 로 둔다
+```
+- import 추가: `./assistant-command` 의 `interpretReplyRule`, `./assistant-service` 의 `runDueCheckin`·`respondCheckin`.
+- 테스트는 `./assistant-command` 를 `vi.mock` 한다. `FakeNotification` 에 `reply` 리스너 호출 헬퍼를 더한다.
+
+#### H.9.7 `assistant.ipc.ts`·`preload/index.ts` (팀원 H2)
+
+| preload 메서드 | 채널 | 인자 | 성공 응답 |
+|----------------|------|------|-----------|
+| respondCheckin | `assistant:respondCheckin` | `eventId: number, status: CheckinStatus \| null, note?: string` | `{ success: true, today }` |
+
+- IPC 핸들러는 `respondCheckin(eventId, { status, note: note ?? null, raw: null })` 를 부른다.
+- §13 의 `respondCheckin(eventId, status: PlanItemStatus, note?)` 를 이 시그니처로 바꾼다. 이유: 답장 해석 결과와 같은 3값이다. 넘기기는 null 이다.
+- `preload/index.d.ts` 는 바꾸지 않는다.
+
+#### H.9.8 렌더러 (팀원 H4)
+
+`types/index.ts`:
+- `CheckinStatus`·`CheckinPayload` 를 H.9.1 과 같은 모양으로 추가한다.
+- `AssistantSettings.checkinEnabled: boolean` 추가.
+- `AssistantChangedEvent.reason` 에 `'checkin'` 추가. `AssistantNavigateEvent.focus.kind` 에 `'checkin'` 추가.
+- `AssistantAPI.respondCheckin: (eventId: number, status: CheckinStatus | null, note?: string) => Promise<TodayResult>` 추가.
+
+`CheckinPanel.tsx`:
+```ts
+export interface PendingCheckin { event: AssistantEvent; item: PlanItem; payload: CheckinPayload }
+export function parseCheckinPayload(payload: string | null): CheckinPayload | null
+export function pendingCheckin(events: AssistantEvent[], items: PlanItem[]): PendingCheckin | null   // H.8.1
+export default function CheckinPanel(props: {
+  pending: PendingCheckin
+  busy: boolean
+  readOnly: boolean
+  onRespond: (eventId: number, status: CheckinStatus | null, note?: string) => void
+  onApplied: () => void          // CommandInput.onApplied
+}): React.ReactNode
+```
+- `CommandInput` 은 `../today/CommandInput` 에서 import 한다. 부록 G 의 파일이다. 수정하지 않는다.
+- 테스트는 `renderToStaticMarkup` 으로 3가지 상태를 그린다. 대기 중, 응답 완료로 숨김, 닫힘이다. `CommandInput` 은 `vi.mock` 한다.
+
+#### H.9.9 변경하지 않는 파일
+`assistant-schema.ts`, `assistant-sources.ts`, `assistant-briefing.ts`, `assistant-refresh.ts`, `assistant-slots.ts`, `assistant-day.ts`, `assistant-recovery.ts`, `assistant-command.ts`, `ai-headless.ts`, `src/main/index.ts`, `src/main/db/database.ts`, `preload/index.d.ts`, `App.tsx`, `CommandInput.tsx`, `ChangeLog.tsx`, `PlanItemRow.tsx`, `DayHeader.tsx`, `tray-widget.ts`, `TrayPanel.tsx`, `notification.ts`. 이유: `App.tsx` 의 `goToday` 는 focus 를 그대로 전달한다.
+
+### H.10 가드레일
+
+기존 규칙 적용:
+- A1·A2: 체크인은 Jira 를 부르지 않는다. `plan_items`·`assistant_events` 만 쓴다.
+- A3: `assistant-schedule.ts` 는 electron·DB·jira·google-calendar 를 import 하지 않는다.
+- A5: INSERT 가 `show()` 보다 먼저다. 서비스와 스케줄러로 나눈다.
+- A7: 근무 중·회의 아님·상한·간격을 `computeDueCheckin` 이 판정한다.
+- A13: 틱 6단계와 `onCheckinReply` 는 `try/catch` 안이다.
+- A16: 셸 실행이 없다.
+- A31: AI 채팅 도구는 바꾸지 않는다.
+
+새 규칙. §15 표에 추가한다.
+
+| ID | 규칙 | 이유 | 판정 |
+|----|------|------|------|
+| A41 | 체크인 창은 `[블록 끝 − 5분, 블록 끝)` 이다. 창 밖에는 보내지 않고 `skipped` 행도 남기지 않는다 | 블록이 끝나면 타임라인이 그 블록을 다시 보지 않는다 | 테스트 `A41` |
+| A42 | 체크인·회의 브리핑 판정은 틱의 자동 최신화 뒤에 실행한다. `dueInFlight` 로 동시에 1개만 실행한다 | 최신 타임라인을 쓰고 중복 판정을 막는다 | 테스트 `A42` |
+| A43 | 체크인 답장 해석은 `interpretReplyRule` 만 쓴다. 답장과 버튼은 같은 `respondCheckin` 을 거친다. 응답은 1회만 기록한다. 활성 항목만 상태를 바꾼다 | 답장에는 확인 단계가 없고, 사용자 결정을 되돌리지 않는다 | 테스트 `A43` |
+| A44 | 최근 15분 안에 항목 상태가 바뀌었으면 체크인을 보내지 않는다 | 사용자가 이미 계획을 다루고 있다 | 테스트 `A44` |
+
+### H.11 팀 구성과 소유 파일
+
+팀원 4명이다. 파일은 겹치지 않는다.
+
+| 팀원 | 역할 | 소유 파일 |
+|------|------|-----------|
+| H1 순수·타입·설정 | 타입, 판정, 설정 키 | `src/main/services/assistant-types.ts`, `assistant-schedule.ts`, `assistant-schedule.test.ts`, `assistant-settings.ts`, `assistant-settings.test.ts` |
+| H2 저장·서비스·IPC | 이벤트 읽기·응답 기록, `runDueCheckin`·`respondCheckin`, 채널 | `src/main/services/assistant-store.ts`, `assistant-store.test.ts`, `assistant-service.ts`, `assistant-service.test.ts`, `assistant-tray.test.ts`, `src/main/ipc/assistant.ipc.ts`, `src/preload/index.ts`, `src/preload/index.d.ts` |
+| H3 스케줄러 | 틱 6단계, 알림, 답장 | `src/main/services/assistant-scheduler.ts`, `assistant-scheduler.test.ts`, `src/main/index.ts` |
+| H4 렌더러 | 타입 복제, 패널, 오늘 화면, 설정 모달 | `src/renderer/src/types/index.ts`, `env.d.ts`, `stores/assistantStore.ts`, `components/today/CheckinPanel.tsx`, `CheckinPanel.test.tsx`, `TodayView.tsx`, `TodayView.test.tsx`, `AssistantSettingsModal.tsx`, `App.tsx` |
+
+- `AssistantSettings.checkinEnabled` 추가로 깨지는 픽스처: `assistant-settings.test.ts` 는 H1, `assistant-tray.test.ts` 는 H2, `TodayView.test.tsx` 는 H4 가 고친다.
+- H3 의 `index.ts` 와 H4 의 `App.tsx`·`env.d.ts` 는 변경 예정이 없다. 소유자를 정해 두는 이유는 예상 밖 수정의 충돌을 막기 위해서다.
+- `docs/ASSISTANT.md` 는 리더가 쓴다. 부록 H 삽입, §15 표에 A41~A44 추가, §13 `respondCheckin` 시그니처 변경, 변경 이력 1줄이다.
+
+의존 순서:
+1. 부록 G 의 `assistant-command.ts` 와 `CommandInput.tsx` 가 먼저 커밋되어 있다. 없으면 H3·H4 의 타입체크가 실패한다.
+2. H1 이 `assistant-types.ts` 추가분을 먼저 쓴다. H4 가 같은 시각에 `types/index.ts` 복제분을 쓴다.
+3. H2·H3 은 2단계 뒤에 시작한다. 함수 본문이 아직 없으면 계약 시그니처 기준으로 작성한다.
+4. H3 은 H2 의 `runDueCheckin`·`respondCheckin` 을 import 한다. 테스트는 `./assistant-service`·`./assistant-command` 를 mock 한다.
+
+### H.12 완료 조건
+
+최대 반복 5회. 같은 실패가 2회 연속이면 중단하고 리더에게 보고한다. 5회를 넘으면 리더가 미충족 항목·시도·원인을 사용자에게 보고한다.
+
+1. C1: `npx vitest run` 종료 코드 0, 실패 0건.
+2. C2: `npm run typecheck` 에러 0건.
+3. C3: `npm run build` 종료 코드 0.
+4. `grep -c "A7" src/main/services/assistant-schedule.test.ts` ≥ 5. 대상: 비활성, 계획 없음, 회의 중, 상한, 간격.
+5. `grep -c "A41" src/main/services/assistant-schedule.test.ts` ≥ 3. 대상: 창 전, 창 안, 창 뒤. 창 뒤는 null 이고 skipped 를 만들지 않는다.
+6. `grep -c "A44" src/main/services/assistant-schedule.test.ts` ≥ 1.
+7. `grep -c "A14" src/main/services/assistant-schedule.test.ts` ≥ 1. 대상: 같은 입력에 같은 출력, 입력 배열 불변.
+8. `grep -c "마감" src/main/services/assistant-schedule.test.ts` ≥ 1. 대상: 앞선 예보에서 마감 항목을 받았던 블록도, 체크인은 블록 진행 중 화면에 보인 항목을 묻는다.
+9. `grep -c "A43" src/main/services/assistant-service.test.ts` ≥ 3. 대상: 응답 2회 거부, 닫힌 계획은 항목 불변, done 항목은 답장이 되돌리지 않음.
+10. `grep -c "A5" src/main/services/assistant-service.test.ts src/main/services/assistant-scheduler.test.ts` 합계 ≥ 10. 기존 8건에 서비스의 체크인 INSERT 충돌 null 과 스케줄러의 INSERT→show 를 더한다.
+11. `grep -c "A42" src/main/services/assistant-scheduler.test.ts` ≥ 2. 대상: 최신화 뒤 실행, `dueInFlight` 중복 차단.
+12. `grep -c "A43" src/main/services/assistant-scheduler.test.ts` ≥ 1. 대상: reply → `interpretReplyRule` → `respondCheckin` 호출 인자.
+13. `grep -c "A13" src/main/services/assistant-scheduler.test.ts` ≥ 9. 기존 8건에 `runDueCheckin` 예외 삼킴을 더한다.
+14. `grep -c "hasReply" src/main/services/assistant-scheduler.ts` ≥ 1. `grep -c "interpretReplyRule" src/main/services/assistant-scheduler.ts` ≥ 1.
+15. `grep -c "respondCheckin"` 결과가 `src/preload/index.ts`, `src/main/ipc/assistant.ipc.ts`, `src/main/services/assistant-service.ts`, `src/renderer/src/types/index.ts`, `src/renderer/src/stores/assistantStore.ts` 각각 ≥ 1.
+16. `grep -c "runDueCheckin" src/main/services/assistant-scheduler.ts` ≥ 1.
+17. `grep -c "getEventById\|setEventResponse" src/main/services/assistant-store.ts` ≥ 2. `grep -c "setEventResponse" src/main/services/assistant-store.test.ts` ≥ 1.
+18. `grep -c "assistant_checkin_enabled" src/main/services/assistant-settings.ts` ≥ 1.
+19. `grep -c "checkinEnabled\|checkinDailyCap\|checkinMinGap" src/renderer/src/components/today/AssistantSettingsModal.tsx` ≥ 3.
+20. `test -f src/renderer/src/components/today/CheckinPanel.tsx` 종료 코드 0. `grep -c "CheckinPanel" src/renderer/src/components/today/TodayView.tsx` ≥ 1. `grep -c "CommandInput" src/renderer/src/components/today/CheckinPanel.tsx` ≥ 1.
+21. `grep -c "checkinEnabled"` 결과가 `src/main/services/assistant-types.ts`, `src/renderer/src/types/index.ts` 각각 ≥ 1. `grep -c "'checkin'" src/renderer/src/components/today/TodayView.tsx` ≥ 1.
+22. `grep -c "today-checkin" src/renderer/src/components/today/CheckinPanel.test.tsx` ≥ 1.
+23. A1: `grep -n "method:" src/main/services/jira.ts | grep -vc "'GET'"` 결과 0.
+24. A2: `grep -nE "INSERT INTO (projects|tasks|todos|meetings)|UPDATE (projects|tasks|todos|meetings)|DELETE FROM (projects|tasks|todos|meetings)" src/main/services/assistant-*.ts src/main/ipc/assistant.ipc.ts src/main/services/tray-widget.ts src/main/services/ai-assistant-tools.ts` 결과 0건.
+25. A3: `grep -lE "from '(electron|better-sqlite3|\.\./db|\./jira|\./google-calendar)" src/main/services/assistant-{candidates,score,slots,settings,day,refresh,schedule,tray,recovery,command}.ts` 결과 0건.
+26. A16: `grep -nE "child_process|execSync|spawn" src/main/services/assistant-*.ts src/main/services/ai-assistant-tools.ts` 결과 0건.
+27. A31: `grep -cE "from '\./jira'|from '\./google-calendar'|from '\./ai-headless'|\bgetDatabase\b" src/main/services/ai-assistant-tools.ts` 결과 0.
+28. 부록 E.8 조건 5·6·7·8·16 과 부록 F.11 조건 7·8·23 을 다시 실행한다. 결과가 모두 충족이다.
+29. 부록 G 의 완료 조건 전체를 다시 실행한다. 결과가 모두 충족이다.
+
+### H.13 열린 결정
+
+| # | 항목 | 권장 기본값 | 근거 |
+|---|------|-------------|------|
+| H-1 | 체크인 시각 | 블록 끝 − 5분, 상수 | 회의 전이고 작업 중이다. 설정 수를 늘리지 않는다 |
+| H-2 | 대상 항목 | 블록 끝 − 30분 시점 타임라인의 배정 항목 | 블록 진행 중 화면에 보인 항목과 같다 |
+| H-3 | 창 밖 `skipped` 행 | 남기지 않음 | 타임라인이 지난 블록을 다시 보지 않는다. 행이 쌓이지 않는다 |
+| H-4 | 체크인 켜기 설정 | 새 키 `assistant_checkin_enabled`, 기본 켬 | 상한 0 으로 끄는 것보다 뜻이 분명하다 |
+| H-5 | 같은 항목의 연속 블록 체크인 | 허용 | 상한 4회와 간격 45분이 피로를 막는다. 2주 사용 뒤 다시 본다 |
+| H-6 | 최근 상태 변경 억제 창 | 15분 | 사용자가 앱에서 계획을 다루는 중이다 |
+| H-7 | `hasReply` | 항상 true | 답장을 지원하지 않는 환경에서도 알림은 정상이다. 클릭·패널이 완결한다 |
+| H-8 | 응답 수정 | 불가. 1회 기록 | 행의 상태는 계획 항목 행에서 바꾼다 |
+| H-9 | 넘기기 | status null, response `skip` | 질문을 닫되 항목은 그대로다 |
+| H-10 | 답장 뒤 원본 완료 처리 | 하지 않음 | 규칙 A2. 계획 항목 행의 체크박스가 담당한다 |
+
+### H.14 위험
+
+| # | 위험 | 대응 |
+|---|------|------|
+| 1 | 임시 서명 앱에서 `reply` 이벤트가 오지 않는다 | 착수 전 리더가 `npm run deploy` 빌드로 답장 1건을 확인한다. 안 오면 클릭·패널 경로만 동작한다. 기능은 완결된다 |
+| 2 | 블록 끝 5분 전에 `current` 블록의 `itemId` 가 null 이다 | `computeDueCheckin` 이 `B.end − 30` 시점 타임라인으로 항목을 찾는다. H.2.3 이다 |
+| 3 | 60초 틱이 5분 창을 놓친다 | 틱 간격 60초는 창 5분보다 짧다. 잠자기 뒤에는 `onWake` 가 즉시 틱을 돈다 |
+| 4 | 자동 최신화가 네트워크로 수 분 걸리면 체크인 창이 지난다 | `runDueCheckin` 은 `serialized` 줄에 선다. 창이 지나면 null 이다. 다음 블록에서 다시 묻는다. 손실을 받아들인다 |
+| 5 | 답장이 창 닫힌 뒤 도착한다 | `respondCheckin` 은 닫힌 계획이면 응답만 기록한다. 항목은 바꾸지 않는다 |
+| 6 | `AssistantSettings` 키 추가로 픽스처 3개가 깨진다 | H.11 에 소유자를 정했다 |
+| 7 | `assistant-command.ts` 가 아직 없다 | 부록 G 가 선행 커밋이다. 없으면 리더가 MVP4 착수를 미룬다 |
+| 8 | 체크인과 기존 `notification.ts` 의 `10분 후 일정` 알림이 5분 차이로 겹친다 | 받아들인다. `notification.ts` 는 바꾸지 않는다. 사용자가 문제 삼으면 후속에서 `assistant_checkin` 과 통합한다 |
+| 9 | 같은 집중 작업을 하루 4번 묻는다 | 상한·간격으로 제한한다. 열린 결정 H-5 다 |
+| 10 | 패널의 `CommandInput` 이 항목을 바꾸면 패널의 체크인이 무의미해진다 | `pendingCheckin` 이 활성 항목만 고른다. `onApplied` 가 `load()` 를 부른다. 항목이 비활성이면 패널이 사라진다 |
+
+
+### H.15 사용자 결정 (2026-11-02)
+- 사용자가 명령 입력 뒤에 MVP4 를 진행하기로 했다.
+- H.13 의 열린 결정은 모두 권장 기본값을 쓴다.
+
+### H.16 구현 확정분
+구현 중 팀원과 리더가 계약에 없던 세부를 아래처럼 정했다.
+- H.2.3 의 대상 항목은 계약대로 `buildTimeline(B.end − 30)` 으로 찾는다. 리더가 블록 시작 전 예보를 묻는 대안을 기각했다. 이유: 사용자는 블록 진행 중 화면이 보인 항목을 보고 일했다.
+- `runDueCheckin(now?)` 와 `respondCheckin(eventId, answer, now?)` 는 `serialized` 줄 안에서 `now ?? new Date()` 로 시각을 잡는다. 스케줄러의 실제 틱은 `now` 를 넘기지 않는다. 이유: 앞선 최신화가 줄을 오래 잡으면 오래된 시각으로 판정해 회의 중 알림이 나간다.
+- `runDueCheckin` 은 INSERT 에 성공하면 `emitChanged({ reason: 'checkin' })` 를 보낸다. 오늘 화면이 패널을 바로 그린다.
+- `respondCheckin` 은 응답 기록과 항목 쓰기를 `db.transaction` 1개로 묶는다. `updatePlanItems` 의 중첩 트랜잭션은 SAVEPOINT 로 처리된다.
+- `interpretReplyRule` 은 `진행 중`·`진행중`·`in progress` 를 `{ status: 'in_progress', note: null }` 로 해석한다. 이유: 답장 안내 문구의 단어가 기존 메모를 덮지 않는다.
+- 빈 답장은 `{ status: null, note: null, raw: null }` 이고 `skip` 으로 기록한다. `onCheckinReply` 는 note 를 500자로 자른다.
+- 틱 4단계의 최신화 예외는 4단계 안에서 잡는다. 6단계 체크인은 계속 실행한다.
+- `minutesBetween` 은 형식이 틀린 입력에 NaN 을 돌려준다. 판정 7·8 은 그런 행을 건너뛴다. 판정 6·7 은 `plan_date === today` 인 행만 센다.
+- 알림 제목의 항목 이름은 30자를 넘으면 30자로 자르고 `…` 를 붙인다.
+- 닫힌 날의 패널은 버튼·메모·`CommandInput` 을 숨기고 `오늘 마감` 만 보인다. 패널의 시각은 `fired_at ?? scheduled_at` 이다. 본문은 현재 항목 제목을 쓴다.
+- `TodayView` 는 `CheckinPanel` 에 `key={event.id}` 를 붙인다. 패널은 응답이 성공했을 때만 메모를 비운다.
+- 설정 모달의 숫자 입력은 빈 칸을 검증 오류로 처리한다. 이전에는 빈 칸이 0 으로 저장됐다.
+- 알려진 한계: 자동 최신화가 항목 상태를 바꿔도 `status_at` 이 바뀐다. 그래서 그 뒤 15분 동안 체크인이 억제된다 (A44).

@@ -479,6 +479,17 @@ export function findEventByKey(db: Db, eventKey: string): AssistantEvent | null 
   return row ? toEvent(row) : null
 }
 
+export function getEventById(db: Db, eventId: number): AssistantEvent | null {
+  const row = db.prepare('SELECT * FROM assistant_events WHERE id = ?').get(eventId) as AssistantEvent | undefined
+  return row ? toEvent(row) : null
+}
+
+// 체크인 응답 기록 (부록 H.7). 1회 기록 판정은 서비스가 한다. 트랜잭션은 호출자가 연다.
+export function setEventResponse(db: Db, eventId: number, response: string, at: string): void {
+  assertDateTime(at, 'at')
+  db.prepare('UPDATE assistant_events SET response = ?, responded_at = ? WHERE id = ?').run(response, at, eventId)
+}
+
 export function listEventsByDate(db: Db, planDate: string): AssistantEvent[] {
   const rows = db
     .prepare('SELECT * FROM assistant_events WHERE plan_date = ? ORDER BY scheduled_at, id')
