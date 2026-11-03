@@ -31,6 +31,7 @@
 - 명령 입력 설계 (2026-11-02): 오늘 화면의 자유 문장 입력을 부록 G 에 둔다. 명령 입력은 MVP4 앞에 구현한다. 규칙 A34~A40 은 부록 G.14 에 있다. IPC 2개는 G.9 에 있다.
 - MVP4 설계 (2026-11-02): 작업 경계 체크인의 모듈 계약을 부록 H 에 둔다. 부록 H 가 §16 MVP4 표와 §17 MVP4 조건을 대체한다. 규칙 A41~A44 는 부록 H.10 에 있다.
 - MVP5 설계 (2026-11-02): 회의 전 브리핑의 모듈 계약을 부록 I 에 둔다. 부록 I 가 §16 MVP5 표와 §17 MVP5 조건을 대체한다. 규칙 A45~A47 은 부록 I.12 에 있다.
+- 오늘 화면 개편 (2026-11-03): 업무 유형 분류·묶음 항목·표 브리핑·해요체·화면 재배치를 부록 J 에 둔다. 부록 J 가 §9 브리핑 형식과 §12 오늘 화면 순서를 대체한다. 규칙 A48~A53 은 부록 J.10 에 있다. A3 대상에 `assistant-worktype.ts` 를 더한다.
 
 ---
 
@@ -4170,3 +4171,614 @@ export default function MeetingBriefingCard(props: {
 - `normalizeTitle` 은 NFC 정규화 뒤 공백·구두점·기호를 지운다. 정규화 결과가 빈 제목끼리는 같은 제목이 아니다.
 - 지난 회의 90일은 회의 `startAt` 기준이다. 이번 회의보다 앞선 회의만 읽는다. 후보 200건을 먼저 자른 뒤 제목으로 매칭한다.
 - `TodayView` 의 화면 순서는 체크인 패널, 회의 브리핑 카드, 나머지 계획 영역이다. 회의 브리핑 카드는 계획이 없어도 보인다.
+
+---
+
+## 부록 J. 업무 유형 브리핑·해요체·오늘 화면 재배치
+
+### J.1 범위
+
+**목표**
+1. 오늘 화면 글의 가독성을 높인다. 표·단락·짧은 문장을 쓴다.
+2. 사용자의 업무 유형 PRD·TRD·SUS·QA 를 계획 항목마다 분류한다. 브리핑이 유형별로 강조한다.
+3. 브리핑 문장을 해요체로 바꾼다. 비서가 말하듯 쓴다.
+4. 오늘 화면 순서를 자동 위주 사용자에 맞게 바꾼다. 조작 UI 는 접힌 영역에 둔다.
+
+**사용자 업무 정의 (2026-11-03)**
+- 사용자의 주 작업은 PRD·TRD·SUS 다. 규모는 보통 PRD > TRD > SUS 다.
+- 사용자는 배포 주기에 맞춰 QA 티켓을 만든다. 배포 버전의 QA 리포트를 받아 수정·보완한 뒤 최종 배포한다.
+- QA 양은 앞 작업의 완성도에 따라 다르다.
+
+**범위**
+- 새 순수 모듈 `assistant-worktype.ts`. 분류와 묶음 판정.
+- `jira.ts` 내 이슈 조회에 `parent` 필드 추가. GET 만 쓴다.
+- `plan_items` 컬럼 4개 추가와 마이그레이션. 최신화가 기존 행을 보강한다.
+- 묶음 항목 규칙. 하루 시작·타임라인·순위·집중 바꾸기에 적용한다.
+- 규칙 브리핑·LLM 브리핑 재설계. 표는 코드가 만든다. LLM 은 문장만 쓴다.
+- `writing-style.ts` 에 비서 말투 규칙 export 추가. 브리핑·회의·복구 LLM 프롬프트와 규칙 복구 본문이 쓴다.
+- 오늘 화면 재배치. 새 `MoreSection`. `PlanItemRow` 유형 배지. `InboxSection` 5건 접기. `MeetingBriefingCard` 기본 펼침 1건.
+
+**비범위**
+- 작업에 끝 시각을 붙이는 설계. 사용자가 거부했다. 다시 제안하지 않는다.
+- IPC·preload·`env.d.ts`·`preload/index.d.ts` 변경. 모든 새 데이터는 `TodayPayload.items` 로 간다.
+- 체크인·최신화 알림 문구의 말투 변경. 알림은 한 줄 요약이라 '다' 체를 유지한다.
+- 트레이 위젯, AI 채팅 도구(`ai-assistant-tools.ts`), 명령 해석 LLM 의 말투.
+- 과거에 저장된 `briefing_text`·`recovery_text`·회의 payload 본문. 그대로 둔다.
+- Jira 쓰기. 어떤 경우에도 쓰지 않는다.
+
+### J.2 용어
+
+| 용어 | 뜻 |
+|------|----|
+| 업무 유형 | `WorkType = 'qa' \| 'sus' \| 'trd' \| 'prd' \| 'etc'`. 계획 항목 1건의 분류다 |
+| 버전 | 작업 제목·부모 요약·프로젝트 이름에서 뽑은 `N.N.N` 문자열. 예: `4.174.0` |
+| 부모 | Jira 이슈의 `parent`. 에픽 또는 상위 작업이다 |
+| 묶음 이름 | 항목이 속한 상위 이름. Jira 항목은 부모 요약, WBS 작업은 프로젝트 이름이다 |
+| 묶음 항목 | 자기 `jira_issue_key` 를 `parent_key` 로 가진 다른 계획 항목이 같은 계획에 있는 항목. 보통 에픽이다 |
+| 사실(facts) | 코드가 계획·타임라인·일정에서 결정적으로 계산한 브리핑 재료 |
+| 비서 말투 | 해요체 문장 규칙. `ASSISTANT_SPEECH_RULES` 가 유일 정의처다 |
+
+### J.3 업무 유형 분류 (A48)
+
+`classifyWork` 는 순수 함수다. 같은 입력에 같은 출력을 낸다.
+
+입력 `WorkClassifyInput`:
+- `source`: `CandidateSource`
+- `jiraKey`: `string | null`
+- `title`: 작업 제목
+- `parentSummary`: Jira 부모 요약. 없으면 null
+- `projectName`: WBS 프로젝트 이름. 없으면 null
+- `issueType`: Jira 이슈 유형 이름. 없으면 null
+
+판정 순서. 먼저 맞는 규칙이 이긴다. '텍스트 3개' 는 `title`·`parentSummary`·`projectName` 이다.
+
+1. `source` 가 `todo`·`action_item`·`manual` 이면 `etc` 다.
+2. `parentSummary` 가 `/QA/` 에 맞으면 `qa` 다. 예: 부모 `안드로이드QA-2026`.
+3. `issueType` 이 `/qa/i` 에 맞으면 `qa` 다.
+4. `title` 이 `/QA/` 에 맞고 `title` 에 버전이 있으면 `qa` 다. 예: `안드로이드 구매자 앱 v4.174.0 QA`.
+5. `title` 이 `/QA/` 에 맞고 `issueType` 이 `/epic|에픽/i` 에 맞으면 `qa` 다. 예: 에픽 `안드로이드QA-2026` 자체.
+6. `projectName` 이 `/릴리스|release|QA/i` 에 맞으면 `qa` 다. 예: WBS `4.165.0 릴리스`.
+7. 텍스트 3개 중 하나가 `SUSTAIN_PATTERN = /\bsus(tain(ing)?)?\b/i` 에 맞으면 `sus` 다. 예: `[Android/Sus] Sprint 26-11`, `[SUS] …`, `Sus 개선 작업 (4.162.0)`.
+8. 텍스트 3개 중 하나가 `/\bTRD\b/i` 에 맞으면 `trd` 다. 예: `[TRD] RxJava to Coroutine Phase2`, `[Android/TRD] …`.
+9. 텍스트 3개 중 하나가 `/\bPRD\b/i` 에 맞으면 `prd` 다.
+10. `jiraKey` 가 있고 `issueType` 이 `/epic|에픽/i` 에 맞으면 `prd` 다. 이유: 접두 없는 에픽은 기능 PRD 다.
+11. `jiraKey` 가 있고 `parentSummary` 가 null 이 아니면 `prd` 다. 이유: 접두 없는 에픽의 하위 작업은 PRD 구현이다.
+12. 나머지는 `etc` 다. WBS 작업 중 Jira 키가 없고 패턴이 없는 작업이 여기에 든다.
+
+"셀프 QA" 같은 개발 작업은 4·5 에 걸리지 않는다. 이유: 버전이 없고 에픽이 아니다.
+
+버전 추출 `extractVersion(texts: (string | null)[]): string | null`:
+- 정규식 `/(?:^|[^\d.])v?(\d+\.\d+\.\d+)(?![\d.])/`.
+- `title` → `parentSummary` → `projectName` 순서로 첫 일치를 돌려준다.
+- 유형과 무관하게 뽑는다. 예: `Sus 개선 작업 (4.162.0)` 은 `sus` + `4.162.0` 이다.
+
+패턴 2개는 `project-sync-plan.ts` 의 `SUSTAIN_EPIC_PATTERN`·`QA_EPIC_PATTERN` 과 같은 문자열이다. import 하지 않고 복사한다. 이유: `project-sync-plan.ts` 는 ADF·날짜 유틸을 끌고 온다. 테스트가 두 패턴의 `.source` 가 같은지 확인한다.
+
+2026-11-03 데이터의 분류 결과. 리더가 Jira 에서 부모를 확인했다.
+
+| 항목 | 부모 요약 | 유형 | 버전 | 묶음 이름 |
+|------|-----------|------|------|-----------|
+| ICA-8054 `안드로이드QA-2026` (에픽) | – | qa | – | – |
+| ICA-8929 `[폴더블] 넓은 화면 공통 기준 적용 - Android` (에픽) | – | prd | – | – |
+| ICA-8971 `안드로이드 구매자 앱 v4.174.0 QA` | `안드로이드QA-2026` | qa | 4.174.0 | `안드로이드QA-2026` |
+| ICA-8984 `[폴더블] 넓은 화면 공통 기반` | `[폴더블] 넓은 화면 공통 기준 적용 - Android` | prd | – | `[폴더블] 넓은 화면 공통 기준 적용 - Android` |
+| ICA-8987 `[폴더블] 공통 요소 넓은 화면 대응` | `[폴더블] 넓은 화면 공통 기준 적용 - Android` | prd | – | `[폴더블] 넓은 화면 공통 기준 적용 - Android` |
+| ICA-8571 `[코루틴] W2-2 홈 베스트·세일·메인 화면군 UseCase 마이그레이션` | `[TRD] RxJava to Coroutine Phase2` | trd | – | `[TRD] RxJava to Coroutine Phase2` |
+| action_item `174 버전 릴리스를 시작한다.` | – | etc | – | – |
+
+### J.4 묶음 항목 규칙 (A49)
+
+정의 `isGroupItem(item, items)`: `item.jira_issue_key` 가 null 이 아니다. 그리고 `items` 중 `id` 가 다르고 `parent_key === item.jira_issue_key` 이고 상태가 `planned`·`in_progress`·`done`·`deferred` 인 항목이 1건 이상 있다. `suggested`·`dismissed`·`dropped` 하위는 세지 않는다. 이유: 사용자가 받아들인 하위만 묶음을 만든다.
+
+후보 단계 `isGroupCandidate(c, candidates)`: `c.jiraKey` 가 null 이 아니고 다른 후보의 `parentKey` 가 그 키와 같다.
+
+적용 지점:
+1. `buildStartPlanItems`: 묶음 후보를 순위 매기기 전에 뺀다. 상위 `planSize` 건에 들어가지 않는다.
+2. `planRefresh` 의 새 후보 → `suggested` 삽입: 묶음 후보를 뺀다.
+3. `buildTimeline` 규칙 5: 활성 항목에서 묶음 항목을 뺀다. 묶음 항목은 집중 작업이 되지 않고 블록을 받지 않는다. `focusItemId` 는 묶음이 아닌 첫 활성 항목이다.
+4. `rerank`: 묶음 항목은 `rank: null` 이다. 나머지 `planned` 항목만 점수 순으로 번호를 받는다.
+5. `focusUpdates`: 대상이 묶음 항목이면 빈 목록이다. 서비스 `focusItem` 은 `'묶음 항목은 집중 작업이 될 수 없어요.'` 로 throw 한다. 다른 활성 항목의 번호 매기기에서 묶음 항목을 뺀다.
+6. 최신화 보강(J.5): 보강으로 묶음이 된 항목은 `rank: null` 패치를 받는다. 나머지 활성 항목은 기존 순서대로 1부터 다시 번호를 받는다. A20 의 '순서 유지' 를 지킨다.
+7. `listCandidates`·후보 더 보기: 묶음 후보를 빼지 않는다. 사용자가 직접 넣을 수 있다. 넣으면 4번으로 `rank: null` 이 된다.
+
+하위가 후보·계획에 없는 에픽은 보통 항목이다. 예: 티켓을 아직 만들지 않은 PRD 에픽은 PRD 작성 자체가 일이다.
+
+기존 계획 반영: 오늘(2026-11-03) 계획의 ICA-8054·ICA-8929 는 하위의 `parent_key` 가 비어 있어 보강 전에는 묶음이 아니다. 다음 `full`·`jira` 최신화가 J.5 보강으로 ICA-8971·ICA-8984·ICA-8987 의 `parent_key` 를 채운다. 같은 트랜잭션에서 두 에픽이 `rank: null` 이 되고 ICA-8971 이 1순위·집중 작업이 된다. 이 재계산은 사용자 결정 상태(A15)를 바꾸지 않는다.
+
+### J.5 저장·마이그레이션·보강 (A50)
+
+**저장 위치 결정**: `plan_items` 컬럼으로 저장한다. 페이로드 생성 시 계산하지 않는다. 이유 3가지. `local` 모드는 Jira 를 보지 않아 부모를 다시 알 수 없다. 타임라인은 `PlanItem` 만으로 계산한다. 지난 계획을 볼 때 그날의 분류가 남는다.
+
+새 컬럼 4개:
+
+| 컬럼 | 타입 | 뜻 |
+|------|------|----|
+| `work_type` | TEXT NOT NULL DEFAULT 'etc' | 업무 유형 |
+| `work_version` | TEXT | 버전 |
+| `parent_key` | TEXT | Jira 부모 키 |
+| `group_name` | TEXT | 묶음 이름 |
+
+`ASSISTANT_SCHEMA` 의 `plan_items` DDL 에 4개를 더한다. `migrateAssistantSchema` 에 `ADDED_PLAN_ITEM_COLUMNS` 배열을 추가한다. `PRAGMA table_info(plan_items)` 로 없는 컬럼만 `ALTER TABLE` 한다. 여러 번 실행해도 결과가 같다.
+
+백업·복원 영향: `docs/DATA_BACKUP.md` 의 zip 은 DB 파일 전체를 복사한다. 새 컬럼은 자동으로 포함된다. 구 버전 zip 을 복원하면 `closeDb → 교체 → initDatabase` 순서로 `migrateAssistantSchema(db)` 가 다시 돈다(`database.ts:439`). 그래서 컬럼이 없는 DB 도 복원 뒤 바로 쓴다. 매니페스트 형식은 바꾸지 않는다.
+
+**최신화 보강** `enrichItems(items, candidates, jiraSeen): PlanItemUpdate[]` (순수, `assistant-refresh.ts`):
+- 대상: `source` 가 `jira`·`task` 이고 `candidate_id` 가 현재 후보 집합에 있는 항목.
+- 후보의 `workType`·`workVersion`·`parentKey`·`groupName` 과 항목의 4개 컬럼이 다르면 그 필드만 패치한다.
+- 상태·제목·마감·점수는 건드리지 않는다. `manual`·`todo`·`action_item` 항목은 건드리지 않는다.
+- `planRefresh` 가 4단계 뒤에 호출해 `updates` 에 합친다. 그 뒤 J.4-6 의 묶음 `rank: null` 과 번호 재부여를 적용한다.
+- `jiraSeen` 이 false 이면 Jira 유래 항목을 보강하지 않는다. 이유: 캐시가 없는 `local` 에서는 부모를 모른다.
+
+`PlanItemUpdate.patch` 허용 키에 4개 컬럼을 더한다. `updatePlanItems` 의 SET 절 화이트리스트에 4개를 더한다.
+
+### J.6 브리핑 형식 (A51)
+
+**원칙**
+- 표·숫자·목록은 코드가 만든다. 규칙 브리핑과 LLM 브리핑이 같은 표를 쓴다.
+- LLM 은 인사 단락, 먼저 할 일 이유, 챙길 것 문장만 쓴다.
+- 회의와 블록을 하나씩 나열하지 않는다. 아래 시간표 카드와 중복되기 때문이다. 회의는 수와 시간대로만 말한다. 집중 시간은 첫 블록 시각과 남은 분으로만 말한다.
+- 제목 H1 을 쓰지 않는다. 날짜는 헤더 1곳에만 보인다.
+- `## 오늘 방침` 절은 A38 그대로 둔다. 지시가 있으면 본문 맨 앞에 온다.
+
+**사실 계산** `buildBriefingFacts(input: BriefingInput): BriefingFacts` (순수):
+```ts
+export interface BriefingRow {
+  item: PlanItem
+  typeLabel: string            // 'QA 4.174.0' | 'SUS' | 'TRD' | 'PRD' | '기타'
+  groupName: string | null     // item.group_name
+  statusLabel: string          // '예정' | '진행 중' | '완료' | '미룸'
+  dueLabel: string             // 'MM-DD' | '오늘' | 'n일 지남' | '–'
+}
+export interface BriefingGroup { name: string; workType: WorkType; version: string | null; total: number; done: number }
+export interface BriefingFacts {
+  instruction: string | null
+  meetingCount: number; morningCount: number; afternoonCount: number   // 12:00 기준. 종일 일정 제외
+  firstMeeting: { start: string; end: string; title: string } | null
+  focus: PlanItem | null
+  freeMinutesLeft: number
+  firstBlockStart: string | null     // state 가 current·future 인 첫 배정 가능 블록의 start
+  rows: BriefingRow[]                // 묶음 항목 제외. rank 순. 계획 상태(planned·in_progress·done·deferred) 만
+  groups: BriefingGroup[]            // group_name 별 집계. total 내림차순
+  qa: { version: string | null; inProgress: boolean; count: number } | null   // qa 항목이 1건 이상이면
+  overdue: PlanItem[]; dueToday: PlanItem[]; unplacedDeadline: PlanItem[]
+  suggestedCount: number; urgentSuggestedCount: number
+  suggestedBySource: Partial<Record<CandidateSource, number>>
+  errors: string[]
+}
+```
+
+**표** `renderPlanTable(rows: BriefingRow[]): string`:
+- 머리글 `| 유형 | 묶음 | 작업 | 상태 | 마감 |`.
+- 작업 칸은 `jira_issue_key` 가 있으면 `KEY 제목`, 없으면 제목이다. 48자에서 자른다.
+- 묶음 칸은 `group_name` 36자, 없으면 `–` 다.
+- 셀 값의 `|` 는 `\|` 로, 줄바꿈은 공백으로 바꾼다. `tableCell()` 1곳에서 한다.
+- 행이 0건이면 표 대신 `계획 항목이 없어요. 아래 더 보기에서 후보를 추가해 주세요.` 1줄이다.
+
+**규칙 브리핑** `renderRuleBriefing(input)` 출력 구조:
+1. `## 오늘 방침` (지시가 있을 때만, A38).
+2. 인사 단락. 코드 템플릿 문장 2~4개. 회의 수·시간대, 첫 집중 시각, 남은 집중 시간, 집중 작업.
+3. `## 오늘 할 일 N건` + 표.
+4. `## 챙길 것` 불릿. 조건별 고정 문장. 0건이면 절을 뺀다.
+   - `qa` 가 있으면 `QA {버전} 이 {진행 중이에요|예정이에요}.` 1줄. 맨 위에 둔다.
+   - 묶음별 진행: `{묶음 이름} 묶음은 {total}건 중 {done}건 끝났어요.` 묶음이 2개 이상일 때만.
+   - 마감 지남·오늘 마감·블록 없는 마감 항목 각각 1줄.
+   - 새로 들어온 일: `새로 들어온 일이 {n}건 있어요. {출처별 요약}.` 예: `회의 액션아이템 12건, Jira 3건이에요.`
+   - 확인 실패 출처: 각각 `{문구}` 를 해요체로. 예: `캘린더를 확인하지 못했어요.`
+
+2026-11-03 규칙 브리핑 예시 (보강 뒤):
+```markdown
+오늘은 회의가 5개 있어요. 오전에 3개, 오후에 2개예요.
+첫 집중 시간은 12:30 부터예요. 집중할 수 있는 시간은 모두 4시간이에요.
+지금은 **ICA-8971 안드로이드 구매자 앱 v4.174.0 QA** 에 집중하시면 돼요.
+
+## 오늘 할 일 4건
+
+| 유형 | 묶음 | 작업 | 상태 | 마감 |
+|------|------|------|------|------|
+| QA 4.174.0 | 안드로이드QA-2026 | ICA-8971 안드로이드 구매자 앱 v4.174.0 QA | 진행 중 | – |
+| PRD | [폴더블] 넓은 화면 공통 기준 적용 - Android | ICA-8984 [폴더블] 넓은 화면 공통 기반 | 예정 | – |
+| PRD | [폴더블] 넓은 화면 공통 기준 적용 - Android | ICA-8987 [폴더블] 공통 요소 넓은 화면 대응 | 예정 | – |
+| 기타 | – | 174 버전 릴리스를 시작한다. | 예정 | – |
+
+## 챙길 것
+- QA 4.174.0 이 진행 중이에요.
+- 새로 들어온 일이 15건 있어요. 회의 액션아이템 15건이에요.
+```
+
+**LLM 브리핑** 스키마 `BriefingSchema`:
+```ts
+const BriefingObject = z.object({
+  greeting: z.string().min(1).max(300),              // 해요체 2~3문장. 회의 수·시간대, 집중 시간, 집중 작업
+  focus_candidate_id: z.string().max(60).nullable(), // 데이터의 candidate_id 중 하나. 묶음 항목 제외
+  focus_reason: z.string().max(120).nullable(),      // 먼저 할 이유 1문장
+  notes: z.array(z.string().max(160)).max(4)         // 챙길 것. 마감·의존·새로 들어온 일
+})
+```
+`headline`·`sections`·`risks` 는 없앤다. 이유: 절 자유 생성이 회의·블록 나열을 만들었다.
+
+`briefingToMarkdown(value: BriefingJson, input: BriefingInput): string` 조립 순서:
+1. `## 오늘 방침` (A38, 코드).
+2. `greeting` 단락 (LLM).
+3. `**먼저 할 일**: {KEY 제목} — {focus_reason}` (코드가 id 를 제목으로 바꾼다. `focus_candidate_id` 가 계획 항목 밖이거나 묶음 항목이면 줄을 뺀다).
+4. `## 오늘 할 일 N건` + 표 (코드, 규칙 브리핑과 같은 함수).
+5. `## 챙길 것`: `notes` (LLM) 뒤에 코드의 확인 실패 출처 문장을 붙인다. 합쳐서 0건이면 절을 뺀다.
+
+프롬프트 `[데이터]` JSON 변경:
+- `plan_items[]` 에 `work_type`, `work_version`, `group_name`, `is_group` 를 더한다. 묶음 항목도 넣되 `is_group: true` 다.
+- `facts` 객체를 더한다: `meeting_count`, `morning_count`, `afternoon_count`, `first_block_start`, `free_minutes_left`, `focus_candidate_id`, `groups[]`, `qa`, `overdue_candidate_ids`, `due_today_candidate_ids`, `suggested_count`, `suggested_by_source`.
+- `timeline.entries` 와 `calendar` 는 유지한다. 상한 40·30 그대로다.
+- 시스템 프롬프트 규칙 추가: `회의와 블록을 하나씩 나열하지 않는다. 회의는 수와 시간대로만 말한다.` `표와 목록을 만들지 않는다. 화면이 표를 따로 보여 준다.` `focus_candidate_id 는 is_group 이 false 인 항목만 고른다.` `QA 항목이 진행 중이면 greeting 에서 배포 버전을 말한다.`
+- `WRITING_STYLE_RULES` 대신 `ASSISTANT_SPEECH_RULES` 와 `ASSISTANT_SPEECH_JSON_NOTE` 를 넣는다.
+- `[지시]` 블록과 `neutralizeMarkers` 는 그대로다 (A38·A9).
+
+2026-11-03 LLM 브리핑 예시:
+```markdown
+좋은 아침이에요. 오늘은 오전에 회의가 3개 몰려 있어요. 12:30 부터 4시간 정도 집중할 수 있으니, v4.174.0 QA 를 먼저 챙기시면 돼요.
+
+**먼저 할 일**: ICA-8971 안드로이드 구매자 앱 v4.174.0 QA — 174 릴리스 시작이 QA 완료에 걸려 있어요.
+
+## 오늘 할 일 4건
+
+(표는 규칙 브리핑과 같다)
+
+## 챙길 것
+- 174 릴리스 시작은 QA 가 끝난 뒤에 하시면 돼요.
+- 폴더블 작업 2건은 QA 뒤 남는 시간에 이어 가시면 돼요.
+- 새로 들어온 일 15건은 모두 회의 액션아이템이에요. 시간 날 때 정리해 주세요.
+```
+
+### J.7 비서 말투 규칙 (A52)
+
+`writing-style.ts` 에 새 export 2개를 더한다. 기존 `WRITING_STYLE_RULES` 는 바꾸지 않는다. 채팅·회의 요약·면접 요약·명령 해석은 그대로 기존 규칙을 쓴다.
+
+```ts
+export const ASSISTANT_SPEECH_RULES = `## 비서 말투 규칙
+- 해요체로 쓴다. 예: "오늘은 오전에 회의가 3개 있어요."
+- 한 문장에 한 가지 정보만 쓴다. 문장은 25 어절 이하다.
+- 권유는 "~하시면 돼요", "~해 주세요" 로 쓴다. "~하라", "~한다" 로 끝내지 않는다.
+- 주어는 생략해도 된다. 비서 자신을 "저" 로 부르지 않는다.
+- 이중 부정을 쓰지 않는다. 괄호 보충을 쓰지 않는다. 세미콜론·대시로 절을 잇지 않는다.
+- 감탄사·이모지·과장을 쓰지 않는다. "!" 를 쓰지 않는다.
+- 숫자는 아라비아 숫자로 쓴다. 시각은 "11:00" 또는 "11시" 중 하나로 통일한다.
+- 열거는 전부 나열하거나 수로 말한다. "등" 으로 끝내지 않는다.
+- [데이터] 에 없는 사실·숫자·이름을 만들지 않는다.`
+
+export const ASSISTANT_SPEECH_JSON_NOTE =
+  'JSON 문자열 값 안의 문장에도 위 말투 규칙을 적용한다. JSON 구조와 키는 바꾸지 않는다.'
+```
+
+적용 범위:
+- `BRIEFING_SYSTEM_PROMPT`·`RECOVERY_SYSTEM_PROMPT`·`MEETING_SYSTEM_PROMPT` 3개가 `ASSISTANT_SPEECH_RULES` 를 쓴다. `assistant-briefing.ts` 에서 `WRITING_STYLE_RULES` import 를 지운다.
+- 규칙 브리핑 문장은 J.6 의 템플릿대로 해요체다.
+- 규칙 복구 본문(`assistant-recovery.ts`)의 완결 문장을 해요체로 바꾼다. 예: `마지막 근무는 {date} 였어요. {n}일 만에 돌아오셨어요.`, `최근 {n}일을 정리했어요.`, `이전 계획이 없어요. 최근 {n}일을 봤어요.`, `Jira 변경을 확인하지 못했어요.`, `Jira 가 연결되어 있지 않아요.`, `이슈가 많아 일부만 가져왔어요.` 날짜·상태·마감만 있는 데이터 줄은 그대로다.
+- 규칙 회의 브리핑(`assistant-meeting.ts`)의 명사구 줄은 바꾸지 않는다. 알림 문구도 바꾸지 않는다.
+- 렌더러 안내 문구(`todayNotices`, 빈 상태 문구)도 해요체로 맞춘다. 예: `캘린더가 연결되지 않았어요. 회의 없이 빈 시간을 계산해요.`
+
+### J.8 오늘 화면 배치 (A53)
+
+최종 순서 (근무 중):
+1. `DayHeader`: 페이지 제목 역할을 겸한다. 긴 날짜 `11월 3일 화요일`, 상태 배지, 시작 시각, 버튼 새로고침·퇴근. `TodayView` 상단의 `오늘` 제목 줄과 날짜 span 을 지운다. 날짜는 화면에 1번만 보인다.
+2. 오류 배너 (조건부).
+3. `CheckinPanel` (조건부, 변경 없음).
+4. `BriefingCard`: 핵심. 본문이 J.6 형식이다.
+5. `MeetingBriefingCard`: 시작 전 회의 중 가장 가까운 1건만 펼친다. 나머지와 지난 회의는 접힌다.
+6. `RecoveryCard`: 본문·진행 중·오류가 있을 때만 여기 보인다. 없으면 '더 보기' 안에 1줄로 간다.
+7. 시간표 카드: 제목 `오늘 계획` → `시간표`. 집중 가능 시간 표시 유지. id `today-timeline` 유지.
+8. `오늘 할 일`: `PlanItemRow` 에 유형 배지·묶음 이름·묶음 배지를 더한다.
+9. `InboxSection` (새로 들어온 일): 5건까지 보이고 `나머지 n건 보기` 버튼. 머리글에 출처별 수.
+10. `MoreSection` (`더 보기`, 기본 접힘): 명령 입력 카드(근무 중), 후보 더 보기(근무 중), 변경 내역, 연결 안내 문구 목록, 본문 없는 맥락 복구 1줄, 비서 설정 버튼.
+
+계획 없음·닫힘 상태: 계획 없음은 1·2·5·10 만 보인다. 10 에는 변경 내역·연결 안내·비서 설정만 있다. 닫힘 상태에서는 7·8 도 읽기 전용으로 보인다. 현재와 같다.
+
+컴포넌트별 변경:
+
+| 파일 | 변경 |
+|------|------|
+| `TodayView.tsx` | 상단 제목 줄 삭제. 순서 재배치. `moreOpen` 상태. `recoveryVisible` 계산. `todayNotices` 해요체. `MoreSection` 렌더 |
+| `MoreSection.tsx` (새) | `{ open, onToggle, children }`. 버튼 id `today-more`. 열렸을 때만 children 을 그린다 |
+| `DayHeader.tsx` | 긴 날짜 라벨. 제목급 타이포. 3개 상태 모두 날짜 1번 |
+| `PlanItemRow.tsx` | `WorkTypeBadge`, `workTypeLabel`, `isGroupItem`, `longDateLabel`. 묶음 항목은 순위 `–`, `집중 중` 배지와 `지금 집중` 버튼 없음, `묶음` 배지. `group_name` 을 제목 아래 작은 회색 글자로 |
+| `InboxSection.tsx` | `INBOX_SHOWN = 5`, `expanded` 상태, 출처별 수 `inboxSourceSummary(items)`. 행에 `WorkTypeBadge` |
+| `CandidatePicker.tsx` | 행에 `WorkTypeBadge` |
+| `MeetingBriefingCard.tsx` | `nearestUpcomingEventId(rows, now)`. 기본 접힘 = `event.id !== nearest` |
+| `BriefingCard.tsx`, `RecoveryCard.tsx`, `ChangeLog.tsx`, `CommandInput.tsx`, `CheckinPanel.tsx`, `Timeline.tsx` | 변경 없음. 위치만 바뀐다 |
+
+유형 배지 색:
+
+| 유형 | 라벨 | 색 |
+|------|------|----|
+| qa | `QA` 또는 `QA 4.174.0` | `bg-rose-50 text-rose-700` |
+| sus | `SUS` | `bg-orange-50 text-orange-700` |
+| trd | `TRD` | `bg-cyan-50 text-cyan-700` |
+| prd | `PRD` | `bg-violet-50 text-violet-700` |
+| etc | 배지 없음 | – |
+| 묶음 | `묶음` | `bg-gray-100 text-gray-600` |
+
+검증은 `renderToStaticMarkup` 으로 한다. 자동 클릭은 불가다. `MoreSection` 은 `open` prop 으로 열린 상태를 직접 그려 검증한다. `TodayView` 는 테스트용으로 `moreOpenInitial?: boolean` 같은 주입 경로가 필요하면 I3 가 정한다.
+
+### J.9 모듈 계약
+
+팀원은 이름과 시그니처를 그대로 쓴다. 바꿔야 하면 리더에게 알린다.
+
+#### J.9.1 `assistant-types.ts` (I1)
+```ts
+// ── 부록 J ──
+export type WorkType = 'qa' | 'sus' | 'trd' | 'prd' | 'etc'
+
+// 변경: Candidate 에 추가
+//   parentKey: string | null      // Jira 부모 키. jira·task(머지) 만
+//   groupName: string | null      // Jira 부모 요약 또는 WBS 프로젝트 이름
+//   workType: WorkType
+//   workVersion: string | null
+// 변경: JiraCandidateInput 에 추가
+//   issueType: string
+//   parentKey: string | null
+//   parentSummary: string | null
+// 변경: PlanItem 에 추가 (NewPlanItem 도 따라 바뀐다)
+//   work_type: WorkType
+//   work_version: string | null
+//   parent_key: string | null
+//   group_name: string | null
+// 변경: PlanItemUpdate.patch 의 Pick 에 'work_type' | 'work_version' | 'parent_key' | 'group_name' 추가
+
+export interface WorkClassifyInput {
+  source: CandidateSource; jiraKey: string | null
+  title: string; parentSummary: string | null; projectName: string | null; issueType: string | null
+}
+export interface WorkClassification { workType: WorkType; workVersion: string | null }
+```
+
+#### J.9.2 `assistant-worktype.ts` (I1, 새 파일, 순수)
+```ts
+export const SUSTAIN_PATTERN = /\bsus(tain(ing)?)?\b/i      // project-sync-plan.SUSTAIN_EPIC_PATTERN 과 같다
+export const QA_PATTERN = /QA/                               // project-sync-plan.QA_EPIC_PATTERN 과 같다
+export const TRD_PATTERN = /\bTRD\b/i
+export const PRD_PATTERN = /\bPRD\b/i
+export const EPIC_TYPE_PATTERN = /epic|에픽/i
+export const RELEASE_PROJECT_PATTERN = /릴리스|release|QA/i
+export const VERSION_PATTERN = /(?:^|[^\d.])v?(\d+\.\d+\.\d+)(?![\d.])/
+export const WORK_TYPE_LABEL: Record<WorkType, string> = { qa: 'QA', sus: 'SUS', trd: 'TRD', prd: 'PRD', etc: '기타' }
+export function extractVersion(texts: (string | null | undefined)[]): string | null
+export function classifyWork(input: WorkClassifyInput): WorkClassification       // J.3 순서
+export function workTypeLabel(type: WorkType, version: string | null): string     // 'QA 4.174.0' | 'SUS' | '기타'
+export function isGroupItem(item: Pick<PlanItem, 'id' | 'jira_issue_key'>, items: Pick<PlanItem, 'id' | 'parent_key' | 'status'>[]): boolean
+export function isGroupCandidate(c: Pick<Candidate, 'jiraKey'>, candidates: Pick<Candidate, 'parentKey'>[]): boolean
+```
+- import 허용: `./assistant-types` 만. A3 대상에 `worktype` 을 추가한다.
+
+#### J.9.3 `jira.ts` (I1) 변경분
+```ts
+const MY_ISSUE_FIELDS = 'summary,status,issuetype,priority,duedate,updated,parent'
+export interface JiraMyIssue {
+  key: string; summary: string; status: string; statusCategory: JiraStatusCategory
+  priority: string | null; duedate: string | null; updated: string; issueType: string
+  parentKey: string | null          // 추가
+  parentSummary: string | null      // 추가. raw.fields.parent.fields.summary
+}
+```
+- `RawMyIssue.fields.parent?: { key?: string; fields?: { summary?: string } } | null`.
+- JQL·메서드·페이지네이션은 바꾸지 않는다. GET 만 쓴다 (A1).
+
+#### J.9.4 `assistant-candidates.ts` (I1) 변경분
+- `fromJira`: `parentKey`·`groupName = parentSummary`·`classifyWork({ source: 'jira', jiraKey, title: summary, parentSummary, projectName: null, issueType })`.
+- `fromTask`: `parentKey: null`, `groupName: project_name`, `classifyWork({ source: 'task', jiraKey, title: name, parentSummary: null, projectName: project_name, issueType: null })`.
+- `mergeTaskJira`: `parentKey` 는 jira, `groupName` 은 `jira.groupName ?? task.groupName`, 분류는 jira 부모 요약·jira 이슈 유형·task 프로젝트 이름으로 다시 계산한다. 그래서 `fromJira` 의 `JiraCandidateInput` 을 `jiraByKey` 와 나란히 보관한다.
+- `fromTodo`·`fromActionItem`: `parentKey: null, groupName: null, workType: 'etc', workVersion: null`.
+
+#### J.9.5 `assistant-sources.ts` (I1) 변경분
+- `toJiraCandidateInput` 에 `issueType`, `parentKey`, `parentSummary` 를 넣는다.
+- 그 외 변경 없음. 스냅샷 `JiraSnapshotRef` 는 바꾸지 않는다.
+
+#### J.9.6 `assistant-schema.ts`·`assistant-store.ts` (I1)
+```ts
+// assistant-schema.ts
+const ADDED_PLAN_ITEM_COLUMNS: { name: string; ddl: string }[]   // work_type, work_version, parent_key, group_name
+// migrateAssistantSchema: daily_plans 뒤에 plan_items 도 PRAGMA table_info 로 확인해 더한다
+// assistant-store.ts
+// insertItemsRaw: INSERT 컬럼에 4개 추가. toItem: work_type 이 null 이면 'etc'
+// updatePlanItems: 허용 키에 4개 추가
+```
+
+#### J.9.7 `assistant-slots.ts` (I1) 변경분
+- `buildStartPlanItems(candidates, today, planSize)`: `isGroupCandidate` 인 후보를 뺀 뒤 순위를 매긴다. 항목에 4개 필드를 채운다.
+- `buildTimeline`: `active = items.filter(ACTIVE && !isGroupItem(it, items))`. 시그니처는 그대로다.
+
+#### J.9.8 `assistant-refresh.ts` (I1) 변경분
+```ts
+export function enrichItems(items: PlanItem[], candidates: Candidate[], jiraSeen: boolean): PlanItemUpdate[]   // J.5
+export function groupRankUpdates(items: PlanItem[]): PlanItemUpdate[]   // 묶음 항목 rank null, 나머지 활성 항목은 기존 순서로 1부터
+// 변경: planRefresh 가 enrichItems → groupRankUpdates 를 updates 에 합친다. summary 는 바꾸지 않는다
+// 변경: planRefresh 의 suggested 삽입에서 isGroupCandidate 를 뺀다. 항목에 4개 필드를 채운다
+// 변경: rerank 는 묶음 항목에 rank null 을 준다
+// 변경: focusUpdates 는 대상이 묶음이면 [] 다. 번호 재부여에서 묶음을 뺀다
+```
+
+#### J.9.9 `assistant-service.ts` (I1) 변경분
+- `addItemImpl`·`insertManualItem`: `NewPlanItem` 에 4개 필드를 채운다. manual 은 `'etc'`·null 3개.
+- `focusItemImpl`: 대상이 묶음이면 `'묶음 항목은 집중 작업이 될 수 없어요.'` 를 throw 한다.
+- `briefingInputOf`·`renderRuleBriefing` 호출은 그대로다. `BriefingInput` 은 바뀌지 않는다.
+- `requestLlmBriefing` 호출 시그니처는 그대로다.
+
+#### J.9.10 `writing-style.ts` (I2) 추가분
+J.7 의 `ASSISTANT_SPEECH_RULES`, `ASSISTANT_SPEECH_JSON_NOTE`.
+
+#### J.9.11 `assistant-briefing.ts` (I2) 변경분
+```ts
+export interface BriefingRow { … }            // J.6
+export interface BriefingGroup { … }
+export interface BriefingFacts { … }
+export function buildBriefingFacts(input: BriefingInput): BriefingFacts
+export function renderPlanTable(rows: BriefingRow[]): string
+export function tableCell(text: string, max: number): string
+export function renderRuleBriefing(input: BriefingInput): string          // 시그니처 유지. 본문 J.6
+export type BriefingJson = { greeting: string; focus_candidate_id: string | null; focus_reason: string | null; notes: string[] }
+export const BriefingSchema: z.ZodType<BriefingJson>
+export const BRIEFING_SYSTEM_PROMPT: string                               // ASSISTANT_SPEECH_RULES 사용
+export function buildBriefingPrompt(input: BriefingInput): string         // facts·work_type 포함
+export function briefingToMarkdown(value: BriefingJson, input: BriefingInput): string   // 시그니처 변경
+export async function requestLlmBriefing(input, model)                     // 시그니처 유지. focus 가 묶음이면 null
+// RECOVERY_SYSTEM_PROMPT·MEETING_SYSTEM_PROMPT: ASSISTANT_SPEECH_RULES 로 교체. 스키마·조립 함수는 그대로
+```
+- import: `./assistant-worktype` 의 `WORK_TYPE_LABEL`·`workTypeLabel`·`isGroupItem` 을 쓴다. 이 파일은 DB 를 쓰지 않는다 (A2).
+
+#### J.9.12 `assistant-recovery.ts` (I2) 변경분
+- `recoveryToMarkdown`·`lastDayLines`·`jiraLines` 의 완결 문장을 J.7 대로 바꾼다. 시그니처는 그대로다.
+
+#### J.9.13 렌더러 (I3)
+`types/index.ts`:
+- `export type WorkType = 'qa' | 'sus' | 'trd' | 'prd' | 'etc'`.
+- `Candidate` 에 `parentKey`, `groupName`, `workType`, `workVersion` 추가. `PlanItem` 에 `work_type`, `work_version`, `parent_key`, `group_name` 추가. J.9.1 과 같은 모양이다.
+- `AssistantAPI` 는 바꾸지 않는다.
+
+`PlanItemRow.tsx`:
+```ts
+export const WORK_TYPE_BADGE: Record<Exclude<WorkType, 'etc'>, { label: string; color: string }>
+export function workTypeLabel(type: WorkType, version: string | null): string
+export function WorkTypeBadge({ type, version }: { type: WorkType; version: string | null }): React.ReactNode   // etc 는 null
+export function isGroupItem(item: Pick<PlanItem, 'id' | 'jira_issue_key'>, items: Pick<PlanItem, 'id' | 'parent_key' | 'status'>[]): boolean   // J.4 와 같은 정의
+export function longDateLabel(date: string): string          // '2026-11-03' → '11월 3일 화요일'. 형식이 아니면 입력 그대로
+// PlanItemRowProps 에 items: Pick<PlanItem, 'id' | 'parent_key' | 'status'>[] 추가 (묶음 판정용)
+```
+`InboxSection.tsx`:
+```ts
+export const INBOX_SHOWN = 5
+export function inboxSourceSummary(items: PlanItem[]): string      // '액션아이템 12 · Jira 3'
+```
+`MeetingBriefingCard.tsx`:
+```ts
+export function nearestUpcomingEventId(rows: MeetingBriefingRow[], now: string): number | null
+```
+`MoreSection.tsx` (새):
+```ts
+export default function MoreSection(props: { open: boolean; onToggle: () => void; children: React.ReactNode }): React.ReactNode
+```
+`TodayView.tsx`:
+```ts
+export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: RecoveryState): boolean
+```
+
+#### J.9.14 변경하지 않는 파일
+`assistant-schedule.ts`, `assistant-day.ts`, `assistant-settings.ts`, `assistant-command.ts`, `assistant-command-llm.ts`, `assistant-scheduler.ts`, `assistant-tray.ts`, `ai-headless.ts`, `ai-assistant-tools.ts`, `project-sync-plan.ts`, `google-calendar.ts`, `src/main/ipc/assistant.ipc.ts`, `src/preload/index.ts`, `src/preload/index.d.ts`, `src/renderer/src/env.d.ts`, `stores/assistantStore.ts`, `App.tsx`, `AssistantSettingsModal.tsx`, `TrayPanel.tsx`, `MarkdownContent.tsx`, `backup-service.ts`.
+
+### J.10 가드레일
+
+기존 규칙 적용:
+- A1: `jira.ts` 는 필드 문자열만 바꾼다. GET 만 쓴다.
+- A2: 비서 테이블만 쓴다. 새 컬럼은 `plan_items` 다.
+- A3: 대상에 `worktype` 을 추가한다. `assistant-worktype.ts` 는 `./assistant-types` 만 import 한다.
+- A8·A9·A38: 규칙 브리핑이 먼저다. `[데이터]`·`[지시]` 블록과 zod 검증은 그대로다.
+- A14: `classifyWork`·`buildBriefingFacts`·`enrichItems`·`groupRankUpdates` 는 입력을 바꾸지 않는다.
+- A15·A20: 보강은 상태를 바꾸지 않는다. 번호 재부여는 활성 항목의 상대 순서를 유지한다.
+
+새 규칙:
+
+| ID | 규칙 | 이유 | 판정 |
+|----|------|------|------|
+| A48 | 업무 유형 분류는 순수 함수다. 순서는 QA → SUS → TRD → PRD → 기타다. `todo`·`action_item`·`manual` 은 항상 `etc` 다. 버전은 `N.N.N` 만 뽑는다 | 사용자가 결과를 예측한다. 패턴 수정이 1곳이다 | 테스트 `A48` |
+| A49 | 묶음 항목은 집중 작업·블록 배정·하루 시작 계획·제안에서 뺀다. `rank` 는 null 이다. 묶음 이름으로만 보인다. 하위가 없는 에픽은 보통 항목이다 | 연 단위 QA 에픽이 집중 시간을 차지하지 않는다 | 테스트 `A49` |
+| A50 | 분류·묶음 정보는 `plan_items` 컬럼 4개에 저장한다. 마이그레이션은 여러 번 실행해도 같다. 최신화 보강은 4개 컬럼과 묶음 `rank` 만 바꾼다. 상태·제목·마감·점수를 바꾸지 않는다 | `local` 모드와 지난 계획에서도 분류가 보인다. A15 를 지킨다 | 테스트 `A50` |
+| A51 | 브리핑의 표·숫자·목록은 코드가 만든다. LLM 출력은 `greeting`·`focus_candidate_id`·`focus_reason`·`notes` 4개 키뿐이다. 회의·블록을 하나씩 나열하지 않는다 | 타임라인 카드와 중복을 없앤다. 환각 범위를 문장으로 제한한다 | 테스트 `A51` |
+| A52 | 비서 문장은 해요체다. `ASSISTANT_SPEECH_RULES` 가 유일 정의처다. 브리핑·복구·회의 LLM 프롬프트와 규칙 브리핑·규칙 복구 본문이 이를 따른다. 저장된 과거 본문은 바꾸지 않는다 | 말투가 1곳에서 바뀐다. 기록이 사후에 바뀌지 않는다 | 테스트 `A52`, 조건 13·14 |
+| A53 | 오늘 화면 순서는 헤더 → 체크인 → 브리핑 → 회의 브리핑 → 맥락 복구 → 시간표 → 오늘 할 일 → 새로 들어온 일 → 더 보기다. 날짜는 헤더 1곳이다. 명령 입력·후보 추가·변경 내역·연결 안내·비서 설정은 더 보기 안이다 | 자동 위주 사용자가 읽을 것만 위에 본다 | 테스트 `A53` |
+
+### J.11 팀 구성과 소유 파일
+
+팀원 3명이다. 파일은 겹치지 않는다.
+
+| 팀원 | 역할 | 소유 파일 |
+|------|------|-----------|
+| I1 메인 데이터·분류·묶음 | 타입, 분류 모듈, Jira 필드, 후보, 수집, 스키마·저장소, 슬롯·타임라인, 최신화 보강, 서비스 | `src/main/services/assistant-types.ts`, `assistant-worktype.ts`(새), `assistant-worktype.test.ts`(새), `jira.ts`, `jira.test.ts`, `assistant-candidates.ts`, `assistant-candidates.test.ts`, `assistant-sources.ts`, `assistant-sources.test.ts`, `assistant-schema.ts`, `assistant-schema.test.ts`, `assistant-store.ts`, `assistant-store.test.ts`, `assistant-slots.ts`, `assistant-slots.test.ts`, `assistant-refresh.ts`, `assistant-refresh.test.ts`, `assistant-service.ts`, `assistant-service.test.ts`, 픽스처만 고치는 `assistant-command.test.ts`, `assistant-schedule.test.ts`, `assistant-tray.test.ts`, `ai-assistant-tools.test.ts`, `assistant-scheduler.test.ts`, `assistant-command-llm.test.ts` |
+| I2 브리핑·말투·프롬프트 | 말투 규칙, 사실 계산, 표, 규칙·LLM 브리핑, 복구 문장, 회의 프롬프트 | `src/main/services/writing-style.ts`, `writing-style.test.ts`, `assistant-briefing.ts`, `assistant-briefing.test.ts`, `assistant-recovery.ts`, `assistant-recovery.test.ts`, `assistant-meeting.ts`, `assistant-meeting.test.ts` |
+| I3 렌더러 UI | 타입 복제, 배지, 재배치, 더 보기, 받은 편지함 접기, 회의 카드 펼침 | `src/renderer/src/types/index.ts`, `components/today/TodayView.tsx`, `TodayView.test.tsx`, `MoreSection.tsx`(새), `DayHeader.tsx`, `PlanItemRow.tsx`, `InboxSection.tsx`, `CandidatePicker.tsx`, `MeetingBriefingCard.tsx`, `MeetingBriefingCard.test.tsx`, `CheckinPanel.test.tsx`(픽스처만), `CommandInput.test.tsx`(픽스처만), `components/tray/TrayPanel.test.tsx`(픽스처만) |
+
+공유 타입 소유자: `assistant-types.ts` 는 I1, `renderer/src/types/index.ts` 는 I3 다. 두 사람은 J.9.1·J.9.13 의 정의를 글자 그대로 쓴다. I2 는 타입 파일을 바꾸지 않는다. I2 가 `assistant-briefing.test.ts`·`assistant-recovery.test.ts`·`assistant-meeting.test.ts` 의 `PlanItem` 픽스처에 4개 필드를 더한다.
+
+`docs/ASSISTANT.md` 는 리더가 쓴다.
+
+### J.12 완료 조건
+
+최대 반복 5회. 같은 실패가 2회 연속이면 중단하고 리더에게 보고한다. 5회를 넘으면 리더가 미충족 항목·시도·원인을 사용자에게 보고한다.
+
+1. C1: `npx vitest run` 종료 코드 0, 실패 0건.
+2. C2: `npm run typecheck` 에러 0건.
+3. C3: `npm run build` 종료 코드 0.
+4. `test -f src/main/services/assistant-worktype.ts` 종료 코드 0. `grep -c "A48" src/main/services/assistant-worktype.test.ts` ≥ 10.
+5. `grep -c "A49" src/main/services/assistant-slots.test.ts` ≥ 3.
+6. `grep -c "A49" src/main/services/assistant-refresh.test.ts` ≥ 4.
+7. `grep -c "A49" src/main/services/assistant-service.test.ts` ≥ 1.
+8. `grep -c "A50" src/main/services/assistant-schema.test.ts` ≥ 2. `grep -c "A50" src/main/services/assistant-store.test.ts` ≥ 2. `grep -c "A50" src/main/services/assistant-refresh.test.ts` ≥ 3.
+9. `grep -c "work_type" src/main/services/assistant-schema.ts` ≥ 2. `grep -c "ADDED_PLAN_ITEM_COLUMNS" src/main/services/assistant-schema.ts` ≥ 1.
+10. `grep -c "summary,status,issuetype,priority,duedate,updated,parent" src/main/services/jira.ts` = 1. `grep -c "parentSummary" src/main/services/jira.test.ts` ≥ 1.
+11. `grep -c "A51" src/main/services/assistant-briefing.test.ts` ≥ 7.
+12. `grep -c "A52" src/main/services/assistant-briefing.test.ts` ≥ 4. `grep -c "A52" src/main/services/assistant-recovery.test.ts` ≥ 1. `grep -c "A52" src/main/services/writing-style.test.ts` ≥ 1.
+13. `grep -c "export const ASSISTANT_SPEECH_RULES" src/main/services/writing-style.ts` = 1. `grep -c "ASSISTANT_SPEECH_RULES" src/main/services/assistant-briefing.ts` ≥ 4.
+14. `grep -c "WRITING_STYLE_RULES" src/main/services/assistant-briefing.ts` = 0. `grep -c "WRITING_STYLE_RULES"` 결과가 `ai-agent.ts`, `meeting-summary.ts`, `interview-summary.ts`, `assistant-command-llm.ts` 각각 ≥ 1.
+15. `grep -c "A38" src/main/services/assistant-briefing.test.ts` ≥ 8.
+16. `grep -c "A9" src/main/services/assistant-briefing.test.ts` ≥ 14.
+17. `grep -c "A53" src/renderer/src/components/today/TodayView.test.tsx` ≥ 5.
+18. `test -f src/renderer/src/components/today/MoreSection.tsx` 종료 코드 0. `grep -c "today-more" src/renderer/src/components/today/MoreSection.tsx` ≥ 1.
+19. `grep -c "WorkTypeBadge"` 결과가 `PlanItemRow.tsx`, `InboxSection.tsx`, `CandidatePicker.tsx` 각각 ≥ 1. `grep -c "묶음" src/renderer/src/components/today/PlanItemRow.tsx` ≥ 1.
+20. `grep -c "INBOX_SHOWN" src/renderer/src/components/today/InboxSection.tsx` ≥ 2. `grep -c "nearestUpcomingEventId"` 결과가 `MeetingBriefingCard.tsx` ≥ 2, `MeetingBriefingCard.test.tsx` ≥ 1.
+21. `grep -c 'variant="page"' src/renderer/src/components/today/TodayView.tsx` = 0. `grep -c "longDateLabel" src/renderer/src/components/today/DayHeader.tsx` ≥ 1.
+22. `grep -c "work_type"` 결과가 `src/main/services/assistant-types.ts`, `src/renderer/src/types/index.ts` 각각 ≥ 1.
+23. `grep -c "isGroupItem"` 결과가 `assistant-slots.ts`, `assistant-refresh.ts`, `assistant-briefing.ts`, `PlanItemRow.tsx` 각각 ≥ 1.
+24. A1: `grep -n "method:" src/main/services/jira.ts | grep -vc "'GET'"` 결과 0.
+25. A2: `grep -nE "INSERT INTO (projects|tasks|todos|meetings)|UPDATE (projects|tasks|todos|meetings)|DELETE FROM (projects|tasks|todos|meetings)" src/main/services/assistant-*.ts` 결과 0건.
+26. A3: `grep -lE "from '(electron|better-sqlite3|\.\./db|\./jira|\./google-calendar|\./project-sync-plan)" src/main/services/assistant-{candidates,score,slots,settings,day,refresh,schedule,tray,recovery,command,meeting,worktype}.ts` 결과 0건.
+27. IPC 불변: `git diff --stat -- src/preload src/main/ipc/assistant.ipc.ts src/renderer/src/env.d.ts` 출력이 비어 있다.
+
+### J.13 열린 결정 (권장 기본값을 쓴다)
+
+| # | 항목 | 기본값 | 근거 |
+|---|------|--------|------|
+| J-1 | Jira 키가 없고 패턴이 없는 WBS 작업의 유형 | `etc` | `회의 정리` 같은 프로젝트를 PRD 로 오분류하지 않는다 |
+| J-2 | 묶음 판정에 `suggested` 하위를 셀지 | 세지 않음 | 사용자가 받아들이기 전 항목이 계획을 바꾸지 않는다 |
+| J-3 | 묶음 후보를 후보 더 보기에서 숨길지 | 숨기지 않음 | 사용자가 에픽 자체를 넣을 길을 남긴다 |
+| J-4 | 규칙 브리핑에 H1 날짜 제목 | 없음 | 헤더가 날짜를 보여 준다 |
+| J-5 | LLM 스키마 `headline` 유지 | 없앰 | 제목 한 줄이 인사 단락과 겹친다 |
+| J-6 | 회의 전·복구 LLM 말투 | 해요체로 통일 | 한 화면에 두 말투가 섞이지 않는다 |
+| J-7 | 체크인·최신화·회의 알림 문구 | 그대로 | 알림은 요약 1줄이다 |
+| J-8 | 명령 입력 위치 | 더 보기 안 | 사용자가 조작을 거의 쓰지 않는다 |
+| J-9 | 새로 들어온 일 기본 표시 수 | 5건 | 액션아이템 15건이 화면을 밀어내지 않는다 |
+| J-10 | `project-sync-plan.ts` 패턴 재사용 방법 | 복사 + 동일성 테스트 | import 가 ADF·날짜 유틸을 끌고 온다 |
+| J-11 | 기존 계획의 보강 시점 | 다음 Jira 최신화 | 하루 시작 직후 수동 새로고침 1번이면 반영된다 |
+| J-12 | 시간표 카드 제목 | `시간표` | `오늘 계획` 이 `오늘 할 일` 과 혼동된다 |
+
+### J.14 위험
+
+| # | 위험 | 대응 |
+|---|------|------|
+| 1 | `PlanItem`·`Candidate` 필수 필드 추가로 픽스처 파일 다수가 깨진다 | J.11 에 파일마다 소유자를 정했다. 필수 필드로 두어 누락을 타입체크가 잡는다 |
+| 2 | Jira `parent` 필드에 `fields.summary` 가 없는 사이트 설정 | `parentSummary` 는 null 허용이다. 분류는 제목·이슈 유형으로 계속 동작한다 |
+| 3 | 묶음 항목이 `rank: null` 로 '오늘 할 일' 아래로 내려간다 | 묶음 배지와 묶음 이름이 하위 항목 옆에 보인다 |
+| 4 | 보강이 rank 를 바꿔 '지금·다음 블록 변경' 알림이 1회 뜬다 | 집중 작업이 에픽에서 실제 작업으로 바뀌는 변화는 사용자가 알아야 한다. 받아들인다 |
+| 5 | LLM 이 `greeting` 에 회의를 나열한다 | 시스템 프롬프트 금지 문구. `greeting` 300자 상한. 표는 코드가 만든다 |
+| 6 | 해요체 전환 뒤 기존 테스트 기대 문자열이 대량으로 바뀐다 | 소유자가 함께 고친다 |
+| 7 | `briefingToMarkdown` 시그니처 변경 | 호출처는 `assistant-briefing.ts` 와 그 테스트뿐이다 |
+| 8 | 순서 변경으로 알림 클릭 스크롤 대상 id 가 사라진다 | id 5개(`today-briefing`, `today-inbox`, `today-timeline`, `today-checkin`, `meeting-briefing-*`) 를 유지한다 |
+| 9 | 버전 정규식이 `26-11` 같은 스프린트 번호를 버전으로 오인한다 | `N.N.N` 3단만 받는다. 테스트가 `Sprint 26-11` 을 null 로 확인한다 |
+| 10 | 구 버전 백업 zip 복원 뒤 컬럼이 없다 | 복원 경로가 `initDatabase` 를 다시 타서 마이그레이션이 돈다 |
+| 11 | WBS 작업과 Jira 이슈 머지 시 분류 입력이 어긋난다 | `mergeTaskJira` 가 분류를 다시 계산한다. 테스트가 머지 결과의 `workType` 을 확인한다 |
+
+### J.15 사용자 결정 (2026-11-03)
+- 사용자가 브리핑 말투로 해요체를 골랐다.
+- 사용자가 상위 에픽을 묶음으로만 보여 주기로 했다. 하위 작업이 계획에 있으면 에픽은 집중 작업·시간 배정에서 빠진다.
+- J.13 의 열린 결정은 모두 기본값을 쓴다.
+
+### J.16 구현 확정분
+구현 중 팀원과 리더가 계약에 없던 세부를 아래처럼 정했다.
+- `assistant-command.ts` 의 `toManualCandidate` 와 `__fixtures__/assistant/factories.ts` 에 4개 필드 기본값을 더했다. 이유: 필수 필드 추가로 타입체크가 실패한다. J.9.14 의 예외다.
+- `assistant-slots.ts` 가 `workFieldsOf(c)` 를 export 한다. 이 함수는 후보의 4개 필드를 항목 컬럼으로 옮긴다. slots·refresh·service 가 쓴다.
+- `groupRankUpdates` 는 rank 가 남은 묶음 항목이 있을 때만 패치를 낸다. 이유: 묶음이 없을 때 매 최신화마다 번호를 다시 매기지 않는다.
+- `planRefresh` 의 교체 패치에도 4개 필드를 넣는다. 이유: 후보가 바뀌면 분류도 바뀐다.
+- 규칙 브리핑의 묶음 진행 줄은 묶음이 2개 이상일 때만 쓴다. 그중 2건 이상이고 끝난 건이 있는 묶음만 쓴다.
+- `facts.qa` 는 끝나지 않은 QA 항목만 센다. QA 가 모두 끝나면 QA 줄이 없다.
+- 표 행이 0건이면 제목은 `## 오늘 할 일` 이다.
+- 마감 줄은 제목을 3건까지 붙인다. 4건 이상이면 '외 n건' 이다. 급한 새 일이 있으면 1줄을 더 쓴다.
+- 외부 문장이 줄 앞에서 Markdown 기호가 되면 `\` 로 이스케이프한다. `tableCell` 은 `|` 와 `\` 를 이스케이프한다.
+- LLM `greeting` 이 비면 규칙 인사 문장을 쓴다. 허용되지 않은 focus 는 `focus_reason` 도 null 이다.
+- 더 보기 버튼 글자는 항상 '더 보기' 다. 화살표만 돈다. 새로 들어온 일을 펼친 뒤 버튼은 '덜 보기' 다.
+- `TodayView` 에 테스트용 `moreOpenInitial` prop 이 있다. 앱은 넘기지 않는다. 알림 대상이 화면에 없으면 더 보기를 연 뒤 스크롤한다.
+- 본문 없는 맥락 복구는 `RecoveryCard` 를 더 보기 안에 그대로 그린다.
+
+남은 위험: 묶음 에픽의 하위가 모두 빠지면 에픽은 보통 항목으로 돌아간다. 이때 rank 는 null 로 남는다. 다음 `rerank` 전까지 목록 맨 뒤에 있다.

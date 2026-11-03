@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { DailyPlan } from '../../types'
-import { Badge, Card, button } from '../ui'
-import { hhmmOf } from './PlanItemRow'
+import { Badge, Card, button, typo } from '../ui'
+import { hhmmOf, longDateLabel } from './PlanItemRow'
 
 const textareaClass =
   'w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none'
@@ -20,6 +20,11 @@ interface DayHeaderProps {
   onSkipWrapup: (date: string) => void
 }
 
+// 헤더는 페이지 제목을 겸한다. 날짜는 화면에서 여기 1번만 보인다 (부록 J.8)
+function DateTitle({ date }: { date: string }): React.ReactNode {
+  return <h2 className={typo.pageTitle}>{longDateLabel(date)}</h2>
+}
+
 // 퇴근을 잊은 날 다음에 보여 주는 어제 메모 입력 칸. 입력은 선택이다
 function WrapupPrompt({
   date,
@@ -36,7 +41,7 @@ function WrapupPrompt({
   return (
     <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
       <p className="text-sm text-amber-800 mb-2">어제 메모가 없어요. 한 줄 남길까요?</p>
-      <p className="text-[11px] text-amber-700 mb-2">{date} 퇴근 메모로 저장합니다.</p>
+      <p className="text-[11px] text-amber-700 mb-2">{longDateLabel(date)} 퇴근 메모로 저장해요.</p>
       <textarea
         rows={2}
         value={note}
@@ -94,10 +99,10 @@ export default function DayHeader({
       <Card>
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-xs text-gray-400">{logicalDate}</p>
-            <h2 className="text-lg font-semibold text-gray-900 mt-0.5">아직 하루를 시작하지 않았어요</h2>
+            <DateTitle date={logicalDate} />
+            <p className="text-sm text-gray-700 mt-1">아직 하루를 시작하지 않았어요</p>
             <p className="text-xs text-gray-500 mt-1">
-              하루를 시작하면 비서가 일정과 할 일을 모아 오늘 계획을 만듭니다.
+              하루를 시작하면 비서가 일정과 할 일을 모아 오늘 계획을 만들어요.
             </p>
           </div>
           <button
@@ -120,13 +125,15 @@ export default function DayHeader({
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
+              <DateTitle date={plan.plan_date} />
               <Badge color="bg-gray-100 text-gray-600">오늘 마감</Badge>
-              <span className="text-xs text-gray-400">
-                {plan.plan_date}
-                {plan.closed_at ? ` · ${hhmmOf(plan.closed_at)} 퇴근` : ''}
-                {plan.closed_by === 'auto' ? ' (자동 닫기)' : ''}
-              </span>
             </div>
+            {plan.closed_at || plan.closed_by === 'auto' ? (
+              <p className="text-xs text-gray-400 mt-1">
+                {plan.closed_at ? `${hhmmOf(plan.closed_at)} 퇴근` : ''}
+                {plan.closed_by === 'auto' ? ' · 자동 닫기' : ''}
+              </p>
+            ) : null}
             <p className="text-sm text-gray-700 mt-2 whitespace-pre-line break-words">
               {plan.wrapup_note ? plan.wrapup_note : '퇴근 메모 없음'}
             </p>
@@ -150,10 +157,10 @@ export default function DayHeader({
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
+            <DateTitle date={plan.plan_date} />
             <Badge color="bg-green-100 text-green-700">근무 중</Badge>
-            <span className="text-xs text-gray-400">{plan.plan_date}</span>
           </div>
-          <p className="text-sm text-gray-700 mt-2">
+          <p className="text-sm text-gray-700 mt-1">
             {hhmmOf(plan.started_at)} 시작
             <span className="text-xs text-gray-400 ml-2">
               마지막 최신화 {plan.last_refresh_at ? hhmmOf(plan.last_refresh_at) : '없음'}
@@ -186,7 +193,7 @@ export default function DayHeader({
             rows={3}
             value={closeNote}
             onChange={(e) => setCloseNote(e.target.value)}
-            placeholder="퇴근 메모 (선택, 1~3줄). 다음 출근 때 이어서 볼 내용을 적어 두세요."
+            placeholder="퇴근 메모 1~3줄. 다음 출근 때 이어서 볼 내용을 적어 주세요."
             className={textareaClass}
           />
           <div className="flex justify-end gap-2 mt-2">

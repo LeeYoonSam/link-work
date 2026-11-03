@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Candidate, PlanItem } from '../../types'
 import { Card, SectionTitle, button } from '../ui'
-import { ItemLink, SourceBadge, shortDate } from './PlanItemRow'
+import { ItemLink, SourceBadge, WorkTypeBadge, shortDate } from './PlanItemRow'
 
 // 계획에 아직 없는 후보만 남긴다. 무시한 제안도 같은 행이 있으므로 뺀다
 export function candidatesNotInPlan(candidates: Candidate[], items: PlanItem[]): Candidate[] {
@@ -55,16 +55,17 @@ export default function CandidatePicker({
           ) : error ? (
             <p className="text-xs text-red-600">{error}</p>
           ) : rest.length === 0 ? (
-            <p className="text-xs text-gray-400">계획에 넣지 않은 후보가 없습니다.</p>
+            <p className="text-xs text-gray-400">계획에 넣지 않은 후보가 없어요.</p>
           ) : (
             <ul className="divide-y divide-gray-100">
               {rest.map((c) => (
                 <li key={c.id} className="flex items-center gap-3 py-2">
                   <SourceBadge source={c.source} />
+                  <WorkTypeBadge type={c.workType} version={c.workVersion} />
                   <span className="flex-1 min-w-0 truncate text-sm text-gray-800" title={c.title}>
                     {c.title}
-                    {c.projectName ? (
-                      <span className="ml-2 text-xs text-gray-400">{c.projectName}</span>
+                    {(c.groupName ?? c.projectName) ? (
+                      <span className="ml-2 text-xs text-gray-400">{c.groupName ?? c.projectName}</span>
                     ) : null}
                   </span>
                   {c.dueDate ? (

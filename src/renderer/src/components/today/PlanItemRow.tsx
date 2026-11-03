@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { CandidateSource, PlanItem, PlanItemStatus } from '../../types'
+import type { CandidateSource, PlanItem, PlanItemStatus, WorkType } from '../../types'
 import { Badge, LinkIcon } from '../ui'
 import { useProjectStore } from '../../stores/projectStore'
 
@@ -20,6 +20,65 @@ export function SourceBadge({ source }: { source: CandidateSource }): React.Reac
       {s.label}
     </Badge>
   )
+}
+
+// 업무 유형 배지 (부록 J.8). etc 는 배지를 그리지 않는다
+export const WORK_TYPE_BADGE: Record<Exclude<WorkType, 'etc'>, { label: string; color: string }> = {
+  qa: { label: 'QA', color: 'bg-rose-50 text-rose-700' },
+  sus: { label: 'SUS', color: 'bg-orange-50 text-orange-700' },
+  trd: { label: 'TRD', color: 'bg-cyan-50 text-cyan-700' },
+  prd: { label: 'PRD', color: 'bg-violet-50 text-violet-700' }
+}
+
+// 유형 라벨. QA 만 버전을 붙인다. main 의 assistant-worktype.workTypeLabel 과 같다
+export function workTypeLabel(type: WorkType, version: string | null): string {
+  if (type === 'etc') return '기타'
+  const label = WORK_TYPE_BADGE[type]?.label ?? '기타'
+  return type === 'qa' && version ? `${label} ${version}` : label
+}
+
+export function WorkTypeBadge({
+  type,
+  version
+}: {
+  type: WorkType
+  version: string | null
+}): React.ReactNode {
+  if (type === 'etc') return null
+  const b = WORK_TYPE_BADGE[type]
+  if (!b) return null
+  return (
+    <Badge color={b.color} size="xs">
+      {workTypeLabel(type, version)}
+    </Badge>
+  )
+}
+
+// 묶음 판정에서 세는 하위 상태. 사용자가 받아들인 하위만 묶음을 만든다 (부록 J.4)
+const GROUP_CHILD_STATUSES: ReadonlySet<PlanItemStatus> = new Set(['planned', 'in_progress', 'done', 'deferred'])
+
+// 받아들인 하위 항목이 같은 계획에 1건 이상 있는 Jira 항목이다. main 의 isGroupItem 과 같은 정의다
+export function isGroupItem(
+  item: Pick<PlanItem, 'id' | 'jira_issue_key'>,
+  items: Pick<PlanItem, 'id' | 'parent_key' | 'status'>[]
+): boolean {
+  const key = item.jira_issue_key
+  if (key === null) return false
+  return items.some((o) => o.id !== item.id && o.parent_key === key && GROUP_CHILD_STATUSES.has(o.status))
+}
+
+const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토']
+
+// 'YYYY-MM-DD' 를 '11월 3일 화요일' 로 바꾼다. 형식이 아니면 입력 그대로다
+export function longDateLabel(date: string): string {
+  const m = date.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return date
+  const y = Number(m[1])
+  const mo = Number(m[2])
+  const d = Number(m[3])
+  const t = new Date(Date.UTC(y, mo - 1, d))
+  if (t.getUTCMonth() !== mo - 1 || t.getUTCDate() !== d) return date
+  return `${mo}월 ${d}일 ${WEEKDAYS[t.getUTCDay()]}요일`
 }
 
 // 로컬 datetime 'YYYY-MM-DD HH:mm:ss' 에서 'HH:mm' 만 꺼낸다
@@ -187,6 +246,8 @@ interface PlanItemRowProps {
   onFocus: (itemId: number) => void
   // 원본 todo·task 를 완료 처리한다. 성공하면 true
   onCompleteOrigin: (item: PlanItem) => Promise<boolean>
+  // 같은 계획의 항목 전체. 묶음 판정에 쓴다 (부록 J.4)
+  items: Pick<PlanItem, 'id' | 'parent_key' | 'status'>[]
 }
 
 export default function PlanItemRow({
@@ -197,14 +258,17 @@ export default function PlanItemRow({
   busy = false,
   onStatus,
   onFocus,
-  onCompleteOrigin
+  onCompleteOrigin,
+  items
 }: PlanItemRowProps): React.ReactNode {
   // 이번 화면에서 사용자가 '완료'로 바꾼 항목만 원본 완료 체크박스를 보여 준다
   const [justDone, setJustDone] = useState(false)
   const [originDone, setOriginDone] = useState(false)
 
   const finished = item.status === 'done' || item.status === 'dropped'
-  const focused = focusItemId !== null && item.id === focusItemId
+  // 묶음 항목은 집중 작업이 되지 않는다 (부록 J.4)
+  const group = isGroupItem(item, items)
+  const focused = !group && focusItemId !== null && item.id === focusItemId
   const canCompleteOrigin =
     (item.source === 'todo' || item.source === 'task') && /^(todo|task):\d+$/.test(item.candidate_id)
   const dayCount = dayCountLabel(item.first_planned_date, logicalDate)
@@ -233,19 +297,30 @@ export default function PlanItemRow({
     >
       <div className="flex items-center gap-3 min-w-0">
         <span className="w-6 text-right text-xs font-semibold text-gray-400 tabular-nums shrink-0">
-          {item.rank ?? '–'}
+          {group ? '–' : (item.rank ?? '–')}
         </span>
         <SourceBadge source={item.source} />
-        <span
-          className={`flex-1 min-w-0 truncate text-sm ${
-            finished ? 'text-gray-400 line-through' : 'text-gray-900'
-          }`}
-          title={item.title}
-        >
-          {item.title}
-        </span>
+        <WorkTypeBadge type={item.work_type} version={item.work_version} />
+        {group ? (
+          <Badge color="bg-gray-100 text-gray-600" size="xs" title="하위 작업이 오늘 계획에 있어요">
+            묶음
+          </Badge>
+        ) : null}
+        <div className="flex-1 min-w-0">
+          <p
+            className={`truncate text-sm ${finished ? 'text-gray-400 line-through' : 'text-gray-900'}`}
+            title={item.title}
+          >
+            {item.title}
+          </p>
+          {item.group_name ? (
+            <p className="truncate text-[11px] text-gray-400" title={item.group_name}>
+              {item.group_name}
+            </p>
+          ) : null}
+        </div>
         {focused && !finished ? (
-          <Badge color="bg-blue-100 text-blue-700" size="xs" title="지금 빈 시간에 할 작업입니다">
+          <Badge color="bg-blue-100 text-blue-700" size="xs" title="지금 빈 시간에 할 작업이에요">
             집중 중
           </Badge>
         ) : null}
@@ -281,7 +356,7 @@ export default function PlanItemRow({
               {b.label}
             </button>
           ))}
-          {isActiveItem(item) && !focused ? (
+          {isActiveItem(item) && !focused && !group ? (
             <>
               <span className="mx-1 h-3 w-px bg-gray-200" />
               <button
@@ -289,7 +364,7 @@ export default function PlanItemRow({
                 disabled={busy}
                 onClick={() => onFocus(item.id)}
                 className="px-2 py-0.5 text-xs text-blue-600 rounded-full hover:bg-blue-50 disabled:opacity-50"
-                title="이 작업을 1순위로 올리고 남은 빈 시간에 배정합니다"
+                title="이 작업을 1순위로 올리고 남은 빈 시간에 배정해요"
               >
                 지금 집중
               </button>

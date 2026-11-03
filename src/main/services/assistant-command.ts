@@ -419,7 +419,11 @@ export function toManualCandidate(title: string, dueDate: string | null, candida
     priority: null,
     jiraPriority: null,
     lastTouchedAt: null,
-    link: null
+    link: null,
+    parentKey: null,
+    groupName: null,
+    workType: 'etc',
+    workVersion: null
   }
 }
 

@@ -73,7 +73,11 @@ function toItem(row: ItemRow): PlanItem {
     ...row,
     pinned: Number(row.pinned) === 1,
     urgent: Number(row.urgent) === 1,
-    first_planned_date: row.first_planned_date ?? null
+    first_planned_date: row.first_planned_date ?? null,
+    work_type: row.work_type ?? 'etc',
+    work_version: row.work_version ?? null,
+    parent_key: row.parent_key ?? null,
+    group_name: row.group_name ?? null
   }
 }
 
@@ -332,8 +336,9 @@ export function getPlanItem(db: Db, itemId: number): PlanItem | null {
 function insertItemsRaw(db: Db, planId: number, items: NewPlanItem[], skipConflict: boolean): PlanItem[] {
   const stmt = db.prepare(
     `INSERT INTO plan_items (plan_id, candidate_id, source, title, link, jira_issue_key, project_id,
-       due_date, score, rank, slot_start, slot_end, pinned, added_by, urgent, status, status_note, status_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+       due_date, score, rank, slot_start, slot_end, pinned, added_by, urgent, status, status_note, status_at,
+       work_type, work_version, parent_key, group_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
      ${skipConflict ? 'ON CONFLICT(plan_id, candidate_id) DO NOTHING' : ''}`
   )
   const out: PlanItem[] = []
@@ -355,7 +360,11 @@ function insertItemsRaw(db: Db, planId: number, items: NewPlanItem[], skipConfli
       it.added_by,
       it.urgent ? 1 : 0,
       it.status ?? 'planned',
-      nullable(it.status_note)
+      nullable(it.status_note),
+      it.work_type ?? 'etc',
+      nullable(it.work_version),
+      nullable(it.parent_key),
+      nullable(it.group_name)
     )
     if (Number(res.changes) === 0) continue
     const item = getPlanItem(db, Number(res.lastInsertRowid))
@@ -385,7 +394,11 @@ const PATCH_COLUMNS = [
   'pinned',
   'urgent',
   'status',
-  'status_note'
+  'status_note',
+  'work_type',
+  'work_version',
+  'parent_key',
+  'group_name'
 ] as const
 
 function toSqlValue(v: unknown): SqlValue {

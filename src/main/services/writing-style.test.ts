@@ -16,10 +16,19 @@ vi.mock('../db/database', () => ({
   }
 }))
 
+// 비서 프롬프트 검사용이다. 헤드리스 실행을 모듈 경계에서 막는다.
+vi.mock('./ai-headless', () => ({ runHeadlessJson: vi.fn() }))
+
 import { buildSystemPrompt } from './ai-agent'
+import { BRIEFING_SYSTEM_PROMPT, MEETING_SYSTEM_PROMPT, RECOVERY_SYSTEM_PROMPT } from './assistant-briefing'
 import { INTERVIEW_SPEC } from './interview-summary'
 import { MEETING_SPEC } from './meeting-summary'
-import { WRITING_STYLE_JSON_NOTE, WRITING_STYLE_RULES } from './writing-style'
+import {
+  ASSISTANT_SPEECH_JSON_NOTE,
+  ASSISTANT_SPEECH_RULES,
+  WRITING_STYLE_JSON_NOTE,
+  WRITING_STYLE_RULES
+} from './writing-style'
 
 const JSON_ONLY_LAST_LINE = '코드펜스 없이 순수 JSON만 출력하세요.'
 
@@ -68,5 +77,36 @@ describe('buildSystemPrompt', () => {
     ['readonly', true]
   ] as const)('writeMode=%s, notion=%s 결과가 공통 글쓰기 규칙을 포함한다', (mode, notion) => {
     expect(buildSystemPrompt(mode, notion)).toContain(WRITING_STYLE_RULES)
+  })
+})
+
+// ── 비서 말투 규칙 (부록 J.7) ──
+
+describe('ASSISTANT_SPEECH_RULES', () => {
+  it('A52: 해요체·권유 형태·금지 문구·데이터 밖 사실 금지를 포함한다', () => {
+    for (const phrase of [
+      '## 비서 말투 규칙',
+      '해요체로 쓴다.',
+      '"~하시면 돼요", "~해 주세요"',
+      '"!" 를 쓰지 않는다.',
+      '아라비아 숫자',
+      '[데이터] 에 없는 사실·숫자·이름을 만들지 않는다.'
+    ]) {
+      expect(ASSISTANT_SPEECH_RULES).toContain(phrase)
+    }
+    expect(ASSISTANT_SPEECH_JSON_NOTE).toContain('위 말투 규칙')
+  })
+
+  it('A52: 비서 프롬프트 3개는 말투 규칙을 쓰고 글쓰기 규칙을 쓰지 않는다', () => {
+    for (const prompt of [BRIEFING_SYSTEM_PROMPT, RECOVERY_SYSTEM_PROMPT, MEETING_SYSTEM_PROMPT]) {
+      expect(prompt).toContain(ASSISTANT_SPEECH_RULES)
+      expect(prompt).toContain(ASSISTANT_SPEECH_JSON_NOTE)
+      expect(prompt).not.toContain(WRITING_STYLE_RULES)
+    }
+  })
+
+  it('A52: 기존 글쓰기 규칙은 말투 규칙과 섞이지 않는다', () => {
+    expect(WRITING_STYLE_RULES).not.toContain('해요체')
+    expect(ASSISTANT_SPEECH_RULES).not.toContain('ASD-STE100')
   })
 })

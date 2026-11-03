@@ -262,3 +262,52 @@ describe('buildTimeline B.3', () => {
     expect(input.items[0].id).toBe(2)
   })
 })
+
+describe('A49: 묶음 항목 (부록 J.4)', () => {
+  it('A49: buildStartPlanItems 는 묶음 후보를 순위 매기기 전에 뺀다', () => {
+    const items = buildStartPlanItems(
+      [
+        cand({ id: 'jira:ICA-8054', jiraKey: 'ICA-8054', jiraPriority: 'Highest', priority: 'high', title: '안드로이드QA-2026', workType: 'qa' }),
+        cand({
+          id: 'jira:ICA-8971', jiraKey: 'ICA-8971', parentKey: 'ICA-8054', groupName: '안드로이드QA-2026',
+          workType: 'qa', workVersion: '4.174.0'
+        }),
+        cand({ id: 'todo:1' })
+      ],
+      TODAY,
+      2
+    )
+    expect(items.map((i) => i.candidate_id)).toEqual(['jira:ICA-8971', 'todo:1'])
+    expect(items[0]).toMatchObject({
+      rank: 1, work_type: 'qa', work_version: '4.174.0', parent_key: 'ICA-8054', group_name: '안드로이드QA-2026'
+    })
+    expect(items[1]).toMatchObject({ work_type: 'etc', work_version: null, parent_key: null, group_name: null })
+  })
+
+  it('A49: 하위가 없는 에픽 후보는 보통 후보로 계획에 든다', () => {
+    const items = buildStartPlanItems([cand({ id: 'jira:ICA-8929', jiraKey: 'ICA-8929', workType: 'prd' })], TODAY, 3)
+    expect(items.map((i) => i.candidate_id)).toEqual(['jira:ICA-8929'])
+  })
+
+  it('A49: buildTimeline 은 묶음 항목을 집중 작업·블록 배정에서 뺀다', () => {
+    const items = [
+      item({ id: 1, rank: 1, candidate_id: 'jira:ICA-8054', jira_issue_key: 'ICA-8054', status: 'in_progress', due_date: TODAY }),
+      item({ id: 2, rank: 2, candidate_id: 'jira:ICA-8971', jira_issue_key: 'ICA-8971', parent_key: 'ICA-8054' }),
+      item({ id: 3, rank: 3, due_date: TODAY })
+    ]
+    const t = tl({ calendar: [ev('a', '10:00', '11:00'), ev('b', '14:00', '15:00')], items })
+    expect(t.focusItemId).toBe(2)
+    const assigned = blocks(t).map((b) => b.itemId)
+    expect(assigned).not.toContain(1)
+    expect(assigned).toEqual([2, 2, 3])
+    expect(t.unplacedDeadlineItemIds).not.toContain(1)
+  })
+
+  it('A49: 하위가 suggested 뿐이면 에픽이 집중 작업이 된다', () => {
+    const items = [
+      item({ id: 1, rank: 1, candidate_id: 'jira:ICA-8054', jira_issue_key: 'ICA-8054' }),
+      item({ id: 2, rank: null, candidate_id: 'jira:ICA-8971', parent_key: 'ICA-8054', status: 'suggested' })
+    ]
+    expect(tl({ items }).focusItemId).toBe(1)
+  })
+})

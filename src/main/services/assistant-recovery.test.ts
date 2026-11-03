@@ -33,7 +33,8 @@ function item(over: Partial<PlanItem> & Pick<PlanItem, 'id' | 'title'>): PlanIte
     plan_id: 7, candidate_id: `task:${over.id}`, source: 'task', link: null, jira_issue_key: null,
     project_id: null, due_date: null, score: 10, rank: null, slot_start: null, slot_end: null,
     pinned: false, added_by: 'start', urgent: false, status: 'planned', status_note: null,
-    status_at: null, first_planned_date: null, ...over
+    status_at: null, first_planned_date: null,
+    work_type: 'etc', work_version: null, parent_key: null, group_name: null, ...over
   }
 }
 
@@ -211,23 +212,23 @@ describe('buildRecovery', () => {
     expect(sections).toEqual([{ key: 'last_day', title: '마지막 근무', lines: ['2026-10-30 (4일 전)', '메모 없음'] }])
   })
 
-  it('Jira 가 null 이면 미연결·실패 문구 1줄을 남긴다', () => {
+  it('A52: Jira 가 null 이면 미연결·실패 문구 1줄을 해요체로 남긴다', () => {
     const off = buildRecovery(input({ jira: null, jiraConnected: false }))
-    expect(off.find((s) => s.key === 'jira')?.lines).toEqual(['Jira 가 연결되어 있지 않다'])
+    expect(off.find((s) => s.key === 'jira')?.lines).toEqual(['Jira 가 연결되어 있지 않아요.'])
     const failed = buildRecovery(input({ jira: null, jiraConnected: true, errors: ['Jira 를 확인하지 못했다'] }))
-    expect(failed.find((s) => s.key === 'jira')?.lines).toEqual(['Jira 변경을 확인하지 못했다'])
+    expect(failed.find((s) => s.key === 'jira')?.lines).toEqual(['Jira 변경을 확인하지 못했어요.'])
     expect(failed.map((s) => s.key)).toEqual(['last_day', 'jira', 'errors'])
   })
 
-  it('Jira 가 잘렸으면 마지막 줄에 안내를 붙인다', () => {
+  it('A52: Jira 가 잘렸으면 마지막 줄에 해요체 안내를 붙인다', () => {
     const s = buildRecovery(input({ jira, jiraTruncated: true })).find((x) => x.key === 'jira')
-    expect(s?.lines.at(-1)).toBe('이슈가 많아 일부만 가져왔다')
+    expect(s?.lines.at(-1)).toBe('이슈가 많아 일부만 가져왔어요.')
   })
 
-  it('이전 계획이 없으면 최근 N일 문구를 쓴다', () => {
+  it('A52: 이전 계획이 없으면 최근 N일 문구를 해요체로 쓴다', () => {
     const ctx = recoveryContextOf({ today: '2026-11-03', lastPlan: null })
     const sections = buildRecovery(input({ ctx }))
-    expect(sections[0].lines).toEqual(['이전 계획이 없다. 최근 7일을 본다'])
+    expect(sections[0].lines).toEqual(['이전 계획이 없어요. 최근 7일을 봤어요.'])
   })
 
   it('A33: 항목 수 상한을 지킨다', () => {
@@ -241,7 +242,7 @@ describe('buildRecovery', () => {
     expect(byKey.unfinished).toHaveLength(RECOVERY_LIMITS.unfinished)
     expect(byKey.done).toHaveLength(RECOVERY_LIMITS.todos)
     expect(byKey.jira).toHaveLength(RECOVERY_LIMITS.jira + 1)
-    expect(byKey.jira.at(-1)).toBe('이슈가 많아 일부만 가져왔다')
+    expect(byKey.jira.at(-1)).toBe('이슈가 많아 일부만 가져왔어요.')
   })
 
   it('문자열을 한 줄 200자로 자르고 [데이터] 표식을 지운다', () => {
@@ -272,13 +273,13 @@ describe('buildRecovery', () => {
 })
 
 describe('recoveryToMarkdown', () => {
-  it('F.4 저장 형식으로 만든다', () => {
+  it('A52: F.4 저장 형식으로 만들고 완결 문장은 해요체다', () => {
     const src = input({ wrapupNote: '배포 전 QA 확인', unfinishedItems: unfinished.slice(1, 3), meetings })
     const md = recoveryToMarkdown(buildRecovery(src), src.ctx)
     expect(md).toBe([
       '# 2026-11-03 맥락 복구',
       '',
-      '마지막 근무는 2026-10-30 입니다. 4일 만에 돌아왔습니다.',
+      '마지막 근무는 2026-10-30 였어요. 4일 만에 돌아오셨어요.',
       '',
       '## 마지막 근무',
       '',
@@ -301,10 +302,10 @@ describe('recoveryToMarkdown', () => {
     expect(md.endsWith('\n\n')).toBe(false)
   })
 
-  it('이전 계획이 없으면 최근 N일 문구를 쓴다', () => {
+  it('A52: 이전 계획이 없으면 최근 N일 문구를 해요체로 쓴다', () => {
     const ctx = recoveryContextOf({ today: '2026-11-03', lastPlan: null, days: 3 })
     const md = recoveryToMarkdown(buildRecovery(input({ ctx })), ctx)
-    expect(md.split('\n').slice(0, 3)).toEqual(['# 2026-11-03 맥락 복구', '', '최근 3일을 정리했습니다.'])
+    expect(md.split('\n').slice(0, 3)).toEqual(['# 2026-11-03 맥락 복구', '', '최근 3일을 정리했어요.'])
   })
 })
 

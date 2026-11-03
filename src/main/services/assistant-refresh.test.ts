@@ -3,7 +3,9 @@ import {
   bucketOf,
   buildPlanUpdateNotices,
   diffSources,
+  enrichItems,
   focusUpdates,
+  groupRankUpdates,
   isInMeeting,
   planRefresh,
   rerank,
@@ -392,7 +394,8 @@ describe('planRefresh §8.4', () => {
     }
     const jiraIssue = {
       key: 'PROJ-1', summary: 'Jira 제목', status: '진행 중', statusCategory: 'indeterminate' as const,
-      priority: 'Highest', duedate: '2026-11-03', updatedLocal: null, url: null
+      priority: 'Highest', duedate: '2026-11-03', updatedLocal: null, url: null,
+      issueType: '작업', parentKey: null, parentSummary: null
     }
     const jiraRef = { key: 'PROJ-1', status: '진행 중', priority: 'Highest', duedate: '2026-11-03', updated: 'x' }
     const base = { tasks: [task], todos: [], actionItems: [], taskTouchedAt: {} }
@@ -413,10 +416,10 @@ describe('planRefresh §8.4', () => {
     expect(localDiff.updatedCandidates.map((c) => c.id)).toEqual(['todo:2'])
     expect(planRefresh(localDiff, local, prev, items, ctx()).updates).toEqual([{ id: 2, patch: { title: '새' } }])
 
-    // full 최신화: jira 값이 같으면 바뀌는 값이 없다. 제목은 task 값으로 갱신된다
+    // full 최신화: jira 값이 같으면 바뀌는 값이 없다. 제목은 task 값으로 갱신된다. 묶음 이름은 보강된다 (A50)
     const full: CurrentSources = { candidates: [merged, cand({ id: 'todo:2', title: '옛' })], calendar: [], jira: [jiraRef] }
     expect(planRefresh(diffSources(prev, full, items), full, prev, items, ctx()).updates).toEqual([
-      { id: 1, patch: { title: '작업' } }
+      { id: 1, patch: { title: '작업', group_name: 'P' } }
     ])
   })
 
@@ -681,5 +684,166 @@ describe('buildPlanUpdateNotices A21', () => {
   it('A14: 입력을 바꾸지 않고 같은 입력에 같은 결과를 낸다', () => {
     const input = deepFreeze(noticeInput({ summary: summary({ currentOrNextChanged: true, urgentSuggestedIds: ['todo:1'] }) }))
     expect(buildPlanUpdateNotices(input)).toEqual(buildPlanUpdateNotices(input))
+  })
+})
+
+// ── 부록 J: 업무 유형 보강·묶음 rank ──
+
+const QA_EPIC = 'ICA-8054'
+const FOLD_EPIC = 'ICA-8929'
+const FOLD_NAME = '[폴더블] 넓은 화면 공통 기준 적용 - Android'
+
+/** 2026-11-03 실제 계획. 보강 전에는 하위의 parent_key 가 비어 있다. */
+function nov3Candidates(): ReturnType<typeof cand>[] {
+  return [
+    cand({ id: 'jira:ICA-8054', jiraKey: QA_EPIC, title: '안드로이드QA-2026', workType: 'qa' }),
+    cand({ id: 'jira:ICA-8929', jiraKey: FOLD_EPIC, title: FOLD_NAME, workType: 'prd' }),
+    cand({
+      id: 'jira:ICA-8971', jiraKey: 'ICA-8971', title: '안드로이드 구매자 앱 v4.174.0 QA',
+      parentKey: QA_EPIC, groupName: '안드로이드QA-2026', workType: 'qa', workVersion: '4.174.0'
+    }),
+    cand({ id: 'jira:ICA-8984', jiraKey: 'ICA-8984', title: '[폴더블] 넓은 화면 공통 기반', parentKey: FOLD_EPIC, groupName: FOLD_NAME, workType: 'prd' }),
+    cand({ id: 'jira:ICA-8987', jiraKey: 'ICA-8987', title: '[폴더블] 공통 요소 넓은 화면 대응', parentKey: FOLD_EPIC, groupName: FOLD_NAME, workType: 'prd' }),
+    cand({ id: 'action_item:9:0', title: '174 버전 릴리스를 시작한다.' })
+  ]
+}
+
+function nov3Items(cands: ReturnType<typeof cand>[]): PlanItem[] {
+  const status: Record<string, PlanItem['status']> = { 'jira:ICA-8971': 'in_progress' }
+  return cands.map((c, idx) =>
+    item({
+      id: idx + 1, candidate_id: c.id, title: c.title, jira_issue_key: c.jiraKey,
+      score: scoreCandidate(c, TODAY), rank: idx + 1, status: status[c.id] ?? 'planned'
+    })
+  )
+}
+
+describe('A50: enrichItems 최신화 보강', () => {
+  it('A50: jira·task 항목의 4개 컬럼만 현재 후보 값으로 맞춘다', () => {
+    const cands = [
+      cand({ id: 'jira:ICA-8971', jiraKey: 'ICA-8971', parentKey: QA_EPIC, groupName: '안드로이드QA-2026', workType: 'qa', workVersion: '4.174.0' }),
+      cand({ id: 'task:5', projectName: '4.165.0 릴리스', groupName: '4.165.0 릴리스', workType: 'qa', workVersion: '4.165.0' }),
+      cand({ id: 'todo:1', title: '[TRD] 문서' })
+    ]
+    const items = [
+      item({ id: 1, candidate_id: 'jira:ICA-8971', jira_issue_key: 'ICA-8971', title: '옛 제목', status: 'done' }),
+      item({ id: 2, candidate_id: 'task:5' }),
+      item({ id: 3, candidate_id: 'todo:1', work_type: 'trd' }),
+      item({ id: 4, candidate_id: 'manual:1:1', work_type: 'prd' }),
+      item({ id: 5, candidate_id: 'jira:GONE-1', jira_issue_key: 'GONE-1' })
+    ]
+    expect(enrichItems(items, cands, true)).toEqual([
+      { id: 1, patch: { work_type: 'qa', work_version: '4.174.0', parent_key: QA_EPIC, group_name: '안드로이드QA-2026' } },
+      { id: 2, patch: { work_type: 'qa', work_version: '4.165.0', group_name: '4.165.0 릴리스' } }
+    ])
+  })
+
+  it('A50: jiraSeen 이 거짓이면 Jira 유래 항목을 건너뛰고 Jira 없는 task 만 보강한다', () => {
+    const cands = [
+      cand({ id: 'jira:ICA-8971', jiraKey: 'ICA-8971', parentKey: QA_EPIC, workType: 'qa' }),
+      cand({ id: 'task:6', jiraKey: 'ICA-1', groupName: 'P', workType: 'prd' }),
+      cand({ id: 'task:7', groupName: 'Sus 개선 작업', workType: 'sus' })
+    ]
+    const items = [
+      item({ id: 1, candidate_id: 'jira:ICA-8971', jira_issue_key: 'ICA-8971' }),
+      item({ id: 2, candidate_id: 'task:6', jira_issue_key: 'ICA-1' }),
+      item({ id: 3, candidate_id: 'task:7' })
+    ]
+    expect(enrichItems(items, cands, false)).toEqual([{ id: 3, patch: { work_type: 'sus', group_name: 'Sus 개선 작업' } }])
+  })
+
+  it('A50: 값이 같으면 패치가 없고 입력을 바꾸지 않는다', () => {
+    const cands = deepFreeze([cand({ id: 'task:1', groupName: 'P', workType: 'etc' })])
+    const items = deepFreeze([item({ id: 1, candidate_id: 'task:1', group_name: 'P' })])
+    expect(enrichItems(items, cands, true)).toEqual([])
+  })
+
+  it('A50: planRefresh 보강은 상태·제목·마감·점수·summary 를 바꾸지 않고 묶음 rank 만 정리한다 (2026-11-03)', () => {
+    const cands = nov3Candidates()
+    const items = nov3Items(cands)
+    const prev = snapshot({ seenCandidateIds: cands.map((c) => c.id) })
+    const current: CurrentSources = { candidates: cands, calendar: [], jira: [] }
+    const plan = run(prev, current, items)
+
+    const byId = new Map(plan.updates.map((u) => [u.id, u.patch]))
+    // 마이그레이션 직후 행은 etc 다. 에픽도 유형을 받고 rank 가 null 이 된다
+    expect(byId.get(1)).toEqual({ work_type: 'qa', rank: null })
+    expect(byId.get(2)).toEqual({ work_type: 'prd', rank: null })
+    expect(byId.get(3)).toEqual({ work_type: 'qa', work_version: '4.174.0', parent_key: QA_EPIC, group_name: '안드로이드QA-2026', rank: 1 })
+    expect(byId.get(4)).toEqual({ work_type: 'prd', parent_key: FOLD_EPIC, group_name: FOLD_NAME, rank: 2 })
+    expect(byId.get(5)).toEqual({ work_type: 'prd', parent_key: FOLD_EPIC, group_name: FOLD_NAME, rank: 3 })
+    expect(byId.get(6)).toEqual({ rank: 4 })
+    for (const u of plan.updates) {
+      for (const k of ['status', 'title', 'due_date', 'score', 'status_note']) expect(u.patch).not.toHaveProperty(k)
+    }
+    expect(plan.inserts).toEqual([])
+    expect(plan.summary).toMatchObject({ suggested: 0, completed: 0, dropped: 0, replaced: 0 })
+
+    // 반영 뒤 집중 작업은 ICA-8971 이다
+    const after = items.map((it) => ({ ...it, ...(byId.get(it.id) ?? {}) }))
+    expect(buildTimeline({ calendar: [], dayStart: '09:00', nowHHmm: '09:00', workEnd: '18:00', items: after, today: TODAY, closed: false }).focusItemId).toBe(3)
+  })
+})
+
+describe('A49: 묶음 항목 rank·집중', () => {
+  it('A49: planRefresh 는 묶음 후보를 suggested 로 넣지 않는다', () => {
+    const cands = [
+      cand({ id: 'jira:ICA-8054', jiraKey: QA_EPIC }),
+      cand({ id: 'jira:ICA-8971', jiraKey: 'ICA-8971', parentKey: QA_EPIC, groupName: '안드로이드QA-2026', workType: 'qa', workVersion: '4.174.0' })
+    ]
+    const plan = run(snapshot(), { candidates: cands, calendar: [], jira: [] }, [])
+    expect(plan.inserts.map((i) => i.candidate_id)).toEqual(['jira:ICA-8971'])
+    expect(plan.inserts[0]).toMatchObject({ status: 'suggested', work_type: 'qa', work_version: '4.174.0', parent_key: QA_EPIC })
+    expect(plan.summary.suggested).toBe(1)
+  })
+
+  it('A49: groupRankUpdates 는 rank 가 남은 묶음이 없으면 빈 목록이다', () => {
+    const items = [item({ id: 1, rank: 1 }), item({ id: 2, rank: 3 })]
+    expect(groupRankUpdates(items)).toEqual([])
+    const settled = [
+      item({ id: 1, candidate_id: 'jira:E-1', jira_issue_key: 'E-1', rank: null }),
+      item({ id: 2, candidate_id: 'jira:C-1', parent_key: 'E-1', rank: 2 })
+    ]
+    expect(groupRankUpdates(settled)).toEqual([])
+  })
+
+  it('A49: groupRankUpdates 는 묶음 rank 를 null 로, 나머지 활성 항목을 기존 순서로 1부터 매긴다', () => {
+    const items = deepFreeze([
+      item({ id: 1, candidate_id: 'todo:1', rank: 2 }),
+      item({ id: 2, candidate_id: 'jira:E-1', jira_issue_key: 'E-1', rank: 1 }),
+      item({ id: 3, candidate_id: 'jira:C-1', parent_key: 'E-1', rank: 4, status: 'in_progress' }),
+      item({ id: 4, candidate_id: 'todo:4', rank: 5, status: 'done' })
+    ])
+    expect(groupRankUpdates(items)).toEqual([
+      { id: 1, patch: { rank: 1 } },
+      { id: 2, patch: { rank: null } },
+      { id: 3, patch: { rank: 2 } }
+    ])
+  })
+
+  it('A49: rerank 는 묶음 항목에 rank null 을 주고 나머지 planned 만 점수 순으로 매긴다', () => {
+    const items = [
+      item({ id: 1, candidate_id: 'jira:E-1', jira_issue_key: 'E-1', rank: 1, score: 100 }),
+      item({ id: 2, candidate_id: 'jira:C-1', parent_key: 'E-1', rank: 2, score: 10 }),
+      item({ id: 3, candidate_id: 'todo:3', rank: 3, score: 50 })
+    ]
+    // id 2 는 이미 2위라 패치가 없다
+    expect(rerank(items)).toEqual([
+      { id: 1, patch: { rank: null } },
+      { id: 3, patch: { rank: 1 } }
+    ])
+  })
+
+  it('A49: focusUpdates 는 대상이 묶음이면 빈 목록이고, 번호 재부여에서 묶음을 뺀다', () => {
+    const items = [
+      item({ id: 1, candidate_id: 'jira:E-1', jira_issue_key: 'E-1', rank: null }),
+      item({ id: 2, candidate_id: 'jira:C-1', parent_key: 'E-1', rank: 1 }),
+      item({ id: 3, candidate_id: 'todo:3', rank: 2 })
+    ]
+    expect(focusUpdates(items, 1)).toEqual([])
+    expect(focusUpdates(items, 3)).toEqual([
+      { id: 2, patch: { rank: 2 } },
+      { id: 3, patch: { rank: 1, status: 'in_progress' } }
+    ])
   })
 })

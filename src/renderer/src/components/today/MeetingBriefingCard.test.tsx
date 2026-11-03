@@ -5,6 +5,7 @@ import MeetingBriefingCard, {
   briefingBadge,
   meetingBriefings,
   meetingStarted,
+  nearestUpcomingEventId,
   parseMeetingPayload,
   type MeetingBriefingRow
 } from './MeetingBriefingCard'
@@ -96,7 +97,7 @@ describe('MeetingBriefingCard 4상태 렌더링', () => {
       rowOf(basePayload({ llmStatus: 'failed', llmError: '응답 형식이 맞지 않습니다' }))
     ])
     expect(html).toContain('meeting-briefing-7')
-    expect(html).toContain('AI 브리핑을 마치지 못했습니다. 응답 형식이 맞지 않습니다')
+    expect(html).toContain('AI 브리핑을 마치지 못했어요. 응답 형식이 맞지 않습니다')
     expect(html).toContain('bg-amber-50')
     expect(html).toContain('규칙 브리핑')
     expect(html).toContain('환불 정책 확정')
@@ -140,6 +141,29 @@ describe('MeetingBriefingCard 동작', () => {
     const html = render([rowOf(p)], { now: '2026-11-02 23:50:00' })
     expect(html).toContain('접기')
     expect(html).toContain('환불 정책 확정')
+  })
+
+  it('A53 시작 전 회의 중 가장 가까운 1건만 펼치고 나머지와 지난 회의는 접는다', () => {
+    const at = (id: string, startAt: string): MeetingBriefingPayload =>
+      basePayload({ meeting: { id, title: `회의 ${id}`, startAt, endAt: startAt } })
+    const rows = [
+      rowOf(at('a', '2026-11-02 10:00:00'), 1),
+      rowOf(at('b', '2026-11-02 14:00:00'), 2),
+      rowOf(at('c', '2026-11-02 11:00:00'), 3)
+    ]
+    const html = render(rows, { now: '2026-11-02 10:50:00' })
+    const row = (id: number): string => {
+      const start = html.indexOf(`id="meeting-briefing-${id}"`)
+      const next = html.indexOf('id="meeting-briefing-', start + 1)
+      return html.slice(start, next === -1 ? undefined : next)
+    }
+    // 1 은 시작이 지났다. 3 이 가장 가깝다. 2 는 그다음이다
+    expect(row(1)).toContain('펼치기')
+    expect(row(1)).not.toContain('환불 정책 확정')
+    expect(row(3)).toContain('접기')
+    expect(row(3)).toContain('환불 정책 확정')
+    expect(row(2)).toContain('펼치기')
+    expect(row(2)).not.toContain('환불 정책 확정')
   })
 
   it('다시 만들기: canRegenerate 가 false 면 숨긴다', () => {
@@ -188,6 +212,26 @@ describe('MeetingBriefingCard 순수 헬퍼', () => {
     expect(briefingBadge('off')).toBe('규칙 브리핑')
     expect(briefingBadge('pending')).toBe('규칙 브리핑')
     expect(briefingBadge('failed')).toBe('규칙 브리핑')
+  })
+
+  it('nearestUpcomingEventId: 시작 전 회의 중 startAt 이 가장 이른 행의 이벤트 id. 없으면 null', () => {
+    const at = (startAt: string, id: number): MeetingBriefingRow =>
+      rowOf(basePayload({ meeting: { id: `cal-${id}`, title: 't', startAt, endAt: startAt } }), id)
+    const now = '2026-11-02 10:50:00'
+    expect(nearestUpcomingEventId([], now)).toBeNull()
+    expect(nearestUpcomingEventId([at('2026-11-02 10:00:00', 1)], now)).toBeNull()
+    expect(
+      nearestUpcomingEventId(
+        [at('2026-11-02 15:00:00', 1), at('2026-11-02 10:50:00', 2), at('2026-11-02 11:30:00', 3)],
+        now
+      )
+    ).toBe(3)
+    // 같은 시각이면 id 가 작은 행이다
+    expect(nearestUpcomingEventId([at('2026-11-02 11:00:00', 9), at('2026-11-02 11:00:00', 4)], now)).toBe(4)
+    // 날짜를 넘는 회의도 시작 전이다
+    expect(nearestUpcomingEventId([at('2026-11-03 00:30:00', 5)], '2026-11-02 23:50:00')).toBe(5)
+    // startAt 이 빈 행은 고르지 않는다
+    expect(nearestUpcomingEventId([at('', 6)], now)).toBeNull()
   })
 
   it('meetingStarted: 시작 일시가 지금 이하면 시작한 회의다. 날짜까지 비교한다', () => {

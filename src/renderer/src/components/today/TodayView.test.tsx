@@ -79,6 +79,10 @@ const item = (over: Partial<PlanItem> & Pick<PlanItem, 'id'>): PlanItem => ({
   status_note: null,
   status_at: null,
   first_planned_date: '2026-11-02',
+  work_type: 'etc',
+  work_version: null,
+  parent_key: null,
+  group_name: null,
   ...over
 })
 
@@ -200,6 +204,8 @@ const { recoveryButtonLabel } = await import('./RecoveryCard')
 const { localNow } = await import('./TodayView')
 
 const render = (): string => renderToStaticMarkup(<TodayView />)
+// '더 보기' 를 연 상태로 그린다 (부록 J.8). 자동 클릭이 불가해 초기값을 주입한다
+const renderOpen = (): string => renderToStaticMarkup(<TodayView moreOpenInitial />)
 
 beforeEach(() => {
   state.today = null
@@ -320,13 +326,16 @@ describe('TodayView 상태별 렌더링', () => {
     expect(html).not.toContain('시간 미배정')
     expect(html).not.toContain('시간 변경')
     expect(html).not.toContain('고정')
-    // 변경 내역과 안내 문구
-    expect(html).toContain('변경 내역')
-    expect(html).toContain('10:42 회의 1건 추가로 시간표 갱신')
-    expect(html).toContain('Jira 이슈가 많습니다. 일부만 가져왔습니다.')
-    expect(html).toContain('후보 더 보기')
     // 근무 중에는 하루 시작 버튼이 없다
     expect(html).not.toContain('하루 시작')
+    // 변경 내역·안내 문구·후보는 접힌 더 보기 안이다 (부록 J.8)
+    expect(html).not.toContain('변경 내역')
+    expect(html).not.toContain('후보 더 보기')
+    const open = renderOpen()
+    expect(open).toContain('변경 내역')
+    expect(open).toContain('10:42 회의 1건 추가로 시간표 갱신')
+    expect(open).toContain('Jira 이슈가 많아 일부만 가져왔어요.')
+    expect(open).toContain('후보 더 보기')
   })
 
   it('근무 중: 지난 블록은 흐리게, 30분 미만 블록은 작게, 배정 못 한 마감 항목은 안내한다', () => {
@@ -401,21 +410,22 @@ describe('TodayView 상태별 렌더링', () => {
   })
 
   // 부록 G.10.1 명령 입력창. 근무 중에만 보인다
-  it('명령 입력: 근무 중이면 비서에게 말하기 입력창이 DayHeader 아래, 맥락 복구 위에 있다', () => {
+  it('명령 입력: 근무 중이면 비서에게 말하기 입력창이 더 보기 안, 오늘 할 일 아래에 있다 (A53)', () => {
     state.today = payload({ plan: plan() })
-    const html = render()
+    expect(render()).not.toContain('비서에게 말하기')
+    const html = renderOpen()
     expect(html).toContain('비서에게 말하기')
-    expect(html.indexOf('비서에게 말하기')).toBeLessThan(html.indexOf('맥락 복구'))
-    expect(html.indexOf('>퇴근</button>')).toBeLessThan(html.indexOf('비서에게 말하기'))
+    expect(html.indexOf('오늘 할 일')).toBeLessThan(html.indexOf('today-more'))
+    expect(html.indexOf('today-more')).toBeLessThan(html.indexOf('비서에게 말하기'))
   })
 
   it('명령 입력: 계획 없음·닫힘이면 비서에게 말하기 입력창이 없다', () => {
     state.today = payload({ plan: null })
-    expect(render()).not.toContain('비서에게 말하기')
+    expect(renderOpen()).not.toContain('비서에게 말하기')
     state.today = payload({
       plan: plan({ status: 'closed', closed_at: '2026-11-02 18:30:00', closed_by: 'button' })
     })
-    expect(render()).not.toContain('비서에게 말하기')
+    expect(renderOpen()).not.toContain('비서에게 말하기')
   })
 
   // 부록 H.8.2 체크인 패널. 응답 없는 체크인이 있으면 맥락 복구 위에 둔다
@@ -440,7 +450,7 @@ describe('TodayView 상태별 렌더링', () => {
       ...over
     })
 
-  it('체크인: 응답 없는 체크인이 있으면 맥락 복구 위에 패널을 보여 준다', () => {
+  it('체크인: 응답 없는 체크인이 있으면 브리핑 위에 패널을 보여 준다', () => {
     state.today = payload({
       plan: plan(),
       items: [item({ id: 1, title: '결제 API 리팩터링', status: 'in_progress' })],
@@ -451,7 +461,7 @@ describe('TodayView 상태별 렌더링', () => {
     expect(html).toContain('체크인 · 10:55')
     expect(html).toContain('09:45–11:00')
     expect(html).toContain('>넘기기<')
-    expect(html.indexOf('today-checkin')).toBeLessThan(html.indexOf('맥락 복구'))
+    expect(html.indexOf('today-checkin')).toBeLessThan(html.indexOf('today-briefing'))
     // 패널에도 범위 지정 명령 입력이 있다
     expect(html).toContain('완료, 미룸, 또는 진행 상황 한 줄')
   })
@@ -517,15 +527,16 @@ describe('TodayView 상태별 렌더링', () => {
     expect(html).toContain('다시 만들기')
   })
 
-  it('회의 브리핑: 체크인 아래, 맥락 복구 위에 놓인다', () => {
+  it('회의 브리핑: 브리핑 아래, 시간표 위에 놓인다 (A53)', () => {
     state.today = payload({
       plan: plan(),
       items: [item({ id: 1, title: '결제 API 리팩터링', status: 'in_progress' })],
       events: [checkinEvent(), meetingEvent()]
     })
     const html = render()
-    expect(html.indexOf('today-checkin')).toBeLessThan(html.indexOf('meeting-briefing-40'))
-    expect(html.indexOf('meeting-briefing-40')).toBeLessThan(html.indexOf('맥락 복구'))
+    expect(html.indexOf('today-checkin')).toBeLessThan(html.indexOf('today-briefing'))
+    expect(html.indexOf('today-briefing')).toBeLessThan(html.indexOf('meeting-briefing-40'))
+    expect(html.indexOf('meeting-briefing-40')).toBeLessThan(html.indexOf('today-timeline'))
   })
 
   it('회의 브리핑: 행이 없거나 skipped 뿐이면 카드가 없다', () => {
@@ -550,13 +561,15 @@ describe('TodayView 상태별 렌더링', () => {
   })
 })
 
-// 부록 F.7 맥락 복구 카드. 브리핑 바로 위에 둔다
+// 부록 F.7 맥락 복구 카드. 부록 J.8 부터 회의 브리핑 아래에 둔다.
+// 본문·진행 중·오류가 없으면 더 보기 안에 1줄로 간다
 describe('맥락 복구 카드 렌더링', () => {
   const RECOVERY_MD = '# 2026-11-02 맥락 복구\n\n## 남은 작업\n\n- 결제 모듈 리팩토링 · 진행 중\n'
 
-  it('맥락 복구 본문 없음: 제목과 만들기 버튼 1줄만 보이고 브리핑 위에 놓인다', () => {
+  it('맥락 복구 본문 없음: 더 보기 안에 제목과 만들기 버튼 1줄만 보인다 (A53)', () => {
     state.today = payload({ plan: plan() })
-    const html = render()
+    expect(render()).not.toContain('today-recovery')
+    const html = renderOpen()
     expect(html).toContain('맥락 복구')
     expect(html).toContain('id="today-recovery"')
     expect(html).toMatch(/<button[^>]*>만들기<\/button>/)
@@ -565,12 +578,15 @@ describe('맥락 복구 카드 렌더링', () => {
     expect(html).not.toContain('AI 복구')
     expect(html).not.toContain('규칙 복구')
     expect(html).not.toContain('>접기<')
-    expect(html.indexOf('today-recovery')).toBeLessThan(html.indexOf('today-briefing'))
+    expect(html.indexOf('today-more')).toBeLessThan(html.indexOf('today-recovery'))
   })
 
   it('맥락 복구 진행 중: 만드는 중… 을 보이고 버튼을 비활성으로 둔다', () => {
     state.today = payload({ plan: plan(), recovery: { inFlight: true, error: null } })
     const html = render()
+    // 진행 중이면 본문 영역에 보인다. 회의 브리핑 아래, 시간표 위다
+    expect(html.indexOf('today-briefing')).toBeLessThan(html.indexOf('today-recovery'))
+    expect(html.indexOf('today-recovery')).toBeLessThan(html.indexOf('today-timeline'))
     expect(html).toContain('만드는 중…')
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>만들기<\/button>/)
   })
@@ -617,12 +633,12 @@ describe('맥락 복구 카드 렌더링', () => {
 
   it('맥락 복구: 비서가 꺼져 있으면 버튼을 숨기고, 계획이 없으면 카드를 그리지 않는다', () => {
     state.today = payload({ plan: plan(), settings: { ...SETTINGS, enabled: false } })
-    let html = render()
+    let html = renderOpen()
     expect(html).toContain('today-recovery')
     expect(html).not.toMatch(/<button[^>]*>만들기<\/button>/)
 
     state.today = payload({ plan: null })
-    html = render()
+    html = renderOpen()
     expect(html).not.toContain('today-recovery')
   })
 
@@ -752,7 +768,7 @@ describe('오늘 화면 순수 헬퍼', () => {
     ]
     expect(commandEvents(events).map((e) => e.id)).toEqual([32, 30])
     state.today = payload({ plan: plan(), events })
-    const html = render()
+    const html = renderOpen()
     const a = html.indexOf("09:50 명령 &#x27;명령 A&#x27;")
     const mid = html.indexOf('10:00 계획 최신화')
     const b = html.indexOf("11:00 명령 &#x27;명령 B&#x27;")
@@ -797,7 +813,7 @@ describe('오늘 화면 순수 헬퍼', () => {
     )
   })
 
-  it('변경 내역: 알림 행은 그리지 않고 오늘 계획 카드에 today-timeline id 를 둔다', () => {
+  it('변경 내역: 알림 행은 그리지 않고 시간표 카드에 today-timeline id 를 둔다', () => {
     state.today = payload({
       plan: plan(),
       items: [item({ id: 1 })],
@@ -814,7 +830,7 @@ describe('오늘 화면 순수 헬퍼', () => {
         })
       ]
     })
-    const html = render()
+    const html = renderOpen()
     expect(html).toContain('id="today-timeline"')
     expect(html).toContain('10:42 1건 완료 반영 · 알림 보냄')
     expect(html).not.toContain('9건 제외')
@@ -856,7 +872,11 @@ describe('오늘 화면 순수 헬퍼', () => {
       priority: null,
       jiraPriority: null,
       lastTouchedAt: null,
-      link: null
+      link: null,
+      parentKey: null,
+      groupName: null,
+      workType: 'etc' as const,
+      workVersion: null
     }
     const rest = candidatesNotInPlan(
       [
@@ -976,5 +996,345 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(html).toContain('회의 전 알림(분)')
     // 3판은 항목 소요 분 설정을 없앴다
     expect(html).not.toContain('소요 분')
+  })
+})
+
+// 부록 J.8 오늘 화면 재배치 (A53). 자동 클릭이 불가해 renderToStaticMarkup 으로 판정한다
+const { recoveryVisible } = await import('./TodayView')
+const { default: PlanItemRow, WorkTypeBadge, workTypeLabel, isGroupItem, longDateLabel } = await import('./PlanItemRow')
+const { default: InboxSection, INBOX_SHOWN, inboxSourceSummary } = await import('./InboxSection')
+const { default: MoreSection } = await import('./MoreSection')
+
+describe('오늘 화면 배치 (부록 J.8)', () => {
+  const checkin = (): AssistantEvent =>
+    event({
+      id: 30,
+      event_key: 'checkin:2026-11-02:1100',
+      kind: 'checkin',
+      scheduled_at: '2026-11-02 10:55:00',
+      fired_at: '2026-11-02 10:55:20',
+      status: 'sent',
+      ref_id: '1',
+      payload: JSON.stringify({
+        itemId: 1,
+        candidateId: 'task:1',
+        itemTitle: '결제 API 리팩터링',
+        blockStart: '09:45',
+        blockEnd: '11:00',
+        title: '체크인: 결제 API 리팩터링',
+        body: '지금까지 어떻게 됐나요?'
+      })
+    })
+  const meeting = (): AssistantEvent =>
+    event({
+      id: 40,
+      event_key: 'meeting_briefing:2026-11-02:cal-1',
+      kind: 'meeting_briefing',
+      scheduled_at: '2026-11-02 10:45:00',
+      fired_at: '2026-11-02 10:45:10',
+      status: 'sent',
+      ref_id: 'cal-1',
+      payload: JSON.stringify({
+        meeting: { id: 'cal-1', title: '주간 스프린트', startAt: '2099-01-01 23:59:00', endAt: '2099-01-01 23:59:59' },
+        title: '주간 스프린트 15분 전',
+        body: '결제',
+        projects: [],
+        hasContext: false,
+        ruleMarkdown: '- 관련 프로젝트: 결제',
+        llmStatus: 'off',
+        llmMarkdown: null,
+        llmModel: null,
+        llmAt: null,
+        llmError: null
+      })
+    })
+  const working = (): TodayPayload =>
+    payload({
+      plan: plan({ recovery_text: '## 남은 작업\n- 결제', recovery_source: 'rules', recovery_at: '2026-11-02 09:40:30' }),
+      items: [
+        item({ id: 1, title: '결제 API 리팩터링', status: 'in_progress' }),
+        item({ id: 2, title: '제안 작업', status: 'suggested', rank: null, source: 'jira', candidate_id: 'jira:A-2' })
+      ],
+      events: [checkin(), meeting(), event({ id: 10, payload: JSON.stringify({ completed: 1 }) })],
+      timeline: WORKING_TIMELINE,
+      jiraConnected: false
+    })
+
+  it('A53 근무 중 순서: 체크인 → 브리핑 → 회의 브리핑 → 맥락 복구 → 시간표 → 오늘 할 일 → 새로 들어온 일 → 더 보기', () => {
+    state.today = working()
+    for (const html of [render(), renderOpen()]) {
+      const marks = [
+        'id="today-checkin"',
+        'id="today-briefing"',
+        'id="meeting-briefing-40"',
+        'id="today-recovery"',
+        'id="today-timeline"',
+        '>오늘 할 일<',
+        'id="today-inbox"',
+        'id="today-more"'
+      ].map((m) => html.indexOf(m))
+      expect(marks.every((i) => i > -1)).toBe(true)
+      for (let i = 1; i < marks.length; i++) expect(marks[i - 1]).toBeLessThan(marks[i])
+    }
+    // 헤더가 맨 위다
+    const html = render()
+    expect(html.indexOf('근무 중')).toBeLessThan(html.indexOf('today-checkin'))
+    // 시간표 카드 제목 (J-12)
+    expect(html).toContain('>시간표<')
+    expect(html).not.toContain('>오늘 계획<')
+  })
+
+  it('A53 날짜는 헤더 1곳에만 긴 라벨로 보인다. ISO 날짜는 화면에 없다', () => {
+    state.today = working()
+    for (const html of [render(), renderOpen()]) {
+      expect(html.split('11월 2일 월요일').length - 1).toBe(1)
+      expect(html).not.toMatch(/\d{4}-\d{2}-\d{2}/)
+    }
+    // 페이지 제목 줄 '오늘' 이 없다
+    expect(render()).not.toContain('>오늘</h3>')
+    // 계획 없음·닫힘도 날짜 1번이다
+    state.today = payload({ plan: null })
+    let html = renderOpen()
+    expect(html.split('11월 2일 월요일').length - 1).toBe(1)
+    expect(html).not.toMatch(/\d{4}-\d{2}-\d{2}/)
+    state.today = payload({ plan: plan({ status: 'closed', closed_at: '2026-11-02 18:30:00', closed_by: 'auto' }) })
+    html = renderOpen()
+    expect(html.split('11월 2일 월요일').length - 1).toBe(1)
+    expect(html).not.toMatch(/\d{4}-\d{2}-\d{2}/)
+    expect(html).toContain('18:30 퇴근 · 자동 닫기')
+  })
+
+  it('A53 더 보기 접힘: 명령 입력·후보·변경 내역·연결 안내·비서 설정이 없다', () => {
+    state.today = working()
+    const html = render()
+    expect(html).toContain('id="today-more"')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('비서에게 말하기')
+    expect(html).not.toContain('후보 더 보기')
+    expect(html).not.toContain('변경 내역')
+    expect(html).not.toContain('Jira 가 연결되지 않았어요.')
+    expect(html).not.toContain('비서 설정')
+  })
+
+  it('A53 더 보기 열림: 명령 입력·후보·변경 내역·연결 안내·비서 설정이 더 보기 아래에 있다', () => {
+    state.today = working()
+    const html = renderOpen()
+    expect(html).toContain('aria-expanded="true"')
+    const more = html.indexOf('id="today-more"')
+    for (const text of ['비서에게 말하기', '후보 더 보기', '변경 내역', 'Jira 가 연결되지 않았어요. Jira 이슈는 후보에 없어요.', '비서 설정']) {
+      expect(html.indexOf(text)).toBeGreaterThan(more)
+    }
+  })
+
+  it('A53 계획 없음: 헤더·회의 브리핑·더 보기만 보인다. 더 보기에는 변경 내역·연결 안내·비서 설정만 있다', () => {
+    state.today = payload({
+      plan: null,
+      events: [meeting(), event({ id: 10, payload: JSON.stringify({ completed: 1 }) })],
+      calendarConnected: false
+    })
+    const html = renderOpen()
+    expect(html).toContain('하루 시작')
+    expect(html).toContain('id="meeting-briefing-40"')
+    expect(html).toContain('id="today-more"')
+    expect(html).toContain('변경 내역')
+    expect(html).toContain('캘린더가 연결되지 않았어요. 회의 없이 빈 시간을 계산해요.')
+    expect(html).toContain('비서 설정')
+    for (const absent of ['today-briefing', 'today-recovery', 'today-timeline', '오늘 할 일', 'today-inbox', '비서에게 말하기', '후보 더 보기']) {
+      expect(html).not.toContain(absent)
+    }
+  })
+
+  it('A53 닫힘: 시간표·오늘 할 일은 읽기 전용으로 보이고 더 보기에 명령 입력·후보가 없다', () => {
+    state.today = payload({
+      plan: plan({ status: 'closed', closed_at: '2026-11-02 18:30:00', closed_by: 'button' }),
+      items: [item({ id: 1, status: 'done' })],
+      timeline: WORKING_TIMELINE
+    })
+    const html = renderOpen()
+    expect(html).toContain('id="today-timeline"')
+    expect(html).toContain('오늘 할 일')
+    expect(html).not.toContain('지금 집중')
+    expect(html).not.toContain('비서에게 말하기')
+    expect(html).not.toContain('후보 더 보기')
+    expect(html).toContain('비서 설정')
+  })
+
+  it('A53 recoveryVisible: 본문·진행 중·오류 중 하나가 있으면 본문 영역에 둔다', () => {
+    const idle = { inFlight: false, error: null }
+    expect(recoveryVisible({ recovery_text: null }, idle)).toBe(false)
+    expect(recoveryVisible({ recovery_text: '' }, idle)).toBe(false)
+    expect(recoveryVisible({ recovery_text: '# 복구' }, idle)).toBe(true)
+    expect(recoveryVisible({ recovery_text: null }, { inFlight: true, error: null })).toBe(true)
+    expect(recoveryVisible({ recovery_text: null }, { inFlight: false, error: '실패' })).toBe(true)
+  })
+
+  it('MoreSection: 열렸을 때만 children 을 그리고 버튼 id 는 today-more 다', () => {
+    const closed = renderToStaticMarkup(
+      <MoreSection open={false} onToggle={() => {}}>
+        <p>안쪽</p>
+      </MoreSection>
+    )
+    expect(closed).toContain('id="today-more"')
+    expect(closed).toContain('더 보기')
+    expect(closed).not.toContain('안쪽')
+    const open = renderToStaticMarkup(
+      <MoreSection open onToggle={() => {}}>
+        <p>안쪽</p>
+      </MoreSection>
+    )
+    expect(open).toContain('안쪽')
+  })
+
+  it('todayNotices: 해요체 문구 (A52)', () => {
+    expect(todayNotices(payload({ calendarConnected: false, jiraConnected: false, jiraTruncated: true }))).toEqual([
+      '캘린더가 연결되지 않았어요. 회의 없이 빈 시간을 계산해요.',
+      'Jira 가 연결되지 않았어요. Jira 이슈는 후보에 없어요.',
+      'Jira 이슈가 많아 일부만 가져왔어요.'
+    ])
+  })
+})
+
+describe('업무 유형 배지·묶음 (부록 J.8, A49)', () => {
+  const epic = item({
+    id: 1,
+    source: 'jira',
+    candidate_id: 'jira:ICA-8054',
+    jira_issue_key: 'ICA-8054',
+    title: 'ICA-8054 안드로이드QA-2026',
+    rank: 1,
+    work_type: 'qa'
+  })
+  const child = item({
+    id: 2,
+    source: 'jira',
+    candidate_id: 'jira:ICA-8971',
+    jira_issue_key: 'ICA-8971',
+    title: 'ICA-8971 안드로이드 구매자 앱 v4.174.0 QA',
+    rank: 2,
+    status: 'in_progress',
+    work_type: 'qa',
+    work_version: '4.174.0',
+    parent_key: 'ICA-8054',
+    group_name: '안드로이드QA-2026'
+  })
+  const rowHtml = (target: PlanItem, items: PlanItem[], focusItemId: number | null): string =>
+    renderToStaticMarkup(
+      <PlanItemRow
+        item={target}
+        items={items}
+        logicalDate="2026-11-02"
+        focusItemId={focusItemId}
+        onStatus={() => {}}
+        onFocus={() => {}}
+        onCompleteOrigin={async () => true}
+      />
+    )
+
+  it('workTypeLabel: QA 만 버전을 붙인다. etc 는 기타', () => {
+    expect(workTypeLabel('qa', '4.174.0')).toBe('QA 4.174.0')
+    expect(workTypeLabel('qa', null)).toBe('QA')
+    expect(workTypeLabel('sus', '4.162.0')).toBe('SUS')
+    expect(workTypeLabel('trd', null)).toBe('TRD')
+    expect(workTypeLabel('prd', null)).toBe('PRD')
+    expect(workTypeLabel('etc', null)).toBe('기타')
+  })
+
+  it('WorkTypeBadge: 유형별 색. etc 는 배지가 없다', () => {
+    const b = (type: PlanItem['work_type'], version: string | null = null): string =>
+      renderToStaticMarkup(<WorkTypeBadge type={type} version={version} />)
+    expect(b('qa', '4.174.0')).toContain('bg-rose-50 text-rose-700')
+    expect(b('qa', '4.174.0')).toContain('QA 4.174.0')
+    expect(b('sus')).toContain('bg-orange-50 text-orange-700')
+    expect(b('trd')).toContain('bg-cyan-50 text-cyan-700')
+    expect(b('prd')).toContain('bg-violet-50 text-violet-700')
+    expect(b('etc')).toBe('')
+  })
+
+  it('A49 isGroupItem: 받아들인 하위가 같은 계획에 있는 Jira 항목만 묶음이다', () => {
+    expect(isGroupItem(epic, [epic, child])).toBe(true)
+    expect(isGroupItem(child, [epic, child])).toBe(false)
+    // 제안·무시·제외 하위는 세지 않는다
+    for (const status of ['suggested', 'dismissed', 'dropped'] as const) {
+      expect(isGroupItem(epic, [epic, { ...child, status }])).toBe(false)
+    }
+    for (const status of ['planned', 'done', 'deferred'] as const) {
+      expect(isGroupItem(epic, [epic, { ...child, status }])).toBe(true)
+    }
+    // 하위가 없는 에픽, Jira 키가 없는 항목은 보통 항목이다
+    expect(isGroupItem(epic, [epic])).toBe(false)
+    expect(isGroupItem({ id: 9, jira_issue_key: null }, [{ id: 1, parent_key: null, status: 'planned' }])).toBe(false)
+  })
+
+  it('A49 묶음 항목: 순위 –, 묶음 배지, 집중 중·지금 집중 없음', () => {
+    const html = rowHtml(epic, [epic, child], epic.id)
+    expect(html).toContain('묶음')
+    expect(html).toContain('bg-gray-100 text-gray-600')
+    expect(html).toContain('>–</span>')
+    expect(html).not.toContain('집중 중')
+    expect(html).not.toContain('지금 집중')
+    expect(html).toContain('QA')
+  })
+
+  it('하위 항목: 유형 배지·버전·묶음 이름을 보이고 지금 집중을 둔다', () => {
+    const html = rowHtml(child, [epic, child], null)
+    expect(html).toContain('QA 4.174.0')
+    expect(html).toContain('안드로이드QA-2026')
+    expect(html).not.toContain('>묶음<')
+    expect(html).toContain('지금 집중')
+  })
+
+  it('A53 오늘 할 일: TodayView 가 묶음 판정에 계획 항목 전체를 넘긴다', () => {
+    state.today = payload({ plan: plan(), items: [epic, child], timeline: { ...EMPTY_TIMELINE, focusItemId: 2 } })
+    const html = render()
+    expect(html).toContain('>묶음<')
+    expect(html).toContain('QA 4.174.0')
+    expect(html.split('집중 중').length - 1).toBe(1)
+  })
+
+  it('longDateLabel: YYYY-MM-DD 를 긴 한국어 라벨로. 형식이 아니면 그대로', () => {
+    expect(longDateLabel('2026-11-03')).toBe('11월 3일 화요일')
+    expect(longDateLabel('2026-01-01')).toBe('1월 1일 목요일')
+    expect(longDateLabel('2026-02-30')).toBe('2026-02-30')
+    expect(longDateLabel('오늘')).toBe('오늘')
+  })
+})
+
+describe('새로 들어온 일 접기 (부록 J.8, J-9)', () => {
+  const suggestions = (n: number): PlanItem[] =>
+    Array.from({ length: n }, (_, i) =>
+      item({
+        id: i + 1,
+        title: `제안 ${i + 1}`,
+        status: 'suggested',
+        rank: null,
+        source: i < 2 ? 'jira' : 'action_item',
+        candidate_id: `x:${i + 1}`,
+        score: 100 - i,
+        work_type: i === 0 ? 'prd' : 'etc'
+      })
+    )
+  const inbox = (items: PlanItem[]): string =>
+    renderToStaticMarkup(<InboxSection items={items} busy={false} onAccept={() => {}} onDismiss={() => {}} />)
+
+  it('INBOX_SHOWN 건까지 보이고 나머지 n건 보기 버튼을 둔다', () => {
+    expect(INBOX_SHOWN).toBe(5)
+    const html = inbox(suggestions(7))
+    expect(html).toContain('7건')
+    for (let i = 1; i <= 5; i++) expect(html).toContain(`>제안 ${i}<`)
+    expect(html).not.toContain('>제안 6<')
+    expect(html).not.toContain('>제안 7<')
+    expect(html).toContain('나머지 2건 보기')
+    // 유형 배지
+    expect(html).toContain('PRD')
+  })
+
+  it('5건 이하면 버튼이 없다', () => {
+    expect(inbox(suggestions(5))).not.toContain('나머지')
+  })
+
+  it('inboxSourceSummary: 출처별 수. 많은 출처가 앞이다', () => {
+    expect(inboxSourceSummary(suggestions(7))).toBe('액션아이템 5 · Jira 2')
+    expect(inbox(suggestions(7))).toContain('액션아이템 5 · Jira 2')
+    expect(inboxSourceSummary([])).toBe('')
   })
 })

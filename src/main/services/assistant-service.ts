@@ -22,7 +22,8 @@ import {
 } from './assistant-briefing'
 import { buildRecovery, recoveryContextOf, recoveryToMarkdown, shouldAutoRecover } from './assistant-recovery'
 import { logicalDate, toLocalDateTime, toHHmm } from './assistant-day'
-import { buildStartPlanItems, buildTimeline, roundUpToQuarter } from './assistant-slots'
+import { buildStartPlanItems, buildTimeline, roundUpToQuarter, workFieldsOf } from './assistant-slots'
+import { isGroupItem } from './assistant-worktype'
 import {
   buildPlanUpdateNotices,
   diffSources,
@@ -750,7 +751,8 @@ async function addItemImpl(candidateId: string, now: Date): Promise<TodayPayload
       added_by: 'user',
       urgent: isUrgent(c, today),
       status: 'planned',
-      status_note: null
+      status_note: null,
+      ...workFieldsOf(c)
     }
     insertPlanItems(db, plan.id, [item])
   }
@@ -837,7 +839,10 @@ async function focusItemImpl(itemId: number, now: Date): Promise<TodayPayload> {
   if (!FOCUSABLE_STATUSES.includes(item.status)) {
     throw new Error('계획 중이거나 진행 중인 항목만 지금 집중할 수 있습니다.')
   }
-  const updates = focusUpdates(listPlanItems(db, plan.id), item.id)
+  const items = listPlanItems(db, plan.id)
+  // 묶음 항목은 집중 작업이 될 수 없다 (A49)
+  if (isGroupItem(item, items)) throw new Error('묶음 항목은 집중 작업이 될 수 없어요.')
+  const updates = focusUpdates(items, item.id)
   if (updates.length > 0) updatePlanItems(db, updates, at)
   return buildPayload(db, settings, today, now)
 }
@@ -1084,7 +1089,11 @@ function insertManualItem(db: Db, title: string, dueDate: string | null, plan: D
     added_by: 'user',
     urgent: isUrgent(c, today),
     status: 'planned',
-    status_note: null
+    status_note: null,
+    work_type: 'etc',
+    work_version: null,
+    parent_key: null,
+    group_name: null
   }
   insertPlanItems(db, plan.id, [item])
 }

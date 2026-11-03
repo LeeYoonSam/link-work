@@ -190,6 +190,67 @@ describe('migrateAssistantSchema', () => {
   })
 })
 
+// 업무 유형 컬럼 4개가 없던 MVP5 시점 plan_items DDL 이다 (부록 J.5)
+const WORK_COLUMNS = ['work_type', 'work_version', 'parent_key', 'group_name']
+const PRE_J_SCHEMA = ASSISTANT_SCHEMA.replace(
+  "    work_type TEXT NOT NULL DEFAULT 'etc',\n    work_version TEXT,\n    parent_key TEXT,\n    group_name TEXT,\n",
+  ''
+)
+
+describe('A50: plan_items 업무 유형 컬럼', () => {
+  it('A50: 새 DDL 의 plan_items 에 컬럼 4개가 있고 work_type 기본값은 etc 다', () => {
+    const db = new Database(':memory:')
+    db.exec(ASSISTANT_SCHEMA)
+    expect(columns(db, 'plan_items')).toEqual(expect.arrayContaining(WORK_COLUMNS))
+    db.prepare("INSERT INTO daily_plans (plan_date, started_at) VALUES ('2026-11-03', '2026-11-03 09:00:00')").run()
+    db.prepare(
+      "INSERT INTO plan_items (plan_id, candidate_id, source, title, score, added_by) VALUES (1, 'todo:1', 'todo', 't', 0, 'start')"
+    ).run()
+    expect(db.prepare('SELECT work_type, work_version, parent_key, group_name FROM plan_items').get()).toEqual({
+      work_type: 'etc', work_version: null, parent_key: null, group_name: null
+    })
+    db.close()
+  })
+
+  it('A50: 옛 DDL 에 컬럼 4개를 더하고 기존 행은 etc·null 이 된다', () => {
+    expect(PRE_J_SCHEMA).not.toBe(ASSISTANT_SCHEMA)
+    const db = new Database(':memory:')
+    db.exec(PRE_J_SCHEMA)
+    for (const c of WORK_COLUMNS) expect(columns(db, 'plan_items')).not.toContain(c)
+    db.prepare("INSERT INTO daily_plans (plan_date, started_at) VALUES ('2026-11-03', '2026-11-03 09:00:00')").run()
+    db.prepare(
+      "INSERT INTO plan_items (plan_id, candidate_id, source, title, score, added_by) VALUES (1, 'jira:ICA-8054', 'jira', '안드로이드QA-2026', 5, 'start')"
+    ).run()
+
+    migrateAssistantSchema(db)
+
+    expect(columns(db, 'plan_items')).toEqual(expect.arrayContaining(WORK_COLUMNS))
+    expect(db.prepare('SELECT title, work_type, work_version, parent_key, group_name FROM plan_items').get()).toEqual({
+      title: '안드로이드QA-2026', work_type: 'etc', work_version: null, parent_key: null, group_name: null
+    })
+    db.close()
+  })
+
+  it('A50: 마이그레이션을 여러 번 실행해도 컬럼 목록이 같다 (멱등성)', () => {
+    const db = new Database(':memory:')
+    db.exec(PRE_J_SCHEMA)
+    migrateAssistantSchema(db)
+    const once = columns(db, 'plan_items')
+    expect(() => migrateAssistantSchema(db)).not.toThrow()
+    migrateAssistantSchema(db)
+    expect(columns(db, 'plan_items')).toEqual(once)
+    for (const c of WORK_COLUMNS) expect(once.filter((x) => x === c)).toHaveLength(1)
+
+    const fresh = new Database(':memory:')
+    fresh.exec(ASSISTANT_SCHEMA)
+    const before = columns(fresh, 'plan_items')
+    migrateAssistantSchema(fresh)
+    expect(columns(fresh, 'plan_items')).toEqual(before)
+    db.close()
+    fresh.close()
+  })
+})
+
 describe('initDatabase', () => {
   afterAll(() => closeDatabase())
 

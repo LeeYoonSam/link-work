@@ -120,6 +120,7 @@ function item(over: Partial<PlanItem> & Pick<PlanItem, 'id'>): PlanItem {
     score: 0, rank: over.id, slot_start: null, slot_end: null,
     pinned: false, added_by: 'start', urgent: false,
     status: 'planned', status_note: null, status_at: null, first_planned_date: null,
+    work_type: 'etc', work_version: null, parent_key: null, group_name: null,
     ...over
   }
 }

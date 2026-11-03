@@ -32,6 +32,10 @@ const item = (over: Partial<PlanItem> & Pick<PlanItem, 'id'>): PlanItem => ({
   status_note: null,
   status_at: null,
   first_planned_date: '2026-11-02',
+  work_type: 'etc',
+  work_version: null,
+  parent_key: null,
+  group_name: null,
   ...over
 })
 

@@ -704,6 +704,10 @@ function planItem(id: number, patch: Partial<PlanItem> = {}): PlanItem {
     status_note: null,
     status_at: null,
     first_planned_date: '2026-10-30',
+    work_type: 'etc',
+    work_version: null,
+    parent_key: null,
+    group_name: null,
     ...patch
   }
 }

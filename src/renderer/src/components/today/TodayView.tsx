@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AssistantNavigateEvent, PlanItem, TodayPayload } from '../../types'
+import type { AssistantNavigateEvent, DailyPlan, PlanItem, RecoveryState, TodayPayload } from '../../types'
 import { useAssistantStore } from '../../stores/assistantStore'
 import { Card, EmptyState, SectionTitle, button } from '../ui'
 import DayHeader from './DayHeader'
@@ -14,6 +14,7 @@ import ChangeLog from './ChangeLog'
 import CandidatePicker from './CandidatePicker'
 import CommandInput from './CommandInput'
 import AssistantSettingsModal from './AssistantSettingsModal'
+import MoreSection from './MoreSection'
 
 // '오늘 할 일' 순서 목록. 제안·무시 항목은 뺀다.
 // 활성 항목을 rank 순으로 먼저 두고, 완료·미룸·제외 항목을 rank 순으로 뒤에 둔다
@@ -38,11 +39,17 @@ export function unplacedDeadlineItems(today: Pick<TodayPayload, 'items' | 'timel
 // 연결 상태와 수집 실패를 짧은 안내 문구로 만든다
 export function todayNotices(today: TodayPayload): string[] {
   const notes: string[] = []
-  if (!today.calendarConnected) notes.push('캘린더가 연결되지 않았습니다. 회의 일정 없이 빈 시간을 계산합니다.')
-  if (!today.jiraConnected) notes.push('Jira 가 연결되지 않았습니다. Jira 이슈는 후보에 없습니다.')
-  if (today.jiraTruncated) notes.push('Jira 이슈가 많습니다. 일부만 가져왔습니다.')
+  if (!today.calendarConnected) notes.push('캘린더가 연결되지 않았어요. 회의 없이 빈 시간을 계산해요.')
+  if (!today.jiraConnected) notes.push('Jira 가 연결되지 않았어요. Jira 이슈는 후보에 없어요.')
+  if (today.jiraTruncated) notes.push('Jira 이슈가 많아 일부만 가져왔어요.')
   for (const e of today.lastErrors ?? []) notes.push(e)
   return notes
+}
+
+// 맥락 복구 카드를 본문 영역에 둘지 판정한다 (부록 J.8).
+// 본문·진행 중·오류가 없으면 '더 보기' 안에 1줄로 간다
+export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: RecoveryState): boolean {
+  return !!plan.recovery_text || state.inFlight || !!state.error
 }
 
 // 알림 focus 를 스크롤 대상 요소 id 로 바꾼다
@@ -70,7 +77,18 @@ export function localNow(d: Date = new Date()): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
-export default function TodayView(): React.ReactNode {
+const scrollToId = (id: string): boolean => {
+  const el = document.getElementById(id)
+  el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  return el !== null
+}
+
+export default function TodayView({
+  moreOpenInitial = false
+}: {
+  // 테스트가 '더 보기' 를 연 상태로 그릴 때 쓴다. 앱은 넘기지 않는다
+  moreOpenInitial?: boolean
+} = {}): React.ReactNode {
   const {
     today,
     loading,
@@ -106,6 +124,7 @@ export default function TodayView(): React.ReactNode {
     subscribe
   } = useAssistantStore()
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(moreOpenInitial)
 
   useEffect(() => {
     void load()
@@ -116,7 +135,11 @@ export default function TodayView(): React.ReactNode {
   useEffect(() => {
     if (!focus || !today) return
     const id = focusTargetId(focus)
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // 대상이 접힌 '더 보기' 안에 있으면 연 뒤 다음 그리기에서 스크롤한다
+    if (!scrollToId(id)) {
+      setMoreOpen(true)
+      setTimeout(() => scrollToId(id), 0)
+    }
     setFocus(null)
   }, [focus, today])
 
@@ -135,7 +158,7 @@ export default function TodayView(): React.ReactNode {
             </button>
           </Card>
         ) : (
-          <EmptyState>{loading ? '오늘 계획을 불러오는 중…' : '오늘 계획이 아직 없습니다.'}</EmptyState>
+          <EmptyState>{loading ? '오늘 계획을 불러오는 중…' : '오늘 계획이 아직 없어요.'}</EmptyState>
         )}
       </div>
     )
@@ -156,9 +179,22 @@ export default function TodayView(): React.ReactNode {
     plan?.status === 'active' && today.aiAvailable && today.settings.llmEnabled
   const meetingRows = meetingBriefings(today.events)
 
+  const recoveryState = today.recovery ?? { inFlight: false, error: null }
+  const showRecovery = plan ? recoveryVisible(plan, recoveryState) : false
+  const recoveryCard = plan ? (
+    <RecoveryCard
+      plan={plan}
+      state={recoveryState}
+      busy={busy}
+      canGenerate={today.settings.enabled}
+      onGenerate={() => void generateRecovery()}
+    />
+  ) : null
+
   const rowProps = {
     readOnly,
     busy,
+    items,
     onStatus: (id: number, status: PlanItem['status']) => void setItemStatus(id, status),
     logicalDate: today.logicalDate,
     focusItemId: timeline?.focusItemId ?? null,
@@ -166,13 +202,10 @@ export default function TodayView(): React.ReactNode {
     onCompleteOrigin: completeOrigin
   }
 
+  // 순서: 헤더 → 오류 → 체크인 → 브리핑 → 회의 브리핑 → 맥락 복구 → 시간표 → 오늘 할 일
+  // → 새로 들어온 일 → 더 보기 (부록 J.8, A53). 날짜는 DayHeader 1곳에만 보인다
   return (
     <div className="max-w-4xl mx-auto space-y-4">
-      <div className="flex items-center justify-between">
-        <SectionTitle variant="page">오늘</SectionTitle>
-        <span className="text-xs text-gray-400">{today.logicalDate}</span>
-      </div>
-
       <DayHeader
         logicalDate={today.logicalDate}
         plan={plan}
@@ -195,23 +228,6 @@ export default function TodayView(): React.ReactNode {
         </div>
       ) : null}
 
-      {notices.length > 0 ? (
-        <ul className="space-y-0.5">
-          {notices.map((n) => (
-            <li key={n} className="text-[11px] text-gray-500">
-              · {n}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-
-      {/* 명령 입력은 근무 중에만 보인다. 닫힌 날은 interpretCommand 가 거절한다 (부록 G.10.1) */}
-      {plan?.status === 'active' ? (
-        <Card padding="sm">
-          <CommandInput />
-        </Card>
-      ) : null}
-
       {/* 시각에 묶인 질문이라 본문 맨 위에 둔다 (부록 H.8.1) */}
       {plan && checkin ? (
         <CheckinPanel
@@ -222,6 +238,15 @@ export default function TodayView(): React.ReactNode {
           readOnly={readOnly}
           onRespond={(eventId, status, note) => respondCheckin(eventId, status, note)}
           onApplied={() => void load()}
+        />
+      ) : null}
+
+      {plan ? (
+        <BriefingCard
+          plan={plan}
+          canRegenerate={canRegenerate}
+          busy={busy}
+          onRegenerate={() => void refreshBriefing()}
         />
       ) : null}
 
@@ -236,32 +261,11 @@ export default function TodayView(): React.ReactNode {
 
       {plan ? (
         <>
-          <RecoveryCard
-            plan={plan}
-            state={today.recovery ?? { inFlight: false, error: null }}
-            busy={busy}
-            canGenerate={today.settings.enabled}
-            onGenerate={() => void generateRecovery()}
-          />
-
-          <BriefingCard
-            plan={plan}
-            canRegenerate={canRegenerate}
-            busy={busy}
-            onRegenerate={() => void refreshBriefing()}
-          />
-
-          <InboxSection
-            items={items}
-            busy={busy}
-            readOnly={readOnly}
-            onAccept={(id) => void acceptSuggestion(id)}
-            onDismiss={(id) => void dismissSuggestion(id)}
-          />
+          {showRecovery ? recoveryCard : null}
 
           <Card padding="none">
             <div id="today-timeline" className="flex items-center justify-between px-4 pt-4 pb-2">
-              <SectionTitle>오늘 계획</SectionTitle>
+              <SectionTitle>시간표</SectionTitle>
               {timeline && !readOnly ? (
                 <span className="text-xs text-gray-500 tabular-nums">
                   집중 가능 <span className="font-semibold text-gray-800">{freeTimeLabel(timeline.freeMinutesLeft)}</span>
@@ -271,7 +275,7 @@ export default function TodayView(): React.ReactNode {
             {timeline && timeline.entries.length > 0 ? (
               <Timeline timeline={timeline} items={items} logicalDate={today.logicalDate} />
             ) : (
-              <EmptyState compact>오늘 남은 시간 블록이 없습니다.</EmptyState>
+              <EmptyState compact>오늘 남은 시간 블록이 없어요.</EmptyState>
             )}
             {unplaced.length > 0 ? (
               <div className="px-4 py-2 border-t border-amber-100 bg-amber-50">
@@ -293,7 +297,7 @@ export default function TodayView(): React.ReactNode {
               <span className="text-xs text-gray-400">{ordered.length}건</span>
             </div>
             {ordered.length === 0 ? (
-              <EmptyState compact>계획 항목이 없습니다. 아래 후보에서 추가하세요.</EmptyState>
+              <EmptyState compact>계획 항목이 없어요. 아래 더 보기에서 후보를 추가해 주세요.</EmptyState>
             ) : (
               <div className="border-t border-gray-100">
                 {ordered.map((item) => (
@@ -303,31 +307,61 @@ export default function TodayView(): React.ReactNode {
             )}
           </Card>
 
-          <ChangeLog events={today.events} />
-
-          {!readOnly ? (
-            <CandidatePicker
-              candidates={candidates}
-              items={items}
-              loading={candidatesLoading}
-              error={candidatesError}
-              busy={busy}
-              onLoad={() => void loadCandidates()}
-              onAdd={(id) => void addItem(id)}
-            />
-          ) : null}
+          <InboxSection
+            items={items}
+            busy={busy}
+            readOnly={readOnly}
+            onAccept={(id) => void acceptSuggestion(id)}
+            onDismiss={(id) => void dismissSuggestion(id)}
+          />
         </>
       ) : null}
 
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          className={`px-3 py-1.5 text-xs ${button.ghost}`}
-        >
-          비서 설정
-        </button>
-      </div>
+      {/* 조작 UI 는 접힌 더 보기 안에 둔다 (부록 J.8, J-8) */}
+      <MoreSection open={moreOpen} onToggle={() => setMoreOpen((o) => !o)}>
+        {/* 명령 입력은 근무 중에만 보인다. 닫힌 날은 interpretCommand 가 거절한다 (부록 G.10.1) */}
+        {plan?.status === 'active' ? (
+          <Card padding="sm">
+            <CommandInput />
+          </Card>
+        ) : null}
+
+        {plan && !readOnly ? (
+          <CandidatePicker
+            candidates={candidates}
+            items={items}
+            loading={candidatesLoading}
+            error={candidatesError}
+            busy={busy}
+            onLoad={() => void loadCandidates()}
+            onAdd={(id) => void addItem(id)}
+          />
+        ) : null}
+
+        <ChangeLog events={today.events} />
+
+        {notices.length > 0 ? (
+          <ul className="space-y-0.5">
+            {notices.map((n) => (
+              <li key={n} className="text-[11px] text-gray-500">
+                · {n}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {plan && !showRecovery ? recoveryCard : null}
+
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            className={`px-3 py-1.5 text-xs ${button.ghost}`}
+          >
+            비서 설정
+          </button>
+        </div>
+      </MoreSection>
 
       {settingsOpen ? (
         <AssistantSettingsModal

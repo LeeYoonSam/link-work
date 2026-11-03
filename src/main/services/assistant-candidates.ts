@@ -8,6 +8,7 @@ import type {
   TaskRow,
   TodoRow
 } from './assistant-types'
+import { classifyWork } from './assistant-worktype'
 
 const DATE_RE = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}))?/
 const DATE_ONLY_RE = /^(\d{4}-\d{2}-\d{2})(?:[ T]\d{2}:\d{2}(?::\d{2})?)?$/
@@ -43,11 +44,15 @@ function normalizeKey(key: string | null | undefined): string | null {
 }
 
 function fromTask(t: TaskRow, touched: Record<number, string>): Candidate {
+  const jiraKey = normalizeKey(t.jira_issue_key)
+  const { workType, workVersion } = classifyWork({
+    source: 'task', jiraKey, title: t.name, parentSummary: null, projectName: t.project_name, issueType: null
+  })
   return {
     id: `task:${t.id}`,
     source: 'task',
     title: t.name,
-    jiraKey: normalizeKey(t.jira_issue_key),
+    jiraKey,
     projectId: t.project_id,
     projectName: t.project_name,
     dueDate: toDate(t.end_date),
@@ -56,7 +61,11 @@ function fromTask(t: TaskRow, touched: Record<number, string>): Candidate {
     priority: t.project_priority ? (PROJECT_PRIORITY[t.project_priority] ?? null) : null,
     jiraPriority: null,
     lastTouchedAt: touched[t.id] ?? null,
-    link: `linkwork://project/${t.project_id}`
+    link: `linkwork://project/${t.project_id}`,
+    parentKey: null,
+    groupName: t.project_name,
+    workType,
+    workVersion
   }
 }
 
@@ -75,12 +84,20 @@ function fromTodo(t: TodoRow): Candidate {
     priority: toPriority(t.priority),
     jiraPriority: null,
     lastTouchedAt: t.updated_at ?? null,
-    link: 'linkwork://view/todos'
+    link: 'linkwork://view/todos',
+    parentKey: null,
+    groupName: null,
+    workType: 'etc',
+    workVersion: null
   }
 }
 
 function fromJira(j: JiraCandidateInput): Candidate {
   const key = normalizeKey(j.key) ?? j.key
+  const { workType, workVersion } = classifyWork({
+    source: 'jira', jiraKey: key, title: j.summary, parentSummary: j.parentSummary, projectName: null,
+    issueType: j.issueType
+  })
   return {
     id: `jira:${key}`,
     source: 'jira',
@@ -94,7 +111,11 @@ function fromJira(j: JiraCandidateInput): Candidate {
     priority: j.priority ? (JIRA_PRIORITY[j.priority] ?? null) : null,
     jiraPriority: j.priority,
     lastTouchedAt: j.updatedLocal,
-    link: j.url
+    link: j.url,
+    parentKey: normalizeKey(j.parentKey),
+    groupName: j.parentSummary,
+    workType,
+    workVersion
   }
 }
 
@@ -114,12 +135,21 @@ function fromActionItem(a: ActionItemRow): Candidate {
     priority: 'medium',
     jiraPriority: null,
     lastTouchedAt: null,
-    link: 'linkwork://view/notes'
+    link: 'linkwork://view/notes',
+    parentKey: null,
+    groupName: null,
+    workType: 'etc',
+    workVersion: null
   }
 }
 
-/** task 와 jira 를 합친다. 식별·이동 경로는 task, 상태는 jira 가 우선이다. */
-function mergeTaskJira(task: Candidate, jira: Candidate): Candidate {
+/** task 와 jira 를 합친다. 식별·이동 경로는 task, 상태는 jira 가 우선이다.
+ *  분류는 task 제목·jira 부모 요약·jira 이슈 유형·task 프로젝트 이름으로 다시 계산한다 (J.9.4). */
+function mergeTaskJira(task: Candidate, jira: Candidate, raw: JiraCandidateInput): Candidate {
+  const { workType, workVersion } = classifyWork({
+    source: 'task', jiraKey: jira.jiraKey, title: task.title, parentSummary: raw.parentSummary,
+    projectName: task.projectName, issueType: raw.issueType
+  })
   return {
     ...task,
     jiraKey: jira.jiraKey,
@@ -127,7 +157,11 @@ function mergeTaskJira(task: Candidate, jira: Candidate): Candidate {
     priority: jira.priority ?? task.priority,
     jiraPriority: jira.jiraPriority,
     dueDate: jira.dueDate ?? task.dueDate,
-    lastTouchedAt: jira.lastTouchedAt ?? task.lastTouchedAt
+    lastTouchedAt: jira.lastTouchedAt ?? task.lastTouchedAt,
+    parentKey: jira.parentKey,
+    groupName: jira.groupName ?? task.groupName,
+    workType,
+    workVersion
   }
 }
 
@@ -141,10 +175,14 @@ export function buildCandidates(input: CandidateInput): Candidate[] {
 
   // jira: 완료 이슈는 후보가 아니다. 같은 키는 첫 1건만 쓴다.
   const jiraByKey = new Map<string, Candidate>()
+  const jiraInputByKey = new Map<string, JiraCandidateInput>()
   for (const j of input.jiraIssues ?? []) {
     if (j.statusCategory === 'done') continue
     const c = fromJira(j)
-    if (c.jiraKey && !jiraByKey.has(c.jiraKey)) jiraByKey.set(c.jiraKey, c)
+    if (c.jiraKey && !jiraByKey.has(c.jiraKey)) {
+      jiraByKey.set(c.jiraKey, c)
+      jiraInputByKey.set(c.jiraKey, j)
+    }
   }
 
   // task: id 오름차순으로 보고, 같은 jiraKey 는 가장 작은 id 1건만 남긴다.
@@ -157,7 +195,8 @@ export function buildCandidates(input: CandidateInput): Candidate[] {
       if (usedKeys.has(c.jiraKey)) continue
       usedKeys.add(c.jiraKey)
       const jira = jiraByKey.get(c.jiraKey)
-      if (jira) c = mergeTaskJira(c, jira)
+      const raw = jiraInputByKey.get(c.jiraKey)
+      if (jira && raw) c = mergeTaskJira(c, jira, raw)
     }
     result.push(c)
   }

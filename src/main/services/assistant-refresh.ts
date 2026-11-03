@@ -1,7 +1,8 @@
 // 최신화 변경 계산·반영 계획·최신화 알림 (docs/ASSISTANT.md §8.3·§8.4, 부록 B.4·B.7·E.3). 순수 모듈이다 (A3·A14).
 import { isUrgent } from './assistant-candidates'
 import { compareDue, compareId, rankCandidates, scoreCandidate, SOURCE_ORDER } from './assistant-score'
-import { ACTIVE_STATUSES, buildTimeline, compareByRank, toMinutes } from './assistant-slots'
+import { ACTIVE_STATUSES, buildTimeline, compareByRank, toMinutes, workFieldsOf } from './assistant-slots'
+import { isGroupCandidate, isGroupItem } from './assistant-worktype'
 import type {
   CalendarRef,
   DayTimeline,
@@ -182,7 +183,8 @@ export function planRefresh(
         link: c.link,
         title: c.title,
         due_date: c.dueDate,
-        score: scoreCandidate(c, ctx.today)
+        score: scoreCandidate(c, ctx.today),
+        ...workFieldsOf(c)
       })
       replaced++
       continue
@@ -213,8 +215,10 @@ export function planRefresh(
     current.calendar !== null &&
     diff.calendarAdded.length + diff.calendarChanged.length + diff.calendarRemoved.length > 0
 
-  // 4. 새 후보는 suggested 로만 넣는다 (A19). replace 대상과 기존 항목은 뺀다.
-  const fresh = diff.newCandidates.filter((c) => !replaceTargets.has(c.id) && !itemCandidateIds.has(c.id))
+  // 4. 새 후보는 suggested 로만 넣는다 (A19). replace 대상과 기존 항목, 묶음 후보는 뺀다 (A49).
+  const fresh = diff.newCandidates.filter(
+    (c) => !replaceTargets.has(c.id) && !itemCandidateIds.has(c.id) && !isGroupCandidate(c, current.candidates)
+  )
   const inserts: NewPlanItem[] = rankCandidates(fresh, ctx.today).map(({ candidate: c, score }) => ({
     candidate_id: c.id,
     source: c.source,
@@ -231,8 +235,14 @@ export function planRefresh(
     added_by: 'refresh',
     urgent: isUrgent(c, ctx.today),
     status: 'suggested',
-    status_note: null
+    status_note: null,
+    ...workFieldsOf(c)
   }))
+
+  // 4-1. 업무 유형·묶음 보강 뒤 묶음 rank 정리 (J.5, A50·A49). 상태·제목·마감·점수는 바꾸지 않는다.
+  const enrichBase = applyPatches(items, patches)
+  for (const u of enrichItems(enrichBase, current.candidates, current.jira !== null)) addPatch(patches, u.id, u.patch)
+  for (const u of groupRankUpdates(applyPatches(items, patches))) addPatch(patches, u.id, u.patch)
 
   const updates = finalizeUpdates(items, patches)
 
@@ -274,6 +284,42 @@ export function planRefresh(
       currentOrNextChanged
     }
   }
+}
+
+const ENRICH_SOURCES: ReadonlySet<PlanItem['source']> = new Set<PlanItem['source']>(['jira', 'task'])
+
+/**
+ * J.5 최신화 보강. jira·task 항목의 업무 유형·묶음 4개 컬럼만 현재 후보 값으로 맞춘다 (A50).
+ * jiraSeen 이 거짓이면 Jira 유래 항목은 건너뛴다. 이유: Jira 를 보지 않으면 부모를 모른다.
+ */
+export function enrichItems(items: PlanItem[], candidates: Candidate[], jiraSeen: boolean): PlanItemUpdate[] {
+  const byId = new Map(candidates.map((c) => [c.id, c]))
+  const patches = new Map<number, Patch>()
+  for (const it of items) {
+    if (!ENRICH_SOURCES.has(it.source)) continue
+    const c = byId.get(it.candidate_id)
+    if (!c) continue
+    if (!jiraSeen && (it.source === 'jira' || it.jira_issue_key !== null || c.jiraKey !== null)) continue
+    addPatch(patches, it.id, workFieldsOf(c))
+  }
+  return finalizeUpdates(items, patches)
+}
+
+/**
+ * J.4-6 묶음 rank 정리. rank 가 남은 묶음 항목이 있을 때만 움직인다.
+ * 묶음 항목은 rank null, 나머지 활성 항목은 기존 순서대로 1부터 다시 매긴다 (A20).
+ */
+export function groupRankUpdates(items: PlanItem[]): PlanItemUpdate[] {
+  const groups = items.filter((it) => isGroupItem(it, items))
+  if (!groups.some((it) => it.rank !== null)) return []
+  const patches = new Map<number, Patch>()
+  for (const it of groups) addPatch(patches, it.id, { rank: null })
+  const groupIds = new Set(groups.map((it) => it.id))
+  items
+    .filter((it) => ACTIVE_STATUSES.has(it.status) && !groupIds.has(it.id))
+    .sort(compareByRank)
+    .forEach((it, idx) => addPatch(patches, it.id, { rank: idx + 1 }))
+  return finalizeUpdates(items, patches)
 }
 
 /** 계획 항목끼리의 점수 순서. 점수 내림차순 → 마감 → 출처 → candidate_id. */
@@ -322,10 +368,17 @@ function sameCurrentAndNext(
  */
 export function rerank(items: PlanItem[]): PlanItemUpdate[] {
   const patches = new Map<number, Patch>()
+  // 묶음 항목은 rank 를 받지 않는다 (A49)
+  const groupIds = new Set(items.filter((it) => isGroupItem(it, items)).map((it) => it.id))
+  for (const id of groupIds) addPatch(patches, id, { rank: null })
   const taken = new Set(
-    items.filter((it) => it.status === 'in_progress' && it.rank !== null).map((it) => it.rank as number)
+    items
+      .filter((it) => it.status === 'in_progress' && it.rank !== null && !groupIds.has(it.id))
+      .map((it) => it.rank as number)
   )
-  const planned = items.filter((it) => it.status === 'planned').sort(compareItemsByScore)
+  const planned = items
+    .filter((it) => it.status === 'planned' && !groupIds.has(it.id))
+    .sort(compareItemsByScore)
   let next = 1
   for (const it of planned) {
     while (taken.has(next)) next++
@@ -343,9 +396,12 @@ export function rerank(items: PlanItem[]): PlanItemUpdate[] {
 export function focusUpdates(items: PlanItem[], itemId: number): PlanItemUpdate[] {
   const target = items.find((it) => it.id === itemId)
   if (!target || !ACTIVE_STATUSES.has(target.status)) return []
+  if (isGroupItem(target, items)) return []   // 묶음 항목은 집중 작업이 되지 않는다 (A49)
   const patches = new Map<number, Patch>()
   addPatch(patches, target.id, target.status === 'planned' ? { rank: 1, status: 'in_progress' } : { rank: 1 })
-  const others = items.filter((it) => it.id !== itemId && ACTIVE_STATUSES.has(it.status)).sort(compareByRank)
+  const others = items
+    .filter((it) => it.id !== itemId && ACTIVE_STATUSES.has(it.status) && !isGroupItem(it, items))
+    .sort(compareByRank)
   others.forEach((it, idx) => addPatch(patches, it.id, { rank: idx + 2 }))
   return finalizeUpdates(items, patches)
 }

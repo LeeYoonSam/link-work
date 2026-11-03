@@ -92,9 +92,28 @@ export function meetingStarted(startAt: string, now: string): boolean {
   return startAt !== '' && startAt <= now
 }
 
+// 시작 전 회의 중 가장 가까운 행의 이벤트 id. 없으면 null 이다 (부록 J.8).
+// 카드는 이 1건만 기본으로 펼친다. 이유: 여러 브리핑이 화면을 밀어내지 않는다
+export function nearestUpcomingEventId(rows: MeetingBriefingRow[], now: string): number | null {
+  let best: MeetingBriefingRow | null = null
+  for (const row of rows) {
+    const start = row.payload.meeting.startAt
+    if (start === '' || meetingStarted(start, now)) continue
+    if (
+      best === null ||
+      start < best.payload.meeting.startAt ||
+      (start === best.payload.meeting.startAt && row.event.id < best.event.id)
+    ) {
+      best = row
+    }
+  }
+  return best ? best.event.id : null
+}
+
 interface RowProps {
   row: MeetingBriefingRow
-  now: string
+  // 기본으로 펼칠 행이면 true
+  expandedByDefault: boolean
   // 이 행의 AI 본문을 다시 만드는 중이면 true
   regenerating: boolean
   canRegenerate: boolean
@@ -103,16 +122,14 @@ interface RowProps {
 
 function MeetingBriefingItem({
   row,
-  now,
+  expandedByDefault,
   regenerating,
   canRegenerate,
   onRegenerate
 }: RowProps): React.ReactNode {
   const { event, payload } = row
-  // 기본은 회의 시작이 지났으면 접힘이다. 이유: 지난 브리핑은 참고용이다
-  const [collapsed, setCollapsed] = useState(() =>
-    meetingStarted(payload.meeting.startAt, now)
-  )
+  // 기본은 가장 가까운 시작 전 회의 1건만 펼친다. 지난 브리핑은 참고용이라 접힌다
+  const [collapsed, setCollapsed] = useState(() => !expandedByDefault)
   const isLlm = payload.llmStatus === 'done'
   const content = payload.llmMarkdown ?? payload.ruleMarkdown
 
@@ -162,7 +179,7 @@ function MeetingBriefingItem({
           {payload.llmStatus === 'failed' ? (
             <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-3 text-xs text-amber-800">
               <AlertTriangleIcon size={14} className="shrink-0 mt-0.5" />
-              <span>AI 브리핑을 마치지 못했습니다. {payload.llmError ?? ''}</span>
+              <span>AI 브리핑을 마치지 못했어요. {payload.llmError ?? ''}</span>
             </div>
           ) : null}
           <MarkdownContent
@@ -195,6 +212,7 @@ export default function MeetingBriefingCard({
   onRegenerate
 }: MeetingBriefingCardProps): React.ReactNode {
   if (rows.length === 0) return null
+  const nearest = nearestUpcomingEventId(rows, now)
   return (
     <Card padding="sm">
       <SectionTitle>회의 브리핑</SectionTitle>
@@ -203,7 +221,7 @@ export default function MeetingBriefingCard({
           <MeetingBriefingItem
             key={row.event.id}
             row={row}
-            now={now}
+            expandedByDefault={row.event.id === nearest}
             regenerating={regeneratingIds.includes(row.event.id)}
             canRegenerate={canRegenerate}
             onRegenerate={onRegenerate}

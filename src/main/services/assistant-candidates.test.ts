@@ -29,6 +29,9 @@ function jira(over: Partial<JiraCandidateInput> & Pick<JiraCandidateInput, 'key'
     duedate: null,
     updatedLocal: null,
     url: `https://jira.example/browse/${over.key}`,
+    issueType: '작업',
+    parentKey: null,
+    parentSummary: null,
     ...over
   }
 }
@@ -167,6 +170,65 @@ describe('A4 중복 제거', () => {
       input({ tasks: [task({ id: 2 }), task({ id: 1, jira_issue_key: 'A-1' })], jiraIssues: [jira({ key: 'A-1' })], todos: [todo({ id: 1 })] })
     )
     expect(buildCandidates(inp)).toEqual(buildCandidates(inp))
+  })
+})
+
+describe('A48: 후보 업무 유형·묶음 필드', () => {
+  it('A48: jira 후보는 부모 키·부모 요약·분류를 채운다', () => {
+    const list = buildCandidates(
+      input({
+        jiraIssues: [
+          jira({ key: 'ica-8971', summary: '안드로이드 구매자 앱 v4.174.0 QA', parentKey: 'ica-8054', parentSummary: '안드로이드QA-2026' }),
+          jira({ key: 'ICA-8054', summary: '안드로이드QA-2026', issueType: '에픽' }),
+          jira({ key: 'ICA-8571', summary: '[코루틴] W2-2 홈', parentKey: 'ICA-9000', parentSummary: '[TRD] RxJava to Coroutine Phase2' })
+        ]
+      })
+    )
+    const byId = new Map(list.map((c) => [c.id, c]))
+    expect(byId.get('jira:ICA-8971')).toMatchObject({
+      parentKey: 'ICA-8054', groupName: '안드로이드QA-2026', workType: 'qa', workVersion: '4.174.0'
+    })
+    expect(byId.get('jira:ICA-8054')).toMatchObject({ parentKey: null, groupName: null, workType: 'qa', workVersion: null })
+    expect(byId.get('jira:ICA-8571')).toMatchObject({ workType: 'trd', groupName: '[TRD] RxJava to Coroutine Phase2' })
+  })
+
+  it('A48: task 후보는 프로젝트 이름을 묶음 이름으로 쓰고 부모 키는 null 이다', () => {
+    const [c] = buildCandidates(input({ tasks: [task({ id: 1, name: '배포 노트', project_name: '4.165.0 릴리스' })] }))
+    expect(c).toMatchObject({ parentKey: null, groupName: '4.165.0 릴리스', workType: 'qa', workVersion: '4.165.0' })
+  })
+
+  it('A48: todo·action_item 은 etc 이고 묶음 필드가 비어 있다', () => {
+    const list = buildCandidates(
+      input({
+        todos: [todo({ id: 1, title: '[TRD] 문서 v1.2.3' })],
+        actionItems: [{ meeting_id: 3, index: 0, text: '174 버전 릴리스를 시작한다.', due: null, meeting_title: '회의' }]
+      })
+    )
+    for (const c of list) {
+      expect(c).toMatchObject({ parentKey: null, groupName: null, workType: 'etc', workVersion: null })
+    }
+  })
+
+  it('A48: task·jira 머지는 jira 부모·이슈 유형과 task 프로젝트 이름으로 다시 분류한다', () => {
+    const [c] = buildCandidates(
+      input({
+        tasks: [task({ id: 7, name: '넓은 화면 공통 기반', project_name: '폴더블', jira_issue_key: 'ICA-8984' })],
+        jiraIssues: [
+          jira({ key: 'ICA-8984', summary: 'Jira 제목', parentKey: 'ICA-8929', parentSummary: '[폴더블] 넓은 화면 공통 기준 적용 - Android' })
+        ]
+      })
+    )
+    expect(c).toMatchObject({
+      id: 'task:7', parentKey: 'ICA-8929', groupName: '[폴더블] 넓은 화면 공통 기준 적용 - Android', workType: 'prd'
+    })
+    // jira 부모 요약이 없으면 task 프로젝트 이름을 묶음 이름으로 쓴다
+    const [d] = buildCandidates(
+      input({
+        tasks: [task({ id: 8, name: '정리', project_name: 'Sus 개선 작업 (4.162.0)', jira_issue_key: 'ICA-1' })],
+        jiraIssues: [jira({ key: 'ICA-1' })]
+      })
+    )
+    expect(d).toMatchObject({ parentKey: null, groupName: 'Sus 개선 작업 (4.162.0)', workType: 'sus', workVersion: '4.162.0' })
   })
 })
 

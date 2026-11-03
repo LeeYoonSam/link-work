@@ -1,5 +1,6 @@
 // 맥락 복구의 트리거 판정·수집 기준·규칙 본문 (docs/ASSISTANT.md 부록 F).
 // 순수 모듈이다 (A3). 같은 입력에 같은 출력을 내고 입력을 바꾸지 않는다 (A14).
+// A52: 규칙 본문의 완결 문장은 해요체다 (부록 J.7). 날짜·상태·마감만 있는 데이터 줄은 그대로다.
 import { addDays, daysBetween } from './assistant-day'
 import type {
   PlanItem,
@@ -134,7 +135,7 @@ function lookbackDays(ctx: RecoveryContext): number {
 
 function lastDayLines(input: RecoveryInput): string[] {
   const { ctx } = input
-  if (ctx.lastPlan === null) return [`이전 계획이 없다. 최근 ${lookbackDays(ctx)}일을 본다`]
+  if (ctx.lastPlan === null) return [`이전 계획이 없어요. 최근 ${lookbackDays(ctx)}일을 봤어요.`]
   const note = input.wrapupNote !== null ? oneLine(input.wrapupNote) : ''
   return [`${ctx.lastPlan.plan_date} (${ctx.gapDays ?? 0}일 전)`, note !== '' ? `메모: ${note}` : '메모 없음']
 }
@@ -182,11 +183,11 @@ function jiraLine(j: RecoveryJiraIssue): string {
 
 function jiraLines(input: RecoveryInput): string[] {
   if (input.jira === null) {
-    return [input.jiraConnected ? 'Jira 변경을 확인하지 못했다' : 'Jira 가 연결되어 있지 않다']
+    return [input.jiraConnected ? 'Jira 변경을 확인하지 못했어요.' : 'Jira 가 연결되어 있지 않아요.']
   }
   if (input.jira.length === 0) return []
   const lines = input.jira.slice(0, RECOVERY_LIMITS.jira).map(jiraLine)
-  if (input.jiraTruncated || input.jira.length > RECOVERY_LIMITS.jira) lines.push('이슈가 많아 일부만 가져왔다')
+  if (input.jiraTruncated || input.jira.length > RECOVERY_LIMITS.jira) lines.push('이슈가 많아 일부만 가져왔어요.')
   return lines
 }
 
@@ -229,8 +230,8 @@ export function recoveryToMarkdown(sections: RecoverySection[], ctx: RecoveryCon
   const out: string[] = [`# ${ctx.today} 맥락 복구`, '']
   out.push(
     ctx.lastPlan !== null
-      ? `마지막 근무는 ${ctx.lastPlan.plan_date} 입니다. ${ctx.gapDays ?? 0}일 만에 돌아왔습니다.`
-      : `최근 ${lookbackDays(ctx)}일을 정리했습니다.`,
+      ? `마지막 근무는 ${ctx.lastPlan.plan_date} 였어요. ${ctx.gapDays ?? 0}일 만에 돌아오셨어요.`
+      : `최근 ${lookbackDays(ctx)}일을 정리했어요.`,
     ''
   )
   for (const s of sections) {

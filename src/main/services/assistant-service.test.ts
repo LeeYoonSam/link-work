@@ -114,6 +114,7 @@ vi.mock('./assistant-schedule', async (importOriginal) => {
 import { closeDatabase, getDatabase, initDatabase } from '../db/database'
 import {
   acceptSuggestion,
+  addItem,
   applyCommand,
   closeDay,
   dismissSuggestion,
@@ -174,6 +175,10 @@ function candidate(id: number, over: Partial<Candidate> = {}): Candidate {
     jiraPriority: null,
     lastTouchedAt: null,
     link: 'linkwork://view/todos',
+    parentKey: null,
+    groupName: null,
+    workType: 'etc',
+    workVersion: null,
     ...over
   }
 }
@@ -399,6 +404,35 @@ describe('focusItem', () => {
     const suggested = refreshed?.items.find((i) => i.status === 'suggested')
     expect(suggested).toBeDefined()
     await expect(focusItem(suggested!.id, MON_1100)).rejects.toThrow('지금 집중')
+  })
+})
+
+describe('A49: 묶음 항목 (부록 J.4)', () => {
+  const epic = (): Candidate =>
+    candidate(8054, {
+      id: 'jira:ICA-8054', source: 'jira', jiraKey: 'ICA-8054', title: '안드로이드QA-2026',
+      priority: 'high', jiraPriority: 'Highest', workType: 'qa', link: null
+    })
+  const child = (): Candidate =>
+    candidate(8971, {
+      id: 'jira:ICA-8971', source: 'jira', jiraKey: 'ICA-8971', title: '안드로이드 구매자 앱 v4.174.0 QA',
+      parentKey: 'ICA-8054', groupName: '안드로이드QA-2026', workType: 'qa', workVersion: '4.174.0', link: null
+    })
+
+  it('A49: 하루 시작은 묶음 후보를 빼고, 직접 넣은 묶음 항목은 rank null 이며 집중할 수 없다', async () => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    sources.collectSources.mockResolvedValue(collected([epic(), child(), candidate(1)]))
+    const started = await startDay(MON_0940)
+    expect(started.items.map((i) => i.candidate_id).sort()).toEqual(['jira:ICA-8971', 'todo:1'])
+    const kid = started.items.find((i) => i.candidate_id === 'jira:ICA-8971')
+    expect(kid).toMatchObject({ work_type: 'qa', work_version: '4.174.0', parent_key: 'ICA-8054', group_name: '안드로이드QA-2026' })
+
+    // 후보 더 보기로 에픽을 직접 넣을 수 있다 (J.4-7). 넣으면 rank null 이다
+    const added = await addItem('jira:ICA-8054', MON_1100)
+    const group = added.items.find((i) => i.candidate_id === 'jira:ICA-8054')
+    expect(group).toMatchObject({ status: 'planned', rank: null, work_type: 'qa' })
+    expect(added.timeline.focusItemId).not.toBe(group!.id)
+    await expect(focusItem(group!.id, MON_1100)).rejects.toThrow('묶음 항목은 집중 작업이 될 수 없어요.')
   })
 })
 

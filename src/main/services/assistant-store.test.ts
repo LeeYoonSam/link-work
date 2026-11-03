@@ -117,6 +117,10 @@ function item(candidateId: string, over: Partial<NewPlanItem> = {}): NewPlanItem
     urgent: false,
     status: 'planned',
     status_note: null,
+    work_type: 'etc',
+    work_version: null,
+    parent_key: null,
+    group_name: null,
     ...over
   }
 }
@@ -404,6 +408,42 @@ describe('계획 항목', () => {
   it('updatePlanItems 는 없는 항목 id 를 건너뛴다', () => {
     startPlan()
     expect(() => updatePlanItems(db, [{ id: 999, patch: { status: 'done' } }], AT)).not.toThrow()
+  })
+})
+
+describe('A50: 업무 유형 컬럼 저장', () => {
+  it('A50: insertPlanItems 가 4개 컬럼을 저장하고 돌려준다', () => {
+    const plan = startPlan()
+    const [added] = insertPlanItems(db, plan.id, [
+      item('jira:ICA-8971', {
+        title: '안드로이드 구매자 앱 v4.174.0 QA', jira_issue_key: 'ICA-8971',
+        work_type: 'qa', work_version: '4.174.0', parent_key: 'ICA-8054', group_name: '안드로이드QA-2026'
+      })
+    ])
+    expect(added).toMatchObject({
+      work_type: 'qa', work_version: '4.174.0', parent_key: 'ICA-8054', group_name: '안드로이드QA-2026'
+    })
+    expect(getPlanItem(db, added.id)).toMatchObject({ work_type: 'qa', parent_key: 'ICA-8054' })
+  })
+
+  it('A50: updatePlanItems 는 4개 컬럼을 바꾸고 상태·status_at 은 그대로 둔다', () => {
+    const plan = startPlan('2026-11-02', [item('jira:ICA-8984', { jira_issue_key: 'ICA-8984', status: 'in_progress' })])
+    const [it0] = listPlanItems(db, plan.id)
+    updatePlanItems(db, [{
+      id: it0.id,
+      patch: { work_type: 'prd', work_version: null, parent_key: 'ICA-8929', group_name: '[폴더블] 넓은 화면 공통 기준 적용 - Android' }
+    }], AT)
+    const cur = getPlanItem(db, it0.id) as PlanItem
+    expect(cur).toMatchObject({
+      work_type: 'prd', parent_key: 'ICA-8929', group_name: '[폴더블] 넓은 화면 공통 기준 적용 - Android',
+      status: 'in_progress', status_at: null
+    })
+  })
+
+  it('A50: 분류 없이 넣은 항목은 work_type etc, 나머지 3개는 null 로 읽는다', () => {
+    const plan = startPlan()
+    const [it0] = listPlanItems(db, plan.id)
+    expect(it0).toMatchObject({ work_type: 'etc', work_version: null, parent_key: null, group_name: null })
   })
 })
 

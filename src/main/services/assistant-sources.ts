@@ -272,7 +272,10 @@ function toJiraCandidateInput(issue: JiraMyIssue): JiraCandidateInput {
     priority: issue.priority,
     duedate: issue.duedate,
     updatedLocal: isoToLocalDateTime(issue.updated),
-    url: getJiraIssueUrl(issue.key)
+    url: getJiraIssueUrl(issue.key),
+    issueType: issue.issueType,
+    parentKey: issue.parentKey,
+    parentSummary: issue.parentSummary
   }
 }
 

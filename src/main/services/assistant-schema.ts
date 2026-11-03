@@ -49,6 +49,10 @@ export const ASSISTANT_SCHEMA = `
     status TEXT NOT NULL DEFAULT 'planned',
     status_note TEXT,
     status_at TEXT,
+    work_type TEXT NOT NULL DEFAULT 'etc',
+    work_version TEXT,
+    parent_key TEXT,
+    group_name TEXT,
     FOREIGN KEY (plan_id) REFERENCES daily_plans(id) ON DELETE CASCADE,
     UNIQUE (plan_id, candidate_id)
   );
@@ -76,15 +80,30 @@ const ADDED_DAILY_PLAN_COLUMNS: { name: string; ddl: string }[] = [
   { name: 'briefing_instruction', ddl: 'ALTER TABLE daily_plans ADD COLUMN briefing_instruction TEXT' }
 ]
 
-export function migrateAssistantSchema(db: {
+// 업무 유형·묶음 컬럼 (부록 J.5, A50).
+const ADDED_PLAN_ITEM_COLUMNS: { name: string; ddl: string }[] = [
+  { name: 'work_type', ddl: "ALTER TABLE plan_items ADD COLUMN work_type TEXT NOT NULL DEFAULT 'etc'" },
+  { name: 'work_version', ddl: 'ALTER TABLE plan_items ADD COLUMN work_version TEXT' },
+  { name: 'parent_key', ddl: 'ALTER TABLE plan_items ADD COLUMN parent_key TEXT' },
+  { name: 'group_name', ddl: 'ALTER TABLE plan_items ADD COLUMN group_name TEXT' }
+]
+
+type MigrateDb = {
   prepare(sql: string): { all(): unknown[] }
   exec(sql: string): void
-}): void {
-  const rows = db.prepare('PRAGMA table_info(daily_plans)').all() as { name: string }[]
-  // 테이블이 없으면 할 일이 없다. ASSISTANT_SCHEMA 가 먼저 만든다.
+}
+
+// 테이블이 없으면 할 일이 없다. ASSISTANT_SCHEMA 가 먼저 만든다.
+function addMissingColumns(db: MigrateDb, table: string, columns: { name: string; ddl: string }[]): void {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
   if (rows.length === 0) return
   const existing = new Set(rows.map((r) => r.name))
-  for (const col of ADDED_DAILY_PLAN_COLUMNS) {
+  for (const col of columns) {
     if (!existing.has(col.name)) db.exec(col.ddl)
   }
+}
+
+export function migrateAssistantSchema(db: MigrateDb): void {
+  addMissingColumns(db, 'daily_plans', ADDED_DAILY_PLAN_COLUMNS)
+  addMissingColumns(db, 'plan_items', ADDED_PLAN_ITEM_COLUMNS)
 }

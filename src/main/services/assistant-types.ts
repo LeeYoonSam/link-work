@@ -17,6 +17,10 @@ export interface Candidate {
   jiraPriority: string | null      // Jira 원본 이름. 긴급 판정용
   lastTouchedAt: string | null     // 로컬 'YYYY-MM-DD HH:mm:ss'
   link: string | null
+  parentKey: string | null         // Jira 부모 키. jira·task(머지) 만 (부록 J)
+  groupName: string | null         // Jira 부모 요약 또는 WBS 프로젝트 이름
+  workType: WorkType
+  workVersion: string | null
 }
 
 export interface TaskRow {
@@ -31,6 +35,9 @@ export interface JiraCandidateInput {
   priority: string | null; duedate: string | null
   updatedLocal: string | null      // 로컬 'YYYY-MM-DD HH:mm:ss' 로 바꾼 값
   url: string | null               // getJiraIssueUrl 결과
+  issueType: string
+  parentKey: string | null
+  parentSummary: string | null
 }
 export interface CandidateInput {
   tasks: TaskRow[]                 // 미완료 작업. 활성 프로젝트 소속만
@@ -72,13 +79,18 @@ export interface PlanItem {
   pinned: boolean; added_by: PlanAddedBy; urgent: boolean
   status: PlanItemStatus; status_note: string | null; status_at: string | null
   first_planned_date: string | null   // 조회 전용. 같은 candidate_id 가 처음 계획에 오른 논리 날짜
+  work_type: WorkType                 // 부록 J
+  work_version: string | null
+  parent_key: string | null
+  group_name: string | null
 }
 export type NewPlanItem = Omit<PlanItem, 'id' | 'plan_id' | 'status_at' | 'first_planned_date'>
 export interface PlanItemUpdate {
   id: number
   patch: Partial<Pick<PlanItem,
     'candidate_id' | 'source' | 'link' | 'title' | 'jira_issue_key' | 'project_id' | 'due_date'
-    | 'score' | 'rank' | 'slot_start' | 'slot_end' | 'pinned' | 'urgent' | 'status' | 'status_note'>>
+    | 'score' | 'rank' | 'slot_start' | 'slot_end' | 'pinned' | 'urgent' | 'status' | 'status_note'
+    | 'work_type' | 'work_version' | 'parent_key' | 'group_name'>>
 }
 
 export type AssistantEventKind = 'start_nudge' | 'plan_update' | 'checkin' | 'meeting_briefing' | 'command'
@@ -361,3 +373,12 @@ export interface SentMeetingNotice {
   eventId: number; title: string; body: string
   focus: { kind: 'meeting'; id: string }
 }
+
+// ── 부록 J ──
+export type WorkType = 'qa' | 'sus' | 'trd' | 'prd' | 'etc'
+
+export interface WorkClassifyInput {
+  source: CandidateSource; jiraKey: string | null
+  title: string; parentSummary: string | null; projectName: string | null; issueType: string | null
+}
+export interface WorkClassification { workType: WorkType; workVersion: string | null }

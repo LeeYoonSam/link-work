@@ -736,7 +736,7 @@ export function getJiraSiteUrl(): string | null {
 /** 비서가 한 번에 가져오는 내 이슈 상한 */
 export const MAX_MY_ISSUES = 200
 
-const MY_ISSUE_FIELDS = 'summary,status,issuetype,priority,duedate,updated'
+const MY_ISSUE_FIELDS = 'summary,status,issuetype,priority,duedate,updated,parent'
 
 export interface JiraMyIssue {
   key: string
@@ -748,6 +748,10 @@ export interface JiraMyIssue {
   /** Jira 원본 ISO 문자열. 시간대가 붙어 있다 */
   updated: string
   issueType: string
+  /** Jira 부모 키. 에픽 또는 상위 작업. 없으면 null */
+  parentKey: string | null
+  /** raw.fields.parent.fields.summary. 없으면 null */
+  parentSummary: string | null
 }
 
 interface RawMyIssue {
@@ -759,6 +763,7 @@ interface RawMyIssue {
     priority?: { name?: string } | null
     duedate?: string | null
     updated?: string | null
+    parent?: { key?: string; fields?: { summary?: string } } | null
   }
 }
 
@@ -772,7 +777,9 @@ function toMyIssue(raw: RawMyIssue): JiraMyIssue {
     priority: f.priority?.name ?? null,
     duedate: f.duedate ?? null,
     updated: f.updated ?? '',
-    issueType: f.issuetype?.name ?? ''
+    issueType: f.issuetype?.name ?? '',
+    parentKey: f.parent?.key || null,
+    parentSummary: f.parent?.fields?.summary || null
   }
 }
 

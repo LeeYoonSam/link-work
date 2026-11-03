@@ -781,7 +781,7 @@ describe('개인 비서 조회 listMyOpenIssues', () => {
     expect(params.get('jql')).toBe(
       'assignee = currentUser() AND statusCategory != Done ORDER BY priority DESC, duedate ASC'
     )
-    expect(params.get('fields')).toBe('summary,status,issuetype,priority,duedate,updated')
+    expect(params.get('fields')).toBe('summary,status,issuetype,priority,duedate,updated,parent')
   })
 
   it('프로젝트 키가 있으면 project 조건을 앞에 붙인다', async () => {
@@ -831,7 +831,9 @@ describe('개인 비서 조회 listMyOpenIssues', () => {
         priority: 'High',
         duedate: '2026-11-03',
         updated: '2026-11-02T10:15:30.000+0900',
-        issueType: '작업'
+        issueType: '작업',
+        parentKey: null,
+        parentSummary: null
       },
       {
         key: 'PROJ-8',
@@ -841,8 +843,41 @@ describe('개인 비서 조회 listMyOpenIssues', () => {
         priority: null,
         duedate: null,
         updated: '',
-        issueType: ''
+        issueType: '',
+        parentKey: null,
+        parentSummary: null
       }
+    ])
+  })
+
+  it('A50: parent 필드를 요청하고 parentKey·parentSummary 로 정규화한다', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        issues: [
+          {
+            key: 'ICA-8971',
+            fields: {
+              summary: '안드로이드 구매자 앱 v4.174.0 QA',
+              status: { name: '진행 중', statusCategory: { key: 'indeterminate' } },
+              issuetype: { name: '작업' },
+              parent: { key: 'ICA-8054', fields: { summary: '안드로이드QA-2026' } }
+            }
+          },
+          { key: 'ICA-1', fields: { summary: '요약 없는 부모', parent: { key: 'ICA-2' } } },
+          { key: 'ICA-3', fields: { summary: '부모 null', parent: null } }
+        ]
+      })
+    )
+
+    const { issues } = await listMyOpenIssues(null)
+
+    expect(new URL(calledUrls()[0]).searchParams.get('fields')).toBe(
+      'summary,status,issuetype,priority,duedate,updated,parent'
+    )
+    expect(issues.map((i) => [i.key, i.parentKey, i.parentSummary])).toEqual([
+      ['ICA-8971', 'ICA-8054', '안드로이드QA-2026'],
+      ['ICA-1', 'ICA-2', null],
+      ['ICA-3', null, null]
     ])
   })
 
@@ -892,7 +927,7 @@ describe('맥락 복구 조회 listMyRecentlyUpdatedIssues', () => {
     expect(params.get('jql')).toBe(
       'assignee = currentUser() AND updated >= -3d ORDER BY updated DESC'
     )
-    expect(params.get('fields')).toBe('summary,status,issuetype,priority,duedate,updated')
+    expect(params.get('fields')).toBe('summary,status,issuetype,priority,duedate,updated,parent')
   })
 
   it('listMyRecentlyUpdatedIssues: 프로젝트 키가 있으면 project 조건을 앞에 붙인다', async () => {

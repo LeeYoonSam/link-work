@@ -18,6 +18,10 @@ export function cand(over: Partial<Candidate> & Pick<Candidate, 'id'>): Candidat
     jiraPriority: null,
     lastTouchedAt: null,
     link: null,
+    parentKey: null,
+    groupName: null,
+    workType: 'etc',
+    workVersion: null,
     ...over
   }
 }
@@ -44,6 +48,10 @@ export function item(over: Partial<PlanItem> & Pick<PlanItem, 'id'>): PlanItem {
     status_note: null,
     status_at: null,
     first_planned_date: null,
+    work_type: 'etc',
+    work_version: null,
+    parent_key: null,
+    group_name: null,
     ...over
   }
 }

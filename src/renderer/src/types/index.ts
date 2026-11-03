@@ -1029,6 +1029,8 @@ export interface BackupAPI {
 // 'manual' 은 명령으로 만든 임시 항목이다 (부록 G.6)
 export type CandidateSource = 'jira' | 'task' | 'todo' | 'action_item' | 'manual'
 export type CandidatePriority = 'high' | 'medium' | 'low'
+// 업무 유형 (부록 J.2·J.9.13)
+export type WorkType = 'qa' | 'sus' | 'trd' | 'prd' | 'etc'
 
 export interface Candidate {
   id: string
@@ -1044,6 +1046,12 @@ export interface Candidate {
   jiraPriority: string | null
   lastTouchedAt: string | null
   link: string | null
+  // Jira 부모 키. jira·task(머지) 만 (부록 J)
+  parentKey: string | null
+  // Jira 부모 요약 또는 WBS 프로젝트 이름
+  groupName: string | null
+  workType: WorkType
+  workVersion: string | null
 }
 
 export type PlanStatus = 'active' | 'closed'
@@ -1106,6 +1114,11 @@ export interface PlanItem {
   status_at: string | null
   // 같은 candidate_id 가 처음 계획에 오른 논리 날짜. 저장소가 조회 시 계산한다 (부록 B.5)
   first_planned_date: string | null
+  // 업무 유형·묶음 (부록 J.5)
+  work_type: WorkType
+  work_version: string | null
+  parent_key: string | null
+  group_name: string | null
 }
 
 // 오늘 타임라인 (부록 B.7)

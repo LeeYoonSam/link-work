@@ -12,6 +12,7 @@ import type {
   Slot,
   TimelineEntry
 } from './assistant-types'
+import { isGroupCandidate, isGroupItem } from './assistant-worktype'
 
 const DAY_END_MIN = 24 * 60
 /** 배정 가능 블록의 최소 남은 분 (B.2). */
@@ -97,9 +98,17 @@ export function computeFreeSlots(
   return slots
 }
 
-/** 하루 시작 계획 항목. 점수 순 상위 planSize 개를 시간 없이 만든다 (B.6). */
+/** 후보의 업무 유형·묶음 필드를 계획 항목 컬럼으로 옮긴다 (부록 J.5). */
+export function workFieldsOf(
+  c: Pick<Candidate, 'workType' | 'workVersion' | 'parentKey' | 'groupName'>
+): Pick<NewPlanItem, 'work_type' | 'work_version' | 'parent_key' | 'group_name'> {
+  return { work_type: c.workType, work_version: c.workVersion, parent_key: c.parentKey, group_name: c.groupName }
+}
+
+/** 하루 시작 계획 항목. 묶음 후보를 뺀 뒤 점수 순 상위 planSize 개를 시간 없이 만든다 (B.6, A49). */
 export function buildStartPlanItems(candidates: Candidate[], today: string, planSize: number): NewPlanItem[] {
-  return rankCandidates(candidates, today)
+  const pool = candidates.filter((c) => !isGroupCandidate(c, candidates))
+  return rankCandidates(pool, today)
     .slice(0, Math.max(0, Math.floor(planSize)))
     .map(({ candidate: c, score }, idx) => ({
       candidate_id: c.id,
@@ -117,7 +126,8 @@ export function buildStartPlanItems(candidates: Candidate[], today: string, plan
       added_by: 'start',
       urgent: isUrgent(c, today),
       status: 'planned',
-      status_note: null
+      status_note: null,
+      ...workFieldsOf(c)
     }))
 }
 
@@ -180,8 +190,10 @@ export function buildTimeline(input: TimelineInput): DayTimeline {
   }
   const assignable = blocks.map((_, i) => i).filter((i) => remain[i] >= MIN_ASSIGN_MIN)
 
-  // 규칙 5: 활성 항목을 rank 순으로. 첫 항목이 집중 작업이다.
-  const active = items.filter((it) => ACTIVE_STATUSES.has(it.status)).sort(compareByRank)
+  // 규칙 5: 활성 항목을 rank 순으로. 첫 항목이 집중 작업이다. 묶음 항목은 뺀다 (A49).
+  const active = items
+    .filter((it) => ACTIVE_STATUSES.has(it.status) && !isGroupItem(it, items))
+    .sort(compareByRank)
   const focus = active[0] ?? null
 
   // 규칙 6·7: 마감 항목은 첫 배정 가능 블록을 빼고 가장 늦은 빈 블록을 받는다.
