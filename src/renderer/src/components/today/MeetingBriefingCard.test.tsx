@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { AssistantEvent, MeetingBriefingPayload } from '../../types'
 import MeetingBriefingCard, {
   briefingBadge,
+  dropLeadingTitle,
   meetingBriefings,
   meetingStarted,
   nearestUpcomingEventId,
@@ -239,5 +240,20 @@ describe('MeetingBriefingCard 순수 헬퍼', () => {
     expect(meetingStarted('2026-11-02 11:00:00', '2026-11-02 11:00:00')).toBe(true)
     expect(meetingStarted('2026-11-03 00:30:00', '2026-11-02 23:50:00')).toBe(false)
     expect(meetingStarted('', '2026-11-02 11:00:00')).toBe(false)
+  })
+})
+
+describe('dropLeadingTitle', () => {
+  it('규칙 브리핑 첫 줄의 # 제목은 행 머리와 겹쳐 감춘다', () => {
+    expect(dropLeadingTitle('# 결제 주간 회의 11:00\n- 관련 프로젝트: 결제')).toBe('- 관련 프로젝트: 결제')
+    expect(dropLeadingTitle('- 관련 프로젝트 없음\n## 지난 회의')).toBe('- 관련 프로젝트 없음\n## 지난 회의')
+    expect(dropLeadingTitle('## 지난 회의\n- 없음')).toBe('## 지난 회의\n- 없음')
+  })
+
+  it('펼친 규칙 브리핑에는 h1 이 없고 h2 소제목은 작게 그린다', () => {
+    const html = render([rowOf(basePayload())])
+    expect(html).not.toContain('<h1')
+    expect(html).toContain('<h2')
+    expect(html).toContain('[&amp;_h2]:text-xs')
   })
 })

@@ -120,6 +120,18 @@ interface RowProps {
   onRegenerate: (eventId: number) => void
 }
 
+// 규칙 브리핑의 첫 줄 '# 제목 시각' 은 행 머리와 같은 정보라 감춘다
+export function dropLeadingTitle(markdown: string): string {
+  return markdown.replace(/^\s*# [^\n]*\n?/, '')
+}
+
+// 본문 제목을 행 글자 크기에 맞춘다. h1 은 본문 크기, h2·h3 은 작은 회색 소제목이다
+const BODY_HEADING_CLASS = [
+  '[&_h1]:text-sm [&_h1]:font-semibold [&_h1]:text-gray-800 [&_h1]:mt-0',
+  '[&_h2]:text-xs [&_h2]:font-semibold [&_h2]:text-gray-500 [&_h2]:mt-3',
+  '[&_h3]:text-xs [&_h3]:font-semibold [&_h3]:text-gray-500 [&_h3]:mt-2'
+].join(' ')
+
 function MeetingBriefingItem({
   row,
   expandedByDefault,
@@ -131,7 +143,7 @@ function MeetingBriefingItem({
   // 기본은 가장 가까운 시작 전 회의 1건만 펼친다. 지난 브리핑은 참고용이라 접힌다
   const [collapsed, setCollapsed] = useState(() => !expandedByDefault)
   const isLlm = payload.llmStatus === 'done'
-  const content = payload.llmMarkdown ?? payload.ruleMarkdown
+  const content = payload.llmMarkdown ?? dropLeadingTitle(payload.ruleMarkdown)
 
   return (
     <div id={`meeting-briefing-${event.id}`} className="py-3 first:pt-0 last:pb-0">
@@ -185,6 +197,7 @@ function MeetingBriefingItem({
           <MarkdownContent
             content={content}
             compact
+            className={BODY_HEADING_CLASS}
             onInternalLink={(href) => void openInternalLink(href)}
           />
         </div>
