@@ -108,7 +108,7 @@ describe('Tooltip', () => {
     expect(html).toContain('tabindex="0"')
   })
 
-  // 조상이 이미 포커스 가능한 곳(대시보드 TODO 행: role="button" tabIndex=0)에서
+  // 조상이 이미 포커스 가능한 곳(role="button" tabIndex=0 인 행)에서
   // 트리거까지 포커스를 받으면 탭 정지점이 중첩되고 ARIA 위반이 된다.
   it('focusable=false면 탭 정지점을 만들지 않는다', () => {
     const html = renderToStaticMarkup(
@@ -126,11 +126,8 @@ describe('Tooltip', () => {
 // 손으로 적은 목록과 대조하면 소비처가 늘거나 바뀔 때 조용히 통과하므로 소스를 직접 읽는다.
 describe('소비처가 line-clamp의 display를 덮지 않는다', () => {
   const DISPLAY_UTILS = /\b(block|flex|inline-flex|inline-block|grid|contents)\b/
-  const CONSUMERS = [
-    '../project/ScheduleTimeline.tsx',
-    '../project/TaskList.tsx',
-    '../dashboard/Dashboard.tsx'
-  ]
+  // 대시보드는 '오늘' 홈으로 합쳐 지웠다 (메뉴 통합 D13). 하한은 CONSUMERS 길이다
+  const CONSUMERS = ['../project/ScheduleTimeline.tsx', '../project/TaskList.tsx']
 
   // <TaskLabel .../> · <ClampedText .../>에 넘어가는 className 표현식만 뽑는다.
   // 래퍼 div의 `flex-1 min-w-0`까지 훑으면 오탐이 난다(\bflex\b가 flex-1에 걸린다).

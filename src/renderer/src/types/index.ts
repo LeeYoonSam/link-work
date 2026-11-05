@@ -850,6 +850,11 @@ export interface SyncAllResult {
   /** 릴리스는 가져왔지만 이슈 조회는 상한에 걸려 미룬 것 — 행의 동기화 버튼으로 개별로 받는다 */
   metaOnly: Array<{ noteId: number; version: string }>
   failed: Array<{ version: string; error: string }>
+  /**
+   * 이번 실행에서 목록에 새로 들어온 릴리스 수. main 은 늘 채운다.
+   * 렌더러 쪽은 선택 필드다. 이유: 이 필드가 없는 기존 테스트 리터럴이 타입체크를 통과해야 한다.
+   */
+  linked?: number
 }
 
 export interface JiraProjectSummary {
@@ -951,6 +956,58 @@ export interface ProjectSyncResult {
   tasksUpdated: number
   documentsAdded: number
   skipped: ProjectSyncSkipped[]
+  /**
+   * 실제로 적용한 항목. main 은 늘 채운다.
+   * 렌더러 쪽은 선택 필드다. 이유: 이 필드가 없는 기존 테스트 리터럴이 타입체크를 통과해야 한다.
+   */
+  applied?: ProjectSyncAppliedItem[]
+}
+
+/** 적용한 항목 1건. main 의 project-sync-plan.ts 와 같은 모양이다 */
+export interface ProjectSyncAppliedItem {
+  jiraKey: string
+  action: ProjectSyncPlanItem['action']
+  projectId: number | null
+  projectName: string
+  force: boolean
+}
+
+// ── 아침 자동 동기화 (docs/ASSISTANT.md A54, docs/PROJECT_SYNC.md R11) ──
+// main 의 assistant-types.ts 와 같은 모양이다. 한쪽만 바꾸면 배지와 상태 줄이 빈 값을 그린다.
+
+export type MorningSyncPartName = 'release' | 'project'
+/** deferred 는 사용자가 수동 미리보기를 검토 중이라 미룬 상태다. 시도로 세지 않는다 */
+export type MorningSyncPartStatus = 'running' | 'ok' | 'skipped' | 'failed' | 'deferred'
+
+export interface MorningSyncPart {
+  status: MorningSyncPartStatus
+  /** 센 시도 수. 오프라인·deferred 는 세지 않는다 */
+  attempts: number
+  /** 마지막 시도 시작 'YYYY-MM-DD HH:mm:ss' */
+  startedAt: string | null
+  /** 마지막 시도 끝. running 이면 null */
+  finishedAt: string | null
+  /** failed 의 사용자용 문구. skipped 이면 건너뛴 이유 */
+  error: string | null
+  /** 새 항목 수. 릴리스는 새 릴리스, 싱크업은 새 프로젝트 */
+  newCount: number
+  /** 갱신한 항목 수 */
+  updatedCount: number
+  /** 싱크업만 쓴다. 자동 적용하지 않고 확인이 필요한 항목 수 (R11) */
+  reviewCount: number
+  /** 릴리스만 쓴다. 일부 버전의 실패 수 */
+  failedCount: number
+}
+
+export interface MorningSyncStatus {
+  enabled: boolean
+  /** 설정 시각 'HH:mm' */
+  at: string
+  inFlight: boolean
+  /** 마지막 행의 논리 날짜. 행이 없으면 null */
+  date: string | null
+  release: MorningSyncPart | null
+  project: MorningSyncPart | null
 }
 
 export interface ProjectSyncAPI {
@@ -961,6 +1018,10 @@ export interface ProjectSyncAPI {
     selection: ProjectSyncSelection[]
   ) => Promise<
     { success: true; result: ProjectSyncResult } | { success: false; error: string }
+  >
+  /** 아침 자동 동기화 상태. 읽기 전용이다 */
+  morningStatus: () => Promise<
+    { success: true; status: MorningSyncStatus } | { success: false; error: string }
   >
 }
 
@@ -1148,6 +1209,7 @@ export type AssistantEventKind =
   | 'checkin'
   | 'meeting_briefing'
   | 'command'
+  | 'morning_sync'
 export type AssistantEventStatus = 'sent' | 'late' | 'skipped' | 'failed' | 'logged'
 export interface AssistantEvent {
   id: number
@@ -1193,15 +1255,17 @@ export interface AssistantSettings {
   refreshCalendarMin: number
   refreshJiraMin: number
   refreshNotify: boolean
-  checkinMinGap: number
-  checkinDailyCap: number
   meetingLeadMin: number
-  // 작업 경계 체크인 켜기 (부록 H.9.3)
-  checkinEnabled: boolean
   // 회의 전 브리핑 켜기 (부록 I.11.4)
   meetingBriefingEnabled: boolean
-  // 첫 화면 (docs/ASSISTANT.md 부록 C)
-  startView: 'auto' | 'dashboard' | 'today'
+  // 첫 화면 (docs/ASSISTANT.md 부록 C, A24). 저장된 auto·dashboard 는 main 이 today 로 읽는다
+  startView: 'today' | 'projects' | 'calendar'
+  // 아침 자동 동기화 켜기 (부록 K, A54)
+  morningSyncEnabled: boolean
+  // 아침 자동 동기화 시각 'HH:mm'
+  morningSyncTime: string
+  // 계획 항목을 완료하면 원본도 완료한다. 기본 false (D10)
+  completeOriginOnDone: boolean
 }
 
 export interface TodayPayload {
@@ -1229,12 +1293,12 @@ export interface RecoveryState {
 
 export interface AssistantChangedEvent {
   date: string
-  reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' | 'checkin' | 'meeting'
+  reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' | 'meeting'
 }
 export interface AssistantNavigateEvent {
   view: 'today'
   focus?: {
-    kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'checkin' | 'meeting'
+    kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'meeting'
     id?: string
   }
 }
@@ -1301,20 +1365,6 @@ export interface CommandApplyOutcome {
   failed: number
 }
 
-// ── 작업 경계 체크인 (부록 H.9.1 복제) ──
-export type CheckinStatus = 'done' | 'in_progress' | 'deferred'
-export interface CheckinPayload {
-  itemId: number
-  candidateId: string
-  itemTitle: string
-  // 'HH:mm'
-  blockStart: string
-  blockEnd: string
-  // 알림 문구
-  title: string
-  body: string
-}
-
 // ── 회의 전 브리핑 (부록 I.11.1 복제) ──
 // 시각은 'YYYY-MM-DD HH:mm:ss' 다. 종일 일정은 없다
 export interface MeetingRef {
@@ -1377,12 +1427,6 @@ export interface AssistantAPI {
     ops: CommandOp[],
     text: string
   ) => Promise<AssistantResult<Omit<CommandApplyOutcome, never>>>
-  // 체크인 응답 (부록 H.9.7). 넘기기는 status null 이다
-  respondCheckin: (
-    eventId: number,
-    status: CheckinStatus | null,
-    note?: string
-  ) => Promise<TodayResult>
   // 회의 브리핑의 AI 본문을 다시 만든다 (부록 I.11.10). 결과를 기다린다
   regenerateMeetingBriefing: (eventId: number) => Promise<TodayResult>
 }

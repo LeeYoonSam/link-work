@@ -3,7 +3,6 @@ import type {
   AssistantNavigateEvent,
   AssistantSettings,
   Candidate,
-  CheckinStatus,
   CommandApplyOutcome,
   CommandInterpretation,
   PlanItem,
@@ -11,6 +10,7 @@ import type {
   TodayPayload,
   TodayResult
 } from '../types'
+import { refreshEntity } from './dataSync'
 
 type Focus = NonNullable<AssistantNavigateEvent['focus']>
 
@@ -64,8 +64,6 @@ interface AssistantStore {
   // 미리보기의 실행 가능한 조작을 적용한다. 성공하면 true
   applyCommand: () => Promise<boolean>
   clearCommand: () => void
-  // 체크인에 응답한다 (부록 H.8.3). 넘기기는 status null 이다. 성공하면 true
-  respondCheckin: (eventId: number, status: CheckinStatus | null, note?: string) => Promise<boolean>
   // 회의 브리핑의 AI 본문을 다시 만든다 (부록 I.10.3). 결과를 기다린다
   regenerateMeetingBriefing: (eventId: number) => Promise<void>
   // assistant:changed 를 구독한다. 해제 함수를 돌려준다
@@ -253,6 +251,8 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
       try {
         if (target.kind === 'todo') await window.api.todo.complete(target.id)
         else await window.api.task.update(target.id, { status: 'done' })
+        // 열린 할 일·프로젝트 화면이 원본 완료를 반영하게 한다. 기다리지 않는다
+        void refreshEntity(target.kind === 'todo' ? 'todo' : 'project')
         return true
       } catch (e) {
         set({ error: errorText(e, '원본 완료 처리에 실패했습니다') })
@@ -343,14 +343,6 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
 
     clearCommand: () => set({ command: null, commandError: '', commandResult: null }),
 
-    respondCheckin: async (eventId, status, note) => {
-      const trimmed = note?.trim()
-      return run(
-        () => window.api.assistant.respondCheckin(eventId, status, trimmed ? trimmed : undefined),
-        '체크인 응답에 실패했습니다'
-      )
-    },
-
     // 행 단위 상태를 쓴다. 같은 행의 중복 클릭만 막는다
     regenerateMeetingBriefing: async (eventId) => {
       if (get().meetingRegeneratingIds.includes(eventId)) return
@@ -369,7 +361,9 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
       }
     },
 
-    // reason 과 무관하게 다시 읽는다. 'meeting' 도 같다 (부록 I.10.3)
+    // reason 과 무관하게 다시 읽는다. 'meeting' 도 같다 (부록 I.10.3).
+    // 메인 창은 dataSync.installDataSync 가 전역으로 구독한다. 화면에서 이 함수를 부르지 않는다.
+    // 이유: 같은 이벤트로 load 가 2번 돈다
     subscribe: () => {
       const api = window.api?.assistant
       if (!api) return () => {}

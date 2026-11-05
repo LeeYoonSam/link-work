@@ -14,7 +14,6 @@ import {
   refreshBriefing,
   regenerateMeetingBriefing,
   reopenDay,
-  respondCheckin,
   runRefresh,
   saveSettings,
   saveWrapup,
@@ -22,7 +21,7 @@ import {
   startDay
 } from '../services/assistant-service'
 import { takePendingNavigate } from '../services/assistant-scheduler'
-import type { CheckinStatus, PlanItemStatus } from '../services/assistant-types'
+import type { PlanItemStatus } from '../services/assistant-types'
 
 // project-sync.ipc.ts 처럼 throw 하지 않고 { success, error } 로 감싼다.
 // 이유: Jira·캘린더 조회가 실패할 수 있고, 실패 사유가 곧 사용자 조치다. getSettings 만 예외다.
@@ -97,11 +96,6 @@ export function registerAssistantIpc(): void {
   // { today, results, applied, failed }
   ipcMain.handle('assistant:applyCommand', (_e, ops: unknown, text: unknown) =>
     wrap(async () => await applyCommand(ops, text))
-  )
-
-  // 체크인 패널 버튼 (부록 H.9.7). 넘기기는 status null 이다. 인자 검증은 서비스가 한다
-  ipcMain.handle('assistant:respondCheckin', (_e, eventId: number, status: CheckinStatus | null, note?: string) =>
-    wrap(async () => ({ today: await respondCheckin(eventId, { status, note: note ?? null, raw: null }) }))
   )
 
   // 회의 브리핑 AI 본문 다시 만들기 (부록 I.11.10). 버튼은 결과를 기다린다. 인자 검증은 서비스가 한다

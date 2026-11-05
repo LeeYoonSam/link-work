@@ -1,13 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { AssistantEvent, MeetingBriefingPayload } from '../../types'
+import type { AssistantEvent, MeetingBriefingPayload, TimelineEntry } from '../../types'
 import MeetingBriefingCard, {
   briefingBadge,
   dropLeadingTitle,
   meetingBriefings,
+  meetingKey,
   meetingStarted,
   nearestUpcomingEventId,
   parseMeetingPayload,
+  splitBriefingsByTimeline,
   type MeetingBriefingRow
 } from './MeetingBriefingCard'
 
@@ -59,7 +61,13 @@ const rowOf = (p: MeetingBriefingPayload, id = 7): MeetingBriefingRow => ({
 
 const render = (
   rows: MeetingBriefingRow[],
-  opts: { now?: string; regeneratingIds?: number[]; canRegenerate?: boolean } = {}
+  opts: {
+    now?: string
+    regeneratingIds?: number[]
+    canRegenerate?: boolean
+    title?: string
+    expandedEventId?: number | null
+  } = {}
 ): string =>
   renderToStaticMarkup(
     <MeetingBriefingCard
@@ -68,6 +76,8 @@ const render = (
       regeneratingIds={opts.regeneratingIds ?? []}
       canRegenerate={opts.canRegenerate ?? true}
       onRegenerate={() => {}}
+      title={opts.title}
+      expandedEventId={opts.expandedEventId}
     />
   )
 
@@ -192,7 +202,7 @@ describe('MeetingBriefingCard 순수 헬퍼', () => {
       event({ id: 2, scheduled_at: '2026-11-02 09:45:00', status: 'late' }),
       event({ id: 3, status: 'skipped' }, null),
       event({ id: 4, scheduled_at: '2026-11-02 11:45:00', status: 'failed' }),
-      event({ id: 5, kind: 'checkin' }),
+      event({ id: 5, kind: 'plan_update' }),
       event({ id: 6, payload: '{깨짐' })
     ])
     expect(rows.map((r) => r.event.id)).toEqual([2, 4, 1])
@@ -255,5 +265,113 @@ describe('dropLeadingTitle', () => {
     expect(html).not.toContain('<h1')
     expect(html).toContain('<h2')
     expect(html).toContain('[&amp;_h2]:text-xs')
+  })
+})
+
+describe('2차 개편: 시간표 짝짓기와 제목 줄바꿈 (부록 L.8, 완료 조건 6)', () => {
+  const at = (id: number, title: string, startAt: string): MeetingBriefingRow =>
+    rowOf(basePayload({ meeting: { id: `cal-${id}`, title, startAt, endAt: startAt } }), id)
+  const meeting = (start: string, title: string): TimelineEntry => ({
+    kind: 'meeting',
+    start,
+    end: start,
+    title
+  })
+  const block: TimelineEntry = {
+    kind: 'block',
+    start: '09:00',
+    end: '10:00',
+    minutes: 60,
+    state: 'past',
+    itemId: null,
+    reason: null,
+    continued: false
+  }
+
+  it('meetingKey: HH:mm 과 제목을 | 로 잇는다', () => {
+    expect(meetingKey('11:00', '결제 주간 회의')).toBe('11:00|결제 주간 회의')
+  })
+
+  it('splitBriefingsByTimeline: 시작 HH:mm 과 제목이 같으면 짝이고 나머지는 unmatched 다', () => {
+    const rows = [
+      at(1, '결제 주간 회의', '2026-11-02 11:00:00'),
+      // 제목은 같고 시각이 다르다
+      at(2, '결제 주간 회의', '2026-11-02 15:00:00'),
+      // 시각은 같고 제목이 다르다
+      at(3, '디자인 리뷰', '2026-11-02 11:00:00'),
+      at(4, '디자인 리뷰', '2026-11-02 14:00:00'),
+      // 시간표에 없는 회의다
+      at(5, '외부 미팅', '2026-11-02 13:00:00')
+    ]
+    const entries = [
+      block,
+      meeting('11:00', '결제 주간 회의'),
+      meeting('14:00', '디자인 리뷰'),
+      meeting('16:00', '브리핑 없는 회의')
+    ]
+    const { matched, unmatched } = splitBriefingsByTimeline(rows, entries)
+    expect([...matched.keys()].sort()).toEqual(['11:00|결제 주간 회의', '14:00|디자인 리뷰'])
+    expect(matched.get(meetingKey('11:00', '결제 주간 회의'))?.event.id).toBe(1)
+    expect(matched.get(meetingKey('14:00', '디자인 리뷰'))?.event.id).toBe(4)
+    // 입력 순서를 유지한다
+    expect(unmatched.map((r) => r.event.id)).toEqual([2, 3, 5])
+  })
+
+  it('splitBriefingsByTimeline: 한 키에는 1건만 짝짓고 startAt 이 빈 행은 unmatched 다', () => {
+    const rows = [
+      at(1, '결제 주간 회의', '2026-11-02 11:00:00'),
+      at(2, '결제 주간 회의', '2026-11-02 11:00:00'),
+      at(3, '결제 주간 회의', '')
+    ]
+    const { matched, unmatched } = splitBriefingsByTimeline(rows, [meeting('11:00', '결제 주간 회의')])
+    expect(matched.size).toBe(1)
+    expect(matched.get('11:00|결제 주간 회의')?.event.id).toBe(1)
+    expect(unmatched.map((r) => r.event.id)).toEqual([2, 3])
+  })
+
+  it('splitBriefingsByTimeline: 시간표가 비면 모두 unmatched 다', () => {
+    const rows = [at(1, '결제 주간 회의', '2026-11-02 11:00:00')]
+    const { matched, unmatched } = splitBriefingsByTimeline(rows, [])
+    expect(matched.size).toBe(0)
+    expect(unmatched).toEqual(rows)
+  })
+
+  it('카드의 회의 제목은 truncate 하지 않고 줄바꿈한다 (V7)', () => {
+    const long = '[결제] 환불 정책 확정과 다음 분기 정산 일정 조율을 위한 주간 회의'
+    const html = render([at(7, long, '2026-11-02 11:00:00')], { now: '2026-11-02 11:30:00' })
+    expect(html).toContain(long)
+    expect(html).not.toContain('truncate')
+    expect(html).toContain('break-words')
+  })
+
+  it('title prop: 기본은 회의 브리핑이고 주면 그 제목을 쓴다', () => {
+    const rows = [rowOf(basePayload())]
+    expect(render(rows)).toContain('>회의 브리핑<')
+    const other = render(rows, { title: '기타 회의 브리핑' })
+    expect(other).toContain('>기타 회의 브리핑<')
+    expect(other).not.toContain('>회의 브리핑<')
+  })
+
+  it('expandedEventId: 주면 nearest 를 다시 계산하지 않고 그 id 만 펼친다. null 이면 모두 접는다', () => {
+    const rows = [at(1, '가까운 회의', '2026-11-02 11:00:00'), at(2, '나중 회의', '2026-11-02 14:00:00')]
+    const row = (html: string, id: number): string => {
+      const start = html.indexOf(`id="meeting-briefing-${id}"`)
+      const next = html.indexOf('id="meeting-briefing-', start + 1)
+      return html.slice(start, next === -1 ? undefined : next)
+    }
+    // 기본: 가장 가까운 1 만 펼친다
+    const base = render(rows)
+    expect(row(base, 1)).toContain('접기')
+    expect(row(base, 2)).toContain('펼치기')
+    // 2 를 주면 2 만 펼친다
+    const forced = render(rows, { expandedEventId: 2 })
+    expect(row(forced, 1)).toContain('펼치기')
+    expect(row(forced, 1)).not.toContain('환불 정책 확정')
+    expect(row(forced, 2)).toContain('접기')
+    expect(row(forced, 2)).toContain('환불 정책 확정')
+    // null 이면 펼친 행이 없다. 이유: 펼칠 1건이 시간표에 있다
+    const none = render(rows, { expandedEventId: null })
+    expect(none).not.toContain('>접기<')
+    expect(none).not.toContain('환불 정책 확정')
   })
 })

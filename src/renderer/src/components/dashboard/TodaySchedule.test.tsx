@@ -143,3 +143,37 @@ describe('중복 일정 처리', () => {
     expect((html.match(/휴가/g) || []).length).toBe(2) // 칩 본문 + title 속성
   })
 })
+
+describe('기준 날짜 prop', () => {
+  // 날짜 경계 전 새벽에는 홈이 전날(논리 날짜)을 넘긴다
+  const yesterday = addDays(today, -1)
+  const ymd = (d: Date): string => format(d, 'yyyy-MM-dd')
+  const evs: CalendarEvent[] = [
+    {
+      id: 'y1',
+      summary: '어제 회의',
+      start: `${ymd(yesterday)}T10:00:00`,
+      end: `${ymd(yesterday)}T11:00:00`,
+      allDay: false
+    },
+    {
+      id: 't1',
+      summary: '오늘 회의',
+      start: `${ymd(today)}T10:00:00`,
+      end: `${ymd(today)}T11:00:00`,
+      allDay: false
+    }
+  ]
+
+  it('day 를 넘기면 그 날짜로 일정을 거른다', () => {
+    const html = renderToStaticMarkup(<TodaySchedule events={evs} connected day={yesterday} />)
+    expect(html).toContain('어제 회의')
+    expect(html).not.toContain('오늘 회의')
+  })
+
+  it('day 가 없으면 지금의 달력 날짜로 거른다', () => {
+    const html = renderToStaticMarkup(<TodaySchedule events={evs} connected />)
+    expect(html).toContain('오늘 회의')
+    expect(html).not.toContain('어제 회의')
+  })
+})

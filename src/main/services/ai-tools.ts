@@ -423,7 +423,7 @@ const getActivityLog = tool(
       if (events === null) {
         return jsonResult({
           error:
-            'Google 캘린더가 연동되어 있지 않습니다. Calendar 메뉴(linkwork://view/calendar)에서 연동할 수 있습니다.'
+            'Google 캘린더가 연동되어 있지 않습니다. 캘린더 메뉴(linkwork://view/calendar)에서 연동할 수 있습니다.'
         })
       }
       return jsonResult(

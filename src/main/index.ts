@@ -26,6 +26,7 @@ import { cancelAllAiQueries } from './services/ai-agent'
 import { cancelAllHeadless } from './services/ai-headless'
 import { startNotificationService, stopNotificationService } from './services/notification'
 import { startAssistantScheduler, stopAssistantScheduler } from './services/assistant-scheduler'
+import { runMorningSyncIfDue } from './services/morning-sync'
 import { createTrayWidget, destroyTrayWidget } from './services/tray-widget'
 import { onRendererReload } from './services/recording-recovery'
 import {
@@ -372,7 +373,8 @@ app.whenReady().then(() => {
     recordingGuard.handleCommandDone(payload)
   })
   startNotificationService()
-  startAssistantScheduler({ getMainWindow: () => mainWindow, createWindow })
+  // A54: 아침 자동 동기화는 스케줄러 틱 끝에서 돈다. 스케줄러는 동기화 모듈을 import 하지 않는다
+  startAssistantScheduler({ getMainWindow: () => mainWindow, createWindow, onTick: runMorningSyncIfDue })
   createTrayWidget(() => createWindow())
 
   createWindow()

@@ -4,7 +4,6 @@ import Header from './components/layout/Header'
 import ProjectList from './components/project/ProjectList'
 import ProjectForm from './components/project/ProjectForm'
 import ProjectDetail from './components/project/ProjectDetail'
-import Dashboard from './components/dashboard/Dashboard'
 import CalendarView from './components/calendar/CalendarView'
 import DocumentList from './components/document/DocumentList'
 import VariableList from './components/variable/VariableList'
@@ -20,6 +19,7 @@ import TodayView from './components/today/TodayView'
 import { useProjectStore } from './stores/projectStore'
 import { useAssistantStore } from './stores/assistantStore'
 import { installRecorderBridge } from './stores/recorderSession'
+import { installDataSync } from './stores/dataSync'
 import { resolveStartView } from './utils/startView'
 import type { AssistantNavigateEvent } from './types'
 
@@ -39,6 +39,9 @@ function App(): React.ReactNode {
 
   // 녹음 상태를 main의 창 닫기/앱 종료 가드에 알리고 저장 명령을 받는다(메인 창에서 1회).
   useEffect(() => installRecorderBridge(), [])
+
+  // 다른 경로의 변경(ai:dataChanged, assistant:changed, 창 focus)을 열린 화면에 반영한다(메인 창에서 1회).
+  useEffect(() => installDataSync(), [])
 
   // 비서 알림 클릭 → 오늘 화면으로 이동한다(assistant:navigate)
   useEffect(() => {
@@ -62,14 +65,15 @@ function App(): React.ReactNode {
     return unsubscribe
   }, [])
 
-  // 첫 화면 자동 선택 (docs/ASSISTANT.md 부록 C.1, A24).
+  // 첫 화면 선택 (docs/ASSISTANT.md 부록 C.1, A24). 기본 첫 화면은 today 다.
+  // 설정이 projects·calendar 이면 그 화면으로 옮긴다.
   // 판정 중 사용자 이동이나 assistant:navigate 로 화면이 바뀌면 결과를 버린다.
-  // 실패하면 아무것도 하지 않는다. 첫 화면은 dashboard 로 남는다.
+  // 실패하면 아무것도 하지 않는다. 첫 화면은 today 로 남는다.
   useEffect(() => {
     if (startViewDecided.current) return
     startViewDecided.current = true
     const api = window.api?.assistant
-    if (!api) return
+    if (!api || typeof api.getSettings !== 'function') return
     const viewAtStart = useProjectStore.getState().view
     let moved = false
     // A→B→A 이동도 '이동함'으로 본다. StrictMode cleanup 에 묶지 않고 판정 끝에 해제한다
@@ -77,20 +81,14 @@ function App(): React.ReactNode {
       if (s.view !== prev.view) moved = true
     })
     api
-      .getToday()
-      .then((res) => {
-        if (!res.success) return
-        const t = res.today
-        const target = resolveStartView({
-          startView: t.settings.startView ?? 'auto',
-          enabled: t.settings.enabled,
-          planStatus: t.plan ? t.plan.status : 'none',
-          logicalDate: t.logicalDate
-        })
-        if (target !== 'today') return
+      .getSettings()
+      .then((settings) => {
+        const target = resolveStartView(settings?.startView)
+        if (target === 'today') return
         const store = useProjectStore.getState()
         if (moved || store.view !== viewAtStart) return
-        store.setView('today')
+        if (target === 'projects') store.setProjectView('list')
+        store.setView(target)
       })
       .catch(() => undefined)
       .finally(unsubscribe)
@@ -98,8 +96,6 @@ function App(): React.ReactNode {
 
   const renderContent = (): React.ReactNode => {
     switch (view) {
-      case 'dashboard':
-        return <Dashboard />
       case 'today':
         return <TodayView />
       case 'projects':
@@ -134,7 +130,7 @@ function App(): React.ReactNode {
       case 'releases':
         return <ReleasesView />
       default:
-        return <Dashboard />
+        return <TodayView />
     }
   }
 

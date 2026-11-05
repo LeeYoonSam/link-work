@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import { applyProjectSync, previewProjectSync } from '../services/project-sync'
+import { getMorningSyncStatus } from '../services/morning-sync'
 
 // Jira가 얽힌 채널이라 release-note.ipc.ts와 같이 throw하지 않고 { success, error }로 감싼다.
 // 실패 사유(미연결·기본 프로젝트 미설정·토큰 만료)가 곧 사용자가 해야 할 조치다.
@@ -21,6 +22,15 @@ export function registerProjectSyncIpc(): void {
   ipcMain.handle('projectSync:apply', async (_event, selection: unknown) => {
     try {
       return { success: true, result: await applyProjectSync(selection) }
+    } catch (err) {
+      return { success: false, error: toMessage(err) }
+    }
+  })
+
+  // 아침 자동 동기화(R11) 상태. 사이드바 배지와 상태 줄이 읽는다. 읽기 전용이다.
+  ipcMain.handle('projectSync:morningStatus', async () => {
+    try {
+      return { success: true, status: await getMorningSyncStatus() }
     } catch (err) {
       return { success: false, error: toMessage(err) }
     }

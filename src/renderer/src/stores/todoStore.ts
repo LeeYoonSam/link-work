@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Todo, TodoTag, TodoInput, TodoTagInput, TodoHistory } from '../types'
+import type { FetchOptions } from './projectStore'
 
 interface TodoStore {
   todos: Todo[]
@@ -19,9 +20,9 @@ interface TodoStore {
   setShowTagManager: (show: boolean) => void
   setSelectedTodoId: (id: number | null) => void
 
-  fetchTodos: () => Promise<void>
+  fetchTodos: (opts?: FetchOptions) => Promise<void>
   fetchCompletedTodos: () => Promise<void>
-  fetchActiveTodos: () => Promise<void>
+  fetchActiveTodos: (opts?: FetchOptions) => Promise<void>
   createTodo: (input: TodoInput) => Promise<void>
   updateTodo: (id: number, input: Partial<TodoInput>) => Promise<void>
   completeTodo: (id: number) => Promise<void>
@@ -54,13 +55,20 @@ export const useTodoStore = create<TodoStore>((set, get) => ({
   setShowTagManager: (show) => set({ showTagManager: show }),
   setSelectedTodoId: (id) => set({ selectedTodoId: id }),
 
-  fetchTodos: async () => {
-    set({ loading: true })
+  fetchTodos: async (opts?) => {
+    // silent 이면 loading 을 켜지 않는다. 이유: 배경 갱신이 편집 중인 목록을 지우면 안 된다
+    const silent = opts?.silent === true
+    if (!silent) set({ loading: true })
     const { filterTagId } = get()
-    const todos = filterTagId
-      ? await window.api.todo.listByTag(filterTagId, false)
-      : await window.api.todo.list(false)
-    set({ todos, loading: false })
+    try {
+      const todos = filterTagId
+        ? await window.api.todo.listByTag(filterTagId, false)
+        : await window.api.todo.list(false)
+      set(silent ? { todos } : { todos, loading: false })
+    } catch (e) {
+      if (!silent) set({ loading: false })
+      throw e
+    }
   },
 
   fetchCompletedTodos: async () => {
@@ -71,6 +79,7 @@ export const useTodoStore = create<TodoStore>((set, get) => ({
     set({ completedTodos })
   },
 
+  // 이 조회는 loading 을 켜지 않는다. 그래서 silent 옵션을 볼 필요가 없다
   fetchActiveTodos: async () => {
     const activeTodos = await window.api.todo.listActive()
     set({ activeTodos })

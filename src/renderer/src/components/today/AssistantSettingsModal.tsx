@@ -17,11 +17,11 @@ export type FormSettingKey =
   | 'refreshCalendarMin'
   | 'refreshJiraMin'
   | 'refreshNotify'
-  | 'checkinEnabled'
-  | 'checkinDailyCap'
-  | 'checkinMinGap'
   | 'meetingBriefingEnabled'
   | 'meetingLeadMin'
+  | 'morningSyncEnabled'
+  | 'morningSyncTime'
+  | 'completeOriginOnDone'
 
 export type FormSettings = Pick<AssistantSettings, FormSettingKey>
 
@@ -39,12 +39,25 @@ export const FORM_SETTING_KEYS: FormSettingKey[] = [
   'refreshCalendarMin',
   'refreshJiraMin',
   'refreshNotify',
-  'checkinEnabled',
-  'checkinDailyCap',
-  'checkinMinGap',
   'meetingBriefingEnabled',
-  'meetingLeadMin'
+  'meetingLeadMin',
+  'morningSyncEnabled',
+  'morningSyncTime',
+  'completeOriginOnDone'
 ]
+
+// 첫 화면으로 고를 수 있는 값. 홈은 '오늘' 하나다 (메뉴 통합 D1·D5)
+export const START_VIEW_OPTIONS: Array<{ value: AssistantSettings['startView']; label: string }> = [
+  { value: 'today', label: '오늘' },
+  { value: 'projects', label: '프로젝트' },
+  { value: 'calendar', label: '캘린더' }
+]
+
+// 저장된 첫 화면 값을 폼 값으로 바꾼다. 이전 값 auto·dashboard 와 모르는 값은 'today' 다
+export function formStartView(v: unknown): AssistantSettings['startView'] {
+  const hit = START_VIEW_OPTIONS.find((o) => o.value === v)
+  return hit ? hit.value : 'today'
+}
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
 
@@ -68,8 +81,6 @@ const NUMBER_FIELDS: Array<[keyof FormSettings, string]> = [
   ['planSize', '하루 계획 항목 수'],
   ['refreshCalendarMin', '캘린더 확인 주기'],
   ['refreshJiraMin', 'Jira 확인 주기'],
-  ['checkinDailyCap', '하루 체크인 상한'],
-  ['checkinMinGap', '체크인 최소 간격'],
   ['meetingLeadMin', '회의 전 알림']
 ]
 
@@ -80,13 +91,11 @@ export function validateSettings(s: FormSettings): string | null {
   }
   if (!HHMM.test(s.dayRollover)) return '날짜 경계는 HH:mm 형식이어야 합니다'
   if (!HHMM.test(s.workEnd)) return '근무 종료 시각은 HH:mm 형식이어야 합니다'
+  if (!HHMM.test(s.morningSyncTime)) return '아침 자동 동기화 시각은 HH:mm 형식이어야 합니다'
   if (!Number.isInteger(s.planSize) || s.planSize < 1 || s.planSize > 20)
     return '계획 항목 수는 1~20 사이여야 합니다'
   if (!isRefreshMin(s.refreshCalendarMin)) return '캘린더 확인 주기는 1~240분 사이여야 합니다'
   if (!isRefreshMin(s.refreshJiraMin)) return 'Jira 확인 주기는 1~240분 사이여야 합니다'
-  // 체크인 상한·간격 (부록 H.8.4)
-  if (!isIntIn(s.checkinDailyCap, 0, 20)) return '하루 체크인 상한은 0~20 사이여야 합니다'
-  if (!isIntIn(s.checkinMinGap, 5, 480)) return '체크인 최소 간격은 5~480분 사이여야 합니다'
   // 회의 전 브리핑 시각 (부록 I.10.4)
   if (!isIntIn(s.meetingLeadMin, 1, 120)) return '회의 전 알림은 1~120분 사이여야 합니다'
   return null
@@ -166,13 +175,16 @@ export default function AssistantSettingsModal({
   const [form, setForm] = useState<FormSettings>(() => {
     const init = {} as Record<string, unknown>
     for (const k of FORM_SETTING_KEYS) init[k] = settings[k]
-    // 이전 버전 main 이 startView 를 주지 않아도 select 가 비지 않게 한다
-    init.startView ??= 'auto'
-    // 이전 버전 main 이 체크인 켜기를 주지 않으면 기본값 켬을 쓴다 (부록 H.9.3)
-    init.checkinEnabled ??= true
+    // 이전 값 auto·dashboard 와 빈 값은 '오늘' 로 보인다. DB 행은 저장할 때만 바뀐다 (D5)
+    init.startView = formStartView(init.startView)
     // 이전 버전 main 이 회의 브리핑 키를 주지 않으면 기본값을 쓴다 (부록 I.11.4)
     init.meetingBriefingEnabled ??= true
     init.meetingLeadMin ??= 15
+    // 이전 버전 main 이 아침 자동 동기화 키를 주지 않으면 기본값 켬·08:00 을 쓴다 (D9)
+    init.morningSyncEnabled ??= true
+    init.morningSyncTime ??= '08:00'
+    // 원본 자동 완료의 기본값은 끔이다 (D10)
+    init.completeOriginOnDone ??= false
     return init as FormSettings
   })
   const [error, setError] = useState('')
@@ -231,16 +243,22 @@ export default function AssistantSettingsModal({
               onChange={(v) => set('refreshNotify', v)}
             />
             <Toggle
-              label="작업 경계 체크인"
-              hint="빈 시간 블록이 끝나기 5분 전에 진행 상황을 묻습니다"
-              checked={form.checkinEnabled}
-              onChange={(v) => set('checkinEnabled', v)}
-            />
-            <Toggle
               label="회의 전 브리핑"
               hint="회의 시작 전에 관련 프로젝트·지난 회의·액션아이템을 알립니다"
               checked={form.meetingBriefingEnabled}
               onChange={(v) => set('meetingBriefingEnabled', v)}
+            />
+            <Toggle
+              label="아침 자동 동기화"
+              hint="매일 아침 1회 릴리스 노트와 Jira 프로젝트를 가져옵니다. 새 프로젝트 추가와 빈 칸 채우기만 자동으로 합니다"
+              checked={form.morningSyncEnabled}
+              onChange={(v) => set('morningSyncEnabled', v)}
+            />
+            <Toggle
+              label="완료하면 원본도 완료"
+              hint="오늘 할 일을 완료로 바꾸면 원본 TODO·작업도 완료로 바꿉니다. Jira 이슈는 바꾸지 않습니다"
+              checked={form.completeOriginOnDone}
+              onChange={(v) => set('completeOriginOnDone', v)}
             />
             <Toggle
               label="AI 브리핑"
@@ -259,19 +277,16 @@ export default function AssistantSettingsModal({
             <Field label="첫 화면">
               <select
                 value={form.startView}
-                onChange={(e) => set('startView', e.target.value as FormSettings['startView'])}
+                onChange={(e) => set('startView', formStartView(e.target.value))}
                 className={inputClass}
               >
-                <option value="auto">자동</option>
-                <option value="dashboard">대시보드</option>
-                <option value="today">오늘</option>
+                {START_VIEW_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
               </select>
             </Field>
-            {form.startView === 'auto' ? (
-              <p className="mt-1 text-[11px] text-gray-500">
-                계획 진행 중이면 오늘, 하루를 마감했으면 대시보드. 계획이 없으면 평일은 오늘, 주말은 대시보드
-              </p>
-            ) : null}
           </div>
 
           <div className="grid grid-cols-2 gap-3 mb-4">
@@ -289,6 +304,15 @@ export default function AssistantSettingsModal({
                 value={form.workEnd}
                 onChange={(e) => set('workEnd', e.target.value)}
                 className={inputClass}
+              />
+            </Field>
+            <Field label="아침 동기화 시각" hint="기본 08:00. 이 시각 뒤 첫 확인 때 1회 실행합니다">
+              <input
+                type="time"
+                value={form.morningSyncTime}
+                disabled={!form.morningSyncEnabled}
+                onChange={(e) => set('morningSyncTime', e.target.value)}
+                className={`${inputClass} disabled:bg-gray-50 disabled:text-gray-400`}
               />
             </Field>
             <Field label="하루 계획 항목 수">
@@ -342,29 +366,6 @@ export default function AssistantSettingsModal({
                 max={240}
                 value={numberInputValue(form.refreshJiraMin)}
                 onChange={(e) => set('refreshJiraMin', parseNumberInput(e.target.value))}
-                className={inputClass}
-              />
-            </Field>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <Field label="하루 체크인 상한" hint="0~20회. 0 이면 보내지 않습니다">
-              <input
-                type="number"
-                min={0}
-                max={20}
-                value={numberInputValue(form.checkinDailyCap)}
-                onChange={(e) => set('checkinDailyCap', parseNumberInput(e.target.value))}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="체크인 최소 간격(분)" hint="5~480분">
-              <input
-                type="number"
-                min={5}
-                max={480}
-                value={numberInputValue(form.checkinMinGap)}
-                onChange={(e) => set('checkinMinGap', parseNumberInput(e.target.value))}
                 className={inputClass}
               />
             </Field>

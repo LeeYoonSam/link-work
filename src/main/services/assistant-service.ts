@@ -46,7 +46,7 @@ import {
   toManualCandidate
 } from './assistant-command'
 import { requestLlmCommand } from './assistant-command-llm'
-import { computeDueCheckin, computeDueMeetingBriefings } from './assistant-schedule'
+import { computeDueMeetingBriefings } from './assistant-schedule'
 import { buildMeetingBriefing, hasMeetingContext, meetingNoticeText } from './assistant-meeting'
 import { isUrgent } from './assistant-candidates'
 import { rankCandidates, scoreCandidate } from './assistant-score'
@@ -69,7 +69,6 @@ import {
   setBriefing,
   setBriefingError,
   setBriefingInstruction,
-  setEventResponse,
   setRecovery,
   updateEventPayload,
   updatePlanItems,
@@ -80,9 +79,6 @@ import type {
   AssistantSettings,
   AutoRefreshOutcome,
   Candidate,
-  CheckinAnswer,
-  CheckinPayload,
-  CheckinStatus,
   CommandApplyOutcome,
   CommandContext,
   CommandInterpretation,
@@ -101,7 +97,6 @@ import type {
   RefreshDiff,
   RefreshMode,
   RefreshSummary,
-  SentCheckinNotice,
   SentMeetingNotice,
   SentPlanUpdateNotice,
   SourceCheckTimes,
@@ -1096,147 +1091,6 @@ function insertManualItem(db: Db, title: string, dueDate: string | null, plan: D
     group_name: null
   }
   insertPlanItems(db, plan.id, [item])
-}
-
-// ── 작업 경계 체크인 (부록 H) ──
-
-const CHECKIN_STATUSES: CheckinStatus[] = ['done', 'in_progress', 'deferred']
-// 응답을 받아 항목 상태를 바꿀 수 있는 상태다. 사용자가 이미 정한 상태는 되돌리지 않는다 (A43)
-const CHECKIN_ACTIVE_STATUSES: PlanItemStatus[] = ['planned', 'in_progress']
-const CHECKIN_TEXT_MAX = 500
-const CHECKIN_ALREADY_ANSWERED = '이미 응답한 체크인입니다.'
-
-/**
- * 체크인 판정과 INSERT (H.6.1). show() 는 스케줄러가 한다 (A5).
- * 계획이 없으면 판정하지 않는다. UNIQUE 충돌이면 null 이다.
- */
-export function runDueCheckin(now?: Date): Promise<SentCheckinNotice | null> {
-  // 시각은 줄 안에서 정한다. 앞선 최신화가 줄을 오래 잡아도 창·회의 판정이 실제 실행 시각을 쓴다 (A7·A41)
-  return serialized(() => runDueCheckinImpl(now ?? new Date()))
-}
-
-async function runDueCheckinImpl(now: Date): Promise<SentCheckinNotice | null> {
-  const db = getDatabase()
-  const { settings, today, at } = todayOf(db, now)
-  const plan = getPlanByDate(db, today)
-  if (!plan) return null
-
-  const due = computeDueCheckin({
-    today,
-    nowHHmm: timelineNow(now, today),
-    at,
-    settings: {
-      enabled: settings.enabled,
-      checkinEnabled: settings.checkinEnabled,
-      checkinDailyCap: settings.checkinDailyCap,
-      checkinMinGap: settings.checkinMinGap
-    },
-    planActive: plan.status === 'active',
-    dayStart: dayStartOf(plan),
-    workEnd: settings.workEnd,
-    calendar: plan.source_snapshot?.calendar ?? [],
-    items: listPlanItems(db, plan.id),
-    events: listEventsByDate(db, today)
-  })
-  if (!due) return null
-
-  const ev = insertEvent(db, {
-    event_key: due.eventKey,
-    kind: 'checkin',
-    plan_date: today,
-    scheduled_at: due.scheduledAt,
-    fired_at: at,
-    status: due.late ? 'late' : 'sent',
-    ref_id: due.refId,
-    payload: JSON.stringify(due.payload)
-  })
-  // UNIQUE 충돌이면 이미 보낸 블록이다. 보내지 않는다 (A5)
-  if (!ev) return null
-
-  // 오늘 화면이 체크인 패널을 바로 그리게 한다
-  emitChanged({ date: today, reason: 'checkin' })
-  return { eventId: ev.id, title: due.title, body: due.body, focus: { kind: 'checkin', id: String(ev.id) } }
-}
-
-function normalizeCheckinAnswer(eventId: unknown, answer: unknown): CheckinAnswer {
-  if (typeof eventId !== 'number' || !Number.isInteger(eventId)) throw new Error('체크인 ID 가 올바르지 않습니다.')
-  if (answer === null || typeof answer !== 'object') throw new Error('체크인 응답 형식이 올바르지 않습니다.')
-  const a = answer as Record<string, unknown>
-  const status = a.status
-  if (status !== null && !CHECKIN_STATUSES.includes(status as CheckinStatus)) {
-    throw new Error('체크인 상태가 올바르지 않습니다.')
-  }
-  const note = a.note ?? null
-  if (note !== null && (typeof note !== 'string' || note.length > CHECKIN_TEXT_MAX)) {
-    throw new Error(`체크인 메모는 ${CHECKIN_TEXT_MAX}자 이하로 입력하세요.`)
-  }
-  const raw = a.raw ?? null
-  if (raw !== null && typeof raw !== 'string') throw new Error('체크인 답장 형식이 올바르지 않습니다.')
-  const trimmedNote = note === null ? '' : note.trim()
-  return {
-    status: status as CheckinStatus | null,
-    note: trimmedNote.length > 0 ? trimmedNote : null,
-    raw
-  }
-}
-
-// 응답 원문. 답장 원문이 우선이고, 없으면 버튼 상태, 둘 다 없으면 넘기기다 (H.6.4 3단계)
-function checkinResponseText(answer: CheckinAnswer): string {
-  if (answer.raw !== null && answer.raw.trim().length > 0) return answer.raw.slice(0, CHECKIN_TEXT_MAX)
-  if (answer.status !== null) return `button:${answer.status}`
-  return 'skip'
-}
-
-function checkinItemIdOf(payload: string | null): number | null {
-  if (payload === null) return null
-  try {
-    const p = JSON.parse(payload) as Partial<CheckinPayload> | null
-    return p !== null && typeof p.itemId === 'number' && Number.isInteger(p.itemId) ? p.itemId : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * 체크인 응답 (H.6.4). 답장과 패널 버튼이 모두 이 함수를 거친다 (A43).
- * 응답 기록(3단계)과 항목 상태 쓰기(7단계)는 한 트랜잭션이다 (H.7).
- */
-export function respondCheckin(eventId: number, answer: CheckinAnswer, now?: Date): Promise<TodayPayload> {
-  // 시각은 줄 안에서 정한다. responded_at·status_at 이 실제 기록 시각이다
-  return serialized(() => respondCheckinImpl(eventId, answer, now ?? new Date()))
-}
-
-async function respondCheckinImpl(eventId: unknown, rawAnswer: unknown, now: Date): Promise<TodayPayload> {
-  const answer = normalizeCheckinAnswer(eventId, rawAnswer)
-  const id = eventId as number
-  const db = getDatabase()
-  const { settings, today, at } = todayOf(db, now)
-
-  db.transaction(() => {
-    // 1·2단계. throw 하면 아무것도 쓰지 않는다
-    const ev = getEventById(db, id)
-    if (!ev || ev.kind !== 'checkin') throw new Error('체크인을 찾을 수 없습니다.')
-    if (ev.response !== null) throw new Error(CHECKIN_ALREADY_ANSWERED)
-
-    // 3단계. 응답은 1회만 기록한다
-    setEventResponse(db, id, checkinResponseText(answer), at)
-
-    // 4단계: 넘기기
-    if (answer.status === null) return
-    // 5단계: 닫힌 하루의 항목은 고정이다
-    const plan = getPlanByDate(db, today)
-    if (!plan || plan.status !== 'active') return
-    // 6단계: 오늘 계획 소속 항목만
-    const itemId = checkinItemIdOf(ev.payload)
-    const item = itemId === null ? null : getPlanItem(db, itemId)
-    if (!item || item.plan_id !== plan.id) return
-    // 7단계: 활성 항목만 바꾼다 (A43)
-    if (!CHECKIN_ACTIVE_STATUSES.includes(item.status)) return
-    updatePlanItems(db, [{ id: item.id, patch: { status: answer.status, status_note: answer.note } }], at)
-  })()
-
-  emitChanged({ date: today, reason: 'checkin' })
-  return buildPayload(db, settings, today, now)
 }
 
 // ── 회의 전 브리핑 (부록 I) ──

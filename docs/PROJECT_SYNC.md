@@ -15,8 +15,8 @@ Jira에서 **내게 할당된 `할 일` 상태 이슈**를 읽어 LinkWork 프�
 | 항목 | 결정 |
 |------|------|
 | 데이터 방향 | **Jira → LinkWork 단방향.** Jira는 GET만, 쓰기는 LinkWork DB에만 |
-| 실행 방식 | **수동.** 미리보기(preview)로 계획을 보여준 뒤 사용자가 **고른 항목만** 적용(apply) (R9) |
-| 기존 데이터 | **삭제 없음.** 기본은 추가·전진만이고, 기존 프로젝트를 덮어쓰는 것은 사용자가 확인한 강제 업데이트(R10)뿐이다 |
+| 실행 방식 | **수동.** 미리보기(preview)로 계획을 보여준 뒤 사용자가 **고른 항목만** 적용(apply) (R9). **아침 안전 자동 적용(R11).** 하루 1회 아침에 앱이 새 프로젝트 추가와 기존 프로젝트 보수 갱신(`force=false`)만 자동으로 적용한다. 수동 싱크업 버튼은 그대로 있다 |
+| 기존 데이터 | **삭제 없음.** 기본은 추가·전진만이고, 기존 프로젝트를 덮어쓰는 것은 사용자가 확인한 강제 업데이트(R10)뿐이다. 자동 적용(R11)은 강제 업데이트를 하지 않는다 |
 | 대상 | 기본 Jira 프로젝트(app_settings `jira_default_project_key`) 하나 |
 
 ### 1.1 Jira 데이터 형태 (예시)
@@ -54,7 +54,7 @@ project = <기본 프로젝트 키> AND assignee = currentUser() AND statusCateg
 
 ## 3. 동기화 규칙
 
-규칙 ID(R1~R10)는 테스트 이름에 그대로 들어간다(`project-sync-plan.test.ts`). 규칙을 바꾸면 같은 ID의 테스트도 함께 바꾼다.
+규칙 ID(R1~R11)는 테스트 이름에 그대로 들어간다(`project-sync-plan.test.ts`). R11 의 적용·DB 동작 테스트는 `project-sync.test.ts` 에도 있다. 규칙을 바꾸면 같은 ID의 테스트도 함께 바꾼다.
 
 | ID | 규칙 | 이유 |
 |----|------|------|
@@ -68,13 +68,18 @@ project = <기본 프로젝트 키> AND assignee = currentUser() AND statusCateg
 | R8 | **멱등성.** 같은 Jira 스냅샷·같은 선택으로 두 번 적용하면 두 번째는 생성·추가·덮어쓰기 0건(action 전부 `unchanged`). 강제 업데이트도 마찬가지다 | 싱크업을 몇 번 눌러도 중복이 쌓이지 않아야 한다 |
 | R9 | **선택 적용.** apply는 `selection: { jiraKey, force, projectId }[]`를 받아 **고른 항목만** 쓴다. 고르지 않은 항목도 계획 단계의 매칭에는 참여하고(프로젝트를 "차지"), 쓰기 직전에 걸러진다. 빈 선택, 형식이 잘못된 선택, 미리보기 계획에 없는 키는 오류로 거부한다. 선택의 `projectId`(미리보기 항목 값 그대로)가 적용 시 재계획 결과와 다른 항목이 하나라도 있으면 **아무것도 쓰지 않고** `미리보기 이후 프로젝트가 바뀌었습니다…` 오류 — 사용자가 확인한 것과 다른 프로젝트에 쓰지 않게. 쓰기 순서는 선택 순서가 아니라 계획 순서다 | 사용자 요구 — 무조건 전부 적용하지 않고 고른 것만. 미선택 항목을 계획 전에 빼면 매칭이 달라져 미리보기에서 본 대상과 적용 대상이 어긋난다 |
 | R10 | **기존 프로젝트 강제 업데이트.** 기존 프로젝트에 매칭된 항목(`projectId !== null`)은 UI에서 **기본 선택 해제** + "이미 추가된 프로젝트입니다" 경고. 체크하면 확인 팝업을 거쳐 `force=true`로 넘긴다. 덮어쓰는 것: 프로젝트 name·description(Jira 본문이 비었으면 유지), 매칭된 작업의 name·status(**역행 허용**)·end_date(Jira duedate가 있을 때만). 유지하는 것: 프로젝트 날짜·status·priority·deploy_version, Jira에 매칭되지 않은 수동 작업·문서. 새 작업·문서 추가와 키 백필은 보수 경로와 같다. 삭제는 없고, 바뀔 값이 없으면 `unchanged`(멱등). 미리보기 항목의 `forceTasks`는 이름·상태·마감일 중 하나라도 바뀌는 기존 작업의 `{ before, after }` 이름 목록(키 백필만 일어나는 작업은 제외)이고, 확인 팝업이 이 목록을 보여 준다. `forceChanges` = 이름 바뀜 1 + 설명 바뀜 1 + `forceTasks.length` | 사용자 요구 — 이미 있는 프로젝트는 실수로 덮지 않게 기본은 손대지 않고, 원할 때만 확인을 거쳐 Jira 내용으로 맞춘다. 덮는 범위는 Jira에 원본이 있는 필드로 한정한다 |
+| R11 | **아침 안전 자동 적용.** 하루 1회 아침에 `runAutoProjectSync` 가 사용자 선택 없이 싱크업을 적용한다. 실행 시점·하루 1회·재시도는 ASSISTANT.md 부록 K 의 A54 가 정한다. 순서: (1) 수동 미리보기 캐시가 10분 안이면 아무것도 하지 않고 `deferred` 를 돌려준다. (2) `fetchJiraSyncSnapshot` 으로 **자기 스냅샷**을 새로 조회한다. 수동 미리보기 캐시는 읽지도 쓰지도 않는다. (3) `buildProjectSyncPlan` 으로 현재 DB 기준 계획을 만든다. (4) 순수 함수 `selectAutoSyncSelection(plan, createdKeys)` 가 선택을 고른다. (5) apply 직전에 수동 미리보기 캐시를 다시 확인한다. 10분 안이면 `deferred` 다. (6) 선택이 0건이면 apply 를 부르지 않는다. (7) `applyProjectSyncSnapshot` 으로 쓴다. R9 의 `projectId` 재확인과 트랜잭션은 수동과 같다. **선택 규칙:** `action='create'` 는 전에 만든 키(§11)가 아니면 고른다. `action='update'` 는 `matchedBy='jira_key'` 일 때만 `force=false` 로 고른다. `matchedBy` 가 `document_url`·`name` 인 항목은 고르지 않고 `needsReview` 로 센다. 전에 만든 키라 뺀 생성 항목은 `previouslyCreated` 로 센다. `unchanged` 는 고르지 않는다. `force=true` 는 만들지 않는다. 삭제는 없다. 활동 로그 모드 이름은 `아침 자동 싱크업` 이다 | 사용자 결정(2026-11-05)이다. 매일 아침 버튼을 누르지 않아도 새 할 일 이슈가 프로젝트로 들어온다. 덮어쓰기(R10)는 사용자 확인이 필요하므로 자동에서 뺀다. 첫 매칭(문서 URL·이름)은 키 백필이 일어나 잘못 붙으면 되돌리기 어려워 사용자가 수동 미리보기에서 확인한다. 사용자가 지운 프로젝트를 다음 아침에 되살리지 않는다. 사용자가 검토 중인 미리보기를 깨뜨리지 않는다. 선택 0건으로 apply 를 부르면 빈 선택 오류가 난다 |
 
 에픽 없는 비-Sustain 트리거 작업은 프로젝트를 만들지 않고 `skipped(reason='no_epic')`로 보고한다.
+
+**R11 테스트가 다루는 경우.** 테스트 이름에 `R11` 을 넣는다.
+- `project-sync-plan.test.ts`: 새 프로젝트는 고른다. 전에 만든 키의 생성 항목은 뺀다. jira_key 매칭 update 는 `force=false` 로 고른다. document_url·name 매칭 update 는 빼고 `needsReview` 로 센다. unchanged 는 뺀다. 모든 선택의 `force` 는 false 다. 입력 계획을 바꾸지 않는다.
+- `project-sync.test.ts`: 수동 미리보기가 10분 안이면 `deferred` 이고 DB 가 그대로다. 선택이 0건이면 apply 를 부르지 않는다. 자동 적용 뒤 같은 스냅샷으로 다시 돌리면 생성 0건이다(R8). 만든 키가 `project_sync_created_keys` 에 남는다. activity_log 의 과거 생성 행으로도 키를 뺀다. 수동 미리보기 캐시가 자동 실행 전후로 같다.
 
 **미리보기 표시.** 미리보기는 프로젝트 단위라 **하위 작업 트리거**는 `skipped`와 `triggerCount`에 넣지 않는다.
 가져오기에는 영향이 없다 — 하위 작업 트리거도 분류(부모 작업 기준)와 작업 가져오기(§6)는 그대로 한다.
 
-**보수 경로와 UI.** `force=false`인 기존 항목은 R5 보수 경로(§5)로 쓰인다. 이 코드 경로는 남아 있지만, 현재 UI는 기존 항목을 고르면 항상 `force=true`로 보내므로 쓰지 않는다.
+**보수 경로와 UI.** `force=false`인 기존 항목은 R5 보수 경로(§5)로 쓰인다. 현재 UI는 기존 항목을 고르면 항상 `force=true`로 보내므로 수동 싱크업은 이 경로를 쓰지 않는다. 아침 자동 적용(R11)이 이 경로를 쓴다.
 
 ---
 
@@ -151,6 +156,13 @@ project = <기본 프로젝트 키> AND assignee = currentUser() AND statusCateg
 - **계획은 순수 함수.** `project-sync-plan.ts`·`project-sync-adf.ts`는 electron·better-sqlite3·`../db`를 import하지 않는다 —
   Jira 스냅샷과 DB 스냅샷만으로 계획을 만들어 픽스처로 규칙을 검증할 수 있게.
 - **적용은 트랜잭션.** Jira 조회를 끝낸 뒤 한 트랜잭션으로 적용하므로 중간 실패 시 DB가 반쯤 바뀌지 않는다.
+- **자동 적용은 보수 경로만 (R11).** `selectAutoSyncSelection` 과 `runAutoProjectSync` 는 `force: true` 를 만들지 않는다. 이유: 덮어쓰기는 사용자 확인 뒤에만 한다.
+  확인: 실행 모듈은 `grep -c "force: true" src/main/services/project-sync.ts` 결과 0 으로 판정한다. 계획 모듈은 R10 경로의 `force: true` 가 있어 grep 으로 판정하지 않는다. 계획 모듈은 `project-sync-plan.test.ts` 의 R11 테스트로 판정한다. 근거 테스트: `R11: 어떤 계획에서도 force=true 선택을 만들지 않는다`, `R11: 고른 선택은 selectProjectSyncOps 를 그대로 통과하고 강제 경로를 타지 않는다`.
+- **자동 적용은 수동 미리보기 캐시를 건드리지 않는다 (R11).** `runAutoProjectSync` 는 `cached` 변수를 읽거나 쓰지 않는다. 신선도 확인은 `hasFreshPreview()` 로만 한다. 이 함수는 캐시를 읽기만 하고 바꾸지 않는다. 이유: 사용자가 검토 중인 미리보기가 자동 실행으로 바뀌면 안 된다.
+- **지운 프로젝트를 자동으로 되살리지 않는다 (R11).** 전에 만든 키(§11)는 자동 선택에서 빠진다. 수동 미리보기는 지금처럼 그 키를 생성 항목으로 보여 준다.
+- **자동 실행은 throw 하지 않는다.** `morning-sync.ts` 의 실행기는 부분(릴리스·싱크업)마다 try/catch 한다. 실패는 상태 행에 `failed` 로 남긴다 (ASSISTANT.md A13·A54).
+- **스케줄러는 싱크업을 import 하지 않는다.** `assistant-scheduler.ts` 는 `project-sync`·`release-note-sync`·`morning-sync` 를 import 하지 않는다. `index.ts` 가 `SchedulerDeps.onTick` 으로 실행기를 주입한다 (A54).
+  확인: `grep -nE "project-sync|release-note-sync|morning-sync" src/main/services/assistant-scheduler.ts` 결과 0건.
 
 ---
 
@@ -159,18 +171,25 @@ project = <기본 프로젝트 키> AND assignee = currentUser() AND statusCateg
 | 파일 | 역할 |
 |------|------|
 | `src/main/services/jira.ts` | Jira 조회 함수(GET만). JQL 키 검증, `/search/jql` 페이지네이션, `MAX_SYNC_ISSUES`·`SYNC_TRIGGER_STATUS` 상수 |
-| `src/main/services/project-sync-plan.ts` | **순수 함수** — 분류(R1~R3)·매칭(R5)·diff(R6)·신규 기본값(R7)·선택 검증과 선택 항목 거르기(R9)·강제 업데이트 내용(R10) |
+| `src/main/services/project-sync-plan.ts` | **순수 함수** — 분류(R1~R3)·매칭(R5)·diff(R6)·신규 기본값(R7)·선택 검증과 선택 항목 거르기(R9)·강제 업데이트 내용(R10)·자동 선택 `selectAutoSyncSelection`·활동 로그 키 파싱 `parseSyncCreatedKey`·로그 머리말 `SYNC_LOG_LABELS`(R11) |
 | `src/main/services/project-sync-adf.ts` | **순수 함수** — ADF → 평문, ADF 속 링크 추출과 호스트별 이름 추정 |
-| `src/main/services/project-sync.ts` | 오케스트레이션 — Jira fetch → 스냅샷, DB 읽기 → 계획, 트랜잭션 적용, 활동 로그. preview는 **항상 새로 조회**해 스냅샷을 캐시하고, apply는 그 캐시로 **현재 DB 기준 재계획** 후 적용한다. apply는 Jira를 다시 조회하지 않는다 — 캐시가 없거나 10분이 지났으면 `미리보기가 만료되었습니다…` 오류(사용자가 보지 않은 계획이 반영되지 않게) |
+| `src/main/services/project-sync.ts` | 오케스트레이션 — Jira fetch → 스냅샷, DB 읽기 → 계획, 트랜잭션 적용, 활동 로그. preview는 **항상 새로 조회**해 스냅샷을 캐시하고, apply는 그 캐시로 **현재 DB 기준 재계획** 후 적용한다. apply는 Jira를 다시 조회하지 않는다 — 캐시가 없거나 10분이 지났으면 `미리보기가 만료되었습니다…` 오류(사용자가 보지 않은 계획이 반영되지 않게). 아침 자동 적용 `runAutoProjectSync`(R11), 캐시 신선도 확인 `hasFreshPreview`, 전에 만든 키 읽기 `readSyncCreatedKeys`·기록(§11)도 여기 있다 |
+| `src/main/services/morning-sync.ts` | 아침 자동 동기화 실행기 `runMorningSyncIfDue` — 판정은 `decideMorningSync` 에 맡기고, 릴리스 전체 동기화와 R11 을 부분별로 실행한다. 상태는 `assistant_events` 의 `morning_sync` 행 1개다. throw 하지 않는다. 이름에 `assistant-` 를 붙이지 않는다. 이유: projects 를 쓰는 모듈이 A2 grep 대상에 들어가면 안 된다 |
+| `src/main/services/assistant-schedule.ts` | **순수 함수** `decideMorningSync` — 오늘 실행할 부분(`release`·`project`)을 고른다 (A54) |
+| `src/main/services/assistant-scheduler.ts` | 60초 틱·wake 끝에서 주입받은 `SchedulerDeps.onTick` 을 await 없이 부른다. 싱크업 모듈을 import 하지 않는다 |
+| `src/main/index.ts` | `startAssistantScheduler` 에 `onTick: runMorningSyncIfDue` 를 주입한다 |
 | `src/main/db/database.ts` | 마이그레이션 — `projects.jira_issue_key TEXT`, `tasks.jira_issue_key TEXT` (CREATE TABLE과 ALTER 둘 다) |
-| `src/main/ipc/project-sync.ipc.ts` | IPC 핸들러, `src/main/index.ts`에서 등록 |
+| `src/main/ipc/project-sync.ipc.ts` | IPC 핸들러, `src/main/index.ts`에서 등록. `projectSync:morningStatus` 도 여기 있다 |
 | `src/main/ipc/release-note.ipc.ts` | Jira 자격 저장·연결 해제·기본 프로젝트 변경 시 싱크업 미리보기 캐시를 비운다 — 다른 계정·프로젝트의 미리보기가 적용되지 않게 |
-| `src/main/services/project-sync-plan.test.ts` | 규칙 테스트 — 이름에 `R1`~`R10` 포함 |
-| `src/main/services/project-sync.test.ts` | DB 적용·멱등성·수동 프로젝트 보존 — better-sqlite3를 `node:sqlite` 인메모리 shim으로 바꿔 실제 스키마로 검증 (`release-note-sync.test.ts` 패턴) |
+| `src/main/services/project-sync-plan.test.ts` | 규칙 테스트 — 이름에 `R1`~`R11` 포함 |
+| `src/main/services/project-sync.test.ts` | DB 적용·멱등성·수동 프로젝트 보존·R11 자동 적용(deferred, 선택 0건, 지운 키 제외) — better-sqlite3를 `node:sqlite` 인메모리 shim으로 바꿔 실제 스키마로 검증 (`release-note-sync.test.ts` 패턴) |
+| `src/main/services/morning-sync.test.ts` | 하루 1회·부분 재시도·오프라인 비계수·throw 없음 (A54) — 인메모리 shim 과 모킹만 쓴다 |
 | `src/main/services/__fixtures__/project-sync/` | 실제 Jira 응답 형태를 본뜬 픽스처 |
 | `src/renderer/src/stores/projectSyncStore.ts` | 미리보기·선택 상태. 기본 선택은 새 프로젝트 항목만, 기존 항목은 확인 후 선택되고 `force=true`로 보낸다 (R9·R10) |
 | `src/renderer/src/components/project/ProjectSyncModal.tsx` | 미리보기 모달 — 항목 체크박스, 기존 항목 경고, 덮어쓰기 확인 팝업(`forceChanges`와 `forceTasks` 목록 표시) |
 | `src/renderer/src/components/project/ProjectSyncModal.test.tsx` | 렌더러 미리보기·선택·적용 모달 테스트 |
+| `src/renderer/src/stores/morningSyncStore.ts` | 아침 동기화 상태(`projectSync:morningStatus`)를 읽는다. `ai:dataChanged` 의 `sync_status` 를 받으면 다시 읽는다 |
+| 사이드바·`ProjectList`·`ReleasesView`·`ChangeLog` | 아침 자동 실행 결과 표시 — 사이드바 프로젝트·릴리스 배지(새 항목 수), 목록 상단 상태 줄(마지막 동기화 시각·실패 표시·새 항목 수), 오늘 화면 변경 내역의 아침 동기화 줄 |
 
 ---
 
@@ -180,6 +199,7 @@ project = <기본 프로젝트 키> AND assignee = currentUser() AND statusCateg
 |------|---------|------|
 | `projectSync:preview` | `window.api.projectSync.preview()` | `{ success: true, plan: ProjectSyncPlan } \| { success: false, error: string }` |
 | `projectSync:apply` | `window.api.projectSync.apply(selection: ProjectSyncSelection[])` | `{ success: true, result: ProjectSyncResult } \| { success: false, error: string }` |
+| `projectSync:morningStatus` | `window.api.projectSync.morningStatus()` | `{ success: true, status: MorningSyncStatus } \| { success: false, error: string }`. 가장 최근 `morning_sync` 행을 읽는다. 읽기 전용이다 |
 
 ```ts
 export type ProjectSyncSkipReason = 'qa' | 'no_epic' | 'tracked_in_project'
@@ -227,8 +247,62 @@ export interface ProjectSyncResult {
   tasksUpdated: number
   documentsAdded: number
   skipped: ProjectSyncSkipped[]
+  applied: ProjectSyncAppliedItem[] // 이번 적용에서 쓴 항목. 자동 적용 결과 표시와 변경 내역이 쓴다
+}
+
+// 적용에서 쓴 항목 (ProjectSyncResult.applied). 순서는 계획 순서다
+export interface ProjectSyncAppliedItem {
+  jiraKey: string
+  action: 'create' | 'update' | 'unchanged'
+  projectId: number | null          // create 면 새 id
+  projectName: string
+  force: boolean
+}
+
+// R11 — project-sync-plan.ts 의 순수 함수 반환값
+export interface AutoSyncSelection {
+  selection: ProjectSyncSelection[] // 전부 force=false. 계획 순서
+  needsReview: number               // matchedBy 가 document_url·name 인 항목 수
+  previouslyCreated: number         // 전에 만든 키라 다시 만들지 않은 create 항목 수
+}
+
+// R11 — project-sync.ts 의 runAutoProjectSync 반환값. IPC 로 나가지 않는다
+export type AutoProjectSyncOutcome =
+  | { status: 'deferred' }          // 수동 미리보기가 10분 안이다. 시도로 세지 않는다
+  | { status: 'applied'; result: ProjectSyncResult; needsReview: number; previouslyCreated: number }
+                                    // 선택 0건이면 apply 를 부르지 않은 0건 결과다
+
+// 아침 자동 동기화 — main 은 assistant-types.ts 에 둔다. assistant_events(kind='morning_sync') 행의 payload 다
+export type MorningSyncPartName = 'release' | 'project'
+export type MorningSyncPartStatus = 'running' | 'ok' | 'skipped' | 'failed' | 'deferred'
+export interface MorningSyncPart {
+  status: MorningSyncPartStatus
+  attempts: number                  // 센 시도 수. 오프라인·deferred 는 세지 않는다
+  startedAt: string | null          // 마지막 시도 시작 'YYYY-MM-DD HH:mm:ss' (로컬)
+  finishedAt: string | null         // running 이면 null
+  error: string | null              // failed 의 사용자용 문구. skipped 면 건너뛴 이유
+  newCount: number                  // 릴리스는 새 릴리스(SyncAllResult.linked), 싱크업은 새 프로젝트(created)
+  updatedCount: number              // 릴리스는 synced 수, 싱크업은 updated
+  reviewCount: number               // 싱크업만. needsReview
+  failedCount: number               // 릴리스만. 실패한 버전 수
+}
+export interface MorningSyncPayload {
+  date: string                      // 논리 날짜
+  release: MorningSyncPart | null   // null 이면 아직 시도하지 않았다
+  project: MorningSyncPart | null
+}
+// projectSync:morningStatus 반환
+export interface MorningSyncStatus {
+  enabled: boolean                  // assistant_morning_sync_enabled
+  at: string                        // assistant_morning_sync_time 'HH:mm'
+  inFlight: boolean
+  date: string | null               // 가장 최근 morning_sync 행의 논리 날짜. 행이 없으면 null
+  release: MorningSyncPart | null
+  project: MorningSyncPart | null   // 실행 중이 아닌데 running 이면 failed('동기화가 중단되었습니다.')로 보여 준다
 }
 ```
+
+- `ai:dataChanged` 이벤트: 싱크업 적용(수동·자동)이 생성·갱신을 만들면 `{ entity: 'project' }` 를 보낸다. 아침 동기화 실행기는 상태 행을 바꿀 때마다 `{ entity: 'sync_status' }` 를 보낸다. 렌더러의 `stores/dataSync.ts` 가 두 이벤트를 앱 전역에서 처리한다.
 
 에러 메시지는 한국어로, 사용자가 취할 조치를 담는다(Jira 미연결, 기본 프로젝트 키 미설정, 미리보기 만료,
 빈 선택 `적용할 항목을 선택해 주세요.`, 미리보기에 없는 항목·잘못된 선택 형식, 미리보기 이후 프로젝트 변경 등).
@@ -244,16 +318,23 @@ export interface ProjectSyncResult {
   `Sustain 정책 개선`을 Sustain으로 보고, `서스테인`·`유지보수`는 놓친다.
 - **에픽 없는 작업은 건너뜀.** 비-Sustain 작업에 에픽이 없으면 `no_epic`으로 보고만 한다.
 - **조회 상한.** 검색당 500건(`MAX_SYNC_ISSUES`)을 넘는 이슈는 계획에 들어가지 않는다. 트리거는 최신 키부터 가져오므로 오래된 할 일 이슈가 빠진다. `truncated`로 알리지만 나머지는 처리되지 않는다.
-- **기존 프로젝트는 UI에서 항상 강제 업데이트.** 기존 항목을 고르면 늘 `force=true`로 보낸다 — 추가만 하는 보수 갱신(§5)은 화면에서 선택할 수 없다.
+- **기존 프로젝트는 UI에서 항상 강제 업데이트.** 기존 항목을 고르면 늘 `force=true`로 보낸다 — 추가만 하는 보수 갱신(§5)은 화면에서 선택할 수 없다. 보수 갱신은 아침 자동 적용(R11)만 쓴다.
 - **이름 매칭은 정확 일치.** 정규화 후에도 표기가 조금 다르면 매칭되지 않아 새 프로젝트가 만들어진다.
   막으려면 **싱크업 전에** 기존 프로젝트에 이슈 링크(`/browse/KEY`)를 문서로 넣어 둔다(§4의 2).
   한 번 새 프로젝트가 생기면 다음부터는 그 프로젝트가 jira_key로 먼저 매칭되므로, 그 뒤에 문서를 넣어도 기존 프로젝트로 옮겨지지 않는다.
-- **삭제 기록이 없다.** 싱크업이 만든 프로젝트·작업·문서를 지워도, Jira 티켓이 `할 일`인 동안은 다음 싱크업에서 다시 생긴다.
+- **삭제 기록이 없다.** 싱크업이 만든 프로젝트·작업·문서를 지워도, Jira 티켓이 `할 일`인 동안은 다음 **수동** 싱크업 미리보기에 생성 항목으로 다시 나온다. 아침 자동 적용(R11)은 아래 '전에 만든 키'로 이 프로젝트를 되살리지 않는다. 지운 작업·문서는 프로젝트가 남아 있으면 자동 적용에서도 다시 추가된다.
+- **전에 만든 키.** R11 은 다음 두 출처의 합집합을 '전에 만든 키'로 본다.
+  - app_settings `project_sync_created_keys`: 정렬한 JSON 문자열 배열이다. 수동·자동 적용이 프로젝트를 만들면, 커밋 뒤에 그 Jira 키를 더한다. 기록이 실패해도 적용은 성공으로 보고한다. 값이 깨졌으면 빈 목록으로 본다. 이 기능 전에는 기록이 없다.
+  - activity_log 파싱: `entity_type='project'`, `action='create'` 행의 `details` 가 `^(Jira 싱크업|강제 업데이트|아침 자동 싱크업) \(([A-Z][A-Z0-9_]*-\d+)\):` 와 맞으면 그 키를 쓴다. 머리말 3개는 `SYNC_LOG_LABELS` 가 유일 정의처다. 파싱은 `parseSyncCreatedKey` 가 한다. 이유: 기존 사용자가 이 기능 전에 만든 프로젝트도 되살리지 않는다.
+  - 활동 로그 `details` 형식 `<모드> (<KEY>): …` 를 바꾸면 파싱이 깨진다. 형식을 바꾸지 않는다.
+  - 두 출처 모두 사라지면(예: 활동 로그를 비운 백업) 그 키는 다시 생성 대상이 된다.
+- **자동 적용은 앱이 실행 중일 때만 돈다.** 아침 시각에 앱이 꺼져 있으면, 그날 앱이 켜진 뒤 첫 틱에서 따라잡는다. 시도 규칙은 ASSISTANT.md A54 다.
+- **첫 매칭은 자동으로 붙지 않는다.** 문서 URL·이름으로만 매칭되는 기존 프로젝트는 R11 이 고르지 않는다. 사용자가 수동 싱크업에서 확인해야 키가 백필된다. 그 수는 상태의 `needsReview` 로 보인다.
 ---
 
 ## 12. 규칙 변경 절차
 
 1. **이 문서를 먼저 고친다** — §3 표의 규칙과 이유, 영향받는 §4~§7.
-2. **픽스처·테스트** — `__fixtures__/project-sync/`에 사례를 추가하고, 해당 규칙 ID를 이름에 넣은 테스트를 `project-sync-plan.test.ts`에 추가·수정한다. 새 규칙이면 다음 번호(R11…)를 부여한다.
+2. **픽스처·테스트** — `__fixtures__/project-sync/`에 사례를 추가하고, 해당 규칙 ID를 이름에 넣은 테스트를 `project-sync-plan.test.ts`에 추가·수정한다. 새 규칙이면 다음 번호(R12…)를 부여한다.
 3. **구현** — `project-sync-plan.ts`를 고쳐 테스트를 통과시킨다. 적용 로직이 바뀌면 `project-sync.test.ts`도.
 4. **검증** — `/project-sync` 스킬의 완료 조건을 `sync-verifier`로 판정한다.

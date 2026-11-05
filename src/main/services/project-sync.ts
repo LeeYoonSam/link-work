@@ -16,8 +16,11 @@ import {
   buildProjectSyncPlan,
   localToday,
   parseProjectSyncSelection,
+  parseSyncCreatedKey,
   resolveProjectRoots,
+  selectAutoSyncSelection,
   selectProjectSyncOps,
+  SYNC_LOG_LABELS,
   type DbSyncState,
   type JiraSyncSnapshot,
   type ProjectSyncPlan,
@@ -34,6 +37,7 @@ import {
  * 미리보기와 적용 사이에 사용자가 프로젝트를 고쳤어도 그 상태 위에서 다시 계산되므로 덮어쓰지 않는다.
  * apply는 **절대 Jira를 다시 조회하지 않는다.** 캐시가 없거나 만료됐으면 오류를 던진다 —
  * 새로 조회해 적용하면 사용자가 보지 않은 계획이 반영되기 때문이다.
+ * 아침 자동 싱크업(R11)은 runAutoProjectSync 가 따로 조회한다. 미리보기 캐시는 쓰지 않는다.
  */
 
 const SNAPSHOT_TTL_MS = 10 * 60 * 1000
@@ -48,6 +52,15 @@ let cached: { snapshot: JiraSyncSnapshot; cachedAt: number } | null = null
  */
 export function clearProjectSyncCache(): void {
   cached = null
+}
+
+/**
+ * R11: 사용자가 10분 안에 받은 미리보기가 있으면 true 다.
+ * 자동 싱크업은 이때 미룬다. 사용자가 검토 중인 계획의 매칭을 바꾸지 않기 위해서다.
+ * 캐시는 읽기만 하고 고치지 않는다.
+ */
+export function hasFreshPreview(now: number = Date.now()): boolean {
+  return cached !== null && now - cached.cachedAt < SNAPSHOT_TTL_MS
 }
 
 /** Jira에서 트리거와 그 조상·자손, 루트의 원격 링크까지 한 번에 모은다 */
@@ -178,6 +191,11 @@ export async function applyProjectSync(selection: unknown): Promise<ProjectSyncR
   return applyProjectSyncSnapshot(cached.snapshot, parsed)
 }
 
+export interface ApplyProjectSyncOptions {
+  /** 'auto' 는 아침 자동 싱크업(R11)이다. 활동 로그 머리말만 달라진다 */
+  mode?: 'manual' | 'auto'
+}
+
 /**
  * 스냅샷 하나를 현재 DB에 적용한다. 네트워크를 타지 않으므로 테스트도 이 함수로 돈다.
  * 계획과 쓰기 사이에 다른 쓰기가 끼지 않도록 DB 읽기부터 트랜잭션 안에서 한다.
@@ -185,10 +203,12 @@ export async function applyProjectSync(selection: unknown): Promise<ProjectSyncR
 export function applyProjectSyncSnapshot(
   snapshot: JiraSyncSnapshot,
   selection: ProjectSyncSelection[],
-  today: string = localToday()
+  today: string = localToday(),
+  options: ApplyProjectSyncOptions = {}
 ): ProjectSyncResult {
   const db = getDatabase()
   const createdIds = new Map<string, number>()
+  const mode = options.mode ?? 'manual'
 
   const run = db.transaction(() => {
     const computation = buildProjectSyncPlan(snapshot, readProjectSyncDbState(), today)
@@ -204,7 +224,8 @@ export function applyProjectSyncSnapshot(
     tasksAdded: 0,
     tasksUpdated: 0,
     documentsAdded: 0,
-    skipped: plan.skipped
+    skipped: plan.skipped,
+    applied: []
   }
   for (const { op, force, action, tasksUpdated } of selected) {
     const { item } = op
@@ -214,10 +235,21 @@ export function applyProjectSyncSnapshot(
     result.tasksAdded += item.newTasks
     result.tasksUpdated += tasksUpdated
     result.documentsAdded += item.newDocuments
+    result.applied.push({
+      jiraKey: item.jiraKey,
+      action,
+      projectId: action === 'create' ? (createdIds.get(item.jiraKey) ?? null) : item.projectId,
+      projectName: item.projectName,
+      force
+    })
 
     // 활동 로그는 커밋이 끝난 뒤에 남긴다 — 롤백된 변경이 로그에 남지 않게.
-    const mode = force ? '강제 업데이트' : 'Jira 싱크업'
-    const detail = `${mode} (${item.jiraKey}): 작업 +${item.newTasks} · 작업 갱신 ${tasksUpdated} · 문서 +${item.newDocuments}`
+    const label = force
+      ? SYNC_LOG_LABELS.force
+      : mode === 'auto'
+        ? SYNC_LOG_LABELS.auto
+        : SYNC_LOG_LABELS.manual
+    const detail = `${label} (${item.jiraKey}): 작업 +${item.newTasks} · 작업 갱신 ${tasksUpdated} · 문서 +${item.newDocuments}`
     if (action === 'create') {
       logActivity('project', 'create', createdIds.get(item.jiraKey), item.projectName, detail)
     } else if (action === 'update') {
@@ -225,8 +257,123 @@ export function applyProjectSyncSnapshot(
     }
   }
 
+  if (createdIds.size > 0) recordSyncCreatedKeys([...createdIds.keys()])
   if (result.created > 0 || result.updated > 0) notifyDataChanged()
   return result
+}
+
+// ── R11: 싱크업이 만든 키 기록 ──
+
+export const SYNC_CREATED_KEYS_SETTING = 'project_sync_created_keys'
+
+const ISSUE_KEY = /^[A-Z][A-Z0-9_]*-\d+$/
+
+// 값이 깨졌으면 빈 목록으로 본다. 그래도 activity_log 파싱이 과거 생성분을 보완한다.
+function readCreatedKeysSetting(): string[] {
+  const row = getDatabase()
+    .prepare('SELECT value FROM app_settings WHERE key = ?')
+    .get(SYNC_CREATED_KEYS_SETTING) as { value: string } | undefined
+  if (!row) return []
+  try {
+    const parsed: unknown = JSON.parse(row.value)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((k): k is string => typeof k === 'string' && ISSUE_KEY.test(k))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 커밋이 끝난 뒤 이번에 만든 키를 기록에 더한다.
+ * 실패해도 throw 하지 않는다. 이미 커밋된 적용을 실패로 보고하지 않기 위해서다.
+ */
+function recordSyncCreatedKeys(keys: string[]): void {
+  try {
+    const merged = [...new Set([...readCreatedKeysSetting(), ...keys])].sort()
+    getDatabase()
+      .prepare(
+        "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))"
+      )
+      .run(SYNC_CREATED_KEYS_SETTING, JSON.stringify(merged))
+  } catch (e) {
+    console.error('[project-sync] created keys', e)
+  }
+}
+
+/**
+ * R11: 싱크업이 전에 프로젝트에 붙인 Jira 키 전체다.
+ * app_settings 기록과 activity_log 의 project create·update 행 detail 파싱의 합집합이다.
+ * activity_log 를 함께 읽는 이유: 기록이 생기기 전에 만든 과거 생성분도 되살리지 않기 위해서다.
+ * update 행도 읽는 이유: 이름·문서 URL 매칭으로 키를 백필한 프로젝트는 update 행만 남는다.
+ * 사용자가 그 프로젝트를 지우면 다음 아침에 되살리지 않아야 한다.
+ * 프로젝트가 남아 있으면 그 키는 jira_key 로 매칭되어 create 가 되지 않는다. 그래서 넓혀도 부작용이 없다.
+ */
+export function readSyncCreatedKeys(): Set<string> {
+  const keys = new Set(readCreatedKeysSetting())
+  const rows = getDatabase()
+    .prepare(
+      "SELECT details FROM activity_log WHERE entity_type = 'project' AND action IN ('create', 'update')"
+    )
+    .all() as Array<{ details: string | null }>
+  for (const row of rows) {
+    const key = parseSyncCreatedKey(row.details)
+    if (key !== null) keys.add(key)
+  }
+  return keys
+}
+
+// ── R11: 아침 자동 싱크업 ──
+
+export type AutoProjectSyncOutcome =
+  /** 사용자가 검토 중인 미리보기가 있어 미뤘다. 시도로 세지 않는다 */
+  | { status: 'deferred' }
+  | {
+      status: 'applied'
+      /** 자동 적용 결과. 선택이 0건이면 apply 를 부르지 않은 0건 결과다 */
+      result: ProjectSyncResult
+      /** 첫 매칭이라 사용자 확인이 필요한 항목 수 */
+      needsReview: number
+      /** 전에 만든 키라 다시 만들지 않은 항목 수 */
+      previouslyCreated: number
+    }
+
+/**
+ * R11: 아침 자동 싱크업. 새 프로젝트 추가와 jira_key 매칭 보수 갱신만 적용한다.
+ * 강제 업데이트와 삭제는 하지 않는다.
+ * Jira 미연결·기본 키 없음·조회 실패는 throw 한다. 호출자(morning-sync.ts)가 skipped·failed 로 기록한다.
+ * 수동 미리보기 캐시는 읽지도 쓰지도 않는다. 사용자가 검토 중인 미리보기를 깨뜨리지 않기 위해서다.
+ */
+export async function runAutoProjectSync(): Promise<AutoProjectSyncOutcome> {
+  if (hasFreshPreview()) return { status: 'deferred' }
+
+  const snapshot = await fetchJiraSyncSnapshot()
+  const today = localToday()
+  const { plan } = buildProjectSyncPlan(snapshot, readProjectSyncDbState(), today)
+  const auto = selectAutoSyncSelection(plan, readSyncCreatedKeys())
+
+  // 조회 중에 사용자가 미리보기를 열었을 수 있다. 적용 직전에 다시 본다.
+  if (hasFreshPreview()) return { status: 'deferred' }
+
+  const counts = { needsReview: auto.needsReview, previouslyCreated: auto.previouslyCreated }
+  // 선택이 0건이면 apply 를 부르지 않는다. selectProjectSyncOps 의 빈 선택 예외를 피하기 위해서다.
+  if (auto.selection.length === 0) {
+    return { status: 'applied', result: emptySyncResult(plan), ...counts }
+  }
+  const result = applyProjectSyncSnapshot(snapshot, auto.selection, today, { mode: 'auto' })
+  return { status: 'applied', result, ...counts }
+}
+
+function emptySyncResult(plan: ProjectSyncPlan): ProjectSyncResult {
+  return {
+    created: 0,
+    updated: 0,
+    unchanged: 0,
+    tasksAdded: 0,
+    tasksUpdated: 0,
+    documentsAdded: 0,
+    skipped: plan.skipped,
+    applied: []
+  }
 }
 
 // 선택된 op만 쓴다(R9). 삭제는 어디에도 없다(R4).

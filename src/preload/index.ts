@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { CheckinStatus, CommandOp } from '../main/services/assistant-types'
+import type { CommandOp } from '../main/services/assistant-types'
 
 const api = {
   project: {
@@ -272,7 +272,9 @@ const api = {
   projectSync: {
     preview: () => ipcRenderer.invoke('projectSync:preview'),
     apply: (selection: { jiraKey: string; force: boolean; projectId: number | null }[]) =>
-      ipcRenderer.invoke('projectSync:apply', selection)
+      ipcRenderer.invoke('projectSync:apply', selection),
+    // 아침 자동 동기화(R11·A54) 상태. 읽기 전용이다
+    morningStatus: () => ipcRenderer.invoke('projectSync:morningStatus')
   },
   backup: {
     // 저장 위치를 고르면 LinkWork-backup-<시각>.zip 파일 하나를 만든다
@@ -308,9 +310,6 @@ const api = {
     interpretCommand: (text: string, scopeItemId?: number) =>
       ipcRenderer.invoke('assistant:interpretCommand', text, scopeItemId),
     applyCommand: (ops: CommandOp[], text: string) => ipcRenderer.invoke('assistant:applyCommand', ops, text),
-    // 체크인 패널 버튼 (부록 H.9.7). 넘기기는 status null 이다
-    respondCheckin: (eventId: number, status: CheckinStatus | null, note?: string) =>
-      ipcRenderer.invoke('assistant:respondCheckin', eventId, status, note),
     // 회의 브리핑 AI 본문 다시 만들기 (부록 I.11.10)
     regenerateMeetingBriefing: (eventId: number) => ipcRenderer.invoke('assistant:regenerateMeetingBriefing', eventId),
     getSettings: () => ipcRenderer.invoke('assistant:getSettings'),

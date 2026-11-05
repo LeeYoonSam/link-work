@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { DailyPlan } from '../../types'
-import { Badge, Card, button, typo } from '../ui'
+import { Badge, Card, button } from '../ui'
 import { hhmmOf, longDateLabel } from './PlanItemRow'
 
 const textareaClass =
@@ -18,11 +18,13 @@ interface DayHeaderProps {
   onReopenDay: () => void
   onSaveWrapup: (note: string, date: string) => void
   onSkipWrapup: (date: string) => void
+  // 카드 아래쪽에 구분선과 함께 그린다. 하루 브리핑 요약이 온다 (2차 개편 V1)
+  children?: React.ReactNode
 }
 
 // 헤더는 페이지 제목을 겸한다. 날짜는 화면에서 여기 1번만 보인다 (부록 J.8)
 function DateTitle({ date }: { date: string }): React.ReactNode {
-  return <h2 className={typo.pageTitle}>{longDateLabel(date)}</h2>
+  return <h2 className="text-xl font-bold text-gray-900">{longDateLabel(date)}</h2>
 }
 
 // 퇴근을 잊은 날 다음에 보여 주는 어제 메모 입력 칸. 입력은 선택이다
@@ -41,7 +43,7 @@ function WrapupPrompt({
   return (
     <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
       <p className="text-sm text-amber-800 mb-2">어제 메모가 없어요. 한 줄 남길까요?</p>
-      <p className="text-[11px] text-amber-700 mb-2">{longDateLabel(date)} 퇴근 메모로 저장해요.</p>
+      <p className="text-sm text-amber-700 mb-2">{longDateLabel(date)} 퇴근 메모로 저장해요.</p>
       <textarea
         rows={2}
         value={note}
@@ -53,7 +55,7 @@ function WrapupPrompt({
         <button
           type="button"
           onClick={() => onSkip(date)}
-          className={`px-3 py-1.5 text-xs ${button.subtle}`}
+          className={`px-3 py-1.5 text-sm ${button.subtle}`}
         >
           건너뛰기
         </button>
@@ -61,7 +63,7 @@ function WrapupPrompt({
           type="button"
           disabled={busy || note.trim() === ''}
           onClick={() => onSave(note, date)}
-          className={`px-3 py-1.5 text-xs ${button.primary} disabled:opacity-50`}
+          className={`px-3 py-1.5 text-sm ${button.primary} disabled:opacity-50`}
         >
           저장
         </button>
@@ -80,7 +82,8 @@ export default function DayHeader({
   onCloseDay,
   onReopenDay,
   onSaveWrapup,
-  onSkipWrapup
+  onSkipWrapup,
+  children
 }: DayHeaderProps): React.ReactNode {
   const [closing, setClosing] = useState(false)
   const [closeNote, setCloseNote] = useState('')
@@ -94,6 +97,8 @@ export default function DayHeader({
     />
   ) : null
 
+  const footer = children ? <div className="mt-4 pt-4 border-t border-gray-100">{children}</div> : null
+
   if (!plan) {
     return (
       <Card>
@@ -101,7 +106,7 @@ export default function DayHeader({
           <div>
             <DateTitle date={logicalDate} />
             <p className="text-sm text-gray-700 mt-1">아직 하루를 시작하지 않았어요</p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-sm text-gray-500 mt-1">
               하루를 시작하면 비서가 일정과 할 일을 모아 오늘 계획을 만들어요.
             </p>
           </div>
@@ -115,6 +120,7 @@ export default function DayHeader({
           </button>
         </div>
         {wrapup}
+        {footer}
       </Card>
     )
   }
@@ -129,7 +135,7 @@ export default function DayHeader({
               <Badge color="bg-gray-100 text-gray-600">오늘 마감</Badge>
             </div>
             {plan.closed_at || plan.closed_by === 'auto' ? (
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-sm text-gray-500 mt-1 tabular-nums">
                 {plan.closed_at ? `${hhmmOf(plan.closed_at)} 퇴근` : ''}
                 {plan.closed_by === 'auto' ? ' · 자동 닫기' : ''}
               </p>
@@ -148,6 +154,7 @@ export default function DayHeader({
           </button>
         </div>
         {wrapup}
+        {footer}
       </Card>
     )
   }
@@ -162,7 +169,7 @@ export default function DayHeader({
           </div>
           <p className="text-sm text-gray-700 mt-1">
             {hhmmOf(plan.started_at)} 시작
-            <span className="text-xs text-gray-400 ml-2">
+            <span className="text-sm text-gray-500 ml-2 tabular-nums">
               마지막 최신화 {plan.last_refresh_at ? hhmmOf(plan.last_refresh_at) : '없음'}
             </span>
           </p>
@@ -203,7 +210,7 @@ export default function DayHeader({
                 setClosing(false)
                 setCloseNote('')
               }}
-              className={`px-3 py-1.5 text-xs ${button.subtle}`}
+              className={`px-3 py-1.5 text-sm ${button.subtle}`}
             >
               취소
             </button>
@@ -215,7 +222,7 @@ export default function DayHeader({
                 setClosing(false)
                 setCloseNote('')
               }}
-              className={`px-3 py-1.5 text-xs ${button.dark} disabled:opacity-50`}
+              className={`px-3 py-1.5 text-sm ${button.dark} disabled:opacity-50`}
             >
               퇴근하기
             </button>
@@ -224,6 +231,7 @@ export default function DayHeader({
       ) : null}
 
       {wrapup}
+      {footer}
     </Card>
   )
 }

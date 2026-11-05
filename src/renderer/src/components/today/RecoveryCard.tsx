@@ -33,29 +33,29 @@ export default function RecoveryCard({
   const hasBody = hasText || !!state.error
 
   return (
-    <Card padding="sm">
+    <Card>
       <div id="today-recovery" className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <SectionTitle>맥락 복구</SectionTitle>
+        <div className="flex items-center gap-2 min-w-0">
+          <SectionTitle variant="page">맥락 복구</SectionTitle>
           {hasText ? (
             <Badge
               color={isLlm ? 'bg-purple-50 text-purple-600' : 'bg-slate-100 text-slate-600'}
-              size="xs"
+             
             >
               {isLlm ? 'AI 복구' : '규칙 복구'}
             </Badge>
           ) : null}
           {hasText && plan.recovery_at ? (
-            <span className="text-[11px] text-gray-400">{hhmmOf(plan.recovery_at)}</span>
+            <span className="text-xs text-gray-500 tabular-nums">{hhmmOf(plan.recovery_at)}</span>
           ) : null}
-          {state.inFlight ? <span className="text-[11px] text-gray-500">만드는 중…</span> : null}
+          {state.inFlight ? <span className="text-sm text-gray-500">만드는 중…</span> : null}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           {hasBody ? (
             <button
               type="button"
               onClick={() => setCollapsed((c) => !c)}
-              className={`px-2 py-1 text-xs ${button.ghost}`}
+              className={`px-3 py-1.5 text-sm ${button.ghost}`}
             >
               {collapsed ? '펼치기' : '접기'}
             </button>
@@ -65,7 +65,7 @@ export default function RecoveryCard({
               type="button"
               disabled={busy || state.inFlight}
               onClick={onGenerate}
-              className={`px-2.5 py-1 text-xs ${button.subtle} disabled:opacity-50`}
+              className={`px-3 py-1.5 text-sm ${button.subtle} disabled:opacity-50`}
             >
               {recoveryButtonLabel(hasText)}
             </button>
@@ -74,10 +74,10 @@ export default function RecoveryCard({
       </div>
 
       {hasBody && !collapsed ? (
-        <div className="mt-3">
+        <div className="mt-4">
           {state.error ? (
-            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-3 text-xs text-amber-800">
-              <AlertTriangleIcon size={14} className="shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-3 text-sm text-amber-800">
+              <AlertTriangleIcon size={16} className="shrink-0 mt-0.5" />
               <span>맥락 복구를 마치지 못했습니다. {state.error}</span>
             </div>
           ) : null}

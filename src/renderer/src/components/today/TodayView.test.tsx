@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import type {
   AssistantEvent,
   AssistantSettings,
@@ -26,12 +28,12 @@ const SETTINGS: AssistantSettings = {
   refreshCalendarMin: 5,
   refreshJiraMin: 15,
   refreshNotify: true,
-  checkinMinGap: 45,
-  checkinDailyCap: 4,
   meetingLeadMin: 15,
-  startView: 'auto',
-  checkinEnabled: true,
-  meetingBriefingEnabled: true
+  startView: 'today',
+  meetingBriefingEnabled: true,
+  morningSyncEnabled: true,
+  morningSyncTime: '08:00',
+  completeOriginOnDone: false
 }
 
 const plan = (over: Partial<DailyPlan> = {}): DailyPlan => ({
@@ -183,11 +185,21 @@ vi.mock('../../stores/assistantStore', async (importOriginal) => ({
     saveSettings: async () => true,
     setFocus: () => {},
     clearError: () => {},
-    respondCheckin: async () => {},
     regenerateMeetingBriefing: async () => {},
-    meetingRegeneratingIds: [],
-    subscribe: () => () => {}
+    meetingRegeneratingIds: []
   })
+}))
+
+// 홈 일정·개요는 다른 스토어를 읽는다. 여기서는 그려진 자리와 횟수만 본다.
+// 표시 내용은 HomeOverview.test.tsx 와 TodaySchedule.test.tsx 가 맡는다.
+// 표식에 날짜를 넣지 않는다. 이유: 'ISO 날짜는 화면에 없다' 검사에 걸린다
+vi.mock('../dashboard/HomeSchedule', () => ({
+  default: (props: { logicalDate?: string | null }) => (
+    <div id="home-schedule" data-logical={props.logicalDate ? 'yes' : 'no'} />
+  )
+}))
+vi.mock('../dashboard/HomeOverview', () => ({
+  default: () => <div id="home-overview" />
 }))
 
 const TodayView = (await import('./TodayView')).default
@@ -195,10 +207,13 @@ const { orderPlanItems, todayNotices, unplacedDeadlineItems, focusTargetId } = a
 const { dayCountLabel, dueLabel, durationLabel, freeTimeLabel } = await import('./PlanItemRow')
 const { blockItemMeta } = await import('./Timeline')
 const { describePlanUpdate, planUpdateEvents, commandEvents, describeCommand } = await import('./ChangeLog')
+const { describeMorningSync, morningSyncEvents, morningStatusLine, parseMorningPart, describeMorningPart } =
+  await import('./ChangeLog')
 const { sortSuggestions } = await import('./InboxSection')
 const { candidatesNotInPlan } = await import('./CandidatePicker')
 const { originTarget } = await import('../../stores/assistantStore')
-const { validateSettings, diffSettings, parseNumberInput, numberInputValue } = await import('./AssistantSettingsModal')
+const { validateSettings, diffSettings, parseNumberInput, numberInputValue, formStartView, START_VIEW_OPTIONS } =
+  await import('./AssistantSettingsModal')
 const AssistantSettingsModal = (await import('./AssistantSettingsModal')).default
 const { recoveryButtonLabel } = await import('./RecoveryCard')
 const { localNow } = await import('./TodayView')
@@ -361,8 +376,8 @@ describe('TodayView 상태별 렌더링', () => {
     expect(html).toContain('1시간')
     expect(html).toContain('data-state="past"')
     expect(html).toMatch(/data-state="past" class="[^"]*opacity-50/)
-    expect(html).toContain('빈 시간 15m')
-    expect(html).toContain('text-[11px]')
+    // 30분 미만 블록은 흐린 회색 글자다 (부록 L 3절)
+    expect(html).toMatch(/class="[^"]*text-gray-400[^"]*">빈 시간 15m</)
     expect(html).toContain('오늘 남은 빈 시간이 없어 배정하지 못한 마감 항목')
     expect(html).toContain('급한 보고서')
     expect(html).toContain('1일 지남')
@@ -404,7 +419,8 @@ describe('TodayView 상태별 렌더링', () => {
     expect(html).not.toContain('새로고침')
     expect(html).not.toContain('하루 시작')
     expect(html).not.toContain('지금 집중')
-    expect(html).not.toContain('집중 가능')
+    // 닫힌 날의 집중 가능 시간 타일은 — 다 (부록 L)
+    expect(html).toMatch(/집중 가능 시간<\/p><p[^>]*>—</)
     expect(html).toContain('data-state="past"')
     expect(html).not.toContain('후보 더 보기')
   })
@@ -428,71 +444,7 @@ describe('TodayView 상태별 렌더링', () => {
     expect(renderOpen()).not.toContain('비서에게 말하기')
   })
 
-  // 부록 H.8.2 체크인 패널. 응답 없는 체크인이 있으면 맥락 복구 위에 둔다
-  const checkinEvent = (over: Partial<AssistantEvent> = {}): AssistantEvent =>
-    event({
-      id: 30,
-      event_key: 'checkin:2026-11-02:1100',
-      kind: 'checkin',
-      scheduled_at: '2026-11-02 10:55:00',
-      fired_at: '2026-11-02 10:55:20',
-      status: 'sent',
-      ref_id: '1',
-      payload: JSON.stringify({
-        itemId: 1,
-        candidateId: 'task:1',
-        itemTitle: '결제 API 리팩터링',
-        blockStart: '09:45',
-        blockEnd: '11:00',
-        title: '체크인: 결제 API 리팩터링',
-        body: '지금까지 어떻게 됐나요? 답장하거나 눌러서 고르세요.'
-      }),
-      ...over
-    })
-
-  it('체크인: 응답 없는 체크인이 있으면 브리핑 위에 패널을 보여 준다', () => {
-    state.today = payload({
-      plan: plan(),
-      items: [item({ id: 1, title: '결제 API 리팩터링', status: 'in_progress' })],
-      events: [checkinEvent()]
-    })
-    const html = render()
-    expect(html).toContain('id="today-checkin"')
-    expect(html).toContain('체크인 · 10:55')
-    expect(html).toContain('09:45–11:00')
-    expect(html).toContain('>넘기기<')
-    expect(html.indexOf('today-checkin')).toBeLessThan(html.indexOf('today-briefing'))
-    // 패널에도 범위 지정 명령 입력이 있다
-    expect(html).toContain('완료, 미룸, 또는 진행 상황 한 줄')
-  })
-
-  it('체크인: 응답했거나 항목이 이미 완료면 패널이 없다', () => {
-    state.today = payload({
-      plan: plan(),
-      items: [item({ id: 1 })],
-      events: [checkinEvent({ response: 'button:in_progress', responded_at: '2026-11-02 10:56:00' })]
-    })
-    expect(render()).not.toContain('today-checkin')
-    state.today = payload({
-      plan: plan(),
-      items: [item({ id: 1, status: 'done' })],
-      events: [checkinEvent()]
-    })
-    expect(render()).not.toContain('today-checkin')
-  })
-
-  it('체크인: 닫힌 날은 버튼 없이 오늘 마감만 보여 준다', () => {
-    state.today = payload({
-      plan: plan({ status: 'closed', closed_at: '2026-11-02 18:30:00', closed_by: 'button' }),
-      items: [item({ id: 1 })],
-      events: [checkinEvent()]
-    })
-    const html = render()
-    expect(html).toContain('id="today-checkin"')
-    expect(html).not.toContain('>넘기기<')
-  })
-
-  // 부록 I.10 회의 브리핑 카드. 체크인 아래, 맥락 복구 위다. 계획이 없어도 보인다
+  // 부록 I.10 회의 브리핑. 시간표 회의 행에 붙고, 짝이 없으면 시간표 아래에 묶인다 (2차 개편 V3·V4). 계획이 없어도 보인다
   const meetingEvent = (over: Partial<AssistantEvent> = {}): AssistantEvent =>
     event({
       id: 40,
@@ -527,16 +479,76 @@ describe('TodayView 상태별 렌더링', () => {
     expect(html).toContain('다시 만들기')
   })
 
-  it('회의 브리핑: 브리핑 아래, 시간표 위에 놓인다 (A53)', () => {
+  it('회의 브리핑: 시간표에 짝이 없으면 오른쪽 열의 시간표 카드 아래 기타 회의 브리핑에 놓인다 (2차 개편 V4)', () => {
     state.today = payload({
       plan: plan(),
       items: [item({ id: 1, title: '결제 API 리팩터링', status: 'in_progress' })],
-      events: [checkinEvent(), meetingEvent()]
+      events: [meetingEvent()],
+      timeline: WORKING_TIMELINE
     })
     const html = render()
-    expect(html.indexOf('today-checkin')).toBeLessThan(html.indexOf('today-briefing'))
-    expect(html.indexOf('today-briefing')).toBeLessThan(html.indexOf('meeting-briefing-40'))
-    expect(html.indexOf('meeting-briefing-40')).toBeLessThan(html.indexOf('today-timeline'))
+    // 하루 브리핑은 헤더 안이라 그리드보다 앞이다
+    expect(html.indexOf('today-briefing')).toBeLessThan(html.indexOf('today-main'))
+    expect(html.indexOf('today-side')).toBeLessThan(html.indexOf('today-timeline'))
+    expect(html.indexOf('today-timeline')).toBeLessThan(html.indexOf('기타 회의 브리핑'))
+    expect(html.indexOf('기타 회의 브리핑')).toBeLessThan(html.indexOf('meeting-briefing-40'))
+    expect(html.indexOf('meeting-briefing-40')).toBeLessThan(html.indexOf('home-overview'))
+  })
+
+  it('회의 브리핑: 시간표 회의 행과 HH:mm·제목이 같으면 그 행에 붙고 기타 묶음이 없다 (2차 개편 V3)', () => {
+    const matched = meetingEvent({
+      id: 41,
+      payload: JSON.stringify({
+        meeting: { id: 'cal-2', title: '주간 스프린트', startAt: '2026-11-02 11:00:00', endAt: '2026-11-02 12:00:00' },
+        title: '주간 스프린트 15분 전',
+        body: '결제',
+        projects: [],
+        hasContext: false,
+        ruleMarkdown: '- 관련 프로젝트: 결제',
+        llmStatus: 'off',
+        llmMarkdown: null,
+        llmModel: null,
+        llmAt: null,
+        llmError: null
+      })
+    })
+    state.today = payload({ plan: plan(), events: [matched], timeline: WORKING_TIMELINE })
+    const html = render()
+    expect(html.split('id="meeting-briefing-41"').length - 1).toBe(1)
+    expect(html.indexOf('today-timeline')).toBeLessThan(html.indexOf('meeting-briefing-41'))
+    expect(html.indexOf('meeting-briefing-41')).toBeLessThan(html.indexOf('home-overview'))
+    expect(html).not.toContain('기타 회의 브리핑')
+  })
+
+  it('회의 브리핑: 짝 있는 회의가 가장 가깝고 짝 없는 회의도 있으면 기타 카드의 본문은 접혀 있다 (화면 전체 기본 펼침 1건)', () => {
+    const briefing = (id: number, title: string, startAt: string, line: string): AssistantEvent =>
+      meetingEvent({
+        id,
+        ref_id: `cal-${id}`,
+        payload: JSON.stringify({
+          meeting: { id: `cal-${id}`, title, startAt, endAt: startAt },
+          title: `${title} 15분 전`,
+          body: '',
+          projects: [],
+          hasContext: false,
+          ruleMarkdown: `- ${line}`,
+          llmStatus: 'off',
+          llmMarkdown: null,
+          llmModel: null,
+          llmAt: null,
+          llmError: null
+        })
+      })
+    // 둘 다 시작 전이다. 시간표 11:00 '주간 스프린트' 와 짝인 41 이 더 가깝다
+    const matched = briefing(41, '주간 스프린트', '2099-01-01 11:00:00', '짝 본문')
+    const other = briefing(43, '외부 미팅', '2099-01-02 09:00:00', '기타 본문')
+    state.today = payload({ plan: plan(), events: [other, matched], timeline: WORKING_TIMELINE })
+    const html = render()
+    expect(html).toContain('짝 본문')
+    expect(html).toContain('기타 회의 브리핑')
+    const card = html.slice(html.indexOf('id="meeting-briefing-43"'))
+    expect(card).toContain('펼치기')
+    expect(html).not.toContain('기타 본문')
   })
 
   it('회의 브리핑: 행이 없거나 skipped 뿐이면 카드가 없다', () => {
@@ -561,7 +573,7 @@ describe('TodayView 상태별 렌더링', () => {
   })
 })
 
-// 부록 F.7 맥락 복구 카드. 부록 J.8 부터 회의 브리핑 아래에 둔다.
+// 부록 F.7 맥락 복구 카드. 2차 개편부터 2열 그리드 아래 전체 폭에 둔다 (V6).
 // 본문·진행 중·오류가 없으면 더 보기 안에 1줄로 간다
 describe('맥락 복구 카드 렌더링', () => {
   const RECOVERY_MD = '# 2026-11-02 맥락 복구\n\n## 남은 작업\n\n- 결제 모듈 리팩토링 · 진행 중\n'
@@ -584,9 +596,10 @@ describe('맥락 복구 카드 렌더링', () => {
   it('맥락 복구 진행 중: 만드는 중… 을 보이고 버튼을 비활성으로 둔다', () => {
     state.today = payload({ plan: plan(), recovery: { inFlight: true, error: null } })
     const html = render()
-    // 진행 중이면 본문 영역에 보인다. 회의 브리핑 아래, 시간표 위다
-    expect(html.indexOf('today-briefing')).toBeLessThan(html.indexOf('today-recovery'))
-    expect(html.indexOf('today-recovery')).toBeLessThan(html.indexOf('today-timeline'))
+    // 진행 중이면 본문 영역에 보인다. 2열 그리드 아래 전체 폭, 홈 개요 위다 (2차 개편 V6)
+    expect(html.indexOf('today-briefing')).toBeLessThan(html.indexOf('today-side'))
+    expect(html.indexOf('today-side')).toBeLessThan(html.indexOf('today-recovery'))
+    expect(html.indexOf('today-recovery')).toBeLessThan(html.indexOf('home-overview'))
     expect(html).toContain('만드는 중…')
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>만들기<\/button>/)
   })
@@ -764,7 +777,7 @@ describe('오늘 화면 순수 헬퍼', () => {
       event({ id: 30, kind: 'command', scheduled_at: '2026-11-02 11:00:00', payload: JSON.stringify({ text: '명령 B', applied: 1, failed: 0 }) }),
       event({ id: 31, scheduled_at: '2026-11-02 10:00:00' }),
       event({ id: 32, kind: 'command', scheduled_at: '2026-11-02 09:50:00', payload: JSON.stringify({ text: '명령 A', applied: 1, failed: 0 }) }),
-      event({ id: 33, kind: 'checkin', scheduled_at: '2026-11-02 09:00:00' })
+      event({ id: 33, kind: 'start_nudge', scheduled_at: '2026-11-02 09:00:00' })
     ]
     expect(commandEvents(events).map((e) => e.id)).toEqual([32, 30])
     state.today = payload({ plan: plan(), events })
@@ -841,8 +854,6 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(focusTargetId({ kind: 'inbox' })).toBe('today-inbox')
     expect(focusTargetId({ kind: 'briefing' })).toBe('today-briefing')
     expect(focusTargetId({ kind: 'item', id: '7' })).toBe('plan-item-7')
-    // 체크인 알림 클릭 (부록 H.6.3)
-    expect(focusTargetId({ kind: 'checkin', id: '42' })).toBe('today-checkin')
     // 회의 브리핑 알림 클릭 (부록 I.10.2)
     expect(focusTargetId({ kind: 'meeting', id: '40' })).toBe('meeting-briefing-40')
   })
@@ -926,19 +937,6 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(html).toContain('value="15"')
   })
 
-  it('설정: 체크인 상한 0~20, 간격 5~480분 정수만 받고 체크인 키도 patch 에 담는다 (부록 H.8.4)', () => {
-    expect(validateSettings({ ...SETTINGS, checkinDailyCap: -1 })).not.toBeNull()
-    expect(validateSettings({ ...SETTINGS, checkinDailyCap: 21 })).not.toBeNull()
-    expect(validateSettings({ ...SETTINGS, checkinMinGap: 4 })).not.toBeNull()
-    expect(validateSettings({ ...SETTINGS, checkinMinGap: 481 })).not.toBeNull()
-    expect(validateSettings({ ...SETTINGS, checkinMinGap: 30.5 })).not.toBeNull()
-    expect(validateSettings({ ...SETTINGS, checkinDailyCap: 0, checkinMinGap: 5 })).toBeNull()
-    expect(validateSettings({ ...SETTINGS, checkinDailyCap: 20, checkinMinGap: 480 })).toBeNull()
-    expect(
-      diffSettings(SETTINGS, { ...SETTINGS, checkinEnabled: false, checkinDailyCap: 2, checkinMinGap: 60 })
-    ).toEqual({ checkinEnabled: false, checkinDailyCap: 2, checkinMinGap: 60 })
-  })
-
   it('설정: 빈 숫자 칸은 0 이 아니라 검증 오류다', () => {
     expect(parseNumberInput('')).toBeNaN()
     expect(parseNumberInput('  ')).toBeNaN()
@@ -946,21 +944,9 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(parseNumberInput('12')).toBe(12)
     expect(numberInputValue(Number.NaN)).toBe('')
     expect(numberInputValue(0)).toBe(0)
-    for (const key of ['planSize', 'refreshCalendarMin', 'refreshJiraMin', 'checkinDailyCap', 'checkinMinGap', 'meetingLeadMin'] as const) {
+    for (const key of ['planSize', 'refreshCalendarMin', 'refreshJiraMin', 'meetingLeadMin'] as const) {
       expect(validateSettings({ ...SETTINGS, [key]: parseNumberInput('') })).toMatch(/입력하세요/)
     }
-  })
-
-  it('설정 모달: 체크인 설정 3개를 보여 준다', () => {
-    const html = renderToStaticMarkup(
-      <AssistantSettingsModal settings={SETTINGS} busy={false} onClose={() => {}} onSave={async () => true} />
-    )
-    expect(html).toContain('작업 경계 체크인')
-    expect(html).toContain('빈 시간 블록이 끝나기 5분 전에 진행 상황을 묻습니다')
-    expect(html).toContain('하루 체크인 상한')
-    expect(html).toContain('체크인 최소 간격(분)')
-    expect(html).toContain('value="45"')
-    expect(html).toContain('value="4"')
   })
 
   it('설정: 회의 전 알림은 1~120분 정수만 받고 회의 브리핑 키도 patch 에 담는다 (부록 I.10.4)', () => {
@@ -1006,25 +992,6 @@ const { default: InboxSection, INBOX_SHOWN, inboxSourceSummary } = await import(
 const { default: MoreSection } = await import('./MoreSection')
 
 describe('오늘 화면 배치 (부록 J.8)', () => {
-  const checkin = (): AssistantEvent =>
-    event({
-      id: 30,
-      event_key: 'checkin:2026-11-02:1100',
-      kind: 'checkin',
-      scheduled_at: '2026-11-02 10:55:00',
-      fired_at: '2026-11-02 10:55:20',
-      status: 'sent',
-      ref_id: '1',
-      payload: JSON.stringify({
-        itemId: 1,
-        candidateId: 'task:1',
-        itemTitle: '결제 API 리팩터링',
-        blockStart: '09:45',
-        blockEnd: '11:00',
-        title: '체크인: 결제 API 리팩터링',
-        body: '지금까지 어떻게 됐나요?'
-      })
-    })
   const meeting = (): AssistantEvent =>
     event({
       id: 40,
@@ -1048,40 +1015,102 @@ describe('오늘 화면 배치 (부록 J.8)', () => {
         llmError: null
       })
     })
+  // 실제 규칙 브리핑 형태: 산문 → '## 오늘 할 일 n건' + 표 → '## 챙길 것' (assistant-briefing.ts)
+  const BRIEFING_WITH_TABLE = [
+    '오늘은 회의가 3개 있어요. 오전에 1개, 오후에 2개예요.',
+    '',
+    '## 오늘 할 일 1건',
+    '',
+    '| 유형 | 묶음 | 작업 | 상태 | 마감 |',
+    '|------|------|------|------|------|',
+    '| 표셀유형 | 표셀묶음 | 표셀작업 | 표셀상태 | 표셀마감 |',
+    '',
+    '## 챙길 것',
+    '- 새로 들어온 일이 1건 있어요.'
+  ].join('\n')
   const working = (): TodayPayload =>
     payload({
-      plan: plan({ recovery_text: '## 남은 작업\n- 결제', recovery_source: 'rules', recovery_at: '2026-11-02 09:40:30' }),
+      plan: plan({
+        briefing_text: BRIEFING_WITH_TABLE,
+        recovery_text: '## 남은 작업\n- 결제',
+        recovery_source: 'rules',
+        recovery_at: '2026-11-02 09:40:30'
+      }),
       items: [
         item({ id: 1, title: '결제 API 리팩터링', status: 'in_progress' }),
         item({ id: 2, title: '제안 작업', status: 'suggested', rank: null, source: 'jira', candidate_id: 'jira:A-2' })
       ],
-      events: [checkin(), meeting(), event({ id: 10, payload: JSON.stringify({ completed: 1 }) })],
+      events: [meeting(), event({ id: 10, payload: JSON.stringify({ completed: 1 }) })],
       timeline: WORKING_TIMELINE,
       jiraConnected: false
     })
 
-  it('A53 근무 중 순서: 체크인 → 브리핑 → 회의 브리핑 → 맥락 복구 → 시간표 → 오늘 할 일 → 새로 들어온 일 → 더 보기', () => {
+  it('A56 근무 중 순서: 헤더(브리핑 요약) → 요약 타일 → 왼쪽(오늘 할 일 → 새로 들어온 일) → 오른쪽(시간표 → 회의 브리핑) → 홈 개요 → 더 보기', () => {
     state.today = working()
     for (const html of [render(), renderOpen()]) {
       const marks = [
-        'id="today-checkin"',
+        '근무 중',
         'id="today-briefing"',
-        'id="meeting-briefing-40"',
-        'id="today-recovery"',
-        'id="today-timeline"',
+        'id="today-summary"',
+        'id="today-main"',
         '>오늘 할 일<',
         'id="today-inbox"',
+        'id="today-side"',
+        'id="today-timeline"',
+        'id="meeting-briefing-40"',
+        'id="home-overview"',
         'id="today-more"'
       ].map((m) => html.indexOf(m))
       expect(marks.every((i) => i > -1)).toBe(true)
       for (let i = 1; i < marks.length; i++) expect(marks[i - 1]).toBeLessThan(marks[i])
+      // 브리핑은 산문만 보인다. 표 셀과 '오늘 할 일' 절은 없다 (V2)
+      expect(html).toContain('오늘은 회의가 3개 있어요.')
+      for (const cell of ['표셀유형', '표셀묶음', '표셀작업', '표셀상태', '표셀마감']) expect(html).not.toContain(cell)
+      expect(html).not.toContain('오늘 할 일 1건')
+      expect(html).not.toContain('전체 보기')
+      // 맥락 복구는 2열 그리드 아래 전체 폭이다 (V6)
+      expect(html.indexOf('id="meeting-briefing-40"')).toBeLessThan(html.indexOf('id="today-recovery"'))
+      expect(html.indexOf('id="today-recovery"')).toBeLessThan(html.indexOf('id="home-overview"'))
+      // 체크인 카드는 없다 (부록 L)
+      expect(html).not.toContain('어떻게 됐나요')
     }
-    // 헤더가 맨 위다
     const html = render()
-    expect(html.indexOf('근무 중')).toBeLessThan(html.indexOf('today-checkin'))
-    // 시간표 카드 제목 (J-12)
+    // 시간표 카드 제목 (J-12). 집중 가능 시간은 타일만 보인다
     expect(html).toContain('>시간표<')
     expect(html).not.toContain('>오늘 계획<')
+    expect(html.split('집중 가능').length - 1).toBe(1)
+    // 모든 카드는 가로 전체 폭을 쓴다(사용자 피드백 2026-11-05). 2열 그리드가 없다. 바깥 폭은 max-w-6xl 이다
+    expect(html).toContain('max-w-6xl')
+    expect(html).not.toContain('lg:grid-cols-5')
+    expect(html).not.toContain('lg:col-span-')
+  })
+
+  it('A56 계획 없음: 타일·그리드가 없고 홈 일정 → 회의 브리핑 → 홈 개요 → 더 보기 순이다', () => {
+    state.today = payload({ plan: null, events: [meeting()] })
+    for (const html of [render(), renderOpen()]) {
+      expect(html).not.toContain('today-summary')
+      expect(html).not.toContain('today-main')
+      expect(html).not.toContain('today-side')
+      expect(html).not.toContain('today-briefing')
+      const marks = ['id="home-schedule"', 'id="meeting-briefing-', 'id="home-overview"', 'id="today-more"'].map(
+        (m) => html.indexOf(m)
+      )
+      expect(marks.every((i) => i > -1)).toBe(true)
+      for (let i = 1; i < marks.length; i++) expect(marks[i - 1]).toBeLessThan(marks[i])
+    }
+  })
+
+  it('A55 닫힘: 타일은 보이고 집중 가능 시간은 — 다', () => {
+    state.today = payload({
+      plan: plan({ status: 'closed', closed_at: '2026-11-02 18:30:00', closed_by: 'button' }),
+      items: [item({ id: 1, status: 'done' }), item({ id: 2, status: 'deferred' })],
+      timeline: WORKING_TIMELINE
+    })
+    const html = render()
+    expect(html).toContain('id="today-summary"')
+    expect(html).toMatch(/집중 가능 시간<\/p><p[^>]*>—</)
+    expect(html).toContain('미룸 1')
+    expect(html).not.toContain('4시간 30분')
   })
 
   it('A53 날짜는 헤더 1곳에만 긴 라벨로 보인다. ISO 날짜는 화면에 없다', () => {
@@ -1126,7 +1155,7 @@ describe('오늘 화면 배치 (부록 J.8)', () => {
     }
   })
 
-  it('A53 계획 없음: 헤더·회의 브리핑·더 보기만 보인다. 더 보기에는 변경 내역·연결 안내·비서 설정만 있다', () => {
+  it('A53 계획 없음: 헤더·회의 브리핑·홈 일정·홈 개요·더 보기만 보인다. 더 보기에는 변경 내역·연결 안내·비서 설정만 있다', () => {
     state.today = payload({
       plan: null,
       events: [meeting(), event({ id: 10, payload: JSON.stringify({ completed: 1 }) })],
@@ -1139,7 +1168,9 @@ describe('오늘 화면 배치 (부록 J.8)', () => {
     expect(html).toContain('변경 내역')
     expect(html).toContain('캘린더가 연결되지 않았어요. 회의 없이 빈 시간을 계산해요.')
     expect(html).toContain('비서 설정')
-    for (const absent of ['today-briefing', 'today-recovery', 'today-timeline', '오늘 할 일', 'today-inbox', '비서에게 말하기', '후보 더 보기']) {
+    expect(html).toContain('id="home-schedule"')
+    expect(html).toContain('id="home-overview"')
+    for (const absent of ['today-summary', 'today-briefing', 'today-recovery', 'today-timeline', '오늘 할 일', 'today-inbox', '비서에게 말하기', '후보 더 보기']) {
       expect(html).not.toContain(absent)
     }
   })
@@ -1336,5 +1367,297 @@ describe('새로 들어온 일 접기 (부록 J.8, J-9)', () => {
     expect(inboxSourceSummary(suggestions(7))).toBe('액션아이템 5 · Jira 2')
     expect(inbox(suggestions(7))).toContain('액션아이템 5 · Jira 2')
     expect(inboxSourceSummary([])).toBe('')
+  })
+})
+
+// 메뉴 통합 1-7. 오늘 일정은 화면에 1번만 보인다.
+// 계획이 있으면 시간표, 없으면 홈 일정이다. 오늘 계획을 못 읽어도 홈 일정·개요는 보인다
+describe('홈 일정 단일 불변식 (메뉴 통합)', () => {
+  const count = (html: string, mark: string): number => html.split(mark).length - 1
+
+  it('계획이 근무 중이면 시간표만 있고 홈 일정은 없다. 홈 개요는 더 보기 앞이다', () => {
+    state.today = payload({
+      plan: plan(),
+      timeline: WORKING_TIMELINE,
+      items: [
+        item({ id: 1 }),
+        item({ id: 2 }),
+        item({ id: 3, status: 'suggested', rank: null, source: 'jira', candidate_id: 'jira:A-3' })
+      ]
+    })
+    for (const html of [render(), renderOpen()]) {
+      expect(html).toContain('id="today-inbox"')
+      expect(count(html, 'id="today-timeline"')).toBe(1)
+      expect(html).not.toContain('id="home-schedule"')
+      expect(count(html, 'id="home-overview"')).toBe(1)
+      expect(html.indexOf('id="today-inbox"')).toBeLessThan(html.indexOf('id="home-overview"'))
+      expect(html.indexOf('id="home-overview"')).toBeLessThan(html.indexOf('id="today-more"'))
+    }
+  })
+
+  it('닫힌 날도 시간표만 있고 홈 일정은 없다', () => {
+    state.today = payload({
+      plan: plan({ status: 'closed', closed_at: '2026-11-02 18:30:00', closed_by: 'button' }),
+      timeline: WORKING_TIMELINE
+    })
+    const html = render()
+    expect(count(html, 'id="today-timeline"')).toBe(1)
+    expect(html).not.toContain('id="home-schedule"')
+  })
+
+  it('계획이 없으면 홈 일정 1개를 logicalDate 기준으로 전체 폭에, 회의 브리핑은 그 아래 전체 폭에 그린다', () => {
+    const meetingRow = event({
+      id: 40,
+      event_key: 'meeting_briefing:2026-11-02:cal-1',
+      kind: 'meeting_briefing',
+      scheduled_at: '2026-11-02 10:45:00',
+      fired_at: '2026-11-02 10:45:10',
+      status: 'sent',
+      ref_id: 'cal-1',
+      payload: JSON.stringify({
+        meeting: { id: 'cal-1', title: '주간 스프린트', startAt: '2099-01-01 23:59:00', endAt: '2099-01-01 23:59:59' },
+        title: '주간 스프린트 15분 전',
+        body: '결제',
+        projects: [],
+        hasContext: false,
+        ruleMarkdown: '- 관련 프로젝트: 결제',
+        llmStatus: 'off',
+        llmMarkdown: null,
+        llmModel: null,
+        llmAt: null,
+        llmError: null
+      })
+    })
+    state.today = payload({ plan: null, events: [meetingRow] })
+    const html = render()
+    expect(count(html, 'id="home-schedule"')).toBe(1)
+    expect(html).toContain('data-logical="yes"')
+    expect(html).not.toContain('id="today-timeline"')
+    expect(html).not.toContain('id="today-main"')
+    expect(html).not.toContain('id="today-side"')
+    expect(html.indexOf('id="home-schedule"')).toBeLessThan(html.indexOf('id="meeting-briefing-40"'))
+    expect(html.indexOf('id="meeting-briefing-40"')).toBeLessThan(html.indexOf('id="home-overview"'))
+    expect(html.indexOf('id="home-overview"')).toBeLessThan(html.indexOf('id="today-more"'))
+  })
+
+  it('오늘 계획을 못 읽어도 홈 일정·개요를 1번씩 그린다. 일정은 로컬 날짜 기준이다', () => {
+    state.today = null
+    let html = render()
+    expect(html).toContain('오늘 계획이 아직 없어요.')
+    expect(count(html, 'id="home-schedule"')).toBe(1)
+    expect(html).toContain('data-logical="no"')
+    expect(count(html, 'id="home-overview"')).toBe(1)
+    state.error = '데이터베이스를 열 수 없습니다'
+    html = render()
+    expect(html).toContain('다시 시도')
+    expect(count(html, 'id="home-schedule"')).toBe(1)
+    expect(count(html, 'id="home-overview"')).toBe(1)
+  })
+
+  it('TodayView 는 assistant:changed 를 직접 구독하지 않는다. 이유: dataSync 와 겹쳐 load 가 2번 돈다', () => {
+    const src = readFileSync(resolve(__dirname, 'TodayView.tsx'), 'utf-8')
+    expect(src).not.toMatch(/\bsubscribe\(/)
+    expect(src).not.toMatch(/onChanged\(/)
+    expect(src).not.toMatch(/onDataChanged\(/)
+  })
+})
+
+// ASSISTANT A54·PROJECT_SYNC R11 아침 자동 동기화의 변경 내역 줄과 상태 줄
+describe('아침 동기화 변경 내역 (A54, R11)', () => {
+  // 문자열을 거쳐 바꾼다. 이유: 이전 타입 정의에도 컴파일된다
+  const MORNING = 'morning_sync' as string as AssistantEvent['kind']
+  const morning = (body: Record<string, unknown>, over: Partial<AssistantEvent> = {}): AssistantEvent =>
+    event({
+      id: 50,
+      event_key: 'morning_sync:2026-11-02',
+      kind: MORNING,
+      scheduled_at: '2026-11-02 08:00:00',
+      fired_at: '2026-11-02 08:01:10',
+      status: 'logged',
+      payload: JSON.stringify(body),
+      ...over
+    })
+  const ok = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    status: 'ok',
+    attempts: 1,
+    startedAt: '2026-11-02 08:01:00',
+    finishedAt: '2026-11-02 08:01:40',
+    error: null,
+    newCount: 0,
+    updatedCount: 0,
+    reviewCount: 0,
+    failedCount: 0,
+    ...extra
+  })
+
+  it('describeMorningSync: 두 부분이 성공하면 건수를 보인다', () => {
+    const ev = morning({
+      release: ok({ newCount: 2, updatedCount: 30 }),
+      project: ok({ newCount: 1, updatedCount: 2, reviewCount: 1 })
+    })
+    // 릴리스의 갱신 수는 보이지 않는다
+    expect(describeMorningSync(ev)).toBe(
+      '08:01 아침 동기화 · 릴리스 새 2건 · 프로젝트 새 1건 · 갱신 2건 · 확인 필요 1건'
+    )
+    expect(describeMorningSync(morning({ release: ok({ newCount: 1, failedCount: 2 }) }))).toBe(
+      '08:01 아침 동기화 · 릴리스 새 1건 · 일부 실패 2건'
+    )
+  })
+
+  it('describeMorningSync: 변경 0건·실패·건너뜀·미룸·진행 중을 구분한다', () => {
+    expect(describeMorningSync(morning({ release: ok(), project: ok() }))).toBe(
+      '08:01 아침 동기화 · 릴리스 변경 없음 · 프로젝트 변경 없음'
+    )
+    expect(
+      describeMorningSync(
+        morning({
+          release: { status: 'failed', attempts: 2, error: 'Jira 토큰이 만료됐어요' },
+          // main 은 건너뛴 이유를 error 에 둔다
+          project: { status: 'skipped', attempts: 0, error: 'Jira 미연결' }
+        })
+      )
+    ).toBe('08:01 아침 동기화 · 릴리스 실패 (Jira 토큰이 만료됐어요) · 프로젝트 건너뜀 (Jira 미연결)')
+    expect(describeMorningSync(morning({ project: { status: 'deferred', attempts: 1 } }))).toBe(
+      '08:01 아침 동기화 · 프로젝트 미룸 (검토 중인 미리보기 있음)'
+    )
+    expect(describeMorningSync(morning({ release: { status: 'running', attempts: 1 } }))).toBe(
+      '08:01 아침 동기화 · 릴리스 진행 중'
+    )
+  })
+
+  it('describeMorningSync: payload 가 깨져도 시각과 제목은 보인다', () => {
+    expect(describeMorningSync(morning({}, { payload: '{깨짐' }))).toBe('08:01 아침 동기화')
+    expect(describeMorningSync(morning({}, { payload: null }))).toBe('08:01 아침 동기화')
+  })
+
+  it('morningSyncEvents: morning_sync 행만 고른다', () => {
+    const rows = [event({ id: 1 }), morning({ release: ok() }), event({ id: 2, kind: 'command' })]
+    expect(morningSyncEvents(rows).map((e) => e.id)).toEqual([50])
+  })
+
+  it('ChangeLog: 아침 동기화 줄을 다른 기록보다 앞에, 더 보기 안에 그린다', () => {
+    state.today = payload({
+      plan: plan(),
+      events: [
+        event({ id: 10, payload: JSON.stringify({ calendarAdded: 1, timelineChanged: true }) }),
+        morning({ release: ok({ newCount: 3 }), project: ok({ newCount: 1 }) })
+      ]
+    })
+    expect(render()).not.toContain('아침 동기화')
+    const html = renderOpen()
+    expect(html).toContain('08:01 아침 동기화 · 릴리스 새 3건 · 프로젝트 새 1건')
+    expect(html.indexOf('08:01 아침 동기화')).toBeLessThan(html.indexOf('10:42 회의 1건 추가로 시간표 갱신'))
+    expect(html.indexOf('id="today-more"')).toBeLessThan(html.indexOf('08:01 아침 동기화'))
+  })
+
+  it('ChangeLog: 계획이 없어도 아침 동기화 줄이 더 보기 안에 보인다', () => {
+    state.today = payload({ plan: null, events: [morning({ release: ok({ newCount: 1 }) })] })
+    expect(renderOpen()).toContain('08:01 아침 동기화 · 릴리스 새 1건')
+  })
+
+  it('morningStatusLine: 시각·건수·실패를 1줄로 만든다. 오늘이 아니면 날짜를 붙인다', () => {
+    const today = '2026-11-02'
+    expect(morningStatusLine('아침 싱크업', 'project', null, today)).toBeNull()
+    expect(
+      morningStatusLine(
+        '아침 싱크업',
+        'project',
+        parseMorningPart(ok({ newCount: 1, updatedCount: 2, reviewCount: 1 })),
+        today
+      )
+    ).toBe('아침 싱크업 08:01 · 새 1건 · 갱신 2건 · 확인 필요 1건')
+    expect(
+      morningStatusLine(
+        '아침 동기화',
+        'release',
+        parseMorningPart({ status: 'failed', attempts: 3, finishedAt: '2026-11-02 09:01:00', error: '네트워크 오류' }),
+        today
+      )
+    ).toBe('아침 동기화 실패 09:01 · 네트워크 오류')
+    expect(morningStatusLine('아침 동기화', 'release', parseMorningPart(ok({ newCount: 0 })), '2026-11-03')).toBe(
+      '아침 동기화 11/2 08:01 · 변경 없음'
+    )
+    expect(
+      morningStatusLine('아침 싱크업', 'project', parseMorningPart({ status: 'skipped', error: '기본 프로젝트 없음' }), today)
+    ).toBe('아침 싱크업 건너뜀 · 기본 프로젝트 없음')
+  })
+
+  it('parseMorningPart: 상태가 없거나 객체가 아니면 null 이다. 숫자가 아니면 0 이다', () => {
+    expect(parseMorningPart(null)).toBeNull()
+    expect(parseMorningPart('ok')).toBeNull()
+    expect(parseMorningPart({ attempts: 1 })).toBeNull()
+    const part = parseMorningPart({ status: 'ok', newCount: '3' })
+    expect(part?.newCount).toBe(0)
+    expect(describeMorningPart('project', part!)).toBe('프로젝트 변경 없음')
+  })
+})
+
+// 메뉴 통합 D5·D9·D10 비서 설정
+describe('비서 설정: 첫 화면·아침 자동 동기화·원본 완료', () => {
+  const modal = (settings: AssistantSettings): string =>
+    renderToStaticMarkup(
+      <AssistantSettingsModal settings={settings} busy={false} onClose={() => {}} onSave={async () => true} />
+    )
+
+  it('formStartView: 이전 값 auto·dashboard 와 모르는 값은 today 다 (D5)', () => {
+    expect(START_VIEW_OPTIONS.map((o) => o.value)).toEqual(['today', 'projects', 'calendar'])
+    expect(formStartView('auto')).toBe('today')
+    expect(formStartView('dashboard')).toBe('today')
+    expect(formStartView(undefined)).toBe('today')
+    expect(formStartView('projects')).toBe('projects')
+    expect(formStartView('calendar')).toBe('calendar')
+  })
+
+  it('설정 모달: 첫 화면 옵션은 오늘·프로젝트·캘린더다. 자동·대시보드가 없다', () => {
+    const html = modal(SETTINGS)
+    expect(html).toContain('<option value="today" selected="">오늘</option>')
+    expect(html).toContain('<option value="projects">프로젝트</option>')
+    expect(html).toContain('<option value="calendar">캘린더</option>')
+    expect(html).not.toContain('value="auto"')
+    expect(html).not.toContain('value="dashboard"')
+    expect(html).not.toContain('대시보드')
+  })
+
+  it('설정 모달: 저장된 dashboard 는 오늘로 선택된다', () => {
+    const legacy = { ...SETTINGS, startView: 'dashboard' } as unknown as AssistantSettings
+    expect(modal(legacy)).toContain('<option value="today" selected="">오늘</option>')
+  })
+
+  it('설정 모달: 아침 자동 동기화 토글·시각과 원본 완료 토글을 보인다', () => {
+    const html = modal(SETTINGS)
+    expect(html).toContain('아침 자동 동기화')
+    expect(html).toContain('아침 동기화 시각')
+    expect(html).toContain('value="08:00"')
+    expect(html).toContain('완료하면 원본도 완료')
+  })
+
+  it('설정 모달: 이전 main 이 새 키를 주지 않으면 켬·08:00·끔이 기본값이다 (D9·D10)', () => {
+    const old = { ...SETTINGS } as Partial<AssistantSettings>
+    delete old.morningSyncEnabled
+    delete old.morningSyncTime
+    delete old.completeOriginOnDone
+    const html = modal(old as AssistantSettings)
+    expect(html).toContain('value="08:00"')
+    // 아침 자동 동기화 토글은 켜짐이고 원본 완료 토글은 꺼짐이다
+    const toggles = [...html.matchAll(/<input type="checkbox"([^>]*)\/><span><span[^>]*>([^<]+)</g)].map(
+      (m) => [m[2], m[1].includes('checked=""')] as const
+    )
+    expect(toggles).toContainEqual(['아침 자동 동기화', true])
+    expect(toggles).toContainEqual(['완료하면 원본도 완료', false])
+  })
+
+  it('설정: 아침 동기화 시각은 HH:mm 만 받고 새 키도 patch 에 담는다', () => {
+    expect(validateSettings({ ...SETTINGS, morningSyncTime: '25:00' })).not.toBeNull()
+    expect(validateSettings({ ...SETTINGS, morningSyncTime: '7:30' })).not.toBeNull()
+    expect(validateSettings({ ...SETTINGS, morningSyncTime: '07:30' })).toBeNull()
+    expect(
+      diffSettings(SETTINGS, {
+        ...SETTINGS,
+        morningSyncEnabled: false,
+        morningSyncTime: '07:30',
+        completeOriginOnDone: true,
+        startView: 'calendar'
+      })
+    ).toEqual({ morningSyncEnabled: false, morningSyncTime: '07:30', completeOriginOnDone: true, startView: 'calendar' })
   })
 })

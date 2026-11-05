@@ -25,7 +25,7 @@ vi.mock('better-sqlite3', async () => {
       return this.db.prepare(sql)
     }
 
-    // better-sqlite3 처럼 중첩 호출은 SAVEPOINT 로 처리한다. respondCheckin 이 트랜잭션 안에서 updatePlanItems 를 부른다
+    // better-sqlite3 처럼 중첩 호출은 SAVEPOINT 로 처리한다. 트랜잭션 안에서 다른 트랜잭션 함수를 부를 수 있다
     private depth = 0
 
     transaction<T>(fn: (...args: Args) => T): (...args: Args) => T {
@@ -98,15 +98,13 @@ vi.mock('./assistant-briefing', async (importOriginal) => {
 const commandLlm = vi.hoisted(() => ({ requestLlmCommand: vi.fn() }))
 vi.mock('./assistant-command-llm', () => commandLlm)
 
-// 체크인 판정은 실제 구현을 쓴다. UNIQUE 충돌 테스트만 결과를 고정한다 (부록 H)
-const schedule = vi.hoisted(() => ({ computeDueCheckin: vi.fn(), computeDueMeetingBriefings: vi.fn() }))
+// 회의 브리핑 판정은 실제 구현을 쓴다. UNIQUE 충돌 테스트만 결과를 고정한다 (부록 I)
+const schedule = vi.hoisted(() => ({ computeDueMeetingBriefings: vi.fn() }))
 vi.mock('./assistant-schedule', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./assistant-schedule')>()
-  schedule.computeDueCheckin.mockImplementation(actual.computeDueCheckin)
   schedule.computeDueMeetingBriefings.mockImplementation(actual.computeDueMeetingBriefings)
   return {
     ...actual,
-    computeDueCheckin: schedule.computeDueCheckin,
     computeDueMeetingBriefings: schedule.computeDueMeetingBriefings
   }
 })
@@ -126,9 +124,7 @@ import {
   interpretCommand,
   refreshBriefing,
   regenerateMeetingBriefing,
-  respondCheckin,
   runAutoRefresh,
-  runDueCheckin,
   runDueMeetingBriefings,
   runRefresh,
   saveSettings,
@@ -142,9 +138,7 @@ import type {
   AssistantChangedEvent,
   CalendarRef,
   Candidate,
-  CheckinAnswer,
   CommandOp,
-  DueCheckin,
   DueMeetingBriefing,
   MeetingBriefingPayload,
   MeetingContext,
@@ -1377,275 +1371,6 @@ describe('명령 입력 (부록 G)', () => {
   })
 })
 
-describe('작업 경계 체크인 (부록 H)', () => {
-  // 11:00~12:00 회의가 있으면 첫 블록은 09:45~11:00 이다. 체크인 창은 [10:55, 11:00) 이다
-  const meeting: CalendarRef = { id: 'm1', title: '주간 회의', start: '11:00', end: '12:00', allDay: false }
-  const MON_1050 = new Date(2026, 10, 2, 10, 50, 0)
-  const MON_1056 = new Date(2026, 10, 2, 10, 56, 0)
-  const MON_1057 = new Date(2026, 10, 2, 10, 57, 0)
-  const MON_1058 = new Date(2026, 10, 2, 10, 58, 0)
-
-  async function startWithMeeting(): Promise<PlanItem[]> {
-    headless.isHeadlessAvailable.mockReturnValue(false)
-    sources.collectSources.mockResolvedValue(collected([candidate(1, { dueDate: '2026-11-02' }), candidate(2)], [meeting]))
-    const started = await startDay(MON_0940)
-    changed.length = 0
-    return started.items
-  }
-
-  function checkinRows(): ReturnType<typeof listEventsOf> {
-    return listEventsOf().filter((e) => e.kind === 'checkin')
-  }
-
-  function listEventsOf(): { id: number; kind: string; event_key: string; response: string | null }[] {
-    return getDatabase().prepare('SELECT id, kind, event_key, response FROM assistant_events ORDER BY id').all() as {
-      id: number
-      kind: string
-      event_key: string
-      response: string | null
-    }[]
-  }
-
-  // 판정을 거치지 않고 체크인 행을 직접 만든다. respondCheckin 만 검증한다
-  function seedCheckin(itemId: number, key = 'checkin:2026-11-02:1100'): number {
-    const ev = insertEvent(getDatabase(), {
-      event_key: key,
-      kind: 'checkin',
-      plan_date: '2026-11-02',
-      scheduled_at: '2026-11-02 10:55:00',
-      fired_at: '2026-11-02 10:56:00',
-      status: 'sent',
-      ref_id: String(itemId),
-      payload: JSON.stringify({ itemId, candidateId: 'todo:1', itemTitle: '할 일', blockStart: '09:45', blockEnd: '11:00', title: '체크인', body: '본문' })
-    })
-    if (!ev) throw new Error('seed failed')
-    return ev.id
-  }
-
-  function answer(over: Partial<CheckinAnswer> = {}): CheckinAnswer {
-    return { status: null, note: null, raw: null, ...over }
-  }
-
-  describe('runDueCheckin', () => {
-    it('계획이 없으면 판정하지 않고 null 이다', async () => {
-      expect(await runDueCheckin(MON_1056)).toBeNull()
-      expect(schedule.computeDueCheckin).not.toHaveBeenCalled()
-    })
-
-    it('창 안이면 checkin 행을 sent 로 INSERT 하고 알림 내용을 돌려준다 (H.4)', async () => {
-      const items = await startWithMeeting()
-      const focusId = (await getToday(MON_1056)).timeline.focusItemId
-      expect(focusId).not.toBeNull()
-
-      const n = await runDueCheckin(MON_1056)
-      expect(n).not.toBeNull()
-      expect(n!.focus).toEqual({ kind: 'checkin', id: String(n!.eventId) })
-      expect(n!.body).toBe('지금까지 어떻게 됐나요? 답장하거나 눌러서 고르세요.')
-
-      const row = getEventById(getDatabase(), n!.eventId)
-      expect(row).toMatchObject({
-        event_key: 'checkin:2026-11-02:1100',
-        kind: 'checkin',
-        plan_date: '2026-11-02',
-        scheduled_at: '2026-11-02 10:55:00',
-        fired_at: '2026-11-02 10:56:00',
-        status: 'sent',
-        ref_id: String(focusId),
-        response: null
-      })
-      const payload = JSON.parse(row!.payload!)
-      expect(payload).toMatchObject({ itemId: focusId, blockStart: '09:45', blockEnd: '11:00' })
-      expect(payload.itemTitle).toBe(items.find((i) => i.id === focusId)?.title)
-      expect(changed).toContainEqual({ date: '2026-11-02', reason: 'checkin' })
-
-      // 판정 입력은 계획 스냅샷의 일정과 오늘 이벤트다 (H.9.5)
-      const input = schedule.computeDueCheckin.mock.calls[0][0]
-      expect(input).toMatchObject({ today: '2026-11-02', nowHHmm: '10:56', at: '2026-11-02 10:56:00', planActive: true, dayStart: '09:45', workEnd: '18:00' })
-      expect(input.calendar).toEqual([meeting])
-    })
-
-    it('예정 시각보다 2분 이상 늦으면 status 는 late 다', async () => {
-      await startWithMeeting()
-      const n = await runDueCheckin(MON_1058)
-      expect(getEventById(getDatabase(), n!.eventId)?.status).toBe('late')
-    })
-
-    it('창 전에는 null 이고 행을 만들지 않는다', async () => {
-      await startWithMeeting()
-      expect(await runDueCheckin(MON_1050)).toBeNull()
-      expect(checkinRows()).toHaveLength(0)
-    })
-
-    it('A5: 같은 블록의 두 번째 틱은 행을 더 만들지 않고 null 이다', async () => {
-      await startWithMeeting()
-      expect(await runDueCheckin(MON_1056)).not.toBeNull()
-      expect(await runDueCheckin(MON_1057)).toBeNull()
-      expect(checkinRows()).toHaveLength(1)
-    })
-
-    it('A5: 판정이 같은 키를 다시 돌려줘도 UNIQUE 충돌이면 null 이고 알리지 않는다', async () => {
-      const items = await startWithMeeting()
-      const due: DueCheckin = {
-        eventKey: 'checkin:2026-11-02:1100',
-        refId: String(items[0].id),
-        scheduledAt: '2026-11-02 10:55:00',
-        late: false,
-        title: '체크인: 할 일 1',
-        body: '본문',
-        payload: { itemId: items[0].id, candidateId: items[0].candidate_id, itemTitle: items[0].title, blockStart: '09:45', blockEnd: '11:00', title: '체크인: 할 일 1', body: '본문' }
-      }
-      schedule.computeDueCheckin.mockReturnValueOnce(due).mockReturnValueOnce(due)
-      expect(await runDueCheckin(MON_1056)).not.toBeNull()
-      changed.length = 0
-      expect(await runDueCheckin(MON_1057)).toBeNull()
-      expect(checkinRows()).toHaveLength(1)
-      expect(changed).toEqual([])
-    })
-
-    it('A41: now 를 주지 않으면 앞선 serialized 작업이 끝난 뒤의 시각으로 판정한다', async () => {
-      await startWithMeeting()
-      let release: (v: unknown) => void = () => undefined
-      let entered: () => void = () => undefined
-      const enteredCollect = new Promise<void>((r) => (entered = r))
-      sources.collectSources.mockImplementationOnce(() => {
-        entered()
-        return new Promise((r) => (release = r))
-      })
-      vi.useFakeTimers({ toFake: ['Date'] })
-      try {
-        vi.setSystemTime(MON_1050)
-        // 최신화가 수집을 기다리며 줄을 잡는다. 체크인은 그 뒤에 선다
-        const refresh = runAutoRefresh('calendar', MON_1050)
-        const due = runDueCheckin()
-        await enteredCollect
-        // 창 전(10:50)에 호출했지만 줄을 기다리는 사이 창 안(10:56)이 됐다
-        vi.setSystemTime(MON_1056)
-        release(collected([candidate(1, { dueDate: '2026-11-02' }), candidate(2)], [meeting]))
-        await refresh
-        const n = await due
-
-        expect(n).not.toBeNull()
-        expect(schedule.computeDueCheckin.mock.calls.at(-1)?.[0]).toMatchObject({ nowHHmm: '10:56', at: '2026-11-02 10:56:00' })
-        expect(getEventById(getDatabase(), n!.eventId)?.fired_at).toBe('2026-11-02 10:56:00')
-      } finally {
-        vi.useRealTimers()
-      }
-    })
-
-    it('닫힌 계획이면 planActive false 로 판정해 null 이다', async () => {
-      await startWithMeeting()
-      await closeDay(null, MON_1050)
-      expect(await runDueCheckin(MON_1056)).toBeNull()
-      expect(schedule.computeDueCheckin.mock.calls.at(-1)?.[0].planActive).toBe(false)
-      expect(checkinRows()).toHaveLength(0)
-    })
-  })
-
-  describe('respondCheckin (H.6.4)', () => {
-    it('A43: 버튼 응답은 항목 상태·메모를 쓰고 response 를 button:<status> 로 기록한다', async () => {
-      const items = await startWithMeeting()
-      const id = seedCheckin(items[0].id)
-
-      const out = await respondCheckin(id, answer({ status: 'done', note: '  리뷰 반영  ' }), MON_1100)
-
-      const item = getPlanItem(getDatabase(), items[0].id)
-      expect(item).toMatchObject({ status: 'done', status_note: '리뷰 반영', status_at: '2026-11-02 11:00:00' })
-      expect(getEventById(getDatabase(), id)).toMatchObject({ response: 'button:done', responded_at: '2026-11-02 11:00:00' })
-      expect(out.items.find((i) => i.id === items[0].id)?.status).toBe('done')
-      expect(out.events.find((e) => e.id === id)?.response).toBe('button:done')
-      expect(changed).toContainEqual({ date: '2026-11-02', reason: 'checkin' })
-    })
-
-    it('A43: 응답은 1회만 기록한다. 두 번째 응답은 throw 하고 아무것도 바꾸지 않는다', async () => {
-      const items = await startWithMeeting()
-      const id = seedCheckin(items[0].id)
-      await respondCheckin(id, answer(), MON_1056)
-      expect(getEventById(getDatabase(), id)?.response).toBe('skip')
-
-      await expect(respondCheckin(id, answer({ status: 'done' }), MON_1100)).rejects.toThrow('이미 응답한 체크인입니다.')
-      expect(getEventById(getDatabase(), id)).toMatchObject({ response: 'skip', responded_at: '2026-11-02 10:56:00' })
-      expect(getPlanItem(getDatabase(), items[0].id)?.status).toBe('planned')
-    })
-
-    it('A43: 닫힌 계획이면 응답만 기록하고 항목은 바꾸지 않는다', async () => {
-      const items = await startWithMeeting()
-      const id = seedCheckin(items[0].id)
-      await closeDay(null, MON_1056)
-
-      await respondCheckin(id, answer({ status: 'in_progress', note: '절반' }), MON_1100)
-
-      expect(getEventById(getDatabase(), id)?.response).toBe('button:in_progress')
-      expect(getPlanItem(getDatabase(), items[0].id)).toMatchObject({ status: 'planned', status_note: null, status_at: null })
-    })
-
-    it('A43: 사용자가 이미 완료한 항목은 답장이 되돌리지 않는다', async () => {
-      const items = await startWithMeeting()
-      const id = seedCheckin(items[0].id)
-      await setItemStatus(items[0].id, 'done', '끝', MON_1050)
-
-      await respondCheckin(id, answer({ status: 'in_progress', raw: '아직 하는 중' }), MON_1100)
-
-      expect(getPlanItem(getDatabase(), items[0].id)).toMatchObject({ status: 'done', status_note: '끝', status_at: '2026-11-02 10:50:00' })
-      expect(getEventById(getDatabase(), id)?.response).toBe('아직 하는 중')
-    })
-
-    it('넘기기는 response skip 이고 항목을 바꾸지 않는다. 공백 답장도 넘기기와 같다', async () => {
-      const items = await startWithMeeting()
-      const a = seedCheckin(items[0].id)
-      const b = seedCheckin(items[0].id, 'checkin:2026-11-02:1500')
-      await respondCheckin(a, answer(), MON_1100)
-      await respondCheckin(b, answer({ raw: '   ' }), MON_1100)
-      expect(getEventById(getDatabase(), a)?.response).toBe('skip')
-      expect(getEventById(getDatabase(), b)?.response).toBe('skip')
-      expect(getPlanItem(getDatabase(), items[0].id)?.status).toBe('planned')
-    })
-
-    it('답장 원문은 500자로 잘라 기록한다', async () => {
-      const items = await startWithMeeting()
-      const id = seedCheckin(items[0].id)
-      await respondCheckin(id, answer({ status: 'deferred', raw: '가'.repeat(600) }), MON_1100)
-      expect(getEventById(getDatabase(), id)?.response).toBe('가'.repeat(500))
-      expect(getPlanItem(getDatabase(), items[0].id)?.status).toBe('deferred')
-    })
-
-    it('payload 의 항목이 오늘 계획에 없으면 응답만 기록한다', async () => {
-      await startWithMeeting()
-      const id = seedCheckin(99999)
-      await respondCheckin(id, answer({ status: 'done' }), MON_1100)
-      expect(getEventById(getDatabase(), id)?.response).toBe('button:done')
-    })
-
-    it('인자가 틀리거나 체크인 행이 아니면 throw 하고 쓰지 않는다 (H.9.5)', async () => {
-      const items = await startWithMeeting()
-      const id = seedCheckin(items[0].id)
-      await expect(respondCheckin(1.5, answer({ status: 'done' }), MON_1100)).rejects.toThrow('체크인 ID')
-      await expect(respondCheckin(id, answer({ status: 'dropped' as never }), MON_1100)).rejects.toThrow('체크인 상태')
-      await expect(respondCheckin(id, answer({ status: 'done', note: 'x'.repeat(501) }), MON_1100)).rejects.toThrow('500자')
-      await expect(respondCheckin(99999, answer({ status: 'done' }), MON_1100)).rejects.toThrow('체크인을 찾을 수 없습니다.')
-      // 변경 기록 행(plan_update)은 체크인이 아니다
-      const logged = insertEvent(getDatabase(), {
-        event_key: 'plan_update:2026-11-02:x', kind: 'plan_update', plan_date: '2026-11-02',
-        scheduled_at: '2026-11-02 10:00:00', fired_at: null, status: 'logged', ref_id: null, payload: '{}'
-      })
-      await expect(respondCheckin(logged!.id, answer({ status: 'done' }), MON_1100)).rejects.toThrow('체크인을 찾을 수 없습니다.')
-      expect(getEventById(getDatabase(), id)?.response).toBeNull()
-      expect(getEventById(getDatabase(), logged!.id)?.response).toBeNull()
-      expect(getPlanItem(getDatabase(), items[0].id)?.status).toBe('planned')
-    })
-
-    it('발송한 체크인에 응답하면 대상 항목이 바뀌고 패널 대상에서 빠진다 (runDueCheckin → respondCheckin)', async () => {
-      await startWithMeeting()
-      const n = await runDueCheckin(MON_1056)
-      const itemId = JSON.parse(getEventById(getDatabase(), n!.eventId)!.payload!).itemId as number
-
-      const out = await respondCheckin(n!.eventId, answer({ status: 'in_progress', note: '절반' }), MON_1058)
-
-      expect(out.items.find((i) => i.id === itemId)).toMatchObject({ status: 'in_progress', status_note: '절반' })
-      expect(out.events.filter((e) => e.kind === 'checkin' && e.response === null)).toHaveLength(0)
-    })
-  })
-})
-
 describe('회의 전 브리핑 (부록 I)', () => {
   // 10:15 회의, lead 15분이면 창은 [10:00, 10:15) 다
   const MON_0955 = new Date(2026, 10, 2, 9, 55, 0)
@@ -2073,7 +1798,7 @@ describe('회의 전 브리핑 (부록 I)', () => {
       expect(skipped.status).toBe('skipped')
       await expect(regenerateMeetingBriefing(skipped.id, MON_1020)).rejects.toThrow('회의 브리핑을 찾을 수 없습니다')
       const other = insertEvent(getDatabase(), {
-        event_key: 'checkin:2026-11-02:1100', kind: 'checkin', plan_date: '2026-11-02',
+        event_key: 'start_nudge:2026-11-02', kind: 'start_nudge', plan_date: '2026-11-02',
         scheduled_at: '2026-11-02 10:55:00', fired_at: '2026-11-02 10:56:00', status: 'sent', ref_id: '1', payload: '{}'
       })
       await expect(regenerateMeetingBriefing(other!.id, MON_1020)).rejects.toThrow('회의 브리핑을 찾을 수 없습니다')

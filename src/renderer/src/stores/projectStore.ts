@@ -1,12 +1,19 @@
 import { create } from 'zustand'
 import type { Project, Task, ProjectInput, TaskInput } from '../types'
+import type { ViewId } from '../components/layout/navConfig'
+
+// 배경 갱신 옵션. silent 이면 loading 을 켜지 않는다.
+// 이유: 스피너가 뜨면 목록 화면이 편집 상태를 잃는다
+export interface FetchOptions {
+  silent?: boolean
+}
 
 interface ProjectStore {
   projects: Project[]
   currentProject: Project | null
   tasks: Task[]
   loading: boolean
-  view: 'dashboard' | 'today' | 'projects' | 'todos' | 'calendar' | 'documents' | 'variables' | 'memos' | 'reports' | 'ai' | 'recordings' | 'notes' | 'releases'
+  view: ViewId
   projectView: 'list' | 'form' | 'detail'
   editingProject: Project | null
 
@@ -14,7 +21,7 @@ interface ProjectStore {
   setProjectView: (view: ProjectStore['projectView']) => void
   setEditingProject: (project: Project | null) => void
 
-  fetchProjects: (status?: string) => Promise<void>
+  fetchProjects: (status?: string, opts?: FetchOptions) => Promise<void>
   fetchProject: (id: number) => Promise<void>
   createProject: (input: ProjectInput) => Promise<void>
   updateProject: (id: number, input: Partial<ProjectInput>) => Promise<void>
@@ -33,7 +40,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   currentProject: null,
   tasks: [],
   loading: false,
-  view: 'dashboard',
+  view: 'today',
   projectView: 'list',
   editingProject: null,
 
@@ -41,10 +48,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   setProjectView: (projectView) => set({ projectView, editingProject: null }),
   setEditingProject: (project) => set({ editingProject: project, projectView: 'form' }),
 
-  fetchProjects: async (status?) => {
-    set({ loading: true })
-    const projects = await window.api.project.list(status)
-    set({ projects, loading: false })
+  fetchProjects: async (status?, opts?) => {
+    const silent = opts?.silent === true
+    if (!silent) set({ loading: true })
+    try {
+      const projects = await window.api.project.list(status)
+      set(silent ? { projects } : { projects, loading: false })
+    } catch (e) {
+      if (!silent) set({ loading: false })
+      throw e
+    }
   },
 
   fetchProject: async (id) => {

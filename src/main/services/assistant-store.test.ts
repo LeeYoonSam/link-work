@@ -753,17 +753,17 @@ describe('비서 이벤트', () => {
   })
 
   it('setEventResponse: response·responded_at 만 쓴다 (부록 H.7)', () => {
-    const checkin = insertEvent(db, {
+    const meeting = insertEvent(db, {
       ...ev,
-      event_key: 'checkin:2026-11-02:1100',
-      kind: 'checkin',
+      event_key: 'meeting_briefing:2026-11-02:m7',
+      kind: 'meeting_briefing',
       scheduled_at: '2026-11-02 10:55:00',
       fired_at: '2026-11-02 10:55:30',
       ref_id: '7',
       payload: '{"itemId":7}'
     })
-    setEventResponse(db, checkin!.id, 'button:done', '2026-11-02 10:58:00')
-    const row = getEventById(db, checkin!.id)
+    setEventResponse(db, meeting!.id, 'button:done', '2026-11-02 10:58:00')
+    const row = getEventById(db, meeting!.id)
     expect(row?.response).toBe('button:done')
     expect(row?.responded_at).toBe('2026-11-02 10:58:00')
     // 다른 컬럼은 그대로다

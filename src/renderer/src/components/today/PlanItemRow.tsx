@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CandidateSource, PlanItem, PlanItemStatus, WorkType } from '../../types'
 import { Badge, LinkIcon } from '../ui'
 import { useProjectStore } from '../../stores/projectStore'
+import { normalizeView } from '../layout/navConfig'
 
 // 출처 배지. 색은 tokens 의 파스텔 필 문법을 따른다
 export const SOURCE_BADGE: Record<CandidateSource, { label: string; color: string }> = {
@@ -16,7 +17,7 @@ export const SOURCE_BADGE: Record<CandidateSource, { label: string; color: strin
 export function SourceBadge({ source }: { source: CandidateSource }): React.ReactNode {
   const s = SOURCE_BADGE[source] ?? { label: source, color: 'bg-gray-100 text-gray-600' }
   return (
-    <Badge color={s.color} size="xs">
+    <Badge color={s.color}>
       {s.label}
     </Badge>
   )
@@ -48,7 +49,7 @@ export function WorkTypeBadge({
   const b = WORK_TYPE_BADGE[type]
   if (!b) return null
   return (
-    <Badge color={b.color} size="xs">
+    <Badge color={b.color}>
       {workTypeLabel(type, version)}
     </Badge>
   )
@@ -156,20 +157,8 @@ export async function openInternalLink(href: string): Promise<void> {
     if (doc) await window.api.document.open(doc.url, doc.type)
     else setView('documents')
   } else if (kind === 'view') {
-    const views = [
-      'dashboard',
-      'today',
-      'projects',
-      'todos',
-      'documents',
-      'variables',
-      'memos',
-      'calendar',
-      'releases',
-      'reports',
-      'notes'
-    ] as const
-    const target = views.find((v) => v === rest)
+    // 예전 화면 ID(dashboard)도 새 ID 로 옮겨 연다
+    const target = normalizeView(rest)
     if (target) setView(target)
   }
 }
@@ -186,7 +175,7 @@ export function ItemLink({ link }: { link: string | null }): React.ReactNode {
         className="p-1 rounded-md text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
         title="열기"
       >
-        <LinkIcon size={14} />
+        <LinkIcon size={16} />
       </button>
     )
   }
@@ -199,7 +188,7 @@ export function ItemLink({ link }: { link: string | null }): React.ReactNode {
         className="p-1 rounded-md text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
         title="Jira 에서 열기"
       >
-        <LinkIcon size={14} />
+        <LinkIcon size={16} />
       </a>
     )
   }
@@ -248,6 +237,8 @@ interface PlanItemRowProps {
   onCompleteOrigin: (item: PlanItem) => Promise<boolean>
   // 같은 계획의 항목 전체. 묶음 판정에 쓴다 (부록 J.4)
   items: Pick<PlanItem, 'id' | 'parent_key' | 'status'>[]
+  // 설정 completeOriginOnDone. true 면 '완료'로 바꿀 때 원본도 완료한다. 기본은 false 다
+  completeOriginOnDone?: boolean
 }
 
 export default function PlanItemRow({
@@ -259,11 +250,14 @@ export default function PlanItemRow({
   onStatus,
   onFocus,
   onCompleteOrigin,
-  items
+  items,
+  completeOriginOnDone = false
 }: PlanItemRowProps): React.ReactNode {
   // 이번 화면에서 사용자가 '완료'로 바꾼 항목만 원본 완료 체크박스를 보여 준다
   const [justDone, setJustDone] = useState(false)
   const [originDone, setOriginDone] = useState(false)
+  // 사용자가 '완료'를 눌렀고 원본 자동 완료 대상이면 true 다. item.status 가 done 이 되면 소비한다
+  const autoOriginPending = useRef(false)
 
   const finished = item.status === 'done' || item.status === 'dropped'
   // 묶음 항목은 집중 작업이 되지 않는다 (부록 J.4)
@@ -279,10 +273,20 @@ export default function PlanItemRow({
     const next = item.status === status ? 'planned' : status
     setJustDone(next === 'done')
     if (next !== 'done') setOriginDone(false)
+    // 원본 자동 완료는 계획 항목이 실제로 done 이 된 뒤에 한다. 아래 effect 가 처리한다
+    autoOriginPending.current = next === 'done' && completeOriginOnDone && canCompleteOrigin
     onStatus(item.id, next)
   }
 
-  const handleOrigin = async (checked: boolean): Promise<void> => {
+  // 상태 변경이 실패하면 item.status 가 done 이 되지 않는다. 그러면 원본도 완료하지 않는다.
+  // 원본 완료는 기존 API 로 렌더러가 부른다. 비서 main 은 원본을 쓰지 않는다(A2)
+  useEffect(() => {
+    if (!autoOriginPending.current || item.status !== 'done') return
+    autoOriginPending.current = false
+    void handleOrigin(true)
+  }, [item.status])
+
+  async function handleOrigin(checked: boolean): Promise<void> {
     if (!checked || originDone) return
     const ok = await onCompleteOrigin(item)
     if (ok) setOriginDone(true)
@@ -291,44 +295,44 @@ export default function PlanItemRow({
   return (
     <div
       id={`plan-item-${item.id}`}
-      className={`px-4 py-3 border-b border-gray-100 last:border-b-0 ${
+      className={`px-5 py-3 border-b border-gray-100 last:border-b-0 ${
         finished ? 'bg-gray-50' : focused ? 'bg-blue-50/40' : ''
       }`}
     >
       <div className="flex items-center gap-3 min-w-0">
-        <span className="w-6 text-right text-xs font-semibold text-gray-400 tabular-nums shrink-0">
+        <span className="w-6 text-right text-sm font-semibold text-gray-500 tabular-nums shrink-0">
           {group ? '–' : (item.rank ?? '–')}
         </span>
         <SourceBadge source={item.source} />
         <WorkTypeBadge type={item.work_type} version={item.work_version} />
         {group ? (
-          <Badge color="bg-gray-100 text-gray-600" size="xs" title="하위 작업이 오늘 계획에 있어요">
+          <Badge color="bg-gray-100 text-gray-600" title="하위 작업이 오늘 계획에 있어요">
             묶음
           </Badge>
         ) : null}
         <div className="flex-1 min-w-0">
           <p
-            className={`truncate text-sm ${finished ? 'text-gray-400 line-through' : 'text-gray-900'}`}
+            className={`min-w-0 break-words text-base ${finished ? 'text-gray-400 line-through' : 'text-gray-900'}`}
             title={item.title}
           >
             {item.title}
           </p>
           {item.group_name ? (
-            <p className="truncate text-[11px] text-gray-400" title={item.group_name}>
+            <p className="break-words text-sm text-gray-500">
               {item.group_name}
             </p>
           ) : null}
         </div>
         {focused && !finished ? (
-          <Badge color="bg-blue-100 text-blue-700" size="xs" title="지금 빈 시간에 할 작업이에요">
+          <Badge color="bg-blue-100 text-blue-700" title="지금 빈 시간에 할 작업이에요">
             집중 중
           </Badge>
         ) : null}
         {dayCount ? (
-          <span className="text-xs text-gray-500 shrink-0 tabular-nums">{dayCount}</span>
+          <span className="text-sm text-gray-500 shrink-0 tabular-nums">{dayCount}</span>
         ) : null}
         {due ? (
-          <span className={`text-xs shrink-0 tabular-nums ${dueTone(item.due_date, logicalDate)}`}>
+          <span className={`text-sm shrink-0 tabular-nums ${dueTone(item.due_date, logicalDate)}`}>
             {due}
           </span>
         ) : null}
@@ -336,11 +340,13 @@ export default function PlanItemRow({
       </div>
 
       {item.status_note ? (
-        <p className="ml-9 mt-1 text-xs text-gray-400">{item.status_note}</p>
+        <p className="ml-9 mt-1 break-words text-sm text-gray-500">
+          {item.status_note}
+        </p>
       ) : null}
 
       {readOnly ? (
-        <div className="ml-9 mt-2 text-xs text-gray-500">{STATUS_LABEL[item.status]}</div>
+        <div className="ml-9 mt-2 text-sm text-gray-500">{STATUS_LABEL[item.status]}</div>
       ) : (
         <div className="ml-9 mt-2 flex flex-wrap items-center gap-1.5">
           {STATUS_BUTTONS.map((b) => (
@@ -349,7 +355,7 @@ export default function PlanItemRow({
               type="button"
               disabled={busy}
               onClick={() => handleStatus(b.status)}
-              className={`px-2 py-0.5 text-xs rounded-full transition-colors disabled:opacity-50 ${
+              className={`px-2.5 py-1 text-sm rounded-full transition-colors disabled:opacity-50 ${
                 item.status === b.status ? b.active : 'text-gray-500 hover:bg-gray-100'
               }`}
             >
@@ -358,12 +364,12 @@ export default function PlanItemRow({
           ))}
           {isActiveItem(item) && !focused && !group ? (
             <>
-              <span className="mx-1 h-3 w-px bg-gray-200" />
+              <span className="mx-1 h-4 w-px bg-gray-200" />
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => onFocus(item.id)}
-                className="px-2 py-0.5 text-xs text-blue-600 rounded-full hover:bg-blue-50 disabled:opacity-50"
+                className="px-2.5 py-1 text-sm text-blue-600 rounded-full hover:bg-blue-50 disabled:opacity-50"
                 title="이 작업을 1순위로 올리고 남은 빈 시간에 배정해요"
               >
                 지금 집중
@@ -374,7 +380,7 @@ export default function PlanItemRow({
       )}
 
       {!readOnly && item.status === 'done' && justDone && canCompleteOrigin ? (
-        <label className="ml-9 mt-2 inline-flex items-center gap-1.5 text-xs text-gray-600">
+        <label className="ml-9 mt-2 inline-flex items-center gap-1.5 text-sm text-gray-600">
           <input
             type="checkbox"
             checked={originDone}

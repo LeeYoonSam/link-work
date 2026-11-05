@@ -4,13 +4,10 @@ import { onActivity, type ActivityEvent, type EntityType } from '../utils/activi
 import { logicalDate, shouldSendStartNudge, toLocalDateTime, type NudgeTrigger } from './assistant-day'
 import { closeStalePlans, findEventByKey, getPlanByDate, insertEvent, readAssistantSettings, updateEventStatus } from './assistant-store'
 import { decideRefresh, TICK_MS } from './assistant-schedule'
-import { interpretReplyRule } from './assistant-command'
 import {
   getSourceCheckTimes,
   getStartNudgeContent,
-  respondCheckin,
   runAutoRefresh,
-  runDueCheckin,
   runDueMeetingBriefings,
   runRefresh,
   setAssistantChangedListener
@@ -18,8 +15,6 @@ import {
 import type {
   AssistantChangedEvent,
   AssistantNavigateEvent,
-  CheckinAnswer,
-  SentCheckinNotice,
   SentMeetingNotice,
   SentPlanUpdateNotice
 } from './assistant-types'
@@ -27,20 +22,19 @@ import type {
 // 비서의 부수 효과 모듈이다. 이벤트 처리기와 60초 틱을 둔다 (§7.2, 부록 E.2).
 // A13: 모든 처리기는 try/catch 로 감싼다. 백업 복원 중 DB 가 닫혀 있어도 메인 프로세스가 죽지 않는다.
 // 위험 8: 확인 시각은 assistant-service 경유로 읽는다. assistant-sources 를 직접 import 하지 않는다.
+// A54: 아침 자동 동기화는 onTick 주입으로만 돈다. 이 모듈은 싱크업·릴리스·아침 동기화 모듈을 import 하지 않는다.
 
-interface SchedulerDeps {
+export interface SchedulerDeps {
   getMainWindow: () => BrowserWindow | null
   createWindow: () => void
+  /** 틱과 wake 의 끝에서 await 없이 부른다. reject 는 삼킨다 (A54). */
+  onTick?: (wake: boolean, now?: Date) => unknown
 }
 
 const START_NUDGE_TITLE = '오늘 시작할까요?'
 const LOCAL_REFRESH_DEBOUNCE_MS = 2000
 // 보관 신호 유효 시간. 창 생성·로딩이 이보다 오래 걸리면 이동을 포기한다
 const PENDING_NAVIGATE_TTL_MS = 60_000
-// 체크인 알림의 답장 입력 안내 문구 (H.6.1)
-const CHECKIN_REPLY_PLACEHOLDER = '완료 / 진행 중 / 미룸'
-// 서비스 respondCheckin 은 이보다 긴 note 를 거부한다 (H.9.5)
-const CHECKIN_NOTE_MAX = 500
 // 비서 후보와 무관한 엔티티는 최신화를 예약하지 않는다
 const IGNORED_ENTITIES: EntityType[] = ['todo_tag', 'memo', 'memo_category', 'document', 'variable', 'release_note']
 
@@ -54,7 +48,7 @@ let pendingNavigate: { payload: AssistantNavigateEvent; at: number } | null = nu
 let tickTimer: ReturnType<typeof setInterval> | null = null
 // A26: 자동 최신화는 동시에 1개만 실행한다. 서비스의 serialized 는 큐라서 중복 실행을 막지 못한다
 let autoRefreshInFlight = false
-// A42: 체크인·회의 브리핑 판정은 동시에 1개만 실행한다. autoRefreshInFlight 와 같은 이유다
+// A42: 회의 브리핑 판정은 동시에 1개만 실행한다. autoRefreshInFlight 와 같은 이유다
 let dueInFlight = false
 
 function logError(where: string, err: unknown): void {
@@ -216,67 +210,6 @@ function showPlanUpdateNotices(notices: SentPlanUpdateNotice[]): void {
   }
 }
 
-function toAnswer(r: { status: CheckinAnswer['status']; note: string | null }, raw: string): CheckinAnswer {
-  // 긴 답장이 거부되어 응답이 기록되지 않는 일을 막는다
-  const note = r.note === null ? null : r.note.slice(0, CHECKIN_NOTE_MAX)
-  return { status: r.status, note, raw }
-}
-
-/**
- * 체크인 답장 처리 (H.6.2). 테스트용으로 export 한다.
- * A43: 해석은 interpretReplyRule 만 쓴다. LLM 을 쓰지 않는다. 버튼과 같은 respondCheckin 을 거친다.
- * A13: 이 함수는 throw 하지 않는다.
- */
-export async function onCheckinReply(eventId: number, reply: string): Promise<void> {
-  try {
-    const text = typeof reply === 'string' ? reply : ''
-    // 빈 답장은 넘기기와 같다. 원문이 없으므로 서비스가 response 를 'skip' 으로 기록한다
-    const answer: CheckinAnswer =
-      text.trim() === ''
-        ? { status: null, note: null, raw: null }
-        : toAnswer(interpretReplyRule(text), text)
-    await respondCheckin(eventId, answer)
-  } catch (err) {
-    logError('checkin reply', err)
-  }
-}
-
-/**
- * 체크인 알림 발송 (H.6.1). 서비스가 INSERT 에 성공한 알림만 받는다 (A5).
- * 답장 입력은 hasReply 로 연다. actions 를 함께 쓰면 macOS 가 첫 action 외에는 무시한다.
- * show() 가 실패하면 그 알림 행을 'failed' 로 바꾼다.
- */
-function showCheckinNotice(notice: SentCheckinNotice): void {
-  try {
-    const n = new Notification({
-      title: notice.title,
-      body: notice.body,
-      hasReply: true,
-      replyPlaceholder: CHECKIN_REPLY_PLACEHOLDER
-    })
-    liveNotifications.add(n)
-    n.on('click', () => {
-      liveNotifications.delete(n)
-      navigateToToday(notice.focus)
-    })
-    n.on('reply', (_e, reply) => {
-      liveNotifications.delete(n)
-      void onCheckinReply(notice.eventId, reply)
-    })
-    n.on('close', () => {
-      liveNotifications.delete(n)
-    })
-    n.show()
-  } catch (err) {
-    logError('checkin show', err)
-    try {
-      updateEventStatus(getDatabase(), notice.eventId, 'failed')
-    } catch (e2) {
-      logError('checkin mark failed', e2)
-    }
-  }
-}
-
 /**
  * 회의 브리핑 알림 발송 (I.9.2). 서비스가 INSERT 에 성공한 알림만 받는다 (A5).
  * 답장 입력이 없다. 클릭은 오늘 화면의 회의 브리핑 카드로 이동한다.
@@ -307,21 +240,15 @@ function showMeetingNotices(notices: SentMeetingNotice[]): void {
 }
 
 /**
- * 틱 6·7단계 (H.5, I.9.2). 체크인 다음 회의 브리핑의 판정과 발송이다.
- * A42: 두 단계는 같은 dueInFlight 안에서 동시에 1개만 실행한다.
+ * 틱 7단계 (I.9.2). 회의 브리핑의 판정과 발송이다. 6단계 체크인은 제거됐다 (부록 L).
+ * A42: dueInFlight 로 동시에 1개만 실행한다.
  * now 가 undefined 면 서비스가 serialized 줄 안에서 현재 시각을 잡는다. 최신화 대기로 시각이 낡지 않는다.
- * A13: 이 함수는 throw 하지 않는다. 6단계가 실패해도 7단계는 실행한다.
+ * A13: 이 함수는 throw 하지 않는다.
  */
 async function runDueSteps(now: Date | undefined): Promise<void> {
   if (dueInFlight) return
   dueInFlight = true
   try {
-    try {
-      const notice = await runDueCheckin(now)
-      if (notice) showCheckinNotice(notice)
-    } catch (err) {
-      logError('checkin', err)
-    }
     try {
       const notices = await runDueMeetingBriefings(now)
       showMeetingNotices(notices)
@@ -334,11 +261,35 @@ async function runDueSteps(now: Date | undefined): Promise<void> {
 }
 
 /**
- * 틱 1회 (부록 E.2.1, H.5, I.9.2). 판정은 decideRefresh 가 한다 (A25). 이 함수는 throw 하지 않는다 (A13).
+ * 주입한 onTick 을 await 없이 부른다 (A54). 동기 throw 와 reject 를 모두 삼킨다 (A13).
+ * 틱을 늦추지 않도록 결과를 기다리지 않는다.
+ */
+function fireOnTick(wake: boolean, injectedNow: Date | undefined): void {
+  const onTick = deps?.onTick
+  if (!onTick) return
+  try {
+    const ret = onTick(wake, injectedNow)
+    void Promise.resolve(ret).catch((err: unknown) => logError('onTick', err))
+  } catch (err) {
+    logError('onTick', err)
+  }
+}
+
+/**
+ * 틱 1회 (부록 E.2.1, I.9.2). 판정은 decideRefresh 가 한다 (A25). 이 함수는 throw 하지 않는다 (A13).
  * wake 는 resume·unlock-screen 에서 불렀는지다. 테스트용으로 export 한다.
  * injectedNow 는 테스트가 주입하는 시각이다. 실제 틱은 넘기지 않는다.
+ * A54: 단계가 끝나면 onTick 을 await 없이 부른다. 앞 단계가 실패해도 부른다.
  */
 export async function runTick(wake: boolean = false, injectedNow?: Date): Promise<void> {
+  try {
+    await runTickSteps(wake, injectedNow)
+  } finally {
+    fireOnTick(wake, injectedNow)
+  }
+}
+
+async function runTickSteps(wake: boolean, injectedNow: Date | undefined): Promise<void> {
   const now = injectedNow ?? new Date()
   try {
     const db = getDatabase()
@@ -364,7 +315,7 @@ export async function runTick(wake: boolean = false, injectedNow?: Date): Promis
         const outcome = await runAutoRefresh(mode, now)
         if (outcome) showPlanUpdateNotices(outcome.notices)
       } catch (err) {
-        // 최신화가 실패해도 6단계 체크인은 실행한다
+        // 최신화가 실패해도 7단계 회의 브리핑은 실행한다
         logError(`auto refresh${wake ? '(wake)' : ''}`, err)
       } finally {
         autoRefreshInFlight = false
@@ -374,7 +325,7 @@ export async function runTick(wake: boolean = false, injectedNow?: Date): Promis
     logError(`tick${wake ? '(wake)' : ''}`, err)
     return
   }
-  // A42: 6·7단계는 4단계 뒤다. 4단계를 건너뛰어도 실행한다. 서비스의 serialized 줄이 진행 중 최신화 뒤에 세운다
+  // A42: 7단계는 4단계 뒤다. 4단계를 건너뛰어도 실행한다. 서비스의 serialized 줄이 진행 중 최신화 뒤에 세운다
   // 실제 틱은 undefined 를 넘긴다. 4단계 await 로 틱 시작 시각이 낡았을 수 있다
   await runDueSteps(injectedNow)
 }

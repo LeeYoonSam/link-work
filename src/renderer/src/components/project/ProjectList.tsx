@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
+import { useMorningSyncStore } from '../../stores/morningSyncStore'
 import { format } from 'date-fns'
 import type { Project, ProjectPriority } from '../../types'
 import { STATUS_RANK, compareProjects } from '../../utils/projectOrder'
@@ -9,6 +10,7 @@ import PhaseHint from './PhaseHint'
 import PriorityBadge from './PriorityBadge'
 import ProjectExportModal from './ProjectExportModal'
 import ProjectSyncModal from './ProjectSyncModal'
+import { morningStatusLine, parseMorningPart } from '../today/ChangeLog'
 
 // 상태 필터 옵션 — 'all'(전체) + STATUS_RANK의 진행 순서.
 // 목록에 손으로 적어두면 상태가 늘 때마다 한쪽만 고쳐져 필터에서 빠진다(on_hold가 그랬다).
@@ -40,10 +42,30 @@ export default function ProjectList(): React.ReactNode {
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
   const dragGroupRef = useRef<string | null>(null)
+  // 아침 자동 싱크업 결과 (PROJECT_SYNC R11). 자동 갱신이 sync_status 로 다시 읽는다
+  const morningStatus = useMorningSyncStore((s) => s.status)
+  const loadMorning = useMorningSyncStore((s) => s.load)
+  const markMorningSeen = useMorningSyncStore((s) => s.markSeen)
+  const morningPart = parseMorningPart(morningStatus?.project)
+  const morningLine = morningStatusLine(
+    '아침 싱크업',
+    'project',
+    morningPart,
+    format(new Date(), 'yyyy-MM-dd')
+  )
 
   useEffect(() => {
     fetchProjects()
+    void loadMorning()
   }, [])
+
+  // 이 화면이 열려 있으면 아침 동기화의 새 항목을 본 것으로 표시한다. 사이드바 배지가 사라진다
+  useEffect(() => {
+    if (morningStatus) markMorningSeen('project')
+  }, [morningStatus])
+
+  // 아침 싱크업이 프로젝트를 바꾸면 main 이 project 이벤트를 보낸다.
+  // dataSync 가 그 이벤트로 목록을 다시 읽는다. 그래서 이 화면은 따로 다시 읽지 않는다
 
   // 정렬 규칙은 utils/projectOrder.ts 하나뿐이다 — 목록·대시보드·트레이가 같은 순서를 본다.
   const sorted = [...projects].sort(compareProjects)
@@ -199,7 +221,18 @@ export default function ProjectList(): React.ReactNode {
             ))}
           </select>
         </label>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 min-w-0">
+          {/* 아침 싱크업 상태 1줄. 실패면 빨간 글자다. 긴 사유는 말줄임하고 title 로 보인다 */}
+          {morningLine ? (
+            <span
+              className={`max-w-[18rem] truncate text-[11px] ${
+                morningPart?.status === 'failed' ? 'text-red-600' : 'text-gray-500'
+              }`}
+              title={morningLine}
+            >
+              {morningLine}
+            </span>
+          ) : null}
           {/* 한글 라벨은 글자 단위로 개행된다 — nowrap 없이 두면 좁은 창에서 세로로 깨진다 */}
           <button
             onClick={() => setShowSync(true)}

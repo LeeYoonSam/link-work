@@ -14,7 +14,7 @@
 | 1 | 하루 시작·퇴근 버튼, 오늘 계획, 시작 브리핑, 수동 새로고침, 앱 내부 변경 즉시 반영, 시작 알림 |
 | 2 | 캘린더·Jira 자동 최신화, 최신화 알림, 트레이 연계 |
 | 3 | 맥락 복구, AI 채팅 도구 |
-| 4 | 작업 경계 체크인 |
+| 4 | 작업 경계 체크인. 제거됨 (2026-11-05, 부록 L) |
 | 5 | 회의 전 브리핑 |
 
 ### 변경 이력
@@ -32,6 +32,8 @@
 - MVP4 설계 (2026-11-02): 작업 경계 체크인의 모듈 계약을 부록 H 에 둔다. 부록 H 가 §16 MVP4 표와 §17 MVP4 조건을 대체한다. 규칙 A41~A44 는 부록 H.10 에 있다.
 - MVP5 설계 (2026-11-02): 회의 전 브리핑의 모듈 계약을 부록 I 에 둔다. 부록 I 가 §16 MVP5 표와 §17 MVP5 조건을 대체한다. 규칙 A45~A47 은 부록 I.12 에 있다.
 - 오늘 화면 개편 (2026-11-03): 업무 유형 분류·묶음 항목·표 브리핑·해요체·화면 재배치를 부록 J 에 둔다. 부록 J 가 §9 브리핑 형식과 §12 오늘 화면 순서를 대체한다. 규칙 A48~A53 은 부록 J.10 에 있다. A3 대상에 `assistant-worktype.ts` 를 더한다.
+- 메뉴 통합·아침 자동 동기화 (2026-11-05): Dashboard 를 없애고 '오늘' 을 유일한 홈으로 둔다. 첫 화면 규칙 A24 를 다시 쓴다(부록 C). 아침 자동 동기화 규칙 A54 와 화면 자동 갱신을 부록 K 에 둔다. 부록 K 가 §12.2 의 Sidebar·Dashboard 항목과 §19 결정 14·15 를 대체한다.
+- 체크인 제거·홈 개편 (2026-11-05): 작업 경계 체크인을 지운다. 오늘 화면을 요약 타일과 2열 배치로 바꾼다. 내용은 부록 L 이다. 부록 L 이 J.8 과 A53 을 대체한다.
 
 ---
 
@@ -81,7 +83,7 @@
 | 시작 브리핑 | start briefing | 하루 시작 때 오늘 계획을 설명하는 브리핑 |
 | 맥락 복구 | recovery | 마지막 근무일 이후 바뀐 것을 정리한 브리핑 |
 | 회의 전 브리핑 | meeting briefing | 캘린더 일정 시작 전에 보내는 브리핑 |
-| 체크인 | check-in | 작업 경계에서 진행 상황을 묻는 알림. 규칙 기반이다. LLM 을 쓰지 않는다 |
+| 체크인 | check-in | 작업 경계에서 진행 상황을 묻는 알림. 규칙 기반이다. LLM 을 쓰지 않는다. 제거됨 (2026-11-05, 부록 L) |
 | 작업 경계 | work boundary | 계획 항목의 슬롯이 끝나는 시각 |
 | 퇴근 메모 | wrap-up note | 사용자가 퇴근 때 적는 1~3줄 메모. `daily_plans.wrapup_note` 에 저장한다 |
 | 비서 이벤트 | assistant event | 비서가 발송하거나 기록한 이벤트 1건. `assistant_events` 1행이다 |
@@ -140,6 +142,8 @@
 4. 오늘 화면은 맥락 복구 카드를 맨 위에 보여 준다. 오늘 계획은 그 아래에 있다.
 
 ### 2.7 낮 시간 체크인 (MVP4)
+제거됨 (2026-11-05, 부록 L). 아래 시나리오는 기록으로만 남긴다.
+
 1. 근무 중이고, 1순위 항목의 슬롯이 10:30 에 끝난다.
 2. 비서가 회의 중·일일 상한·최소 간격을 확인한다.
 3. 비서가 알림을 보낸다. 제목은 `체크인: <항목 이름>` 이다.
@@ -220,7 +224,7 @@ CREATE TABLE IF NOT EXISTS plan_items (
 CREATE TABLE IF NOT EXISTS assistant_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_key TEXT NOT NULL UNIQUE,              -- '<kind>:<plan_date>:<ref_id>'
-  kind TEXT NOT NULL,                          -- start_nudge | plan_update | checkin | meeting_briefing
+  kind TEXT NOT NULL,                          -- start_nudge | plan_update | checkin | meeting_briefing | morning_sync
   plan_date TEXT NOT NULL,
   scheduled_at TEXT NOT NULL,                  -- 로컬 'YYYY-MM-DD HH:mm:ss'
   fired_at TEXT,
@@ -235,6 +239,8 @@ CREATE INDEX IF NOT EXISTS idx_assistant_events_date ON assistant_events(plan_da
 ```
 
 - `plan_update` 이벤트는 알림을 보내지 않아도 기록한다. 이때 status 는 `logged` 다. 오늘 화면은 이 기록으로 변경 내역을 보여 준다.
+- `morning_sync` 행은 아침 자동 동기화의 하루 상태다. event_key 는 `morning_sync:<plan_date>` 다. 알림을 보내지 않는다. 부분별 상태는 payload JSON 에 둔다. 규칙은 부록 K 의 A54 다. `kind` 에 CHECK 제약이 없으므로 마이그레이션은 없다.
+- `assistant_events` 를 읽는 코드는 `kind` 로 거른다. 그래서 `morning_sync` 행이 체크인·회의 브리핑·변경 내역 화면에 섞이지 않는다.
 
 ### 3.2 설정
 
@@ -255,9 +261,12 @@ CREATE INDEX IF NOT EXISTS idx_assistant_events_date ON assistant_events(plan_da
 | assistant_refresh_calendar_min | `5` | 캘린더 자동 확인 주기 분 | 2 |
 | assistant_refresh_jira_min | `15` | Jira 자동 확인 주기 분 | 2 |
 | assistant_refresh_notify | `1` | 최신화 알림 사용 | 2 |
-| assistant_checkin_min_gap | `45` | 체크인 최소 간격 분 | 4 |
-| assistant_checkin_daily_cap | `4` | 하루 체크인 상한 | 4 |
+| assistant_checkin_min_gap | `45` | 체크인 최소 간격 분. 제거됨 (2026-11-05, 부록 L). 남은 행은 읽지 않는다 | 4 |
+| assistant_checkin_daily_cap | `4` | 하루 체크인 상한. 제거됨 (2026-11-05, 부록 L). 남은 행은 읽지 않는다 | 4 |
 | assistant_meeting_lead_min | `15` | 회의 전 브리핑 선행 분 | 5 |
+| assistant_morning_sync_enabled | `1` | 아침 자동 동기화 사용. 릴리스 전체 동기화와 싱크업 안전 자동 적용을 함께 켠다 | K |
+| assistant_morning_sync_time | `08:00` | 아침 자동 동기화 시각 `HH:mm` | K |
+| assistant_complete_origin_on_done | `0` | 계획 항목을 `done` 으로 바꿀 때 원본 todo·작업도 완료할지. 렌더러가 기존 API 로 처리한다 | K |
 
 `assistant-settings.ts` 의 `parseAssistantSettings(rows)` 는 순수 함수다. 이 함수가 기본값 병합과 형식 검증을 한다. 잘못된 값은 기본값으로 바뀐다.
 
@@ -447,17 +456,18 @@ export function shouldSendStartNudge(input: NudgeInput): boolean
 |-----|---------------|
 | 1 | 이벤트 기반만. 시작 알림 판정, 자동 닫기, 앱 내부 변경의 최신화 예약 |
 | 2 | 60초 틱 추가. 캘린더·Jira 주기 확인, 잠자기 복귀 시 즉시 확인, 최신화 알림 |
-| 4 | 체크인 판정 추가. 순수 함수 `assistant-schedule.ts` 의 `computeDueEvents` 를 쓴다 |
+| 4 | 체크인 판정 추가. 순수 함수 `assistant-schedule.ts` 의 `computeDueEvents` 를 쓴다. 제거됨 (2026-11-05, 부록 L) |
 | 5 | 회의 전 브리핑 판정 추가 |
+| K | `runTick` 끝에서 주입받은 `SchedulerDeps.onTick(wake, now)` 를 await 없이 부른다. `index.ts` 가 `runMorningSyncIfDue` 를 주입한다. 스케줄러는 싱크업·릴리스·아침 동기화 모듈을 import 하지 않는다 (A54) |
 
 ### 7.3 시각 기반 이벤트 (MVP4·5)
 
 | kind | 예정 시각 | 보충 창 | 창 밖 처리 | 조건 |
 |------|-----------|---------|------------|------|
-| checkin | 각 계획 항목의 `slot_end` | 20분 | `skipped` | 근무 중 |
+| checkin | 제거됨 (2026-11-05, 부록 L) | – | – | – |
 | meeting_briefing | 일정 시작 − `assistant_meeting_lead_min` | 일정 시작까지 | `skipped` | 근무 중 여부와 무관 |
 
-체크인 추가 조건 (A7):
+체크인 추가 조건 (A7). 제거됨 (2026-11-05, 부록 L):
 - 근무 중이다.
 - 지금 진행 중인 캘린더 일정이 없다.
 - 오늘 체크인 발송 수가 `assistant_checkin_daily_cap` 미만이다.
@@ -692,17 +702,17 @@ JQL:
 |------|-------|------|----------|------|-----|
 | start_nudge | `오늘 시작할까요?` | `후보 N건 · 오늘 일정 M건` | 아니오 | 오늘 화면 | 1 |
 | plan_update | `계획 변경` 또는 `새로 들어온 일` | §8.5 | 아니오 | 오늘 화면의 해당 영역 | 2 |
-| checkin | `체크인: <항목>` | `완료했으면 "완료", 아니면 한 줄로 알려 주세요.` | 예 | 체크인 패널 | 4 |
+| checkin | 제거됨 (2026-11-05, 부록 L) | – | – | – | 4 |
 | meeting_briefing | `<회의 제목> 15분 전` | `<관련 프로젝트> · 미완료 액션 N건` | 아니오 | 회의 카드 | 5 |
 
 - 알림은 `actions` 를 쓰지 않는다. 이유: `hasReply` 와 함께 쓰면 macOS 가 첫 action 외에는 무시한다.
-- 체크인 답장 해석: `완료`·`done` 은 `done` 이다. `미룸`·`나중에` 는 `deferred` 다. 나머지는 `in_progress` 와 `status_note` 다.
+- 체크인 답장 해석. 제거됨 (2026-11-05, 부록 L). `완료`·`done` 은 `done` 이다. `미룸`·`나중에` 는 `deferred` 다. 나머지는 `in_progress` 와 `status_note` 다.
 - 클릭 처리: 스케줄러가 `mainWindow.show()` 후 `webContents.send('assistant:navigate', { view: 'today', focus })` 를 보낸다.
 - 창이 없거나 창이 로딩 중이면, 스케줄러가 navigate 를 '보관 신호'로 저장한다. 창이 없으면, 스케줄러가 `createWindow()` 를 호출한다. 렌더러는 마운트할 때 `assistant:takePendingNavigate` 로 보관 신호를 가져간다. 보관 신호는 60초 뒤 만료된다. 이유: `did-finish-load` 시점에 렌더러의 구독이 아직 없을 수 있다 (부록 D.4).
 
 ### 12.2 오늘 화면 (MVP1)
 - `projectStore.view` 유니온에 `'today'` 를 추가한다.
-- Sidebar 에 `오늘` 항목을 Dashboard 바로 아래에 둔다.
+- Sidebar 에 `오늘` 항목을 Dashboard 바로 아래에 둔다. 메뉴 통합 뒤에는 부록 K.1 이 이 항목을 대체한다. '오늘' 이 맨 위 홈이고 Dashboard 는 없다.
 - `App.tsx` 에 `case 'today'` 를 추가한다.
 
 상태별 상단 영역:
@@ -726,11 +736,12 @@ JQL:
 - 순위, 슬롯 시간, 제목, 출처 배지, 마감, 상태 버튼 4개, 링크 열기를 보여 준다.
 - 사용자가 슬롯 시간을 직접 바꾸면, 항목이 고정 항목이 된다. 행은 고정 표시를 보여 준다.
 - 사용자가 항목을 `done` 으로 바꾸면, 화면이 `원본도 완료 처리` 체크박스를 보여 준다. 사용자가 체크하면, 렌더러가 기존 `window.api.todo.complete` 또는 `window.api.task.update` 를 부른다. 비서 main 코드는 todos·tasks 를 쓰지 않는다.
+- 설정 `assistant_complete_origin_on_done` 이 `1` 이면, 체크박스 없이 렌더러가 같은 API 로 원본을 완료한다. 원본 완료가 성공하면 렌더러가 `refreshEntity` 로 해당 스토어를 다시 읽는다 (부록 K.4).
 
 기타:
 - 설정 모달 `AssistantSettingsModal.tsx` 는 §3.2 의 키 중 현재 MVP 까지의 키를 다룬다.
 - `AiChatView.tsx` 의 `handleInternalLink` views 배열에 `'today'`·`'notes'` 를 추가한다.
-- Dashboard: FocusCard 옆에 `오늘 계획 보기 →` 링크만 둔다. 기존 로직은 유지한다.
+- Dashboard: FocusCard 옆에 `오늘 계획 보기 →` 링크만 둔다. 기존 로직은 유지한다. 메뉴 통합 뒤에는 Dashboard 가 없다. 부록 K.2 가 대체한다.
 
 ### 12.3 트레이 위젯 (MVP2)
 - `getTrayData()` 에 `assistant` 필드를 추가한다. 필드는 근무 상태, 상위 계획 항목 3건, 제안 항목 수다.
@@ -785,8 +796,7 @@ export interface AssistantAPI {
   takePendingNavigate?: () => Promise<Result<{ pending: { view: 'today'; focus?: { kind: string; id: string } } | null }>>  // 부록 D.4
   // MVP3
   generateRecovery: () => Promise<Result<{ today: TodayPayload }>>
-  // MVP4
-  respondCheckin: (eventId: number, status: PlanItemStatus, note?: string) => Promise<Result<{ today: TodayPayload }>>
+  // MVP4 — respondCheckin 은 제거됨 (2026-11-05, 부록 L)
   // MVP5
   getMeetingBriefing: (calendarEventId: string) => Promise<Result<{ event: AssistantEvent | null }>>
 }
@@ -826,8 +836,8 @@ push 채널은 `assistant:navigate` 와 `assistant:changed` 다. `preload/index.
 | A3 | 순수 모듈은 electron·better-sqlite3·`../db`·`./jira`·`./google-calendar` 를 import 하지 않는다. 대상은 candidates·score·slots·settings·day·refresh·recovery·schedule·meeting 이다 | 픽스처로 규칙을 검증한다 | MVP 별 조건 |
 | A4 | 같은 `jiraKey` 의 후보는 1개다. `todo_id` 가 있는 액션아이템은 후보가 아니다 | 같은 일이 계획에 두 번 들어가지 않는다 | 테스트 `A4` |
 | A5 | 같은 `event_key` 는 1회만 기록·발송한다. INSERT 가 `show()` 보다 먼저다 | 재시작·보충에서 중복 알림을 막는다 | UNIQUE 제약, 테스트 `A5` |
-| A6 | 체크인·회의 전 브리핑의 보충은 창 안에서 1회다. 창 밖은 `skipped` 행을 남긴다 | 지난 알림이 늦게 오지 않는다 | 테스트 `A6` |
-| A7 | 체크인은 근무 중에만 보낸다. 회의 중에는 보내지 않는다. 하루 상한과 최소 간격을 지킨다 | 알림 피로를 막는다 | 테스트 `A7` |
+| A6 | 회의 전 브리핑의 보충은 창 안에서 1회다. 창 밖은 `skipped` 행을 남긴다. 체크인 부분은 제거했다 (부록 L) | 지난 알림이 늦게 오지 않는다 | 테스트 `A6` |
+| A7 | 제거됨 (2026-11-05, 부록 L). 체크인은 근무 중에만 보낸다. 회의 중에는 보내지 않는다. 하루 상한과 최소 간격을 지킨다 | 알림 피로를 막는다 | 테스트 `A7` |
 | A8 | 계획 생성·최신화·알림은 LLM 결과에 의존하지 않는다. 규칙 브리핑을 항상 먼저 저장한다 | AI 실패일에도 비서가 동작한다 | 테스트 `A8` |
 | A9 | LLM 입력의 외부 문자열은 `[데이터]` 블록에 넣는다. 출력은 zod 로 검증하고 길이를 제한한다. 도구는 0개다 | 프롬프트 인젝션과 과잉 출력을 막는다 | 테스트 `A9`, MVP1 조건 14 |
 | A10 | 헤드리스 query 는 `sanitizedEnv()` 와 `settingSources: []` 를 쓴다 | 과금 경로를 차단한다. AI_GUARDRAILS §9 와 같다 | MVP1 조건 14 |
@@ -879,6 +889,8 @@ push 채널은 `assistant:navigate` 와 `assistant:changed` 다. `preload/index.
 | 4 | `ai-assistant-tools.ts`, `ai-assistant-tools.test.ts`, `ai-tools.ts`, `ai-agent.ts`, `docs/AI_GUARDRAILS.md` |
 
 ### MVP4 체크인 — 팀원 3명
+제거됨 (2026-11-05, 부록 L). 아래 표는 기록으로만 남긴다.
+
 
 착수 전에 리더가 §17 위험 1 을 확인한다.
 
@@ -937,7 +949,7 @@ push 채널은 `assistant:navigate` 와 `assistant:changed` 다. `preload/index.
 12. A2: `grep -nE "INSERT INTO (projects|tasks|todos|meetings)|UPDATE (projects|tasks|todos|meetings)|DELETE FROM (projects|tasks|todos|meetings)" src/main/services/assistant-*.ts src/main/ipc/assistant.ipc.ts` 결과 0건.
 13. A3: `grep -lE "from '(electron|better-sqlite3|\.\./db|\./jira|\./google-calendar)" src/main/services/assistant-{candidates,score,slots,settings,day,refresh}.ts` 결과 0건.
 14. A9·A10: `grep -c "allowedTools: \[\]" src/main/services/ai-headless.ts` ≥ 1. `grep -c "settingSources: \[\]" src/main/services/ai-headless.ts` ≥ 1.
-15. `grep -c "'today'"` 결과가 `stores/projectStore.ts`, `App.tsx`, `components/layout/Sidebar.tsx` 각각 ≥ 1.
+15. `grep -c "'today'"` 결과가 `stores/projectStore.ts`, `App.tsx`, `components/layout/navConfig.ts` 각각 ≥ 1.
 16. `grep -c "assistant:" src/preload/index.ts` ≥ 15.
 17. `grep -c "ASSISTANT_SCHEMA" src/main/db/database.ts` ≥ 1.
 
@@ -958,6 +970,8 @@ push 채널은 `assistant:navigate` 와 `assistant:changed` 다. `preload/index.
 6. A3 대상에 `assistant-recovery.ts` 를 추가해 MVP1 조건 13 를 다시 실행한다. 결과 0건.
 
 ### MVP4
+제거됨 (2026-11-05, 부록 L). 아래 조건은 더 판정하지 않는다.
+
 1. C1·C2·C3.
 2. `grep -c "A7" src/main/services/assistant-schedule.test.ts` ≥ 3.
 3. `grep -c "A5\|A6" src/main/services/assistant-schedule.test.ts` ≥ 2.
@@ -1005,8 +1019,8 @@ push 채널은 `assistant:navigate` 와 `assistant:changed` 다. `preload/index.
 | 11 | 체크인 트리거 | 슬롯 종료 시각 | 고정 간격보다 작업 경계에 맞다 |
 | 12 | 체크인 상한·최소 간격 | 4회, 45분 | 알림 피로를 막는다 |
 | 13 | 로그인 시 실행 | 끔 | 사용자가 켠다 |
-| 14 | 항목 `done` 시 원본 완료 처리 | 체크박스 기본 꺼짐 | A2 원칙을 지킨다 |
-| 15 | Dashboard 와 오늘 화면 | 둘 다 유지, 링크만 추가 | MVP 범위를 줄인다 |
+| 14 | 항목 `done` 시 원본 완료 처리 | 체크박스 기본 꺼짐. 설정 `assistant_complete_origin_on_done` 기본 `0`. 켜면 렌더러가 기존 API 로 원본을 완료한다 | A2 원칙을 지킨다. 비서 main 코드는 원본을 쓰지 않는다 (2026-11-05 개정, 부록 K.4) |
+| 15 | Dashboard 와 오늘 화면 | 합친다. '오늘' 이 유일한 홈이다. Dashboard 를 지운다 | 두 화면이 일정·할 일·집중 대상·진행 중 프로젝트를 겹쳐 보여 준다. 대시보드는 현황 모니터링 화면이고, 할 일을 처리하는 화면은 오늘이다 (2026-11-05 개정, 부록 K.1·K.2) |
 | 16 | git 연동 | 하지 않음 | §10 의 이유 3가지 |
 | 17 | Jira changelog | 하지 않음 | `updated`·`status` 로 충분하다 |
 | 18 | `meeting-summary.ts` 의 `ai-headless.ts` 전환 | 하지 않음 | 범위 밖이다. 후속 리팩터링으로 한다 |
@@ -1489,50 +1503,62 @@ IPC·preload: `assistant:setItemSlot` → `assistant:focusItem` (인자 `itemId`
 
 ---
 
-## 부록 C. 첫 화면 자동 선택 (3판 추가)
+## 부록 C. 첫 화면 자동 선택 (3판 추가, 2026-11-05 개정)
 
 ### C.1 규칙 (A24)
 앱이 처음 열릴 때와 창이 새로 만들어질 때, 렌더러가 첫 화면을 한 번 정한다. 창을 다시 포커스할 때는 정하지 않는다. 이유: 사용자가 보던 화면을 비서가 바꾸면 안 된다.
 
-`resolveStartView(input)` 은 순수 함수다. 입력은 설정 `startView`, 설정 `enabled`, 오늘 계획 상태, 논리 날짜의 요일이다.
+2026-11-05 개정: Dashboard 가 없어졌다. '오늘' 이 유일한 홈이다. 첫 화면 설정은 `today` · `projects` · `calendar` 3값이다. 계획 상태와 요일은 첫 화면에 영향을 주지 않는다. 이유: 오늘 화면은 계획이 없어도 일정과 개요를 보여 준다 (부록 K.2).
+
+`resolveStartView(startView)` 는 순수 함수다. 입력은 설정 `startView` 값 1개다.
 
 | 조건 | 첫 화면 |
 |------|---------|
-| `startView = 'dashboard'` | dashboard |
 | `startView = 'today'` | today |
-| `startView = 'auto'` 이고 `enabled = false` | dashboard |
-| `auto`, 계획 `active` | today |
-| `auto`, 계획 `closed` | dashboard |
-| `auto`, 계획 없음, 월~금 | today |
-| `auto`, 계획 없음, 토·일 | dashboard |
+| `startView = 'projects'` | projects |
+| `startView = 'calendar'` | calendar |
+| 이전 값 `startView = 'auto'` | today |
+| 이전 값 `startView = 'dashboard'` | today |
+| 그 밖의 값, 빈 값, 값 없음 | today |
 
-- 요일은 `TodayPayload.logicalDate` 로 계산한다. 이유: 날짜 경계 04:00 전의 새벽은 전날이다.
-- `getToday` 가 실패하면, 첫 화면은 dashboard 다.
+이전 규칙:
+- main 의 `parseAssistantSettings` 가 저장값을 읽을 때 정규화한다. `auto`·`dashboard` 는 허용값이 아니므로 기본값 `today` 가 된다. 이 경로는 기존 '허용값 아님이면 기본값' 경로다.
+- main 은 `app_settings` 의 `assistant_start_view` 행을 다시 쓰지 않는다. 이유: 읽을 때 정규화하면 이전 백업을 복원해도 같은 결과가 나온다.
+- 사용자가 비서 설정 모달에서 저장하면, 그때 새 값이 저장된다.
+- 렌더러의 `resolveStartView` 도 모르는 값을 `today` 로 바꾼다. 이유: main 과 렌더러가 같은 결론을 낸다.
+
+판정 흐름:
+- `projectStore.view` 의 초기값은 `today` 다. 그래서 `getToday` 가 실패하면 첫 화면은 today 다.
+- 판정 결과가 현재 화면과 같으면 아무것도 하지 않는다.
 - 판정이 끝나기 전에 사용자가 다른 화면으로 이동했으면, 판정 결과를 적용하지 않는다.
 - 판정이 끝나기 전에 `assistant:navigate` 가 오면, navigate 가 우선한다.
+- 트레이·알림·AI 링크·`linkwork://` 가 넘기는 화면 이름은 `navConfig.ts` 의 `normalizeView` 를 거친다. `normalizeView('dashboard')` 는 `'today'` 다. 모르는 값이면 null 이고, 렌더러는 이동하지 않는다.
 
 ### C.2 설정
 | 키 | 기본값 | 의미 |
 |----|--------|------|
-| assistant_start_view | `auto` | `auto` · `dashboard` · `today` |
+| assistant_start_view | `today` | `today` · `projects` · `calendar` |
 
-`AssistantSettings` 에 `startView: 'auto' | 'dashboard' | 'today'` 를 추가한다. 비서 설정 모달에 '첫 화면' 선택을 둔다.
+`AssistantSettings` 의 `startView` 타입은 `'today' | 'projects' | 'calendar'` 다. 비서 설정 모달의 '첫 화면' 선택은 이 3값을 보여 준다. 레이블은 `오늘`·`프로젝트`·`캘린더` 다.
 
 ### C.3 파일
-- main: `assistant-types.ts` (startView 필드), `assistant-settings.ts`·`assistant-settings.test.ts` (키·기본값·검증).
-- 렌더러: `types/index.ts` (startView 필드), `utils/startView.ts`·`utils/startView.test.ts` (resolveStartView), `App.tsx` (마운트 시 1회 판정), `components/today/AssistantSettingsModal.tsx` ('첫 화면' 선택).
+- main: `assistant-types.ts` (startView 타입), `assistant-settings.ts`·`assistant-settings.test.ts` (허용값·기본값·이전 값 정규화).
+- 렌더러: `types/index.ts` (startView 타입), `utils/startView.ts`·`utils/startView.test.ts` (resolveStartView), `components/layout/navConfig.ts` (normalizeView), `App.tsx` (마운트 시 1회 판정), `components/today/AssistantSettingsModal.tsx` ('첫 화면' 선택).
 
 ### C.4 완료 조건
 최대 반복 5회. 같은 실패 2회 연속이면 중단하고 보고한다.
 1. C1 `npx vitest run` 종료 코드 0, 실패 0건.
 2. C2 `npm run typecheck` 에러 0건.
 3. C3 `npm run build` 종료 코드 0.
-4. `grep -c "A24" src/renderer/src/utils/startView.test.ts` ≥ 7. C.1 표의 7행을 각각 검증한다.
-5. `grep -c "assistant_start_view" src/main/services/assistant-settings.ts` ≥ 1.
-6. `grep -c "resolveStartView" src/renderer/src/App.tsx` ≥ 1.
-7. `grep -c "startView" src/renderer/src/components/today/AssistantSettingsModal.tsx` ≥ 1.
-8. `grep -lE "from '(electron|better-sqlite3|\.\./db|\./jira|\./google-calendar)" src/main/services/assistant-settings.ts` 결과 0건 (A3).
-9. `grep -lE "window\.|from 'react'|zustand" src/renderer/src/utils/startView.ts` 결과 0건. 이유: 순수 함수로 테스트한다.
+4. `grep -c "A24" src/renderer/src/utils/startView.test.ts` ≥ 6. C.1 표의 6행을 각각 검증한다.
+5. `grep -c "A24" src/main/services/assistant-settings.test.ts` ≥ 1. 저장값 `auto`·`dashboard` 가 `today` 로 읽히는지 검증한다.
+6. `grep -c "assistant_start_view" src/main/services/assistant-settings.ts` ≥ 1.
+7. `grep -c "resolveStartView" src/renderer/src/App.tsx` ≥ 1.
+8. `grep -c "startView" src/renderer/src/components/today/AssistantSettingsModal.tsx` ≥ 1.
+9. `grep -cE "values: \[[^]]*'(auto|dashboard)'" src/main/services/assistant-settings.ts` 결과 0. 허용값 목록에 이전 값이 없다.
+10. `grep -lE "from '(electron|better-sqlite3|\.\./db|\./jira|\./google-calendar)" src/main/services/assistant-settings.ts` 결과 0건 (A3).
+11. `grep -lE "window\.|from 'react'|zustand" src/renderer/src/utils/startView.ts` 결과 0건. 이유: 순수 함수로 테스트한다.
+12. `grep -rn "assistant_start_view" src/main/db src/main/services/assistant-store.ts src/main/services/assistant-service.ts` 결과 0건. 이유: 이전 값을 DB 에 다시 쓰는 마이그레이션을 두지 않는다.
 
 ---
 
@@ -3316,6 +3342,8 @@ G.9 그대로다.
 
 ## 부록 H. MVP4 작업 경계 체크인
 
+제거됨 (2026-11-05, 부록 L). 이 부록은 기록으로만 남긴다. 코드·설정·IPC·화면에서 체크인을 지웠다. `assistant_events.kind` 의 `checkin` 값과 과거 행은 남는다.
+
 이 부록이 §16 MVP4 표와 §17 MVP4 조건을 대체한다. §2.7, §7.3 의 checkin 행, §12.1 의 checkin 행, 부록 B.6 마지막 줄을 아래 내용으로 구체화한다. 선행 기능은 명령 입력이다. 부록 G 가 그 계약이다. 부록 G 가 규칙 A34~A40 을 쓰므로 이 부록의 새 규칙은 A41 부터다. MVP4 는 부록 G 의 `interpretReplyRule` 과 `CommandInput` 을 재사용한다.
 
 ### H.1 범위
@@ -3623,10 +3651,10 @@ export default function CheckinPanel(props: {
 
 | ID | 규칙 | 이유 | 판정 |
 |----|------|------|------|
-| A41 | 체크인 창은 `[블록 끝 − 5분, 블록 끝)` 이다. 창 밖에는 보내지 않고 `skipped` 행도 남기지 않는다 | 블록이 끝나면 타임라인이 그 블록을 다시 보지 않는다 | 테스트 `A41` |
-| A42 | 체크인·회의 브리핑 판정은 틱의 자동 최신화 뒤에 실행한다. `dueInFlight` 로 동시에 1개만 실행한다 | 최신 타임라인을 쓰고 중복 판정을 막는다 | 테스트 `A42` |
-| A43 | 체크인 답장 해석은 `interpretReplyRule` 만 쓴다. 답장과 버튼은 같은 `respondCheckin` 을 거친다. 응답은 1회만 기록한다. 활성 항목만 상태를 바꾼다 | 답장에는 확인 단계가 없고, 사용자 결정을 되돌리지 않는다 | 테스트 `A43` |
-| A44 | 최근 15분 안에 항목 상태가 바뀌었으면 체크인을 보내지 않는다 | 사용자가 이미 계획을 다루고 있다 | 테스트 `A44` |
+| A41 | 제거됨 (2026-11-05, 부록 L). 체크인 창은 `[블록 끝 − 5분, 블록 끝)` 이다. 창 밖에는 보내지 않고 `skipped` 행도 남기지 않는다 | 블록이 끝나면 타임라인이 그 블록을 다시 보지 않는다 | 테스트 `A41` |
+| A42 | 체크인 부분은 제거됨 (2026-11-05, 부록 L). 회의 브리핑 판정에는 계속 적용한다. 체크인·회의 브리핑 판정은 틱의 자동 최신화 뒤에 실행한다. `dueInFlight` 로 동시에 1개만 실행한다 | 최신 타임라인을 쓰고 중복 판정을 막는다 | 테스트 `A42` |
+| A43 | 제거됨 (2026-11-05, 부록 L). `interpretReplyRule` 은 명령 입력이 계속 쓴다. 체크인 답장 해석은 `interpretReplyRule` 만 쓴다. 답장과 버튼은 같은 `respondCheckin` 을 거친다. 응답은 1회만 기록한다. 활성 항목만 상태를 바꾼다 | 답장에는 확인 단계가 없고, 사용자 결정을 되돌리지 않는다 | 테스트 `A43` |
+| A44 | 제거됨 (2026-11-05, 부록 L). 최근 15분 안에 항목 상태가 바뀌었으면 체크인을 보내지 않는다 | 사용자가 이미 계획을 다루고 있다 | 테스트 `A44` |
 
 ### H.11 팀 구성과 소유 파일
 
@@ -4456,6 +4484,8 @@ export const ASSISTANT_SPEECH_JSON_NOTE =
 
 ### J.8 오늘 화면 배치 (A53)
 
+부록 L 이 대체한다. 아래 순서는 기록으로만 남긴다.
+
 최종 순서 (근무 중):
 1. `DayHeader`: 페이지 제목 역할을 겸한다. 긴 날짜 `11월 3일 화요일`, 상태 배지, 시작 시각, 버튼 새로고침·퇴근. `TodayView` 상단의 `오늘` 제목 줄과 날짜 span 을 지운다. 날짜는 화면에 1번만 보인다.
 2. 오류 배너 (조건부).
@@ -4463,12 +4493,15 @@ export const ASSISTANT_SPEECH_JSON_NOTE =
 4. `BriefingCard`: 핵심. 본문이 J.6 형식이다.
 5. `MeetingBriefingCard`: 시작 전 회의 중 가장 가까운 1건만 펼친다. 나머지와 지난 회의는 접힌다.
 6. `RecoveryCard`: 본문·진행 중·오류가 있을 때만 여기 보인다. 없으면 '더 보기' 안에 1줄로 간다.
-7. 시간표 카드: 제목 `오늘 계획` → `시간표`. 집중 가능 시간 표시 유지. id `today-timeline` 유지.
+7. 시간표 카드: 제목 `오늘 계획` → `시간표`. 집중 가능 시간 표시 유지. id `today-timeline` 유지. 일정 불변식: 계획이 있으면 `Timeline` 을, 없으면 `HomeSchedule` 을 그린다. 화면에 일정 카드는 항상 1개다 (2026-11-05, 부록 K.2).
 8. `오늘 할 일`: `PlanItemRow` 에 유형 배지·묶음 이름·묶음 배지를 더한다.
 9. `InboxSection` (새로 들어온 일): 5건까지 보이고 `나머지 n건 보기` 버튼. 머리글에 출처별 수.
-10. `MoreSection` (`더 보기`, 기본 접힘): 명령 입력 카드(근무 중), 후보 더 보기(근무 중), 변경 내역, 연결 안내 문구 목록, 본문 없는 맥락 복구 1줄, 비서 설정 버튼.
+10. `HomeOverview` (2026-11-05 추가): 중요 메모, 진행 중 프로젝트, 우선순위 미지정 배지. Dashboard 에서 옮겨 왔다 (부록 K.2).
+11. `MoreSection` (`더 보기`, 기본 접힘): 명령 입력 카드(근무 중), 후보 더 보기(근무 중), 변경 내역, 연결 안내 문구 목록, 본문 없는 맥락 복구 1줄, 비서 설정 버튼. 변경 내역 맨 위에 아침 자동 동기화 1줄이 있다 (부록 K.3).
 
-계획 없음·닫힘 상태: 계획 없음은 1·2·5·10 만 보인다. 10 에는 변경 내역·연결 안내·비서 설정만 있다. 닫힘 상태에서는 7·8 도 읽기 전용으로 보인다. 현재와 같다.
+계획 없음·닫힘 상태: 계획 없음은 1·2·5·7·10·11 만 보인다. 이때 7 은 `HomeSchedule` 이다. 11 에는 변경 내역·연결 안내·비서 설정만 있다. 닫힘 상태에서는 7·8 도 읽기 전용으로 보인다. 현재와 같다.
+
+오늘 데이터가 없는 분기: `getToday` 가 실패했거나 비서가 꺼져 있어도, 화면은 `HomeSchedule` 과 `HomeOverview` 를 그린다. 이유: 오늘이 유일한 홈이라 비서가 꺼져도 일정과 개요가 사라지면 안 된다.
 
 컴포넌트별 변경:
 
@@ -4679,7 +4712,7 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 | A50 | 분류·묶음 정보는 `plan_items` 컬럼 4개에 저장한다. 마이그레이션은 여러 번 실행해도 같다. 최신화 보강은 4개 컬럼과 묶음 `rank` 만 바꾼다. 상태·제목·마감·점수를 바꾸지 않는다 | `local` 모드와 지난 계획에서도 분류가 보인다. A15 를 지킨다 | 테스트 `A50` |
 | A51 | 브리핑의 표·숫자·목록은 코드가 만든다. LLM 출력은 `greeting`·`focus_candidate_id`·`focus_reason`·`notes` 4개 키뿐이다. 회의·블록을 하나씩 나열하지 않는다 | 타임라인 카드와 중복을 없앤다. 환각 범위를 문장으로 제한한다 | 테스트 `A51` |
 | A52 | 비서 문장은 해요체다. `ASSISTANT_SPEECH_RULES` 가 유일 정의처다. 브리핑·복구·회의 LLM 프롬프트와 규칙 브리핑·규칙 복구 본문이 이를 따른다. 저장된 과거 본문은 바꾸지 않는다 | 말투가 1곳에서 바뀐다. 기록이 사후에 바뀌지 않는다 | 테스트 `A52`, 조건 13·14 |
-| A53 | 오늘 화면 순서는 헤더 → 체크인 → 브리핑 → 회의 브리핑 → 맥락 복구 → 시간표 → 오늘 할 일 → 새로 들어온 일 → 더 보기다. 날짜는 헤더 1곳이다. 명령 입력·후보 추가·변경 내역·연결 안내·비서 설정은 더 보기 안이다 | 자동 위주 사용자가 읽을 것만 위에 본다 | 테스트 `A53` |
+| A53 | 부록 L 이 대체한다. 오늘 화면 순서는 헤더 → 체크인 → 브리핑 → 회의 브리핑 → 맥락 복구 → 시간표 → 오늘 할 일 → 새로 들어온 일 → 홈 개요 → 더 보기다. 홈 개요는 2026-11-05 에 더했다. 날짜는 헤더 1곳이다. 명령 입력·후보 추가·변경 내역·연결 안내·비서 설정은 더 보기 안이다 | 자동 위주 사용자가 읽을 것만 위에 본다 | 테스트 `A53` |
 
 ### J.11 팀 구성과 소유 파일
 
@@ -4782,3 +4815,273 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 - 본문 없는 맥락 복구는 `RecoveryCard` 를 더 보기 안에 그대로 그린다.
 
 남은 위험: 묶음 에픽의 하위가 모두 빠지면 에픽은 보통 항목으로 돌아간다. 이때 rank 는 null 로 남는다. 다음 `rerank` 전까지 목록 맨 뒤에 있다.
+
+---
+
+## 부록 K. 메뉴 통합·화면 자동 갱신·아침 자동 동기화 (2026-11-05)
+
+### K.1 메뉴 통합
+- Dashboard 를 지운다. `today` 가 유일한 홈이다. `projectStore.view` 의 초기값은 `today` 다.
+- 렌더러 `components/layout/navConfig.ts` 가 화면 ID·레이블·사이드바 그룹의 유일 정의처다. 이 파일은 순수 모듈이다.
+  - `VIEW_IDS`·`ViewId`: 화면 ID 12개다. `dashboard` 는 없다.
+  - `VIEW_LABELS`: 화면 제목이다. 사이드바와 Header 가 같은 레이블을 쓴다. Header 의 빈 제목 3개(today·notes·releases)가 이 표로 채워진다.
+  - `NAV_GROUPS`: 사이드바 그룹이다. 그룹 안에 그룹을 두지 않는다.
+  - `normalizeView(value)`: `dashboard` 를 `today` 로 바꾼다. 모르는 값이면 null 이다. 트레이·알림·AI 링크·`linkwork://` 의 화면 이름이 이 함수를 거친다.
+- 레이블은 한국어로 통일한다. `Reports` 는 `주간 보고` 다.
+- `MenuIcon` 에 해 모양 `today` 아이콘을 더한다. `dashboard` 아이콘을 지운다. 이유: '오늘' 과 '캘린더' 가 같은 아이콘을 쓰면 구분이 약하다.
+
+| 그룹 제목 | 메뉴 (화면 ID) |
+|-----------|----------------|
+| 제목 없음 | 오늘 (`today`), AI 대화 (`ai`) |
+| 업무 | 프로젝트 (`projects`), 할 일 (`todos`), 캘린더 (`calendar`), 릴리스 (`releases`), 주간 보고 (`reports`) |
+| 회의 | 녹음 (`recordings`), 회의록 (`notes`) |
+| 자료 | 문서 (`documents`), 메모 (`memos`), 변수 (`variables`) |
+
+### K.2 홈(오늘) 화면
+- 일정 불변식: 계획이 있으면 `Timeline` 을 그린다. 계획이 없으면 `HomeSchedule` 을 그린다. 일정 카드는 화면에 항상 1개다.
+- `HomeSchedule` 은 캘린더의 오늘 일정을 읽기 전용으로 보여 준다. 기준 날짜는 논리 날짜다. 논리 날짜가 없으면 로컬 날짜다.
+- `HomeOverview` 는 Dashboard 에서 옮긴 3가지를 담는다. 대상은 중요 메모, 진행 중 프로젝트, 우선순위 미지정 배지다.
+- Dashboard 의 FocusCard 와 TODO 패널은 없앤다. 집중 대상은 오늘 계획의 `focusItemId` 1개다. `selectFocus` 는 우선순위 미지정 배지에만 쓴다.
+- 오늘 데이터가 없는 분기에도 `HomeSchedule` 과 `HomeOverview` 를 그린다. 대상은 `getToday` 실패와 비서 꺼짐이다.
+- 배치 순서는 J.8 과 A53 이다.
+
+### K.3 아침 자동 동기화 (A54)
+매일 아침 1회, main 이 릴리스 노트 전체 동기화와 Jira 프로젝트 싱크업 안전 자동 적용을 실행한다. 수동 버튼은 그대로 있다. 릴리스 쪽 규칙은 RELEASE_NOTES.md §4.6, 싱크업 쪽 규칙은 PROJECT_SYNC.md R11 이다.
+
+구조:
+- `assistant-scheduler.ts` 는 `runTick` 끝에서 `SchedulerDeps.onTick(wake, now)` 를 await 없이 부른다. 앞 단계가 실패해도 부른다. 동기 throw 와 reject 를 모두 삼킨다.
+- `index.ts` 가 `onTick: runMorningSyncIfDue` 를 주입한다. 스케줄러는 `project-sync`·`release-note-sync`·`morning-sync` 를 import 하지 않는다.
+- 판정은 `assistant-schedule.ts` 의 순수 함수 `decideMorningSync(input)` 다. 반환값은 이번 틱에 실행할 부분 목록이다. 부분은 `release`·`project` 이고, 실행 순서도 이 순서다.
+- 실행기는 `src/main/services/morning-sync.ts` 의 `runMorningSyncIfDue` 다. 이름에 `assistant-` 를 붙이지 않는다. 이유: 이 모듈은 싱크업을 거쳐 projects 를 쓴다. A2 grep 대상에 들어가면 안 된다.
+- 상태는 `assistant_events` 행 1개다. event_key 는 `morning_sync:<논리 날짜>`, kind 는 `morning_sync`, status 는 `logged` 다. 부분 상태는 payload JSON 이다. 타입은 PROJECT_SYNC.md §10 의 `MorningSyncPayload` 다.
+- 이 행은 같은 키를 다시 쓰는 예외다. §7.4 의 '같은 키는 다시 시도하지 않는다' 는 알림 행에만 적용한다. 아침 동기화는 같은 행의 payload 를 UPDATE 해서 재시도를 기록한다.
+
+`decideMorningSync` 판정 규칙. 위에서부터 처음 맞는 줄을 쓴다.
+
+| 조건 | 결과 |
+|------|------|
+| `morningSyncEnabled = false` | 실행하지 않는다 |
+| 실행기가 진행 중이다 (`inFlight`) | 실행하지 않는다 |
+| 달력 날짜가 논리 날짜와 다르다 (날짜 경계 전 새벽) | 실행하지 않는다 |
+| 지금 시각이 `morningSyncTime` 보다 이르다 | 실행하지 않는다 |
+| 부분 기록이 없다 | 그 부분을 실행한다 |
+| 부분이 `ok`·`skipped` 다 | 다시 실행하지 않는다 |
+| 부분이 `failed` 이고 시도가 3회 미만이며 마지막 시도 뒤 30분이 지났다 | 다시 실행한다 |
+| 부분이 `running` 이고 시작 뒤 15분이 지났다 | `failed` 로 보고 위 줄을 적용한다 |
+| 부분이 `deferred` 이고 마지막 시도 뒤 30분이 지났다 | 다시 실행한다 |
+
+- 상수는 `MORNING_SYNC_RETRY_MIN = 30`, `MORNING_SYNC_MAX_ATTEMPTS = 3`, `MORNING_SYNC_STALE_MIN = 15` 다.
+- 비서 전체 설정 `assistant_enabled` 는 아침 동기화에 영향을 주지 않는다. 이유: 릴리스 동기화와 싱크업은 비서 기능이 아니다. 끄는 설정은 `assistant_morning_sync_enabled` 1개다.
+- 앱이 아침 시각에 꺼져 있거나 잠들어 있으면, 실행기는 그날 처음 오는 틱이나 wake 에서 따라잡는다.
+
+실행기 순서:
+1. 실행기가 진행 중이면 돌아간다.
+2. 설정·논리 날짜·오늘 행을 읽고 `decideMorningSync` 로 판정한다. 결과가 비면 돌아간다.
+3. `net.isOnline()` 이 false 면 돌아간다. 이때 시도로 세지 않는다.
+4. 트랜잭션 안에서 행을 선점한다. 행이 없으면 INSERT 한다. 충돌하면 실행하지 않는다.
+5. 고른 부분을 `running` 으로 바꾸고 `attempts` 를 1 늘린다.
+6. 부분마다 try/catch 로 실행한다. Jira 미연결이거나 기본 프로젝트 키가 없으면 `skipped` 다.
+7. 부분이 끝날 때마다 payload 를 기록한다.
+8. 부분이 끝날 때마다 `ai:dataChanged { entity: 'sync_status' }` 를 보낸다.
+
+부분 결과:
+- 토큰 만료와 네트워크 오류는 `failed` 다. `error` 에 사용자용 문구를 둔다.
+- R11 이 `deferred` 를 돌려주면 부분은 `deferred` 다. 시도 수는 실행 전 값으로 되돌린다.
+- 릴리스 부분은 받은 릴리스가 0건이고 실패만 있으면 `failed` 다.
+- `projectSync:morningStatus` 는 실행 중이 아닌 `running` 을 `failed` 로 보여 준다. 이유: 앱이 동기화 중에 꺼졌다.
+
+결과 표시:
+- 사이드바 프로젝트·릴리스 메뉴에 새 항목 수 배지를 단다. 사용자가 그 메뉴를 열면 배지가 사라진다.
+- `ProjectList`·`ReleasesView` 상단 상태 줄이 마지막 동기화 시각, 실패 표시, 새 항목 수를 보여 준다.
+- 오늘 화면 변경 내역(`ChangeLog`) 맨 위에 아침 동기화 1줄이 있다.
+- 활동 로그에 `아침 자동 싱크업 (KEY): …` 행이 남는다.
+
+### K.4 화면 자동 갱신
+- 렌더러 `stores/dataSync.ts` 의 `refreshEntity(entity)` 가 엔티티별로 스토어를 다시 읽는다. 본문은 예전 `AiChatView` 처리기를 옮긴 것이다. `fetchTags`·`fetchCategories` 도 포함한다.
+- `installDataSync()` 는 App 메인 창 분기에서 1번 설치한다. 구독 대상은 `ai:dataChanged`, `assistant:changed`, 창 focus 다.
+- `AiChatView`·`TodayView` 는 데이터 이벤트를 따로 구독하지 않는다. 이유: 같은 이벤트로 load 가 2번 돈다.
+- `entity = 'sync_status'` 이면 `morningSyncStore.load` 와 `assistantStore.load` 를 부른다.
+- focus 재로드는 30초에 1번만 한다.
+- 배경 갱신은 `silent` 옵션을 쓴다. 이유: 스피너가 뜨면 목록 화면이 편집 상태를 잃는다.
+- 원본 완료(`completeOrigin`)가 성공하면 렌더러가 `refreshEntity` 를 부른다.
+- 설정 `completeOriginOnDone` 이 켜져 있으면, 계획 항목을 `done` 으로 바꿀 때 렌더러가 기존 `window.api.todo.complete` 또는 `window.api.task.update` 로 원본을 완료한다. 비서 main 코드는 원본을 쓰지 않는다 (A2).
+
+### K.5 규칙
+
+| ID | 규칙 | 이유 | 판정 |
+|----|------|------|------|
+| A54 | 아침 자동 동기화는 논리 날짜당 `morning_sync:<날짜>` 행 1개로 상태를 둔다. 판정은 순수 함수 `decideMorningSync` 만 한다. ok·skipped 는 다시 하지 않는다. failed 는 30분 간격으로 하루 3회까지다. 15분 넘은 running 은 failed 다. 오프라인과 deferred 는 시도로 세지 않는다. 스케줄러는 주입받은 `onTick` 만 부르고 싱크업·릴리스·아침 동기화 모듈을 import 하지 않는다. 실행기는 throw 하지 않고 새 타이머를 만들지 않는다 | 새 타이머 없이 하루 1회를 지킨다. 재시작·잠자기 복귀에도 같은 결과가 나온다. 스케줄러가 projects 를 쓰는 모듈에 묶이지 않는다 | 테스트 `A54`, K.7 |
+
+기존 규칙 적용:
+- A2: `morning-sync.ts` 는 A2 grep 대상이 아니다. 이 파일의 projects 쓰기는 싱크업 함수 호출뿐이다.
+- A3: `decideMorningSync` 는 `assistant-schedule.ts` 에 있다. 이 파일은 electron·DB 를 import 하지 않는다.
+- A5: 행 선점은 INSERT 가 먼저다. UNIQUE 충돌이면 실행하지 않는다.
+- A13: 틱 끝의 `onTick` 호출과 실행기 전체를 try/catch 로 감싼다.
+- A24: 첫 화면 규칙은 부록 C.1 이 다시 정했다.
+
+### K.6 결정
+사용자 원 요청에 따라 Claude 가 근거 조사와 판정으로 아래를 정했다. 사용자 결정은 싱크업 범위(D7) 1개다.
+
+| # | 결정 | 근거 |
+|---|------|------|
+| D1 | Dashboard 와 오늘을 '오늘' 홈 1개로 합친다 | NN/g 는 대시보드를 현황 모니터링 화면으로 정의한다. Todoist 는 Today 를 홈으로 둔다. 두 화면이 일정·할 일·집중 대상·진행 중 프로젝트를 겹쳐 보여 준다 |
+| D2 | 집중 대상은 `focusItemId` 1개다. `selectFocus` 는 우선순위 미지정 배지에만 쓴다 | 두 집중 규칙이 서로 독립이었다 |
+| D3 | 레이블은 한국어로 통일한다. Reports 는 `주간 보고` 다 | NN/g 는 레이블에 내부 용어를 쓰지 말라고 한다 |
+| D4 | 녹음·회의록·문서·변수·메모는 합치지 않는다 | 중복 근거가 없다. 이 판단은 unverified 다 |
+| D5 | startView 는 허용값 축소로 이전한다 | 읽을 때 정규화하면 백업 복원도 처리된다 |
+| D6 | 아침 동기화 상태는 `assistant_events` 에 둔다. 재시도는 payload `attempts` 로 표현한다 | UNIQUE event_key 로 하루 1회를 보장한다. 마이그레이션이 없다 |
+| D7 | R11 범위는 사용자 답(안전 자동 적용)을 따른다. 지운 키 부활 금지와 첫 매칭 확인을 더한다 | 사용자 결정 (2026-11-05) |
+| D8 | 오프라인은 시도가 아니다. 토큰 만료·네트워크 오류는 failed 다 | 노트북이 깨어난 직후의 오프라인이 하루 시도를 소진하지 않는다 |
+| D9 | 비서 설정 모달에 아침 동기화 토글과 시각을 둔다. 기본은 켜짐, 08:00 이다 | 별도 설정 화면이 없다 (§0) |
+| D10 | `completeOriginOnDone` 기본값은 false 다 | A2 원칙을 지킨다 |
+| D11 | 회의 알림 2중 구조는 범위 밖이다 | 이번 요구사항에 없다 |
+| D12 | `ReleaseNotesCard` 는 행선지가 필요 없다 | 이 카드는 Dashboard 에 없고 ProjectDetail 에만 있다 |
+| D13 | `TaskLabel.test` 의 CONSUMERS 에서 Dashboard 를 뺀다 | 하한은 CONSUMERS 길이 2 로 유지된다 |
+| D14 | `morning_sync` 행은 다른 UI 를 깨지 않는다 | `assistant_events` 사용처가 kind 로 거른다 |
+
+### K.7 완료 조건
+최대 반복 5회. 같은 실패가 2회 연속이면 접근을 바꾸거나 중단하고 보고한다.
+1. C1: `npx vitest run` 종료 코드 0, 실패 0건.
+2. C2: `npm run typecheck` 에러 0건.
+3. C3: `npm run build` 종료 코드 0.
+4. `grep -c "A54" src/main/services/assistant-schedule.test.ts` ≥ 8. K.3 판정 표의 경우를 각각 검증한다.
+5. `test -f src/main/services/morning-sync.ts` 종료 코드 0. `grep -c "A54" src/main/services/morning-sync.test.ts` ≥ 3. 하루 1회, 오프라인 비계수, throw 없음을 검증한다.
+6. `grep -c "A54" src/main/services/assistant-scheduler.test.ts` ≥ 1. `onTick` 이 throw·reject 해도 틱이 끝나는지 검증한다.
+7. `grep -nE "project-sync|release-note-sync|morning-sync" src/main/services/assistant-scheduler.ts` 결과 0건.
+8. `grep -c "runMorningSyncIfDue" src/main/index.ts` ≥ 1.
+9. `grep -cE "setInterval|setTimeout" src/main/services/morning-sync.ts` 결과 0.
+10. `ls src/main/services/assistant-morning*` 결과 0건.
+11. A2: `grep -nE "INSERT INTO (projects|tasks|todos|meetings)|UPDATE (projects|tasks|todos|meetings)|DELETE FROM (projects|tasks|todos|meetings)" src/main/services/assistant-*.ts` 결과 0건.
+12. A3: `grep -lE "from '(electron|better-sqlite3|\.\./db|\./jira|\./google-calendar)" src/main/services/assistant-schedule.ts` 결과 0건.
+13. `grep -c "R11" src/main/services/project-sync-plan.test.ts` ≥ 1. `grep -c "R11" src/main/services/project-sync.test.ts` ≥ 1.
+14. `test ! -e src/renderer/src/components/dashboard/Dashboard.tsx` 종료 코드 0.
+15. `grep -c "normalizeView" src/renderer/src/components/layout/navConfig.ts` ≥ 1. `grep -c "VIEW_LABELS" src/renderer/src/components/layout/Header.tsx` ≥ 1.
+16. `grep -c "installDataSync" src/renderer/src/App.tsx` ≥ 1. `grep -cE "onDataChanged|assistant\.onChanged" src/renderer/src/components/ai/AiChatView.tsx src/renderer/src/components/today/TodayView.tsx` 합계 0.
+17. `grep -c "linked" src/main/services/release-note-sync.ts` ≥ 1.
+
+공유 파일 변경: `src/preload/index.ts` 에 `projectSync.morningStatus()` 를 더한다. `src/renderer/src/types/index.ts` 에 startView 3값, 설정 필드 3개, `ProjectSyncResult.applied`, 아침 동기화 상태 타입을 더한다.
+
+---
+
+## 부록 L. 체크인 제거·홈 개편 (2026-11-05)
+
+사용자 피드백: 체크인 카드는 쓰지 않는다. 예전 대시보드는 큼직하고 읽기 쉬웠다. 지금 홈은 글자가 작고 목록이 줄줄이 보인다. 그래서 체크인을 지우고 홈 배치와 글자 크기를 바꾼다. 이 부록이 J.8 과 A53 을 대체한다.
+
+### L.1 체크인 제거 범위
+- 체크인을 전부 지운다. 대상은 판정·발송·답장·IPC·설정·화면이다.
+- 지운 함수: `runDueCheckin`, `respondCheckin`, `computeDueCheckin`, `checkinEventKey`, `checkinNoticeText`, `onCheckinReply`, `showCheckinNotice`.
+- 지운 타입: `CheckinStatus`, `CheckinPayload`, `CheckinDecisionInput`, `DueCheckin`, `SentCheckinNotice`, `CheckinAnswer`.
+- 지운 설정 필드: `checkinEnabled`, `checkinMinGap`, `checkinDailyCap`. 키·기본값·검증과 모달 항목을 함께 지운다.
+- 지운 IPC: `assistant:respondCheckin`. preload 의 `assistant.respondCheckin` 도 지운다.
+- 지운 화면: `CheckinPanel`. `AssistantChangedEvent.reason` 과 `AssistantNavigateEvent.focus.kind` 에서 `checkin` 값을 뺀다.
+- 틱의 6단계가 없어진다. 틱은 4단계 자동 최신화 뒤에 7단계 회의 브리핑만 실행한다. `dueInFlight` 는 회의 브리핑에 계속 쓴다 (A42).
+
+남기는 것:
+- `AssistantEventKind` 의 `checkin` 값. 이유: DB 에 과거 행이 있다.
+- DB 스키마와 과거 `assistant_events` 행. 마이그레이션을 하지 않는다.
+- `app_settings` 의 옛 `assistant_checkin_*` 행. `parseAssistantSettings` 는 알려진 키만 읽는다. 그래서 옛 행을 무시한다. `serializeAssistantSettingsPatch` 는 옛 필드를 모르는 키로 거부한다.
+- 공유 코드 `interpretReplyRule`. 명령 입력의 scope 모드가 쓴다.
+- 공유 코드 `setEventResponse`. 저장소 함수라 남긴다.
+- 공유 코드 `minutesBetween`·`LATE_AFTER_MIN`. 회의 브리핑과 아침 동기화가 쓴다.
+- 변경 내역(`ChangeLog`)은 kind 로 거른다. 과거 체크인 행을 그리지 않는다. 변경이 없다.
+
+### L.2 홈 배치
+- 바깥 틀은 `max-w-6xl mx-auto space-y-5` 다. 2열은 뷰포트 1024 이상(`lg:`)에서만 켠다. 최소 창 800 에서는 1열이다.
+
+근무 중 순서 (DOM 순):
+1. `DayHeader`. 글자만 키운다.
+2. 오류 배너. 조건부다.
+3. 요약 타일 `SummaryTiles` (`id="today-summary"`). 타일은 4개다.
+4. 2열 그리드. 주열(`id="today-main"`, 3칸)과 보조열(`id="today-side"`, 2칸)이다.
+5. `HomeOverview`. 전체 폭이다.
+6. `MoreSection`. 기본으로 접힌다. 내용은 그대로다.
+
+- 주열은 행동할 것이다. 순서는 시간표(`today-timeline`) → 오늘 할 일 → 새로 들어온 일(`today-inbox`)이다.
+- 보조열은 읽을 것이다. 순서는 회의 브리핑 → 브리핑(`today-briefing`) → 맥락 복구(`today-recovery`)다. 회의 브리핑과 맥락 복구는 내용이 있을 때만 보인다.
+
+요약 타일:
+
+| 타일 | 값 | 보조 |
+|------|----|------|
+| 남은 할 일 | planned + in_progress 건수 | `전체 n건` |
+| 완료 | done 건수 | `미룸 n · 제외 n`. 둘 다 0이면 생략한다 |
+| 다음 회의 | 시간표 회의 중 `end > now` 인 첫 건의 `HH:mm` | 회의 제목. 없으면 값 `—`, 보조 `남은 회의가 없어요` |
+| 집중 가능 시간 | 근무 중이면 남은 빈 시간 | 닫힘이면 값 `—` |
+
+- 타일은 `TodayPayload` 만 쓴다. 데이터 흐름은 그대로다.
+- 시간표 머리의 '집중 가능' 표시는 지운다. 이유: 타일과 겹친다.
+- 계획 없음: 1·2 → 그리드(주열 `HomeSchedule`, 보조열 회의 브리핑) → 5 → 6 이다. 타일은 없다.
+- 닫힘: 근무 중과 같다. '집중 가능 시간' 타일은 `—` 다. 행은 읽기 전용이다.
+- 오늘 데이터가 없는 분기: 오류 또는 빈 카드 → `HomeSchedule` → `HomeOverview` 를 세로로 둔다. 폭만 `max-w-6xl` 로 바꾼다.
+- 배치 근거: 지금 행동할 것이 위·왼쪽이다. 읽을 것이 오른쪽이다. 참고할 것이 아래다. 조작은 더 보기 안이다.
+
+### L.3 시각 규칙
+- 홈 블록 파일의 본문은 `text-sm` 이상이다. `text-[11px]`·`text-[10px]` 는 0건이다.
+- 대상 파일: `today/` 의 TodayView, DayHeader, SummaryTiles, Timeline, PlanItemRow, InboxSection, BriefingCard, MeetingBriefingCard, RecoveryCard, ChangeLog. `dashboard/` 의 HomeOverview, HomeSchedule, TodaySchedule.
+- 공용 `ui/index.tsx`·`tokens.ts` 는 고치지 않는다. 이유: 다른 화면이 같은 토큰을 쓴다.
+- `text-xs` 는 시각·건수·배지에만 쓴다. 제목·항목명·버튼은 `text-sm` 이상이다.
+- 블록 제목은 `SectionTitle variant="page"` 다. 제목 옆 건수는 `text-sm text-gray-500` 이다.
+- 항목 제목은 `text-base text-gray-900` 이다. 메타 정보는 `text-sm text-gray-500 tabular-nums` 다.
+- 묶음 이름과 상태 메모는 1줄로 자른다. 전체 문장은 `title` 로 보인다.
+- 타일 값은 `text-2xl font-bold` 다. 라벨과 보조는 `text-sm text-gray-500` 이다.
+
+### L.4 요약
+- 새 LLM 호출이 없다.
+- 브리핑: 순수 함수 `briefingPreview(text)` 가 `{ preview, hidden }` 을 돌려준다. 미리보기는 2번째 `#`·`##` 제목 앞까지다. 2번째 제목이 없으면 전부 보인다. 이유: 표를 중간에 자르지 않는다.
+- 브리핑에 숨은 부분이 있으면 `전체 보기`·`접기` 버튼이 보인다. 기본은 접힘이다.
+- 회의 브리핑은 가장 가까운 1건만 펼친다. 맥락 복구는 기존 접기를 쓴다. 새로 들어온 일은 5건까지 보인다.
+- 시간표의 지난 항목은 접지 않는다.
+
+### L.5 규칙
+
+| ID | 규칙 | 이유 | 판정 |
+|----|------|------|------|
+| A55 | 근무 중 홈 순서는 헤더 → 요약 타일 → 주열(시간표 → 오늘 할 일 → 새로 들어온 일) → 보조열(회의 브리핑 → 브리핑 → 맥락 복구) → 홈 개요 → 더 보기다. 체크인 블록은 없다. 계획 없음에는 요약 타일이 없다 | 행동할 것을 위·왼쪽에 둔다 | 테스트 `A55` |
+
+### L.6 결정
+
+| # | 결정 | 근거 |
+|---|------|------|
+| D1 | 체크인을 전부 지운다. 공유 코드 4개만 남긴다 | 죽은 설정·IPC 를 남기면 테스트가 체크인을 계속 유지한다 |
+| D2 | `checkin` kind 값은 남긴다 | DB 에 과거 행이 있다 |
+| D3 | 옛 `assistant_checkin_*` 설정 행은 무시한다 | `parseAssistantSettings` 는 알려진 키만 읽는다 |
+| D4 | 요약 타일은 `TodayPayload` 만 쓴다 | 데이터 흐름이 그대로다 |
+| D5 | 브리핑은 보조열에서 첫 절만 미리 보인다 | 긴 표가 주열을 밀어내지 않는다 |
+| D6 | 2열 기준은 `lg` 5칸(3:2)이다 | 예전 Dashboard 도 `lg` 에서 2/3 + 1/3 이었다 |
+| D7 | 공용 ui 토큰은 기존 `variant="page"` 를 쓴다 | 다른 화면이 바뀌지 않는다 |
+| D8 | 시간표의 지난 항목은 접지 않는다 | 하루 흐름이 한눈에 보인다 |
+| D9 | `HomeOverview` 는 전체 폭으로 아래에 둔다 | 참고 정보다 |
+| D10 | `MeetingBriefingCard` 동작은 바꾸지 않는다 | 위치만 보조열로 옮긴다 |
+| D11 | 글자 크기 테스트가 다른 슬라이스 파일을 읽는다 | 읽기만 한다 |
+| D12 | 문서는 제거됨 표기와 부록 L 로 고친다 | 본문 전면 재작성은 별도 작업이다 |
+
+### L.7 완료 조건
+최대 반복 5회. 같은 실패가 2회 연속이면 접근을 바꾸거나 중단하고 보고한다.
+1. `npx vitest run` 종료 코드 0, 실패 0건.
+2. `npm run typecheck` 에러 0건.
+3. `npm run build` 종료 코드 0.
+4. `grep -rli checkin src/main src/preload src/renderer | sort` 결과가 `src/main/services/assistant-types.ts` 와 `src/renderer/src/types/index.ts` 2줄이다. 각 파일의 `grep -ci checkin` 은 2 이하다.
+5. `src/renderer/src/components/today/CheckinPanel.tsx` 와 `CheckinPanel.test.tsx` 가 없다.
+6. `grep -c assistant_checkin src/main/services/assistant-settings.ts` 결과 0.
+7. `grep -c respondCheckin src/preload/index.ts src/main/ipc/assistant.ipc.ts src/renderer/src/stores/assistantStore.ts` 결과 모두 0.
+8. L.3 대상 파일에서 `text-[10px]`·`text-[11px]` 결과 0건.
+9. `TodayView.test.tsx` 의 A55 테스트가 통과한다.
+
+### L.8 2차 개편 (2026-11-05)
+사용자 피드백: 하루 브리핑의 할 일 표가 '오늘 할 일' 카드와 겹친다. 회의 브리핑은 좁은 보조열에서 제목이 잘리고 접혀 내용이 안 보인다. 보조열 아래가 크게 빈다. 이 절이 L.2 의 보조열 배치와 L.4 의 브리핑 요약을 대체한다.
+
+| # | 결정 | 근거 |
+|---|------|------|
+| V1 | 하루 브리핑은 `DayHeader` 카드 안 아래쪽에 둔다. `id="today-briefing"` 을 유지한다 | 하루 시작에 읽는 정보라 머리줄과 같은 카드가 맞다 |
+| V2 | 하루 브리핑은 산문만 보인다. 순수 함수 `briefingSummary(text)` 가 표 줄과 제목에 '할 일'이 든 절을 뺀다. 제목 기호도 지운다. '전체 보기'는 없다 | 표는 '오늘 할 일' 카드와 같은 내용이다. 새 LLM 호출이 없다 |
+| V3 | 회의 브리핑은 시간표의 회의 행에 붙인다. 회의 행의 '브리핑' 버튼이 행 아래 본문을 펼친다. 본문 안에 배지, '다시 만들기', pending·failed 안내가 있다 | 회의 브리핑은 그 회의의 정보다 |
+| V4 | 짝짓기 키는 `meetingKey(HH:mm, 제목)` 이다. 브리핑 `meeting.startAt` 의 HH:mm 과 제목이 시간표 회의 항목의 `start`·`title` 과 같으면 짝이다. 한 키에는 1건만 짝짓는다. 짝 없는 브리핑은 시간표 아래 '기타 회의 브리핑' 카드에 보인다 | 시간표 회의 항목에는 id 가 없다 |
+| V5 | 2열 그리드는 왼쪽 '오늘 할 일·새로 들어온 일'(3칸)과 오른쪽 '시간표 + 회의 브리핑'(2칸)이다. 읽기 전용 보조열은 없다 | 두 열이 모두 목록이라 길이가 비슷하다 |
+| V6 | 맥락 복구 카드는 보일 때만 그리드 아래 전체 폭에 둔다 | 보조열이 없어졌다 |
+| V7 | 회의 브리핑 카드와 시간표 회의 행의 제목은 자르지 않고 줄바꿈한다(`break-words`) | 잘린 제목은 무슨 회의인지 알 수 없다 |
+
+- 시간표 기본 펼침은 가장 가까운 시작 전 회의 1건이다. 시간표에 없는 회의도 후보로 센다.
+- 접힌 회의 행에도 `id="meeting-briefing-<eventId>"` 블록이 남는다. 알림 클릭이 이 id 로 스크롤한다.
+- `Timeline` 에 브리핑 prop 을 주지 않으면 출력이 개편 전과 같다.
+
+- 3차 조정 (2026-11-05, 사용자 피드백): V5 의 2열 그리드를 없앴다. 모든 홈 카드는 가로 전체 폭을 쓰고 세로로 쌓인다. 순서는 오늘 할 일, 새로 들어온 일, 시간표다. 홈 카드의 말줄임(truncate)과 중요 메모 높이 제한을 없앴다. 글은 줄바꿈으로 끝까지 보인다. 캘린더와 함께 쓰는 DayScheduleCard 는 바꾸지 않았다.

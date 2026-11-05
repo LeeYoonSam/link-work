@@ -87,17 +87,9 @@ const service = vi.hoisted(() => ({
   runAutoRefresh: vi.fn(async (): Promise<unknown> => null),
   getSourceCheckTimes: vi.fn(() => ({ calendarAt: null, jiraAt: null })),
   setAssistantChangedListener: vi.fn(),
-  runDueCheckin: vi.fn(async (): Promise<unknown> => null),
-  runDueMeetingBriefings: vi.fn(async (): Promise<unknown[]> => []),
-  respondCheckin: vi.fn(async (): Promise<unknown> => ({}))
+  runDueMeetingBriefings: vi.fn(async (): Promise<unknown[]> => [])
 }))
 vi.mock('./assistant-service', () => service)
-
-// 답장 해석 규칙은 assistant-command.test.ts 가 검증한다. 여기서는 호출 인자와 결과 전달만 본다
-const command = vi.hoisted(() => ({
-  interpretReplyRule: vi.fn((text: string): { status: string; note: string | null } => ({ status: 'in_progress', note: text.trim() }))
-}))
-vi.mock('./assistant-command', () => command)
 
 // 판정 규칙(A25)은 assistant-schedule.test.ts 가 검증한다. 여기서는 근무 중이고 진행 중이 아니면 'calendar' 로 둔다
 const schedule = vi.hoisted(() => ({
@@ -111,7 +103,6 @@ vi.mock('./assistant-schedule', () => schedule)
 
 import {
   navigateToToday,
-  onCheckinReply,
   runStartNudgeCheck,
   runTick,
   startAssistantScheduler,
@@ -174,10 +165,7 @@ beforeEach(() => {
   store.closeStalePlans.mockReturnValue([])
   store.findEventByKey.mockReturnValue(null)
   service.runAutoRefresh.mockImplementation(async () => null)
-  service.runDueCheckin.mockImplementation(async () => null)
   service.runDueMeetingBriefings.mockImplementation(async () => [])
-  service.respondCheckin.mockImplementation(async () => ({}))
-  command.interpretReplyRule.mockImplementation((text: string) => ({ status: 'in_progress', note: text.trim() }))
   store.insertEvent.mockImplementation((_db: unknown, ev: { event_key: string }) => {
     order.push('insertEvent')
     return { id: 1, ...ev }
@@ -542,206 +530,6 @@ describe('A13: 틱 예외를 삼킨다', () => {
   })
 })
 
-function checkinNotice(over: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    eventId: 31,
-    title: '체크인: API 설계',
-    body: '지금까지 어떻게 됐나요? 답장하거나 눌러서 고르세요.',
-    focus: { kind: 'checkin', id: '31' },
-    ...over
-  }
-}
-
-// 서비스가 체크인 행을 INSERT 한 뒤 결과를 돌려준다 (H.6.1)
-function dueCheckinReturns(n: Record<string, unknown> | null): void {
-  service.runDueCheckin.mockImplementation(async () => {
-    order.push('runDueCheckin')
-    if (n) order.push('insertEvent')
-    return n
-  })
-}
-
-describe('체크인 발송 (부록 H.5·H.6.1)', () => {
-  it('A5: 체크인은 서비스 INSERT 뒤에 Notification show() 를 한다. 답장 입력을 연다', async () => {
-    dueCheckinReturns(checkinNotice())
-    await runTick()
-    expect(order).toEqual(['decideRefresh', 'runDueCheckin', 'insertEvent', 'new Notification', 'show'])
-    expect(electron.notifications[0].opts).toEqual({
-      title: '체크인: API 설계',
-      body: '지금까지 어떻게 됐나요? 답장하거나 눌러서 고르세요.',
-      hasReply: true,
-      replyPlaceholder: '완료 / 진행 중 / 미룸'
-    })
-    expect(electron.notifications[0].opts).not.toHaveProperty('actions')
-  })
-
-  it('A5: runDueCheckin 이 null(판정 없음·UNIQUE 충돌)이면 Notification 을 만들지 않는다', async () => {
-    dueCheckinReturns(null)
-    await runTick()
-    expect(service.runDueCheckin).toHaveBeenCalledTimes(1)
-    expect(electron.notifications).toHaveLength(0)
-  })
-
-  it('A5: 체크인 show() 가 실패하면 그 행을 failed 로 바꾼다', async () => {
-    electron.state.throwOnShow = true
-    dueCheckinReturns(checkinNotice({ eventId: 55 }))
-    await runTick()
-    expect(store.updateEventStatus).toHaveBeenCalledWith({}, 55, 'failed')
-  })
-
-  it('체크인 알림 클릭은 checkin focus 로 이동한다 (H.6.3)', async () => {
-    const win = fakeWindow()
-    startAssistantScheduler({ getMainWindow: () => win as never, createWindow: vi.fn() })
-    dueCheckinReturns(checkinNotice())
-    await runTick()
-    electron.notifications[0].listeners.get('click')?.()
-    expect(win.webContents.send).toHaveBeenLastCalledWith('assistant:navigate', {
-      view: 'today',
-      focus: { kind: 'checkin', id: '31' }
-    })
-  })
-
-  it('창이 없을 때 체크인 알림을 클릭하면 checkin focus 를 보관 신호에 둔다 (부록 D.4)', async () => {
-    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
-    dueCheckinReturns(checkinNotice())
-    await runTick()
-    electron.notifications[0].listeners.get('click')?.()
-    expect(takePendingNavigate()).toEqual({ view: 'today', focus: { kind: 'checkin', id: '31' } })
-  })
-
-  it('runDueCheckin 에 테스트가 주입한 now 를 넘긴다', async () => {
-    const now = new Date(2026, 10, 2, 10, 55, 0)
-    await runTick(false, now)
-    expect(service.runDueCheckin).toHaveBeenCalledWith(now)
-  })
-
-  it('실제 틱은 runDueCheckin 에 시각을 넘기지 않는다. 서비스가 serialized 안에서 현재 시각을 잡는다', async () => {
-    await runTick()
-    expect(service.runDueCheckin).toHaveBeenCalledTimes(1)
-    expect(service.runDueCheckin.mock.calls[0]).toEqual([undefined])
-  })
-})
-
-describe('A42: 체크인은 자동 최신화 뒤에 1개만 실행한다', () => {
-  beforeEach(() => {
-    store.getPlanByDate.mockReturnValue({ id: 9, status: 'active' } as never)
-  })
-
-  it('A42: 6단계 체크인은 4단계 자동 최신화와 최신화 알림 뒤에 실행한다', async () => {
-    autoRefreshReturns([notice()])
-    dueCheckinReturns(null)
-    await runTick()
-    expect(order).toEqual(['decideRefresh', 'insertEvent', 'new Notification', 'show', 'runDueCheckin'])
-  })
-
-  it('A42: 최신화가 진행 중이라 4단계를 건너뛰어도 6단계는 실행한다', async () => {
-    const gate = deferred()
-    service.runAutoRefresh.mockImplementation(async () => {
-      await gate.promise
-      return null
-    })
-    const first = runTick()
-    await runTick()
-    expect(service.runAutoRefresh).toHaveBeenCalledTimes(1)
-    expect(service.runDueCheckin).toHaveBeenCalledTimes(1)
-    gate.resolve(null)
-    await first
-    expect(service.runDueCheckin).toHaveBeenCalledTimes(2)
-  })
-
-  it('A42: dueInFlight 가 켜져 있으면 두 번째 틱은 runDueCheckin 을 부르지 않는다', async () => {
-    store.getPlanByDate.mockReturnValue(null)
-    const gate = deferred()
-    service.runDueCheckin.mockImplementationOnce(async () => {
-      await gate.promise
-      return null
-    })
-    const first = runTick()
-    await runTick()
-    expect(service.runDueCheckin).toHaveBeenCalledTimes(1)
-    gate.resolve(null)
-    await first
-    // 끝나면 가드를 푼다
-    await runTick()
-    expect(service.runDueCheckin).toHaveBeenCalledTimes(2)
-  })
-
-  it('A42: stopAssistantScheduler 가 dueInFlight 를 비운다', async () => {
-    store.getPlanByDate.mockReturnValue(null)
-    const gate = deferred()
-    service.runDueCheckin.mockImplementationOnce(async () => {
-      await gate.promise
-      return null
-    })
-    const first = runTick()
-    stopAssistantScheduler()
-    await runTick()
-    expect(service.runDueCheckin).toHaveBeenCalledTimes(2)
-    gate.resolve(null)
-    await first
-  })
-})
-
-describe('A43: 체크인 답장은 규칙 해석 뒤 respondCheckin 으로 간다 (H.6.2)', () => {
-  it('A43: 알림 reply → interpretReplyRule → respondCheckin(eventId, { status, note, raw })', async () => {
-    command.interpretReplyRule.mockReturnValueOnce({ status: 'done', note: null })
-    dueCheckinReturns(checkinNotice({ eventId: 31 }))
-    await runTick()
-    electron.notifications[0].reply('완료')
-    await vi.waitFor(() => expect(service.respondCheckin).toHaveBeenCalled())
-    expect(command.interpretReplyRule).toHaveBeenCalledWith('완료')
-    expect(service.respondCheckin).toHaveBeenCalledWith(31, { status: 'done', note: null, raw: '완료' })
-  })
-
-  it('A43: 자유 문장 답장은 원문을 raw 로, 해석 결과를 status·note 로 넘긴다', async () => {
-    await onCheckinReply(12, '  리뷰 반영 중 ')
-    expect(service.respondCheckin).toHaveBeenCalledWith(12, { status: 'in_progress', note: '리뷰 반영 중', raw: '  리뷰 반영 중 ' })
-  })
-
-  it('A43: 해석한 note 가 500자를 넘으면 500자로 잘라 respondCheckin 에 넘긴다', async () => {
-    const long = '가'.repeat(600)
-    await onCheckinReply(12, long)
-    const answer = (service.respondCheckin.mock.calls[0] as unknown[])[1] as { note: string; raw: string }
-    expect(answer.note).toHaveLength(500)
-    expect(answer.raw).toBe(long)
-  })
-
-  it('A43: 빈 답장은 넘기기와 같다. status null 로 respondCheckin 을 부르고 해석하지 않는다', async () => {
-    await onCheckinReply(12, '   ')
-    expect(command.interpretReplyRule).not.toHaveBeenCalled()
-    expect(service.respondCheckin).toHaveBeenCalledWith(12, { status: null, note: null, raw: null })
-  })
-})
-
-describe('A13: 체크인 예외를 삼킨다', () => {
-  it('A13: runDueCheckin 이 reject 해도 runTick 은 throw 하지 않고 가드를 푼다', async () => {
-    service.runDueCheckin.mockRejectedValueOnce(new Error('Database not initialized'))
-    await expect(runTick()).resolves.toBeUndefined()
-    await runTick()
-    expect(service.runDueCheckin).toHaveBeenCalledTimes(2)
-  })
-
-  it('A13: runAutoRefresh 가 reject 해도 6단계 체크인은 실행한다', async () => {
-    store.getPlanByDate.mockReturnValue({ id: 9, status: 'active' } as never)
-    service.runAutoRefresh.mockRejectedValueOnce(new Error('network'))
-    await expect(runTick()).resolves.toBeUndefined()
-    expect(service.runDueCheckin).toHaveBeenCalledTimes(1)
-  })
-
-  it('A13: respondCheckin 이 reject 해도 onCheckinReply 는 throw 하지 않는다', async () => {
-    service.respondCheckin.mockRejectedValueOnce(new Error('이미 응답한 체크인입니다.'))
-    await expect(onCheckinReply(31, '완료')).resolves.toBeUndefined()
-  })
-
-  it('A13: interpretReplyRule 이 throw 해도 onCheckinReply 는 throw 하지 않는다', async () => {
-    command.interpretReplyRule.mockImplementationOnce(() => {
-      throw new Error('boom')
-    })
-    await expect(onCheckinReply(31, '완료')).resolves.toBeUndefined()
-    expect(service.respondCheckin).not.toHaveBeenCalled()
-  })
-})
-
 function meetingNotice(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     eventId: 41,
@@ -819,40 +607,38 @@ describe('회의 브리핑 발송 (부록 I.9.2)', () => {
   })
 })
 
-describe('A42: 회의 브리핑은 체크인 뒤 같은 dueInFlight 안에서 실행한다', () => {
+describe('A42: 회의 브리핑은 자동 최신화 뒤에 1개만 실행한다', () => {
   beforeEach(() => {
     store.getPlanByDate.mockReturnValue({ id: 9, status: 'active' } as never)
   })
 
-  it('A42: 7단계 회의 브리핑은 4단계 최신화 알림과 6단계 체크인 뒤에 실행한다', async () => {
+  it('A42: 7단계 회의 브리핑은 4단계 자동 최신화와 최신화 알림 뒤에 실행한다', async () => {
     autoRefreshReturns([notice()])
-    dueCheckinReturns(checkinNotice())
     dueMeetingsReturn([meetingNotice()])
     await runTick()
     expect(order).toEqual([
       'decideRefresh',
       'insertEvent', 'new Notification', 'show',
-      'runDueCheckin', 'insertEvent', 'new Notification', 'show',
       'runDueMeetingBriefings', 'insertEvent', 'new Notification', 'show'
     ])
   })
 
-  it('A42: 체크인이 진행 중(dueInFlight)이면 두 번째 틱은 회의 브리핑도 부르지 않는다', async () => {
-    store.getPlanByDate.mockReturnValue(null)
+  it('A42: 최신화가 진행 중이라 4단계를 건너뛰어도 7단계는 실행한다', async () => {
     const gate = deferred()
-    service.runDueCheckin.mockImplementationOnce(async () => {
+    service.runAutoRefresh.mockImplementation(async () => {
       await gate.promise
       return null
     })
     const first = runTick()
     await runTick()
-    expect(service.runDueMeetingBriefings).not.toHaveBeenCalled()
+    expect(service.runAutoRefresh).toHaveBeenCalledTimes(1)
+    expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1)
     gate.resolve(null)
     await first
-    expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1)
+    expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(2)
   })
 
-  it('A42: 회의 브리핑이 진행 중이면 두 번째 틱은 6·7단계를 건너뛴다', async () => {
+  it('A42: dueInFlight 가 켜져 있으면 두 번째 틱은 runDueMeetingBriefings 를 부르지 않는다', async () => {
     store.getPlanByDate.mockReturnValue(null)
     const gate = deferred()
     service.runDueMeetingBriefings.mockImplementationOnce(async () => {
@@ -862,12 +648,28 @@ describe('A42: 회의 브리핑은 체크인 뒤 같은 dueInFlight 안에서 �
     const first = runTick()
     await vi.waitFor(() => expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1))
     await runTick()
-    expect(service.runDueCheckin).toHaveBeenCalledTimes(1)
     expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1)
     gate.resolve([])
     await first
+    // 끝나면 가드를 푼다
     await runTick()
     expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(2)
+  })
+
+  it('A42: stopAssistantScheduler 가 dueInFlight 를 비운다', async () => {
+    store.getPlanByDate.mockReturnValue(null)
+    const gate = deferred()
+    service.runDueMeetingBriefings.mockImplementationOnce(async () => {
+      await gate.promise
+      return []
+    })
+    const first = runTick()
+    await vi.waitFor(() => expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1))
+    stopAssistantScheduler()
+    await runTick()
+    expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(2)
+    gate.resolve([])
+    await first
   })
 })
 
@@ -879,10 +681,105 @@ describe('A13: 회의 브리핑 예외를 삼킨다', () => {
     expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(2)
   })
 
-  it('A13: runDueCheckin 이 reject 해도 7단계 회의 브리핑은 실행한다', async () => {
-    service.runDueCheckin.mockRejectedValueOnce(new Error('boom'))
+  it('A13: runAutoRefresh 가 reject 해도 7단계 회의 브리핑은 실행한다', async () => {
+    store.getPlanByDate.mockReturnValue({ id: 9, status: 'active' } as never)
+    service.runAutoRefresh.mockRejectedValueOnce(new Error('network'))
     dueMeetingsReturn([meetingNotice()])
     await expect(runTick()).resolves.toBeUndefined()
+    expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1)
     expect(electron.notifications).toHaveLength(1)
+  })
+})
+
+describe('A54: 틱 끝의 onTick 주입', () => {
+  it('A54: 틱은 7단계 뒤에 onTick(wake=false, now) 를 부른다', async () => {
+    const onTick = vi.fn(() => {
+      order.push('onTick')
+    })
+    service.runDueMeetingBriefings.mockImplementation(async () => {
+      order.push('runDueMeetingBriefings')
+      return []
+    })
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn(), onTick })
+    const now = new Date(2026, 10, 2, 9, 40)
+    await runTick(false, now)
+    expect(onTick).toHaveBeenCalledTimes(1)
+    expect(onTick).toHaveBeenCalledWith(false, now)
+    expect(order.indexOf('onTick')).toBeGreaterThan(order.indexOf('runDueMeetingBriefings'))
+  })
+
+  it('A54: wake 처리기도 onTick(wake=true) 를 부른다', async () => {
+    const onTick = vi.fn()
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn(), onTick })
+    electron.handlers.get('power:unlock-screen')?.()
+    await vi.waitFor(() => expect(onTick).toHaveBeenCalled())
+    expect(onTick.mock.calls[0][0]).toBe(true)
+  })
+
+  it('A54: 60초 틱이 onTick 을 부른다', async () => {
+    vi.useFakeTimers()
+    const onTick = vi.fn()
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn(), onTick })
+    await vi.advanceTimersByTimeAsync(60_000)
+    // 틱 본문의 await 를 모두 흘려 보낸다
+    for (let i = 0; i < 50; i++) await Promise.resolve()
+    expect(onTick).toHaveBeenCalledTimes(1)
+    expect(onTick.mock.calls[0][0]).toBe(false)
+  })
+
+  it('A54: onTick 을 기다리지 않는다. 끝나지 않는 onTick 도 틱을 막지 않는다', async () => {
+    const gate = deferred()
+    const onTick = vi.fn(() => gate.promise)
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn(), onTick })
+    await expect(runTick()).resolves.toBeUndefined()
+    await expect(runTick()).resolves.toBeUndefined()
+    expect(onTick).toHaveBeenCalledTimes(2)
+    gate.resolve(null)
+  })
+
+  it('A54: onTick 의 reject 를 삼킨다', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const onTick = vi.fn(async () => {
+      throw new Error('morning sync failed')
+    })
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn(), onTick })
+    await expect(runTick()).resolves.toBeUndefined()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(errSpy).toHaveBeenCalledWith('[assistant-scheduler] onTick', expect.any(Error))
+    errSpy.mockRestore()
+  })
+
+  it('A54: onTick 의 동기 throw 를 삼킨다', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const onTick = vi.fn(() => {
+      throw new Error('sync throw')
+    })
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn(), onTick })
+    await expect(runTick()).resolves.toBeUndefined()
+    errSpy.mockRestore()
+  })
+
+  it('A54: 틱 단계가 getDatabase 예외로 끝나도 onTick 을 부른다', async () => {
+    db.getDatabase.mockImplementation(() => {
+      throw new Error('Database not initialized')
+    })
+    const onTick = vi.fn()
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn(), onTick })
+    await expect(runTick()).resolves.toBeUndefined()
+    expect(onTick).toHaveBeenCalledTimes(1)
+  })
+
+  it('A54: onTick 이 없어도 틱이 동작한다', async () => {
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
+    await expect(runTick()).resolves.toBeUndefined()
+    expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1)
+  })
+
+  it('A54: 정지하면 onTick 을 더 부르지 않는다', async () => {
+    const onTick = vi.fn()
+    startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn(), onTick })
+    stopAssistantScheduler()
+    await runTick()
+    expect(onTick).not.toHaveBeenCalled()
   })
 })

@@ -15,12 +15,12 @@ export const ASSISTANT_SETTING_KEYS: Record<keyof AssistantSettings, string> = {
   refreshCalendarMin: 'assistant_refresh_calendar_min',
   refreshJiraMin: 'assistant_refresh_jira_min',
   refreshNotify: 'assistant_refresh_notify',
-  checkinMinGap: 'assistant_checkin_min_gap',
-  checkinDailyCap: 'assistant_checkin_daily_cap',
   meetingLeadMin: 'assistant_meeting_lead_min',
   startView: 'assistant_start_view',
-  checkinEnabled: 'assistant_checkin_enabled',
-  meetingBriefingEnabled: 'assistant_meeting_briefing_enabled'
+  meetingBriefingEnabled: 'assistant_meeting_briefing_enabled',
+  morningSyncEnabled: 'assistant_morning_sync_enabled',
+  morningSyncTime: 'assistant_morning_sync_time',
+  completeOriginOnDone: 'assistant_complete_origin_on_done'
 }
 
 export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
@@ -36,12 +36,12 @@ export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
   refreshCalendarMin: 5,
   refreshJiraMin: 15,
   refreshNotify: true,
-  checkinMinGap: 45,
-  checkinDailyCap: 4,
   meetingLeadMin: 15,
-  startView: 'auto',
-  checkinEnabled: true,
-  meetingBriefingEnabled: true
+  startView: 'today',
+  meetingBriefingEnabled: true,
+  morningSyncEnabled: true,
+  morningSyncTime: '08:00',
+  completeOriginOnDone: false
 }
 
 type FieldSpec =
@@ -51,6 +51,7 @@ type FieldSpec =
   | { kind: 'enum'; values: readonly string[] }
 
 const AI_MODELS: readonly AiModelName[] = ['opus', 'sonnet', 'haiku']
+const START_VIEWS: readonly AssistantSettings['startView'][] = ['today', 'projects', 'calendar']
 
 // 정수 범위는 설계 문서에 없다. 화면 입력의 상식적 범위로 정한다.
 const FIELD_SPECS: Record<keyof AssistantSettings, FieldSpec> = {
@@ -66,12 +67,13 @@ const FIELD_SPECS: Record<keyof AssistantSettings, FieldSpec> = {
   refreshCalendarMin: { kind: 'int', min: 1, max: 240 },
   refreshJiraMin: { kind: 'int', min: 1, max: 240 },
   refreshNotify: { kind: 'bool' },
-  checkinMinGap: { kind: 'int', min: 5, max: 480 },
-  checkinDailyCap: { kind: 'int', min: 0, max: 20 },
   meetingLeadMin: { kind: 'int', min: 1, max: 120 },
-  startView: { kind: 'enum', values: ['auto', 'dashboard', 'today'] },
-  checkinEnabled: { kind: 'bool' },
-  meetingBriefingEnabled: { kind: 'bool' }
+  // A24: 이전 값 auto·dashboard 는 허용값이 아니므로 읽을 때 기본값 today 가 된다. DB 행은 다시 쓰지 않는다
+  startView: { kind: 'enum', values: START_VIEWS },
+  meetingBriefingEnabled: { kind: 'bool' },
+  morningSyncEnabled: { kind: 'bool' },
+  morningSyncTime: { kind: 'time' },
+  completeOriginOnDone: { kind: 'bool' }
 }
 
 const FIELD_NAMES = Object.keys(ASSISTANT_SETTING_KEYS) as (keyof AssistantSettings)[]
@@ -119,6 +121,7 @@ function serializeValue(spec: FieldSpec, value: unknown): string | undefined {
 
 // app_settings 행 → 설정. 없는 키와 잘못된 값은 기본값이다.
 // 3판에서 없앤 키 (assistant_slot_min) 는 FIELD_NAMES 에 없으므로 무시한다 (부록 B.6).
+// 제거된 작업 경계 체크인의 설정 행도 같은 이유로 무시한다 (부록 L).
 export function parseAssistantSettings(rows: { key: string; value: string }[]): AssistantSettings {
   const byKey = new Map<string, string>()
   for (const row of rows) {

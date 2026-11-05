@@ -1,40 +1,16 @@
 // 앱 첫 화면 판정 (docs/ASSISTANT.md 부록 C.1, A24).
 // 순수 함수다. 브라우저 전역·React·스토어를 쓰지 않는다.
 
-export type StartViewSetting = 'auto' | 'dashboard' | 'today'
-export type StartPlanStatus = 'none' | 'active' | 'closed'
-export type StartView = 'dashboard' | 'today'
+export type StartView = 'today' | 'projects' | 'calendar'
 
-export interface StartViewInput {
-  startView: StartViewSetting
-  enabled: boolean
-  planStatus: StartPlanStatus
-  // 논리 날짜 'YYYY-MM-DD'. 날짜 경계 전의 새벽은 전날이다
-  logicalDate: string
-}
+export const START_VIEWS: readonly StartView[] = ['today', 'projects', 'calendar']
 
-const YMD = /^(\d{4})-(\d{2})-(\d{2})$/
+const START_VIEW_SET: ReadonlySet<string> = new Set(START_VIEWS)
 
-// 'YYYY-MM-DD' 를 로컬 날짜로 읽어 요일(0=일 … 6=토)을 돌려준다.
-// new Date('YYYY-MM-DD') 는 UTC 로 읽혀 하루 밀릴 수 있어 쓰지 않는다.
-export function weekdayOf(logicalDate: string): number | null {
-  const m = YMD.exec(logicalDate)
-  if (!m) return null
-  const y = Number(m[1])
-  const mo = Number(m[2])
-  const d = Number(m[3])
-  const date = new Date(y, mo - 1, d)
-  if (date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d) return null
-  return date.getDay()
-}
-
-export function resolveStartView(input: StartViewInput): StartView {
-  if (input.startView === 'dashboard') return 'dashboard'
-  if (input.startView === 'today') return 'today'
-  if (!input.enabled) return 'dashboard'
-  if (input.planStatus === 'active') return 'today'
-  if (input.planStatus === 'closed') return 'dashboard'
-  const wd = weekdayOf(input.logicalDate)
-  if (wd === null) return 'dashboard'
-  return wd >= 1 && wd <= 5 ? 'today' : 'dashboard'
+// 설정값을 첫 화면으로 바꾼다. 알려진 값은 그대로 쓴다.
+// 예전 값 auto·dashboard 와 모르는 값은 today 다. 이유: 홈을 today 1개로 합쳤다.
+// 저장된 설정 행은 다시 쓰지 않는다. 읽을 때 정규화해 백업 복원도 같은 규칙을 따른다
+export function resolveStartView(setting: unknown): StartView {
+  if (typeof setting === 'string' && START_VIEW_SET.has(setting)) return setting as StartView
+  return 'today'
 }

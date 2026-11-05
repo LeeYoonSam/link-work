@@ -93,7 +93,8 @@ export interface PlanItemUpdate {
     | 'work_type' | 'work_version' | 'parent_key' | 'group_name'>>
 }
 
-export type AssistantEventKind = 'start_nudge' | 'plan_update' | 'checkin' | 'meeting_briefing' | 'command'
+// 'checkin' 은 제거된 작업 경계 체크인의 과거 행이다 (부록 L). 새 행을 만들지 않는다
+export type AssistantEventKind = 'start_nudge' | 'plan_update' | 'checkin' | 'meeting_briefing' | 'command' | 'morning_sync'
 export type AssistantEventStatus = 'sent' | 'late' | 'skipped' | 'failed' | 'logged'
 export interface AssistantEvent {
   id: number; event_key: string; kind: AssistantEventKind; plan_date: string; scheduled_at: string
@@ -134,10 +135,12 @@ export interface AssistantSettings {
   planSize: number; llmEnabled: boolean; llmModel: AiModelName
   jiraScope: 'all' | 'default_project'; openAtLogin: boolean
   refreshCalendarMin: number; refreshJiraMin: number; refreshNotify: boolean
-  checkinMinGap: number; checkinDailyCap: number; meetingLeadMin: number
-  startView: 'auto' | 'dashboard' | 'today'   // 첫 화면 (부록 C)
-  checkinEnabled: boolean                      // 작업 경계 체크인 (부록 H)
+  meetingLeadMin: number
+  startView: 'today' | 'projects' | 'calendar'   // 첫 화면 (부록 C, A24)
   meetingBriefingEnabled: boolean              // 회의 전 브리핑 (부록 I)
+  morningSyncEnabled: boolean                  // 아침 자동 동기화 (A54)
+  morningSyncTime: string                        // 아침 자동 동기화 시각 'HH:mm'
+  completeOriginOnDone: boolean                // 계획 항목 완료 때 원본도 완료한다
 }
 
 export type TimelineEntry =
@@ -166,8 +169,8 @@ export interface TodayPayload {
   lastErrors: string[]             // 마지막 수집에서 실패한 출처의 사용자용 문구
   recovery: RecoveryState          // 맥락 복구 진행·실패 상태 (부록 F.6)
 }
-export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' | 'checkin' | 'meeting' }
-export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'checkin' | 'meeting'; id?: string } }
+export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' | 'meeting' }
+export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'meeting'; id?: string } }
 
 // ── MVP2 (부록 E.6.1) ──
 export type RefreshMode = 'full' | 'local' | 'calendar' | 'jira'
@@ -311,32 +314,6 @@ export interface CommandOpResult { op: CommandOp; label: string; ok: boolean; er
 export interface CommandApplyOutcome { today: TodayPayload; results: CommandOpResult[]; applied: number; failed: number }
 export interface CommandLlmInput { ctx: CommandContext; text: string }
 
-// ── MVP4 (부록 H) ──
-export type CheckinStatus = 'done' | 'in_progress' | 'deferred'
-export interface CheckinPayload {
-  itemId: number; candidateId: string; itemTitle: string
-  blockStart: string; blockEnd: string      // 'HH:mm'
-  title: string; body: string               // 알림 문구
-}
-export interface CheckinDecisionInput {
-  today: string; nowHHmm: string; at: string          // at 은 'YYYY-MM-DD HH:mm:ss'
-  settings: Pick<AssistantSettings, 'enabled' | 'checkinEnabled' | 'checkinDailyCap' | 'checkinMinGap'>
-  planActive: boolean
-  dayStart: string; workEnd: string
-  calendar: CalendarRef[]                   // 계획 스냅샷의 일정
-  items: PlanItem[]
-  events: AssistantEvent[]                  // 오늘 논리 날짜의 이벤트 전부
-}
-export interface DueCheckin {
-  eventKey: string; refId: string; scheduledAt: string; late: boolean
-  title: string; body: string; payload: CheckinPayload
-}
-export interface SentCheckinNotice {
-  eventId: number; title: string; body: string
-  focus: { kind: 'checkin'; id: string }
-}
-export interface CheckinAnswer { status: CheckinStatus | null; note: string | null; raw: string | null }
-
 // ── MVP5 (부록 I) ──
 export interface MeetingRef { id: string; title: string; startAt: string; endAt: string }   // 'YYYY-MM-DD HH:mm:ss'. 종일 제외
 export interface MeetingDecisionInput {
@@ -382,3 +359,41 @@ export interface WorkClassifyInput {
   title: string; parentSummary: string | null; projectName: string | null; issueType: string | null
 }
 export interface WorkClassification { workType: WorkType; workVersion: string | null }
+
+// ── 아침 자동 동기화 (A54) ──
+export type MorningSyncPartName = 'release' | 'project'
+// deferred 는 사용자가 수동 미리보기를 검토 중이라 미룬 상태다. 시도로 세지 않는다
+export type MorningSyncPartStatus = 'running' | 'ok' | 'skipped' | 'failed' | 'deferred'
+export interface MorningSyncPart {
+  status: MorningSyncPartStatus
+  attempts: number                 // 센 시도 수. 오프라인·deferred 는 세지 않는다
+  startedAt: string | null         // 마지막 시도 시작 'YYYY-MM-DD HH:mm:ss'
+  finishedAt: string | null        // 마지막 시도 끝. running 이면 null
+  error: string | null             // failed 의 사용자용 문구. skipped 이면 건너뛴 이유
+  newCount: number                 // 새 항목 수. 릴리스는 새 릴리스, 싱크업은 새 프로젝트
+  updatedCount: number             // 갱신한 항목 수
+  reviewCount: number              // 싱크업만. 자동 적용하지 않고 확인이 필요한 항목 수 (R11)
+  failedCount: number              // 릴리스만. 일부 버전의 실패 수
+}
+export interface MorningSyncPayload {
+  date: string                     // 논리 날짜
+  release: MorningSyncPart | null  // null 이면 아직 시도하지 않았다
+  project: MorningSyncPart | null
+}
+export interface MorningSyncDecisionInput {
+  today: string                    // 논리 날짜
+  calendarDate: string             // now 의 달력 날짜. 논리 날짜와 다르면 새벽이다
+  nowHHmm: string
+  at: string                       // 'YYYY-MM-DD HH:mm:ss'
+  settings: Pick<AssistantSettings, 'morningSyncEnabled' | 'morningSyncTime'>
+  inFlight: boolean
+  payload: MorningSyncPayload | null   // 오늘 행의 payload. 행이 없으면 null
+}
+export interface MorningSyncStatus {
+  enabled: boolean
+  at: string                       // 설정 시각 'HH:mm'
+  inFlight: boolean
+  date: string | null              // 마지막 행의 논리 날짜. 행이 없으면 null
+  release: MorningSyncPart | null
+  project: MorningSyncPart | null
+}

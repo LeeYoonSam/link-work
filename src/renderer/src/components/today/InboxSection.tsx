@@ -52,11 +52,14 @@ export default function InboxSection({
 
   return (
     <Card padding="none">
-      <div id="today-inbox" className="flex items-center gap-2 px-4 pt-4 pb-2">
-        <InboxIcon size={16} className="text-gray-400" />
-        <SectionTitle>새로 들어온 일</SectionTitle>
-        <span className="text-xs text-gray-400">{suggestions.length}건</span>
-        <span className="ml-auto text-[11px] text-gray-400 truncate">
+      <div id="today-inbox" className="flex items-center gap-2 px-5 pt-5 pb-3 min-w-0">
+        <InboxIcon size={18} className="text-gray-400 shrink-0" />
+        <SectionTitle variant="page" className="shrink-0">새로 들어온 일</SectionTitle>
+        <span className="text-sm text-gray-500 tabular-nums shrink-0">{suggestions.length}건</span>
+        <span
+          className="ml-auto min-w-0 text-xs text-gray-500 tabular-nums break-words"
+          title={inboxSourceSummary(suggestions)}
+        >
           {inboxSourceSummary(suggestions)}
         </span>
       </div>
@@ -64,22 +67,24 @@ export default function InboxSection({
         {shown.map((item) => (
           <div
             key={item.id}
-            className={`flex items-center gap-3 px-4 py-2.5 border-t border-gray-100 ${
+            className={`flex items-center gap-3 px-5 py-3 border-t border-gray-100 ${
               item.urgent ? 'bg-red-50/40' : ''
             }`}
           >
             {item.urgent ? (
-              <Badge color="bg-red-100 text-red-700" size="xs">
+              <Badge color="bg-red-100 text-red-700">
                 긴급
               </Badge>
             ) : null}
             <SourceBadge source={item.source} />
             <WorkTypeBadge type={item.work_type} version={item.work_version} />
-            <span className="flex-1 min-w-0 truncate text-sm text-gray-900" title={item.title}>
+            <span className="flex-1 min-w-0 break-words text-base text-gray-900">
               {item.title}
             </span>
             {item.due_date ? (
-              <span className="text-xs text-gray-500 shrink-0">마감 {shortDate(item.due_date)}</span>
+              <span className="text-sm text-gray-500 tabular-nums shrink-0">
+                마감 {shortDate(item.due_date)}
+              </span>
             ) : null}
             <ItemLink link={item.link} />
             {readOnly ? null : (
@@ -88,7 +93,7 @@ export default function InboxSection({
                   type="button"
                   disabled={busy}
                   onClick={() => onAccept(item.id)}
-                  className={`shrink-0 px-2.5 py-1 text-xs ${button.primary} disabled:opacity-50`}
+                  className={`shrink-0 px-2.5 py-1 text-sm ${button.primary} disabled:opacity-50`}
                 >
                   계획에 추가
                 </button>
@@ -96,7 +101,7 @@ export default function InboxSection({
                   type="button"
                   disabled={busy}
                   onClick={() => onDismiss(item.id)}
-                  className={`shrink-0 px-2.5 py-1 text-xs ${button.subtle} disabled:opacity-50`}
+                  className={`shrink-0 px-2.5 py-1 text-sm ${button.subtle} disabled:opacity-50`}
                 >
                   무시
                 </button>
@@ -106,11 +111,11 @@ export default function InboxSection({
         ))}
       </div>
       {hidden > 0 ? (
-        <div className="px-4 py-2 border-t border-gray-100">
+        <div className="px-5 py-2 border-t border-gray-100">
           <button
             type="button"
             onClick={() => setExpanded((e) => !e)}
-            className={`px-2.5 py-1 text-xs ${button.ghost}`}
+            className={`px-2.5 py-1 text-sm ${button.ghost}`}
           >
             {expanded ? '덜 보기' : `나머지 ${hidden}건 보기`}
           </button>

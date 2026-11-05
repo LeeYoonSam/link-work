@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useReleaseNoteStore } from '../../stores/releaseNoteStore'
+import { useMorningSyncStore } from '../../stores/morningSyncStore'
+import { format } from 'date-fns'
 import type { ReleaseNoteSummary } from '../../types'
 import JiraSettingsModal from './JiraSettingsModal'
 import JiraTokenWarning from './JiraTokenWarning'
 import ReleaseNoteRow from './ReleaseNoteRow'
 import SyncAllSummary from './SyncAllSummary'
+import { morningStatusLine, parseMorningPart } from '../today/ChangeLog'
 import { Badge, Card, EmptyState, SearchIcon, XIcon, button } from '../ui'
 
 // 검색 — 버전 이름과 Jira 프로젝트 키를 한 상자에서 찾는다.
@@ -41,13 +44,31 @@ export default function ReleasesView(): React.ReactNode {
   } = useReleaseNoteStore()
   const [showSettings, setShowSettings] = useState(false)
   const [query, setQuery] = useState('')
+  // 아침 자동 릴리스 동기화 결과 (RELEASE_NOTES §1). 자동 갱신이 sync_status 로 다시 읽는다
+  const morningStatus = useMorningSyncStore((s) => s.status)
+  const loadMorning = useMorningSyncStore((s) => s.load)
+  const markMorningSeen = useMorningSyncStore((s) => s.markSeen)
+  const morningPart = parseMorningPart(morningStatus?.release)
+  const morningLine = morningStatusLine(
+    '아침 동기화',
+    'release',
+    morningPart,
+    format(new Date(), 'yyyy-MM-dd')
+  )
 
   useEffect(() => {
     void fetchJiraStatus()
     void fetchAllReleaseNotes()
+    void loadMorning()
   }, [])
 
+  // 이 화면이 열려 있으면 아침 동기화의 새 항목을 본 것으로 표시한다. 사이드바 배지가 사라진다
+  useEffect(() => {
+    if (morningStatus) markMorningSeen('release')
+  }, [morningStatus])
+
   // 동기화는 main에서 끝나고 알림만 온다 — AI 대화가 돌린 동기화도 화면에 반영돼야 한다
+  // 아침 자동 동기화도 변경이 있으면 release_note 이벤트를 보낸다. 그래서 이 리스너 하나로 다시 읽는다
   useEffect(() => {
     return window.api.ai.onDataChanged(({ entity }) => {
       if (entity === 'release_note') void fetchAllReleaseNotes()
@@ -79,7 +100,18 @@ export default function ReleasesView(): React.ReactNode {
             </Badge>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {/* 아침 동기화 상태 1줄. 실패면 빨간 글자다. 긴 사유는 말줄임하고 title 로 보인다 */}
+          {morningLine ? (
+            <span
+              className={`max-w-[18rem] truncate text-[11px] ${
+                morningPart?.status === 'failed' ? 'text-red-600' : 'text-gray-500'
+              }`}
+              title={morningLine}
+            >
+              {morningLine}
+            </span>
+          ) : null}
           <button
             onClick={() => setShowSettings(true)}
             className={`px-4 py-2 text-sm ${button.subtle}`}

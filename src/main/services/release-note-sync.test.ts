@@ -568,6 +568,52 @@ describe('syncAllReleases — Jira 릴리스 전체를 가져온다', () => {
     expect(logs[0].entity_name).toContain('일괄 동기화')
     expect(logs[0].details).toContain('동기화 2건')
   })
+
+  it('linked 는 이번 실행에서 새로 목록에 넣은 릴리스 수다', async () => {
+    mockJira([V_164])
+    const first = await syncAllReleases()
+    expect(first.linked).toBe(1)
+
+    mockJira([V_164, V_163])
+    const second = await syncAllReleases()
+    // 4.164.0 은 이미 있으므로 새로 들어온 것은 4.163.0 하나다
+    expect(second.linked).toBe(1)
+    expect(second.synced).toHaveLength(2)
+
+    const third = await syncAllReleases()
+    expect(third).toEqual({
+      synced: [
+        { noteId: expect.any(Number), version: '4.164.0', itemCount: 1 },
+        { noteId: expect.any(Number), version: '4.163.0', itemCount: 1 }
+      ],
+      metaOnly: [],
+      failed: [],
+      linked: 0
+    })
+  })
+
+  it('동시에 두 번 부르면 같은 실행을 공유해 버전 목록을 1번만 조회한다', async () => {
+    mockJira([V_164, V_163])
+
+    const [a, b] = await Promise.all([syncAllReleases(), syncAllReleases()])
+
+    expect(jira.listJiraVersions).toHaveBeenCalledTimes(1)
+    expect(a).toBe(b)
+    expect(a.linked).toBe(2)
+    expect(a.failed).toEqual([])
+    expect(listReleaseNotes()).toHaveLength(2)
+  })
+
+  it('실행이 끝나면 공유를 비워 다음 호출은 새로 조회한다 (실패해도 같다)', async () => {
+    mockJira([V_164])
+    jira.listJiraVersions.mockRejectedValueOnce(new Error('네트워크 오류'))
+
+    await expect(syncAllReleases()).rejects.toThrow('네트워크 오류')
+    const next = await syncAllReleases()
+
+    expect(jira.listJiraVersions).toHaveBeenCalledTimes(2)
+    expect(next.linked).toBe(1)
+  })
 })
 
 // 기존 사용자의 DB는 릴리스 노트가 프로젝트에 묶여 있었다. 이 마이그레이션은 중복 행을 합치고

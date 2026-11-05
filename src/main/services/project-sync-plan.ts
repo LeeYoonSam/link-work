@@ -5,10 +5,11 @@ import { adfToPlainText, extractAdfLinks } from './project-sync-adf'
 /**
  * Jira 프로젝트 싱크업의 계획 단계 — **순수 함수만** 둔다(electron·DB import 금지).
  *
- * Jira 스냅샷 + 현재 DB 스냅샷 → 무엇을 만들고/채우고/건너뛸지. 규칙(R1~R10)은
+ * Jira 스냅샷 + 현재 DB 스냅샷 → 무엇을 만들고/채우고/건너뛸지. 규칙(R1~R11)은
  * docs/PROJECT_SYNC.md에 있고, 이 파일의 주석은 규칙 ID로 그 문서를 가리킨다.
  * 기본 계획은 "추가"와 "빈 칸 채우기"만 만든다. 덮어쓰기는 사용자가 기존 프로젝트를 골라
  * 강제 업데이트를 확인했을 때(R10)만 쓰이는 별도 op(force)이고, 삭제 op는 어디에도 없다(R4).
+ * 아침 자동 싱크업(R11)은 이 계획에서 안전한 항목만 고른다. 강제 업데이트와 삭제는 고르지 않는다.
  */
 
 // ── IPC 계약 (renderer의 types/index.ts와 같은 형태를 유지할 것) ──
@@ -86,6 +87,16 @@ export interface ProjectSyncResult {
   tasksUpdated: number
   documentsAdded: number
   skipped: ProjectSyncSkipped[]
+  /** 이번 적용에서 쓴 항목. 순서는 계획 순서다. create 항목의 projectId 는 새 id 다 */
+  applied: ProjectSyncAppliedItem[]
+}
+
+export interface ProjectSyncAppliedItem {
+  jiraKey: string
+  action: ProjectSyncPlanItem['action']
+  projectId: number | null
+  projectName: string
+  force: boolean
 }
 
 // ── 입력 스냅샷 ──
@@ -886,4 +897,71 @@ export function selectProjectSyncOps(
         tasksUpdated: f.taskOverwrites.length
       }
     })
+}
+
+// ── 아침 자동 싱크업 (R11) ──
+
+/** 활동 로그 detail 의 머리말. parseSyncCreatedKey 가 이 머리말로 싱크업 생성 행을 알아본다 */
+export const SYNC_LOG_LABELS = {
+  manual: 'Jira 싱크업',
+  force: '강제 업데이트',
+  auto: '아침 자동 싱크업'
+} as const
+
+export interface AutoSyncSelection {
+  /** 자동 적용할 선택. force 는 항상 false 다 */
+  selection: ProjectSyncSelection[]
+  /** matchedBy 가 document_url·name 인 update 항목 수. 사용자 확인이 필요하다 */
+  needsReview: number
+  /** 전에 싱크업이 만든 키라 다시 만들지 않은 create 항목 수 */
+  previouslyCreated: number
+}
+
+/**
+ * R11: 계획에서 자동 적용해도 안전한 항목만 고른다.
+ * - create 는 전에 싱크업이 만든 키를 뺀다. 사용자가 지운 프로젝트를 되살리지 않기 위해서다.
+ * - update 는 jira_key 로 매칭된 것만 보수 경로(force=false)로 고른다.
+ * - document_url·name 매칭은 첫 매칭이라 사용자 확인 전까지 쓰지 않고 needsReview 로 센다.
+ * - unchanged 는 쓸 것이 없어 고르지 않는다. 그래서 같은 스냅샷의 두 번째 실행은 선택 0건이다.
+ * 강제 업데이트(R10)와 삭제(R4)는 고르지 않는다.
+ */
+export function selectAutoSyncSelection(
+  plan: ProjectSyncPlan,
+  createdKeys: ReadonlySet<string>
+): AutoSyncSelection {
+  const selection: ProjectSyncSelection[] = []
+  let previouslyCreated = 0
+  let needsReview = 0
+  for (const item of plan.items) {
+    if (item.action === 'create') {
+      if (createdKeys.has(item.jiraKey)) {
+        previouslyCreated++
+      } else {
+        selection.push({ jiraKey: item.jiraKey, force: false, projectId: null })
+      }
+      continue
+    }
+    if (item.matchedBy === 'document_url' || item.matchedBy === 'name') {
+      needsReview++
+      continue
+    }
+    if (item.matchedBy === 'jira_key' && item.action === 'update') {
+      selection.push({ jiraKey: item.jiraKey, force: false, projectId: item.projectId })
+    }
+  }
+  return { selection, needsReview, previouslyCreated }
+}
+
+const SYNC_CREATED_DETAIL_PATTERN = new RegExp(
+  `^(?:${Object.values(SYNC_LOG_LABELS).join('|')}) \\(([A-Z][A-Z0-9_]*-\\d+)\\):`
+)
+
+/**
+ * R11: 싱크업 활동 로그 detail 에서 Jira 키를 꺼낸다. 싱크업 형식이 아니면 null 이다.
+ * 기존 사용자의 과거 생성분을 알아내는 데 쓴다. app_settings 기록이 생기기 전의 행도 읽기 위해서다.
+ */
+export function parseSyncCreatedKey(detail: string | null | undefined): string | null {
+  if (typeof detail !== 'string') return null
+  const m = SYNC_CREATED_DETAIL_PATTERN.exec(detail)
+  return m ? m[1] : null
 }

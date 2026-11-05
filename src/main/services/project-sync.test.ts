@@ -70,9 +70,13 @@ import {
   applyProjectSync,
   applyProjectSyncSnapshot,
   clearProjectSyncCache,
+  hasFreshPreview,
   PREVIEW_EXPIRED_MESSAGE,
   previewProjectSync,
-  readProjectSyncDbState
+  readProjectSyncDbState,
+  readSyncCreatedKeys,
+  runAutoProjectSync,
+  SYNC_CREATED_KEYS_SETTING
 } from './project-sync'
 import {
   buildProjectSyncPlan,
@@ -630,5 +634,263 @@ describe('preview / apply', () => {
     jira.getDefaultJiraProjectKey.mockReturnValue(null)
     await expect(previewProjectSync()).rejects.toThrow('Jira 기본 프로젝트가 설정되지 않았습니다')
     expect(jira.listMyTodoIssues).not.toHaveBeenCalled()
+  })
+})
+
+describe('R11 아침 자동 싱크업 (runAutoProjectSync)', () => {
+  function createdKeysSetting(): unknown {
+    const row = db()
+      .prepare('SELECT value FROM app_settings WHERE key = ?')
+      .get(SYNC_CREATED_KEYS_SETTING) as { value: string } | undefined
+    return row ? JSON.parse(row.value) : null
+  }
+
+  /** 사용자가 프로젝트를 지운 상황. 테스트 인메모리 DB 에서만 지운다 */
+  function removeProject(id: number): void {
+    db().prepare('DELETE FROM tasks WHERE project_id = ?').run(id)
+    db().prepare('DELETE FROM documents WHERE project_id = ?').run(id)
+    db().prepare('DELETE FROM projects WHERE id = ?').run(id)
+  }
+
+  it('R11: 새 프로젝트는 만들고 jira_key 기존 프로젝트는 보수 갱신만 한다 (덮어쓰기 없음)', async () => {
+    mockJiraFromFixture()
+    const keyed = seedProject('[알림] 내가 고친 이름', {
+      description: '내 메모',
+      priority: 'now'
+    })
+    db().prepare("UPDATE projects SET jira_issue_key = 'PROJ-1855' WHERE id = ?").run(keyed)
+    const doneTask = seedTask(keyed, '내가 고친 작업 (PROJ-1856)', 'done', 0)
+    const before = db().prepare('SELECT * FROM projects WHERE id = ?').get(keyed) as Record<
+      string,
+      unknown
+    >
+
+    const outcome = await runAutoProjectSync()
+
+    expect(outcome).toMatchObject({
+      status: 'applied',
+      result: { created: 2, updated: 1 },
+      needsReview: 0,
+      previouslyCreated: 0
+    })
+    const after = db().prepare('SELECT * FROM projects WHERE id = ?').get(keyed) as Record<
+      string,
+      unknown
+    >
+    for (const col of [
+      'name',
+      'description',
+      'dev_start_date',
+      'dev_end_date',
+      'status',
+      'priority',
+      'deploy_version'
+    ]) {
+      expect(after[col], col).toEqual(before[col])
+    }
+    // 보수 경로: 기존 작업 이름은 그대로, 상태는 되돌리지 않는다
+    expect(tasksOf(keyed).find((t) => t.id === doneTask)).toMatchObject({
+      name: '내가 고친 작업 (PROJ-1856)',
+      status: 'done'
+    })
+    expect(projects().map((p) => p.jira_issue_key)).toEqual(['PROJ-1855', 'PROJ-1893', 'PROJ-1895'])
+  })
+
+  it('R11: 이름·문서로 처음 매칭되는 프로젝트는 쓰지 않고 needsReview 로만 센다', async () => {
+    mockJiraFromFixture()
+    const byName = seedProject('상품 상세 크래시 수정', {
+      description: '수동'
+    })
+    // 자동 상태면 지난 날짜 때문에 끝난 프로젝트로 보여 이름 매칭 후보에서 빠진다(§4). 진행 중으로 고정한다.
+    db().prepare('UPDATE projects SET status_manual = 1 WHERE id = ?').run(byName)
+    const byDoc = seedProject('문서로만 연결')
+    seedDoc(byDoc, '티켓', `${SITE_URL}/browse/PROJ-1895`)
+    const before = dumpAll()
+
+    const outcome = await runAutoProjectSync()
+
+    expect(outcome).toMatchObject({
+      status: 'applied',
+      result: { created: 1, updated: 0 },
+      needsReview: 2
+    })
+    const after = dumpAll() as {
+      projects: unknown[]
+      tasks: unknown[]
+      documents: unknown[]
+    }
+    const prev = before as typeof after
+    // 키 백필도 하지 않는다
+    expect(after.projects.slice(0, prev.projects.length)).toEqual(prev.projects)
+    expect(after.documents.slice(0, prev.documents.length)).toEqual(prev.documents)
+    expect(projects().find((p) => p.id === byName)?.jira_issue_key).toBeNull()
+  })
+
+  it('R11: 같은 Jira 상태로 두 번째 실행하면 선택 0건이라 apply 를 부르지 않고 DB 가 그대로다', async () => {
+    mockJiraFromFixture()
+    await runAutoProjectSync()
+    const once = dumpAll()
+    const logCount = (
+      db().prepare('SELECT COUNT(*) AS n FROM activity_log').get() as {
+        n: number
+      }
+    ).n
+
+    const second = await runAutoProjectSync()
+
+    expect(second).toMatchObject({
+      status: 'applied',
+      result: {
+        created: 0,
+        updated: 0,
+        unchanged: 0,
+        tasksAdded: 0,
+        documentsAdded: 0,
+        applied: []
+      },
+      needsReview: 0,
+      previouslyCreated: 0
+    })
+    expect(dumpAll()).toEqual(once)
+    expect(
+      (
+        db().prepare('SELECT COUNT(*) AS n FROM activity_log').get() as {
+          n: number
+        }
+      ).n
+    ).toBe(logCount)
+  })
+
+  it('R11: 싱크업이 만든 프로젝트를 사용자가 지우면 다시 만들지 않는다', async () => {
+    mockJiraFromFixture()
+    applyAll(projSnapshot())
+    const removed = projects().find((p) => p.jira_issue_key === 'PROJ-1893')!
+    removeProject(removed.id)
+
+    const outcome = await runAutoProjectSync()
+
+    expect(outcome).toMatchObject({
+      status: 'applied',
+      result: { created: 0 },
+      previouslyCreated: 1
+    })
+    expect(projects().some((p) => p.jira_issue_key === 'PROJ-1893')).toBe(false)
+  })
+
+  it('R11: app_settings 기록이 없어도 과거 activity_log 생성 행으로 지운 프로젝트를 알아본다', async () => {
+    mockJiraFromFixture()
+    db()
+      .prepare(
+        "INSERT INTO activity_log (entity_type, entity_id, entity_name, action, details) VALUES ('project', 99, '로그 개선', 'create', ?)"
+      )
+      .run('Jira 싱크업 (PROJ-1895): 작업 +0 · 작업 갱신 0 · 문서 +1')
+    // 싱크업과 무관한 수동 생성 행은 키로 읽지 않는다
+    db()
+      .prepare(
+        "INSERT INTO activity_log (entity_type, entity_id, entity_name, action, details) VALUES ('project', 98, '수동', 'create', '직접 생성')"
+      )
+      .run()
+    expect(createdKeysSetting()).toBeNull()
+    expect([...readSyncCreatedKeys()]).toEqual(['PROJ-1895'])
+
+    const outcome = await runAutoProjectSync()
+
+    expect(outcome).toMatchObject({
+      status: 'applied',
+      result: { created: 2 },
+      previouslyCreated: 1
+    })
+    expect(projects().some((p) => p.jira_issue_key === 'PROJ-1895')).toBe(false)
+  })
+
+  it('R11: 만든 키를 app_settings project_sync_created_keys 에 합쳐 기록한다 (수동·자동 모두)', async () => {
+    applyProjectSyncSnapshot(
+      projSnapshot(),
+      [{ jiraKey: 'PROJ-1893', force: false, projectId: null }],
+      TODAY
+    )
+    expect(createdKeysSetting()).toEqual(['PROJ-1893'])
+
+    mockJiraFromFixture()
+    const outcome = await runAutoProjectSync()
+
+    expect(outcome).toMatchObject({ status: 'applied', result: { created: 2 } })
+    expect(createdKeysSetting()).toEqual(['PROJ-1855', 'PROJ-1893', 'PROJ-1895'])
+    expect([...readSyncCreatedKeys()].sort()).toEqual(['PROJ-1855', 'PROJ-1893', 'PROJ-1895'])
+    // 자동 적용 행은 '아침 자동 싱크업' 머리말로 남는다
+    const autoLogs = db()
+      .prepare(
+        "SELECT details FROM activity_log WHERE entity_type = 'project' AND details LIKE '아침 자동 싱크업 (%'"
+      )
+      .all() as Array<{ details: string }>
+    expect(autoLogs).toHaveLength(2)
+  })
+
+  it('R11: 10분 안의 미리보기가 있으면 deferred 이고 Jira 조회·쓰기·캐시 변경이 없다', async () => {
+    mockJiraFromFixture()
+    await previewProjectSync()
+    expect(hasFreshPreview()).toBe(true)
+
+    expect(await runAutoProjectSync()).toEqual({ status: 'deferred' })
+    expect(jira.listMyTodoIssues).toHaveBeenCalledTimes(1)
+    expect(projects()).toEqual([])
+    // 사용자가 보던 미리보기는 그대로 적용할 수 있다
+    expect((await applyProjectSync(ALL_ICA)).created).toBe(3)
+  })
+
+  it('R11: 미리보기가 10분 지났으면 미루지 않고 실행한다', async () => {
+    mockJiraFromFixture()
+    await previewProjectSync()
+    const now = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(now + 10 * 60 * 1000)
+    expect(hasFreshPreview()).toBe(false)
+
+    expect(await runAutoProjectSync()).toMatchObject({
+      status: 'applied',
+      result: { created: 3 }
+    })
+  })
+
+  it('R11: Jira 미연결·기본 프로젝트 키 없음은 조회 없이 throw 한다 (호출자가 먼저 skipped 로 거른다)', async () => {
+    jira.getJiraSiteUrl.mockReturnValue(null)
+    await expect(runAutoProjectSync()).rejects.toThrow('Jira에 연결되어 있지 않습니다')
+
+    jira.getJiraSiteUrl.mockReturnValue(SITE_URL)
+    jira.getDefaultJiraProjectKey.mockReturnValue(null)
+    await expect(runAutoProjectSync()).rejects.toThrow('Jira 기본 프로젝트가 설정되지 않았습니다')
+    expect(jira.listMyTodoIssues).not.toHaveBeenCalled()
+    expect(projects()).toEqual([])
+  })
+
+  it('R11: 자동 실행은 수동 미리보기 캐시를 만들지 않는다 (실행 전후 캐시가 같다)', async () => {
+    mockJiraFromFixture()
+    expect(hasFreshPreview()).toBe(false)
+
+    await runAutoProjectSync()
+
+    expect(hasFreshPreview()).toBe(false)
+    await expect(applyProjectSync(ALL_ICA)).rejects.toThrow(PREVIEW_EXPIRED_MESSAGE)
+  })
+
+  it('R11: Jira 조회가 실패하면 throw 하고 DB 를 건드리지 않는다 (호출자가 failed 로 기록)', async () => {
+    mockJiraFromFixture()
+    jira.listMyTodoIssues.mockRejectedValue(new Error('Jira 토큰이 만료되었습니다.'))
+
+    await expect(runAutoProjectSync()).rejects.toThrow('Jira 토큰이 만료되었습니다.')
+    expect(projects()).toEqual([])
+  })
+
+  it('R11: applied 는 쓴 항목을 계획 순서로 담고 create 는 새 id 를 갖는다', () => {
+    const result = applyAll(projSnapshot())
+    const rows = projects()
+    expect(result.applied).toEqual(
+      rows.map((p) => ({
+        jiraKey: p.jira_issue_key,
+        action: 'create',
+        projectId: p.id,
+        projectName: p.name,
+        force: false
+      }))
+    )
   })
 })

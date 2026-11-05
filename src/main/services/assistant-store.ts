@@ -7,6 +7,7 @@ import { plansToAutoClose } from './assistant-day'
 import { parseAssistantSettings, serializeAssistantSettingsPatch } from './assistant-settings'
 import type {
   AssistantEvent,
+  AssistantEventKind,
   AssistantEventStatus,
   AssistantSettings,
   DailyPlan,
@@ -513,4 +514,12 @@ export function listEventsByDate(db: Db, planDate: string): AssistantEvent[] {
     .prepare('SELECT * FROM assistant_events WHERE plan_date = ? ORDER BY scheduled_at, id')
     .all(planDate) as AssistantEvent[]
   return rows.map(toEvent)
+}
+
+// 읽기 전용. kind 가 같은 행 가운데 마지막 논리 날짜의 행이다 (A54 아침 동기화 상태 표시).
+export function findLatestEventByKind(db: Db, kind: AssistantEventKind): AssistantEvent | null {
+  const row = db
+    .prepare('SELECT * FROM assistant_events WHERE kind = ? ORDER BY plan_date DESC, id DESC LIMIT 1')
+    .get(kind) as AssistantEvent | undefined
+  return row ? toEvent(row) : null
 }

@@ -1,7 +1,7 @@
 const INK = '#1e2235'
 
 export type MenuIconName =
-  | 'dashboard'
+  | 'today'
   | 'projects'
   | 'todos'
   | 'documents'
@@ -15,15 +15,21 @@ export type MenuIconName =
   | 'releases'
 
 const PATHS: Record<MenuIconName, React.ReactNode> = {
-  dashboard: (
+  // 오늘 화면 전용 해 모양. 캘린더 아이콘과 겹치지 않게 따로 둔다
+  today: (
     <>
-      <g stroke={INK} strokeWidth="1.9" strokeLinejoin="round">
-        <rect x="2.5" y="2.5" width="8" height="10" rx="2" fill="#FFD43B" />
-        <rect x="13.8" y="2.5" width="8" height="6" rx="2" fill="#4DABF7" />
-        <rect x="13.8" y="11.8" width="8" height="9.7" rx="2" fill="#FF8787" />
-        <rect x="2.5" y="15.8" width="8" height="5.7" rx="2" fill="#63E6BE" />
+      <g stroke={INK} strokeWidth="2.2" strokeLinecap="round">
+        <path d="M12 1.8v2.4" />
+        <path d="M12 19.8v2.4" />
+        <path d="M1.8 12h2.4" />
+        <path d="M19.8 12h2.4" />
+        <path d="m4.8 4.8 1.7 1.7" />
+        <path d="m17.5 17.5 1.7 1.7" />
+        <path d="m4.8 19.2 1.7-1.7" />
+        <path d="m17.5 6.5 1.7-1.7" />
       </g>
-      <path d="M4.6 5.2l2.4-1" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="12" cy="12" r="5.6" fill="#FFD43B" stroke={INK} strokeWidth="1.9" />
+      <path d="M9.3 10.4a3.2 3.2 0 0 1 1.6-1.6" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
     </>
   ),
   projects: (

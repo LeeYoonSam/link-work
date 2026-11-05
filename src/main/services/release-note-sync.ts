@@ -257,6 +257,8 @@ export interface SyncAllResult {
   /** 릴리스는 가져왔지만 이슈 조회는 상한에 걸려 미룬 것. 행의 동기화 버튼으로 개별로 받을 수 있다 */
   metaOnly: Array<{ noteId: number; version: string }>
   failed: Array<{ version: string; error: string }>
+  /** 이번 실행에서 목록에 새로 들어온 릴리스 수 */
+  linked: number
 }
 
 /**
@@ -267,6 +269,9 @@ export interface SyncAllResult {
  * "아직 동기화하지 않았습니다"로 남아 행의 동기화 버튼으로 언제든 개별로 받을 수 있다.
  */
 export const MAX_ISSUE_FETCH_PER_SYNC = 40
+
+// 진행 중인 전체 동기화. 아침 자동 실행과 수동 버튼이 겹치면 같은 실행을 함께 기다린다.
+let syncAllInFlight: Promise<SyncAllResult> | null = null
 
 /**
  * 기본 Jira 프로젝트의 릴리스 전체를 가져와 릴리스 노트로 만들고 동기화한다.
@@ -279,7 +284,17 @@ export const MAX_ISSUE_FETCH_PER_SYNC = 40
  * 동기화 자체는 반드시 syncReleaseNote를 거친다 — 거기에 "조회 완료 후 트랜잭션 쓰기"
  * 안전장치가 들어 있어서, 일괄 처리용 경로를 따로 만들면 그 보장이 조용히 사라진다.
  */
-export async function syncAllReleases(): Promise<SyncAllResult> {
+export function syncAllReleases(): Promise<SyncAllResult> {
+  // 두 실행이 동시에 돌면 같은 릴리스를 두 번 만들려다 UNIQUE 오류가 failed 에 쌓인다.
+  if (syncAllInFlight) return syncAllInFlight
+  const run = runSyncAllReleases().finally(() => {
+    syncAllInFlight = null
+  })
+  syncAllInFlight = run
+  return run
+}
+
+async function runSyncAllReleases(): Promise<SyncAllResult> {
   const defaultKey = getDefaultJiraProjectKey()
   if (!defaultKey) {
     throw new Error('Jira 기본 프로젝트가 설정되지 않았습니다. 연동 설정에서 선택해 주세요.')
@@ -292,8 +307,7 @@ export async function syncAllReleases(): Promise<SyncAllResult> {
     compareVersionDesc(a.name, b.name)
   )
 
-  const result: SyncAllResult = { synced: [], metaOnly: [], failed: [] }
-  let linked = 0
+  const result: SyncAllResult = { synced: [], metaOnly: [], failed: [], linked: 0 }
   let fetched = 0
 
   for (const version of versions) {
@@ -309,7 +323,7 @@ export async function syncAllReleases(): Promise<SyncAllResult> {
         noteId = existing.id
       } else {
         noteId = linkReleaseNote(defaultKey, version, { quiet: true }).id
-        linked++
+        result.linked++
       }
 
       // 이미 받아 뒀는지는 상한 계산에 넣지 않는다 — 넣으면 받아 둔 릴리스가 쌓일수록
@@ -338,7 +352,7 @@ export async function syncAllReleases(): Promise<SyncAllResult> {
     'update',
     undefined,
     `Jira 일괄 동기화 (${defaultKey})`,
-    `동기화 ${result.synced.length}건 · 신규 ${linked}건 · 이슈 보류 ${result.metaOnly.length}건 · 실패 ${result.failed.length}건`
+    `동기화 ${result.synced.length}건 · 신규 ${result.linked}건 · 이슈 보류 ${result.metaOnly.length}건 · 실패 ${result.failed.length}건`
   )
 
   // 실패해도 last_sync_error가 기록되고 릴리스 자체는 만들어졌을 수 있어 화면을 갱신해야 한다.

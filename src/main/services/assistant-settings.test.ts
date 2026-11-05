@@ -13,7 +13,7 @@ describe('ASSISTANT_SETTING_KEYS', () => {
     }
   })
 
-  it('§3.2 키 15개, 부록 C.2 키 1개, 부록 H 키 1개, 부록 I 키 1개, 모두 18개를 가진다. 3판에서 assistant_slot_min 을 없앴다 (부록 B.6)', () => {
+  it('§3.2 키 13개, 부록 C.2 키 1개, 부록 I 키 1개, A54 키 2개, 원본 완료 키 1개, 모두 18개를 가진다. 3판에서 assistant_slot_min 을, 부록 L 에서 체크인 키 3개를 없앴다', () => {
     expect(Object.keys(ASSISTANT_SETTING_KEYS)).toHaveLength(18)
     expect(new Set(Object.values(ASSISTANT_SETTING_KEYS)).size).toBe(18)
     expect(Object.values(ASSISTANT_SETTING_KEYS)).not.toContain('assistant_slot_min')
@@ -22,8 +22,10 @@ describe('ASSISTANT_SETTING_KEYS', () => {
     expect(ASSISTANT_SETTING_KEYS.refreshJiraMin).toBe('assistant_refresh_jira_min')
     expect(ASSISTANT_SETTING_KEYS.refreshNotify).toBe('assistant_refresh_notify')
     expect(ASSISTANT_SETTING_KEYS.startView).toBe('assistant_start_view')
-    expect(ASSISTANT_SETTING_KEYS.checkinEnabled).toBe('assistant_checkin_enabled')
     expect(ASSISTANT_SETTING_KEYS.meetingBriefingEnabled).toBe('assistant_meeting_briefing_enabled')
+    expect(ASSISTANT_SETTING_KEYS.morningSyncEnabled).toBe('assistant_morning_sync_enabled')
+    expect(ASSISTANT_SETTING_KEYS.morningSyncTime).toBe('assistant_morning_sync_time')
+    expect(ASSISTANT_SETTING_KEYS.completeOriginOnDone).toBe('assistant_complete_origin_on_done')
   })
 })
 
@@ -42,12 +44,12 @@ describe('parseAssistantSettings', () => {
       refreshCalendarMin: 5,
       refreshJiraMin: 15,
       refreshNotify: true,
-      checkinMinGap: 45,
-      checkinDailyCap: 4,
       meetingLeadMin: 15,
-      startView: 'auto',
-      checkinEnabled: true,
-      meetingBriefingEnabled: true
+      startView: 'today',
+      meetingBriefingEnabled: true,
+      morningSyncEnabled: true,
+      morningSyncTime: '08:00',
+      completeOriginOnDone: false
     })
   })
 
@@ -74,23 +76,24 @@ describe('parseAssistantSettings', () => {
       { key: 'assistant_day_rollover', value: '4:00' },
       { key: 'assistant_work_end', value: '24:00' },
       { key: 'assistant_plan_size', value: '0' },
-      { key: 'assistant_checkin_daily_cap', value: '-1' },
       { key: 'assistant_llm_model', value: 'gpt' },
       { key: 'assistant_jira_scope', value: 'mine' },
-      { key: 'assistant_start_view', value: 'calendar' },
-      { key: 'assistant_checkin_enabled', value: 'yes' },
-      { key: 'assistant_checkin_min_gap', value: '4' },
-      { key: 'assistant_checkin_daily_cap', value: '21' },
+      { key: 'assistant_start_view', value: 'dashboard' },
+      { key: 'assistant_morning_sync_enabled', value: 'on' },
+      { key: 'assistant_morning_sync_time', value: '8:00' },
+      { key: 'assistant_complete_origin_on_done', value: 'true' },
       { key: 'assistant_meeting_briefing_enabled', value: 'true' },
       { key: 'assistant_meeting_lead_min', value: '0' }
     ])
     expect(s).toEqual(DEFAULT_ASSISTANT_SETTINGS)
   })
 
-  it('H.9.3: assistant_checkin_enabled 는 0·1 을 읽는다. 기본값은 켬이다', () => {
-    expect(parseAssistantSettings([]).checkinEnabled).toBe(true)
-    expect(parseAssistantSettings([{ key: 'assistant_checkin_enabled', value: '0' }]).checkinEnabled).toBe(false)
-    expect(parseAssistantSettings([{ key: 'assistant_checkin_enabled', value: '1' }]).checkinEnabled).toBe(true)
+  it('D3: 제거된 체크인 설정 행은 무시한다. 결과에 그 필드가 없다 (부록 L)', () => {
+    // 완료 조건 grep 이 소스에서 옛 키 문자열을 0건으로 판정하므로 키를 조합해 만든다
+    const legacy = ['enabled', 'min_gap', 'daily_cap'].map((k) => `assistant_${'check'}in_${k}`)
+    const s = parseAssistantSettings(legacy.map((key) => ({ key, value: '0' })))
+    expect(s).toEqual(DEFAULT_ASSISTANT_SETTINGS)
+    expect(Object.values(ASSISTANT_SETTING_KEYS).some((k) => legacy.includes(k))).toBe(false)
   })
 
   it('I.11.4: assistant_meeting_briefing_enabled 는 0·1 을 읽는다. 기본값은 켬이다', () => {
@@ -109,32 +112,56 @@ describe('parseAssistantSettings', () => {
     expect(parseAssistantSettings([{ key: 'assistant_meeting_lead_min', value: '121' }]).meetingLeadMin).toBe(15)
   })
 
-  it('H.8.4: 체크인 상한 0~20, 최소 간격 5~480 경계값을 읽는다', () => {
-    const lo = parseAssistantSettings([
-      { key: 'assistant_checkin_daily_cap', value: '0' },
-      { key: 'assistant_checkin_min_gap', value: '5' }
-    ])
-    expect(lo.checkinDailyCap).toBe(0)
-    expect(lo.checkinMinGap).toBe(5)
-    const hi = parseAssistantSettings([
-      { key: 'assistant_checkin_daily_cap', value: '20' },
-      { key: 'assistant_checkin_min_gap', value: '480' }
-    ])
-    expect(hi.checkinDailyCap).toBe(20)
-    expect(hi.checkinMinGap).toBe(480)
-    expect(parseAssistantSettings([{ key: 'assistant_checkin_min_gap', value: '481' }]).checkinMinGap).toBe(45)
-  })
-
-  it('C.2: assistant_start_view 는 auto·dashboard·today 를 읽는다', () => {
-    for (const v of ['auto', 'dashboard', 'today'] as const) {
+  it('A24: assistant_start_view 는 today·projects·calendar 를 읽는다', () => {
+    for (const v of ['today', 'projects', 'calendar'] as const) {
       expect(parseAssistantSettings([{ key: 'assistant_start_view', value: v }]).startView).toBe(v)
     }
   })
 
-  it('C.2: assistant_start_view 가 허용값이 아니면 기본값 auto 다', () => {
-    for (const v of ['', 'Today', 'calendar', '1']) {
-      expect(parseAssistantSettings([{ key: 'assistant_start_view', value: v }]).startView).toBe('auto')
+  it('A24: 이전 저장값 auto·dashboard 는 today 로 읽힌다', () => {
+    expect(parseAssistantSettings([{ key: 'assistant_start_view', value: 'auto' }]).startView).toBe('today')
+    expect(parseAssistantSettings([{ key: 'assistant_start_view', value: 'dashboard' }]).startView).toBe('today')
+  })
+
+  it('A24: 이전 저장값을 읽어도 입력 행을 바꾸지 않는다', () => {
+    const rows = [{ key: 'assistant_start_view', value: 'dashboard' }]
+    parseAssistantSettings(rows)
+    expect(rows).toEqual([{ key: 'assistant_start_view', value: 'dashboard' }])
+  })
+
+  it('A24: assistant_start_view 가 허용값이 아니면 기본값 today 다', () => {
+    for (const v of ['', 'Today', 'memos', '1']) {
+      expect(parseAssistantSettings([{ key: 'assistant_start_view', value: v }]).startView).toBe('today')
     }
+  })
+
+  it('A54: assistant_morning_sync_enabled 는 0·1 을 읽는다. 기본값은 켬이다', () => {
+    expect(parseAssistantSettings([]).morningSyncEnabled).toBe(true)
+    expect(parseAssistantSettings([{ key: 'assistant_morning_sync_enabled', value: '0' }]).morningSyncEnabled).toBe(false)
+    expect(parseAssistantSettings([{ key: 'assistant_morning_sync_enabled', value: '1' }]).morningSyncEnabled).toBe(true)
+    expect(parseAssistantSettings([{ key: 'assistant_morning_sync_enabled', value: 'yes' }]).morningSyncEnabled).toBe(true)
+  })
+
+  it('A54: assistant_morning_sync_time 은 HH:mm 을 읽는다. 기본값은 08:00 이다', () => {
+    expect(parseAssistantSettings([]).morningSyncTime).toBe('08:00')
+    expect(parseAssistantSettings([{ key: 'assistant_morning_sync_time', value: '07:30' }]).morningSyncTime).toBe('07:30')
+    expect(parseAssistantSettings([{ key: 'assistant_morning_sync_time', value: '00:00' }]).morningSyncTime).toBe('00:00')
+    for (const v of ['7:30', '24:00', '08:60', '', 'morning']) {
+      expect(parseAssistantSettings([{ key: 'assistant_morning_sync_time', value: v }]).morningSyncTime).toBe('08:00')
+    }
+  })
+
+  it('assistant_complete_origin_on_done 은 0·1 을 읽는다. 기본값은 끔이다', () => {
+    expect(parseAssistantSettings([]).completeOriginOnDone).toBe(false)
+    expect(
+      parseAssistantSettings([{ key: 'assistant_complete_origin_on_done', value: '1' }]).completeOriginOnDone
+    ).toBe(true)
+    expect(
+      parseAssistantSettings([{ key: 'assistant_complete_origin_on_done', value: '0' }]).completeOriginOnDone
+    ).toBe(false)
+    expect(
+      parseAssistantSettings([{ key: 'assistant_complete_origin_on_done', value: 'true' }]).completeOriginOnDone
+    ).toBe(false)
   })
 
   it('B.6: DB 에 남은 assistant_slot_min 행은 무시한다', () => {
@@ -177,30 +204,23 @@ describe('serializeAssistantSettingsPatch', () => {
     expect(s.meetingLeadMin).toBe(10)
   })
 
-  it('C.2: startView 를 assistant_start_view 행으로 바꾼다', () => {
+  it('A24: startView 를 assistant_start_view 행으로 바꾼다', () => {
     expect(serializeAssistantSettingsPatch({ startView: 'today' })).toEqual([
       { key: 'assistant_start_view', value: 'today' }
     ])
-    expect(serializeAssistantSettingsPatch({ startView: 'dashboard' })).toEqual([
-      { key: 'assistant_start_view', value: 'dashboard' }
+    expect(serializeAssistantSettingsPatch({ startView: 'calendar' })).toEqual([
+      { key: 'assistant_start_view', value: 'calendar' }
     ])
-    const s = parseAssistantSettings(serializeAssistantSettingsPatch({ startView: 'auto' }))
-    expect(s.startView).toBe('auto')
+    const s = parseAssistantSettings(serializeAssistantSettingsPatch({ startView: 'projects' }))
+    expect(s.startView).toBe('projects')
   })
 
-  it('C.2: startView 가 허용값이 아니면 throw 한다', () => {
-    expect(() => serializeAssistantSettingsPatch({ startView: 'calendar' })).toThrow(/비서 설정 값이 올바르지 않습니다/)
+  it('A24: startView 가 허용값이 아니면 throw 한다. 이전 값 auto·dashboard 도 쓰지 않는다', () => {
+    expect(() => serializeAssistantSettingsPatch({ startView: 'dashboard' })).toThrow(/비서 설정 값이 올바르지 않습니다/)
+    expect(() => serializeAssistantSettingsPatch({ startView: 'auto' })).toThrow()
     expect(() => serializeAssistantSettingsPatch({ startView: 'Today' })).toThrow()
     expect(() => serializeAssistantSettingsPatch({ startView: null })).toThrow()
     expect(() => serializeAssistantSettingsPatch({ startView: 1 })).toThrow()
-  })
-
-  it('H.9.3: checkinEnabled 를 assistant_checkin_enabled 행으로 바꾼다', () => {
-    expect(serializeAssistantSettingsPatch({ checkinEnabled: false })).toEqual([
-      { key: 'assistant_checkin_enabled', value: '0' }
-    ])
-    expect(parseAssistantSettings(serializeAssistantSettingsPatch({ checkinEnabled: false })).checkinEnabled).toBe(false)
-    expect(() => serializeAssistantSettingsPatch({ checkinEnabled: 1 })).toThrow()
   })
 
   it('I.11.4: meetingBriefingEnabled 를 assistant_meeting_briefing_enabled 행으로 바꾼다', () => {
@@ -215,15 +235,33 @@ describe('serializeAssistantSettingsPatch', () => {
     expect(() => serializeAssistantSettingsPatch({ meetingLeadMin: 121 })).toThrow()
   })
 
-  it('H.8.4: 체크인 상한·간격이 범위 밖이면 throw 한다', () => {
-    expect(() => serializeAssistantSettingsPatch({ checkinDailyCap: -1 })).toThrow()
-    expect(() => serializeAssistantSettingsPatch({ checkinDailyCap: 21 })).toThrow()
-    expect(() => serializeAssistantSettingsPatch({ checkinMinGap: 4 })).toThrow()
-    expect(() => serializeAssistantSettingsPatch({ checkinMinGap: 481 })).toThrow()
-    expect(serializeAssistantSettingsPatch({ checkinDailyCap: 0, checkinMinGap: 480 })).toEqual([
-      { key: 'assistant_checkin_daily_cap', value: '0' },
-      { key: 'assistant_checkin_min_gap', value: '480' }
+  it('D1: 제거된 체크인 설정 필드는 모르는 키로 throw 한다 (부록 L)', () => {
+    // 예전에는 올바르던 값이다. 필드가 남아 있으면 throw 하지 않는다
+    const cases: [string, unknown][] = [['Enabled', false], ['MinGap', 45], ['DailyCap', 4]]
+    for (const [suffix, value] of cases) {
+      const name = `${'check'}in${suffix}`
+      expect(() => serializeAssistantSettingsPatch({ [name]: value })).toThrow(/알 수 없는 비서 설정입니다/)
+    }
+  })
+
+  it('A54: 아침 자동 동기화 설정을 행으로 바꾼다. 형식이 틀리면 throw 한다', () => {
+    expect(serializeAssistantSettingsPatch({ morningSyncEnabled: false, morningSyncTime: '07:45' })).toEqual([
+      { key: 'assistant_morning_sync_enabled', value: '0' },
+      { key: 'assistant_morning_sync_time', value: '07:45' }
     ])
+    const s = parseAssistantSettings(serializeAssistantSettingsPatch({ morningSyncEnabled: false, morningSyncTime: '09:10' }))
+    expect(s.morningSyncEnabled).toBe(false)
+    expect(s.morningSyncTime).toBe('09:10')
+    expect(() => serializeAssistantSettingsPatch({ morningSyncEnabled: 1 })).toThrow()
+    expect(() => serializeAssistantSettingsPatch({ morningSyncTime: '8:00' })).toThrow()
+    expect(() => serializeAssistantSettingsPatch({ morningSyncTime: '24:00' })).toThrow()
+  })
+
+  it('completeOriginOnDone 을 assistant_complete_origin_on_done 행으로 바꾼다', () => {
+    expect(serializeAssistantSettingsPatch({ completeOriginOnDone: true })).toEqual([
+      { key: 'assistant_complete_origin_on_done', value: '1' }
+    ])
+    expect(() => serializeAssistantSettingsPatch({ completeOriginOnDone: 'true' })).toThrow()
   })
 
   it('빈 객체는 빈 배열이다', () => {

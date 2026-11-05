@@ -16,8 +16,11 @@ import {
   INVALID_SELECTION_MESSAGE,
   normalizeProjectName,
   parseProjectSyncSelection,
+  parseSyncCreatedKey,
   PROJECT_CHANGED_MESSAGE,
+  selectAutoSyncSelection,
   selectProjectSyncOps,
+  SYNC_LOG_LABELS,
   UNKNOWN_SELECTION_MESSAGE,
   type DbSyncState,
   type JiraSyncSnapshot,
@@ -1186,6 +1189,137 @@ describe('2차 리뷰 결함 회귀', () => {
         () => parseProjectSyncSelection([{ jiraKey: 'PROJ-1', force: false, projectId }]),
         String(projectId)
       ).toThrow(INVALID_SELECTION_MESSAGE)
+    }
+  })
+})
+
+describe('R11 아침 자동 싱크업 — 안전 자동 적용 선택', () => {
+  const NONE: ReadonlySet<string> = new Set()
+  const row = (overrides: Partial<DbSyncState['projects'][0]>): DbSyncState['projects'][0] => ({
+    id: 1,
+    name: '다른 이름',
+    description: null,
+    jira_issue_key: null,
+    status: 'in_progress',
+    ...overrides
+  })
+
+  it('R11: 기존 프로젝트가 없으면 create 항목 전부를 force=false·projectId=null 로 고른다', () => {
+    const input = plan(projSnapshot()).plan
+    const copy = JSON.parse(JSON.stringify(input)) as typeof input
+    const auto = selectAutoSyncSelection(input, NONE)
+    // 입력 계획을 바꾸지 않는다
+    expect(input).toEqual(copy)
+    expect(auto.selection).toEqual([
+      { jiraKey: 'PROJ-1855', force: false, projectId: null },
+      { jiraKey: 'PROJ-1893', force: false, projectId: null },
+      { jiraKey: 'PROJ-1895', force: false, projectId: null }
+    ])
+    expect(auto.previouslyCreated).toBe(0)
+    expect(auto.needsReview).toBe(0)
+  })
+
+  it('R11: 전에 싱크업이 만든 키의 create 는 고르지 않는다 (지운 프로젝트를 되살리지 않는다)', () => {
+    const auto = selectAutoSyncSelection(plan(projSnapshot()).plan, new Set(['PROJ-1893']))
+    expect(auto.selection.map((s) => s.jiraKey)).toEqual(['PROJ-1855', 'PROJ-1895'])
+    expect(auto.previouslyCreated).toBe(1)
+  })
+
+  it('R11: update 는 jira_key 매칭만 force=false 로 고르고 name·document_url 매칭은 needsReview 로 센다', () => {
+    const db: DbSyncState = {
+      projects: [
+        row({ id: 1, name: '무관한 이름', jira_issue_key: 'PROJ-1855' }),
+        row({ id: 2, name: '상품 상세 크래시 수정' }),
+        row({ id: 3, name: '문서로만 연결' })
+      ],
+      tasks: [],
+      documents: [
+        {
+          id: 1,
+          project_id: 3,
+          name: '티켓',
+          url: `${SITE_URL}/browse/PROJ-1895`,
+          sort_order: 0
+        }
+      ]
+    }
+    const c = plan(projSnapshot(), db)
+    expect(c.plan.items.map((i) => [i.jiraKey, i.matchedBy])).toEqual([
+      ['PROJ-1855', 'jira_key'],
+      ['PROJ-1893', 'name'],
+      ['PROJ-1895', 'document_url']
+    ])
+
+    const auto = selectAutoSyncSelection(c.plan, NONE)
+    expect(auto.selection).toEqual([{ jiraKey: 'PROJ-1855', force: false, projectId: 1 }])
+    expect(auto.needsReview).toBe(2)
+  })
+
+  it('R11: 어떤 계획에서도 force=true 선택을 만들지 않는다', () => {
+    const db: DbSyncState = {
+      projects: [row({ id: 1, name: '내가 고친 이름', jira_issue_key: 'PROJ-1855' })],
+      tasks: [],
+      documents: []
+    }
+    for (const c of [plan(projSnapshot()), plan(projSnapshot(), db)]) {
+      const auto = selectAutoSyncSelection(c.plan, NONE)
+      expect(auto.selection.length).toBeGreaterThan(0)
+      expect(auto.selection.every((s) => s.force === false)).toBe(true)
+    }
+  })
+
+  it('R11: 고른 선택은 selectProjectSyncOps 를 그대로 통과하고 강제 경로를 타지 않는다', () => {
+    const db: DbSyncState = {
+      projects: [row({ id: 1, name: '내가 고친 이름', jira_issue_key: 'PROJ-1855' })],
+      tasks: [],
+      documents: []
+    }
+    const c = plan(projSnapshot(), db)
+    const auto = selectAutoSyncSelection(c.plan, NONE)
+    const selected = selectProjectSyncOps(c, auto.selection)
+    expect(selected.map((s) => [s.op.item.jiraKey, s.force, s.action])).toEqual([
+      ['PROJ-1855', false, 'update'],
+      ['PROJ-1893', false, 'create'],
+      ['PROJ-1895', false, 'create']
+    ])
+    // 보수 경로이므로 이름은 덮어쓰지 않는다
+    const after = applyInMemory(db, c, auto.selection)
+    expect(after.projects.find((p) => p.id === 1)?.name).toBe('내가 고친 이름')
+  })
+
+  it('R11: 적용 뒤 같은 스냅샷으로 다시 고르면 unchanged 라 선택이 0건이다', () => {
+    const first = plan(projSnapshot())
+    const db = applyInMemory(emptyDb(), first, selectAutoSyncSelection(first.plan, NONE).selection)
+    const second = plan(projSnapshot(), db)
+    expect(second.plan.items.every((i) => i.action === 'unchanged')).toBe(true)
+    expect(selectAutoSyncSelection(second.plan, NONE).selection).toEqual([])
+  })
+
+  it('R11: parseSyncCreatedKey 는 수동·강제·자동 3접두의 키를 꺼내고 그 외는 null 이다', () => {
+    expect(
+      parseSyncCreatedKey(`${SYNC_LOG_LABELS.manual} (PROJ-1855): 작업 +3 · 작업 갱신 0 · 문서 +2`)
+    ).toBe('PROJ-1855')
+    expect(
+      parseSyncCreatedKey(`${SYNC_LOG_LABELS.force} (PROJ-12): 작업 +0 · 작업 갱신 1 · 문서 +0`)
+    ).toBe('PROJ-12')
+    expect(
+      parseSyncCreatedKey(`${SYNC_LOG_LABELS.auto} (AB_2-7): 작업 +1 · 작업 갱신 0 · 문서 +1`)
+    ).toBe('AB_2-7')
+    expect(SYNC_LOG_LABELS).toEqual({
+      manual: 'Jira 싱크업',
+      force: '강제 업데이트',
+      auto: '아침 자동 싱크업'
+    })
+    for (const bad of [
+      null,
+      undefined,
+      '',
+      '수동 생성',
+      'Jira 싱크업 PROJ-1: 작업 +1',
+      'Jira 싱크업 (proj-1): 작업 +1',
+      '메모 Jira 싱크업 (PROJ-1): 작업 +1'
+    ]) {
+      expect(parseSyncCreatedKey(bad), String(bad)).toBeNull()
     }
   })
 })

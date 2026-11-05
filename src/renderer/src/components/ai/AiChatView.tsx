@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAiChatStore } from '../../stores/aiChatStore'
 import { useProjectStore } from '../../stores/projectStore'
-import { useTodoStore } from '../../stores/todoStore'
-import { useMemoStore } from '../../stores/memoStore'
-import { useVariableStore } from '../../stores/variableStore'
-import { useDocumentStore } from '../../stores/documentStore'
+import { normalizeView } from '../layout/navConfig'
 import MarkdownContent from '../memo/MarkdownContent'
 import type {
   AiApprovalRequest,
@@ -93,43 +90,8 @@ export default function AiChatView(): React.ReactNode {
     const unsubscribe = window.api.ai.onStream((event) =>
       handleStreamEvent(event as AiStreamEvent)
     )
-    // AI 쓰기 도구가 데이터를 생성하면 열려 있는 화면(store)을 갱신한다
-    const unsubscribeData = window.api.ai.onDataChanged(({ entity }) => {
-      if (entity === 'project') {
-        const projectStore = useProjectStore.getState()
-        void projectStore.fetchProjects()
-        // 상세 화면이 "실제로 열려 있을 때만" 상세 재조회 (태스크 수정 반영).
-        // currentProject는 목록으로 나가도 유지되므로 projectView로 추가 게이트한다.
-        if (projectStore.projectView === 'detail' && projectStore.currentProject) {
-          void projectStore.fetchProject(projectStore.currentProject.id)
-        }
-      } else if (entity === 'todo') {
-        const todoStore = useTodoStore.getState()
-        void todoStore.fetchTodos()
-        void todoStore.fetchActiveTodos()
-        void todoStore.fetchTags()
-      } else if (entity === 'memo') {
-        const memoStore = useMemoStore.getState()
-        void memoStore.fetchMemos()
-        void memoStore.fetchCategories()
-      } else if (entity === 'variable') {
-        void useVariableStore.getState().fetchVariables()
-      } else if (entity === 'document') {
-        // 문서 목록 store는 전체 목록과 프로젝트별 목록이 공유하므로,
-        // 프로젝트 상세가 열려 있으면 그 프로젝트 문서만 다시 읽는다.
-        const projectStore = useProjectStore.getState()
-        const documentStore = useDocumentStore.getState()
-        if (projectStore.projectView === 'detail' && projectStore.currentProject) {
-          void documentStore.fetchDocuments(projectStore.currentProject.id)
-        } else {
-          void documentStore.fetchAllDocuments()
-        }
-      }
-    })
-    return () => {
-      unsubscribe()
-      unsubscribeData()
-    }
+    // AI 쓰기 도구의 데이터 변경(ai:dataChanged)은 App 의 installDataSync 가 반영한다
+    return unsubscribe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -453,20 +415,8 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
         setView('documents')
       }
     } else if (kind === 'view') {
-      const views = [
-        'dashboard',
-        'today',
-        'projects',
-        'todos',
-        'documents',
-        'variables',
-        'memos',
-        'calendar',
-        'releases',
-        'reports',
-        'notes'
-      ] as const
-      const target = views.find((v) => v === rest)
+      // 예전 화면 ID(dashboard)도 새 ID 로 옮겨 연다
+      const target = normalizeView(rest)
       if (target) setView(target)
     }
   }
