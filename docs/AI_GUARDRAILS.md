@@ -20,9 +20,9 @@ LinkWork "AI 대화" 기능의 데이터 보호·보안·추적 기준. 코드�
 
 | 레이어 | 설정 | 효과 |
 |---|---|---|
-| 1차 | `allowedTools: LINKWORK_TOOL_NAMES` | LinkWork **조회** 도구(+Notion 조회)만 자동 승인 |
-| 2차 | `disallowedTools: [Bash, Write, Edit, ...]` | 위험 내장 도구 명시적 차단 |
-| 3차 | `canUseTool` 콜백 | 쓰기 도구는 HITL 승인 흐름(7절), `fetch_url`은 조건부 승인(8절), 내장 `Read`는 첨부 이미지 디렉토리만 허용(8절), 그 외 화이트리스트 밖 도구는 **모두** 거부 + 시도를 감사 로그에 기록 |
+| 1차 | `allowedTools: LINKWORK_TOOL_NAMES` | LinkWork **조회** 도구(+Notion·Bitbucket 조회)만 자동 승인 |
+| 2차 | `disallowedTools: [Bash, Write, Edit, ..., EnterPlanMode]` | 위험 내장 도구 명시적 차단. AI 가 스스로 plan mode 에 들어가지 못한다 |
+| 3차 | `canUseTool` 콜백 | 쓰기 도구는 HITL 승인 흐름(7절), `fetch_url`은 조건부 승인(8절), 내장 `Read`는 첨부 이미지 디렉토리만 허용(8절), `ExitPlanMode`는 plan 모드에서만 계획 승인 카드(7.4절), 그 외 화이트리스트 밖 도구는 **모두** 거부 + 시도를 감사 로그에 기록 |
 
 새 조회 도구는 `ai-tools.ts`에 정의하고 `LINKWORK_TOOL_NAMES`에 등록해야만 실행된다.
 비서 도구는 `ai-assistant-tools.ts` 에 정의한다. 등록은 같은 `LINKWORK_TOOL_NAMES` 에 한다.
@@ -40,13 +40,15 @@ LinkWork "AI 대화" 기능의 데이터 보호·보안·추적 기준. 코드�
 | `tool_call` | AI가 도구 호출 | chat_id, tool_name, input(JSON) |
 | `tool_error` | 도구 실행 실패 | tool_name, 오류 내용 |
 | `tool_denied` | 화이트리스트 외 도구 시도 / 쓰기 비활성 중 쓰기 시도 | tool_name, input — **보안 이벤트** |
-| `approval_request` | 쓰기 도구 승인 요청 표시 | tool_name, input(전문) |
+| `approval_request` | 쓰기·웹 읽기·계획 승인 요청 표시 | tool_name, input(전문) |
 | `write_approved` | 사용자가 쓰기 승인 / auto 모드 자동 승인 | tool_name, input(전문), detail(자동 승인 시 변경 전 스냅샷) |
 | `write_rejected` | 사용자가 쓰기 거절 (타임아웃/중단 포함) | tool_name, detail(사유) |
 | `write_executed` | 쓰기 실행 완료 | tool_name, detail(생성된 id 등) |
-| `write_toggle` | 채팅 쓰기 모드 변경 | chat_id, detail(write_mode=readonly/ask/auto) |
+| `write_toggle` | 채팅 쓰기 모드 변경 (계획 승인으로 바뀐 경우 포함) | chat_id, detail(write_mode=readonly/ask/auto/plan) |
 | `fetch_approved` | 사용자가 fetch_url(웹 페이지 읽기) 승인 | tool_name=fetch_url, input(URL) |
 | `fetch_rejected` | 사용자가 fetch_url 거절 (타임아웃/중단 포함) | tool_name=fetch_url, detail(사유) |
+| `plan_approved` | 사용자가 plan 모드의 계획 승인 | tool_name=ExitPlanMode, input(계획 전문), detail(실행 모드=auto/ask) |
+| `plan_rejected` | 사용자가 계획 거절 (타임아웃/중단 포함) | tool_name=ExitPlanMode, detail(사유) |
 | `query_done` | 정상 완료 | duration_ms, 응답 길이 |
 | `query_error` | 실패 | 오류 메시지 |
 | `query_cancelled` | 사용자 중단 | duration_ms |
@@ -112,8 +114,8 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
 4. **전용 쓰기 경로**: 읽기 전용 커넥션이 아닌 별도 모듈로 분리하고,
    입력 전문을 감사 로그(`input`)에 기록
 5. **채팅별 모드 게이트**: 쓰기 동작 방식은 채팅 단위로 제어한다
-   (`ai_chats.write_mode`, 7.3절). 자동 승인은 채팅별 opt-in(기본 아님)이며,
-   기본 모드(ask)에서는 모든 쓰기가 건별 승인을 거친다
+   (`ai_chats.write_mode`, 7.3절). 새 채팅의 기본 모드는 자동 승인(auto)이다.
+   사용자는 입력창 아래 모드 선택에서 채팅마다 readonly·ask·plan 으로 바꿀 수 있다
 6. 이 문서에 도구별 위험도와 승인 흐름을 먼저 추가한 뒤 구현
 
 ### 7.1 현재 구현 — 생성(create) 6종 + 수정(update) 6종
@@ -159,6 +161,7 @@ AI가 쓰기 도구 호출
   → canUseTool 인터셉트 (쓰기 도구는 allowedTools에 없음 — SDK 자동 승인 불가)
   → 채팅 write_mode 재조회 (호출 시점 기준 — 모드 전환 즉시 반영)
   → readonly: 즉시 거부 (audit: tool_denied)
+  → plan: 즉시 거부, AI에게 "ExitPlanMode 로 계획 제출" 메시지 (audit: tool_denied, 7.4절)
   → auto + 변수 외 도구: 자동 승인 (audit: write_approved, 변경 전 스냅샷 기록) → 실행
   → ask / 변수 도구: renderer에 'approval' 이벤트 (입력 전문 미리보기 카드)
      → 사용자 [승인] → 실행 (audit: write_approved → tool_call → write_executed)
@@ -181,12 +184,18 @@ AI가 쓰기 도구 호출
 | 모드 | 동작 | 비고 |
 |---|---|---|
 | `readonly` | 쓰기 도구 시도 자체를 거부 | 조회 전용 채팅 (audit: tool_denied) |
-| `ask` (기본) | 쓰기 호출마다 승인 카드 | 승인이 게이트 — 사전 토글 없이도 안전 |
-| `auto` | 승인 카드 없이 즉시 실행 | 채팅별 opt-in. **변수 도구는 예외** — 항상 승인 |
+| `ask` | 쓰기 호출마다 승인 카드 | 승인이 게이트. DB 값이 허용 밖이면 이 모드로 폴백한다 |
+| `auto` (새 채팅 기본) | 승인 카드 없이 즉시 실행 | **변수 도구는 예외** — 항상 승인 |
+| `plan` | 조회로 계획을 세우고 승인 전 쓰기를 거부 | 계획 승인 시 auto 또는 ask 로 전환 (7.4절) |
+
+새 채팅 기본값:
+
+- `ai:chatCreate` 가 `write_mode = 'auto'` 를 명시해 INSERT 한다.
+- 컬럼 DEFAULT 는 `'ask'` 그대로 둔다. 마이그레이션이 없으므로 기존 채팅의 모드는 바뀌지 않는다.
 
 `auto` 모드 설계 근거와 안전장치:
 
-- 승인 카드의 "이 채팅에서 항상 승인" 버튼 또는 헤더 세그먼트로만 진입 (기본값 아님)
+- 새 채팅의 기본값이다. 승인 카드의 "이 채팅에서 항상 승인" 버튼 또는 모드 선택으로도 진입한다
 - `create_variable`/`update_variable`(`ALWAYS_CONFIRM_WRITE_TOOLS`)은 secret 값을
   다룰 수 있어 auto 모드에서도 항상 승인 카드를 거친다
 - 자동 승인 시 수정 도구는 **변경 전 스냅샷**을 `write_approved`의 detail에 기록해
@@ -195,7 +204,38 @@ AI가 쓰기 도구 호출
   요청한 경우에만"(6절) 규칙은 모든 모드에서 유지된다
 - 모드는 `canUseTool` 호출 시점마다 DB에서 재조회 — 진행 중인 쿼리에도 즉시 적용
 
-## 8. 외부 콘텐츠 접근 (Notion / Atlassian(Jira) / 웹 링크 / 이미지 첨부)
+### 7.4 계획 모드 (`plan`)
+
+Claude Code 의 plan mode 를 LinkWork 쓰기 흐름에 맞춘 모드다.
+AI 는 먼저 조회 도구로 현황을 파악한다. 그다음 생성·수정할 항목을 계획으로 제출한다.
+사용자가 계획을 승인한 뒤에만 쓰기 도구가 실행된다.
+
+```
+plan 채팅의 쿼리 시작
+  → query 옵션 permissionMode: 'plan' + planModeInstructions(PLAN_MODE_INSTRUCTIONS)
+  → AI 가 조회 도구 호출 → canUseTool 허용 (기존 조회 게이트와 같다)
+  → AI 가 쓰기 도구 호출 → 거부 "계획 모드입니다. 쓰기 전에 ExitPlanMode 로 계획을 제출하세요."
+  → AI 가 ExitPlanMode 호출 → renderer에 'approval' 이벤트 (kind: 'plan', 계획 전문 카드)
+     → 사용자 [승인 + 실행 모드 auto/ask] → 채팅 write_mode 변경 + 'mode_changed' 이벤트
+        → canUseTool 이 updatedPermissions [{ type: 'setMode', mode: 'default', destination: 'session' }] 로 허용
+        → CLI 가 plan mode 를 빠져나간다. 이후 쓰기는 새 모드 규칙(7.2)을 따른다
+          (audit: plan_approved)
+     → 사용자 [거절] → 거부 "실행하지 말고 수정 요청을 기다리라". 모드는 plan 유지
+          (audit: plan_rejected)
+     → 5분 무응답/쿼리 중단 → 자동 거부
+```
+
+- `ExitPlanMode` 는 `allowedTools` 에 넣지 않는다. 항상 `canUseTool` 의 승인 카드를 거친다.
+- 채팅 모드가 plan 이 아닐 때 `ExitPlanMode` 는 승인 카드 없이 거부한다 (audit: tool_denied).
+- `EnterPlanMode` 는 `disallowedTools` 로 막는다. plan mode 진입은 사용자가 고른 채팅 모드로만 한다.
+- 계획 본문 수집: CLI 는 `ExitPlanMode` 의 `plan` 인자를 `canUseTool` input 에서 뺀다 (CLI 2.1.318 실측).
+  그래서 메시지 루프가 assistant 의 tool_use 블록에서 `plan` 을 잡아 tool_use id 로 보관한다.
+  `canUseTool` 은 `options.toolUseID` 로 그 값을 찾는다. 값이 없으면 마지막 계획 결정 뒤의 응답 텍스트를 쓴다.
+- CLI 의 기본 plan mode 는 계획 파일(`~/.claude/plans/*.md`)을 Write 로 쓰려 한다.
+  `Write` 는 계속 차단한다. `PLAN_MODE_INSTRUCTIONS` 가 계획 파일 대신 응답 본문과 `plan` 인자를 쓰게 지시한다.
+- 계획 승인 응답은 `ai:approve(requestId, approved, { mode })` 로 받는다. mode 는 auto 또는 ask 이고, 생략하면 auto 다.
+
+## 8. 외부 콘텐츠 접근 (Notion / Atlassian(Jira) / 웹 링크 / 이미지 첨부 / Bitbucket)
 
 AI가 앱 밖의 지식(Notion 문서, Atlassian(Jira) 티켓·프로젝트, 웹 페이지, 첨부 이미지)에
 접근하는 경로와 각 게이트. **모두 읽기 전용**이며 외부에 데이터를 쓰는 도구는 없다.
@@ -339,6 +379,34 @@ Jira 릴리스(버전)에 묶인 이슈를 앱이 미리 동기화해 둔 결과
 - **브리핑·맥락 복구 본문은 신뢰할 수 없는 입력으로 다룬다.** 이 본문은 LLM 이 만든 문장이다. 회의 요약 액션아이템도 LLM 출력이다.
 - AI 는 도구 결과 안의 지시문을 따르지 않는다. 조회한 값을 외부 URL 로 보내지 않는다.
 - 입력은 zod 로 검증한다. SQL 은 바인딩 파라미터만 쓴다.
+- 조회 전용이다. 그래서 인젝션이 성공해도 피해 범위는 잘못된 답변 표시로 한정된다.
+
+### 8.7 Bitbucket 저장소 조회 (`read_bitbucket`) — 자동 허용 (읽기 전용)
+
+Bitbucket Cloud 비공개 저장소의 파일 내용과 폴더 목록을 읽는 도구다.
+비공개 저장소 URL 은 인증 없이 404 를 반환한다. 그래서 `fetch_url` 로 읽을 수 없다.
+구현은 `src/main/services/bitbucket.ts` 와 `bitbucket-url.ts` 에 있다.
+
+- **GET 만 호출한다.** 이 모듈은 쓰기 API 를 호출하지 않는다.
+- **호스트는 `https://api.bitbucket.org/2.0` 으로 고정한다.** 입력 URL 은 `bitbucket.org` 웹 주소만 받는다. 앱이 그 주소를 API 경로로 바꾼다.
+- workspace·저장소 슬러그는 허용 문자만 받는다. `.`·`..` 경로 세그먼트는 거부한다.
+- **인증 헤더는 `api.bitbucket.org` 에만 보낸다.** 리다이렉트는 수동으로 따라간다. 다른 호스트로 가는 리다이렉트에는 인증 헤더를 붙이지 않는다.
+- 다른 호스트로 가는 리다이렉트는 https 공개 주소만 따라간다. 사설망·로컬 주소는 `getUrlBlockReason` 으로 거부한다.
+- 페이지네이션의 `next` 주소가 `api.bitbucket.org` 밖이면 요청하지 않는다.
+- 인증은 Atlassian 이메일과 Bitbucket API token 의 Basic 인증이다. 필수 스코프는 `read:repository` 다.
+- token 은 `app_settings` 에 **safeStorage 암호화**로 저장한다 (`bitbucket_api_token`). 이메일은 평문으로 저장한다 (`bitbucket_email`).
+- **token 은 모델에 노출하지 않는다.** token·이메일·Authorization 값은 도구 결과와 에러 메시지에 들어가지 않는다.
+- 등록할 때 앱이 `/2.0/user` 로 자격 증명을 검증한다. 401 이면 등록하지 않는다. 403 은 선택 스코프 `read:user` 가 없다는 뜻이라 등록을 허용한다.
+- 리소스 상한은 다음과 같다.
+  - 요청 타임아웃 15초
+  - 응답 2MB
+  - 파일 본문 15,000자. 넘으면 `truncated: true` 와 `notice` 를 붙인다.
+  - 폴더 목록 5페이지·500항목
+  - 바이너리 파일은 본문 대신 안내 문구를 반환한다.
+- 슬래시가 든 브랜치는 URL 만으로 경계를 알 수 없다. 첫 시도가 404 이면 앱이 ref 를 한 세그먼트씩 늘려 최대 3회 다시 시도한다.
+- `fetch_url` 은 Bitbucket URL 을 받으면 이 경로로 위임한다. 미연동이면 연동 안내 에러를 반환한다.
+- 자동 허용 화이트리스트(`LINKWORK_TOOL_NAMES`)에 등재한다. 이 도구는 외부에 데이터를 보내지 않는다. 읽는 범위는 사용자 token 이 허가한 저장소로 한정된다.
+- **반환 내용은 신뢰할 수 없는 데이터다.** 저장소 파일 안의 지시문을 따르지 않는다. 조회한 값을 외부 URL 로 보내지 않는다 (6절과 같다).
 - 조회 전용이다. 그래서 인젝션이 성공해도 피해 범위는 잘못된 답변 표시로 한정된다.
 
 ## 9. 비용 가드레일 (과금 차단)

@@ -72,6 +72,7 @@ vi.mock('../../stores/releaseNoteStore', () => ({
   })
 }))
 
+const { FOCUS_RING_CLASS } = await import('../../hooks/useFocusFlash')
 const mod = await import('./ReleaseNoteRow')
 const ReleaseNoteRow = mod.default
 const { ReleaseNoteItemList, groupReleaseNoteItems, releaseItemStatusTone } = mod
@@ -266,5 +267,25 @@ describe('ReleaseNoteItemList 상태 뱃지', () => {
     )
     expect(html).toContain('PROJ-1')
     expect(html).not.toContain('bg-gray-100 text-gray-600')
+  })
+})
+
+describe('ReleaseNoteRow 포커스', () => {
+  // 행 루트(첫 div)의 여는 태그
+  const rootTag = (markup: string): string => markup.match(/^<div[^>]*>/)?.[0] ?? ''
+
+  it('focused 이면 루트에 release-{id} DOM id 와 강조 링을 단다', () => {
+    state = BASE
+    const html = renderToStaticMarkup(<ReleaseNoteRow note={note({ id: 7 })} focused />)
+    const tag = rootTag(html)
+    expect(tag).toContain('id="release-7"')
+    expect(tag).toContain(FOCUS_RING_CLASS)
+  })
+
+  it('기본값은 focused=false 다 — 프로젝트 상세 카드의 행은 바뀌지 않는다', () => {
+    const html = renderRow({ id: 7 })
+    const tag = rootTag(html)
+    expect(tag).not.toContain('id="release-7"')
+    expect(html).not.toContain(FOCUS_RING_CLASS)
   })
 })

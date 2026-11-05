@@ -54,7 +54,7 @@ describe('buildCandidates 정규화', () => {
       priority: 'high',
       inProgress: true,
       dueDate: '2026-11-05',
-      link: 'linkwork://project/10',
+      link: 'linkwork://project/10/task/3',
       projectName: '프로젝트A',
       lastTouchedAt: '2026-11-01 10:00:00'
     })
@@ -75,7 +75,7 @@ describe('buildCandidates 정규화', () => {
         ]
       })
     )
-    expect(list[0]).toMatchObject({ id: 'todo:1', dueDate: '2026-11-03', dueTime: '14:30', priority: 'high', link: 'linkwork://view/todos' })
+    expect(list[0]).toMatchObject({ id: 'todo:1', dueDate: '2026-11-03', dueTime: '14:30', priority: 'high', link: 'linkwork://todo/1' })
     expect(list[1]).toMatchObject({ dueDate: '2026-11-04', dueTime: null })
     expect(list[2].priority).toBeNull()
   })
@@ -104,7 +104,7 @@ describe('buildCandidates 정규화', () => {
         ]
       })
     )
-    expect(list[0]).toMatchObject({ id: 'action_item:7:0', priority: 'medium', dueDate: '2026-11-04', link: 'linkwork://view/notes' })
+    expect(list[0]).toMatchObject({ id: 'action_item:7:0', priority: 'medium', dueDate: '2026-11-04', link: 'linkwork://note/7' })
     expect(list[1].dueDate).toBeNull()
   })
 
@@ -135,7 +135,7 @@ describe('A4 중복 제거', () => {
     expect(list[0]).toMatchObject({
       id: 'task:12',
       source: 'task',
-      link: 'linkwork://project/10',
+      link: 'linkwork://project/10/task/12',
       projectId: 10,
       jiraKey: 'PROJ-1',
       inProgress: true,

@@ -477,7 +477,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         task_id: Number(taskId),
         project_id: args.project_id,
         name: args.name,
-        link: `linkwork://project/${args.project_id}`
+        link: `linkwork://project/${args.project_id}/task/${taskId}`
       })
     }
   )
@@ -525,7 +525,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         todo_id: Number(todoId),
         title: args.title,
         new_tags: createdTags,
-        link: 'linkwork://view/todos'
+        link: `linkwork://todo/${todoId}`
       })
     }
   )
@@ -569,7 +569,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         created: true,
         memo_id: Number(memoId),
         new_category: createdCategory,
-        link: 'linkwork://view/memos'
+        link: `linkwork://memo/${memoId}`
       })
     }
   )
@@ -609,7 +609,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         created: true,
         variable_id: Number(result.lastInsertRowid),
         key: args.key,
-        link: 'linkwork://view/variables'
+        link: `linkwork://variable/${result.lastInsertRowid}`
       })
     }
   )
@@ -822,7 +822,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         task_id: args.task_id,
         project_id: row.project_id,
         updated_fields: keys,
-        link: `linkwork://project/${row.project_id}`
+        link: `linkwork://project/${row.project_id}/task/${args.task_id}`
       })
     }
   )
@@ -913,7 +913,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         todo_id: args.todo_id,
         updated_fields: keys,
         new_tags: createdTags,
-        link: 'linkwork://view/todos'
+        link: `linkwork://todo/${args.todo_id}`
       })
     }
   )
@@ -1013,7 +1013,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         memo_id: args.memo_id,
         updated_fields: keys,
         new_category: createdCategory,
-        link: 'linkwork://view/memos'
+        link: `linkwork://memo/${args.memo_id}`
       })
     }
   )
@@ -1071,7 +1071,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         variable_id: args.variable_id,
         key: args.key ?? row.key,
         updated_fields: keys,
-        link: 'linkwork://view/variables'
+        link: `linkwork://variable/${args.variable_id}`
       })
     }
   )

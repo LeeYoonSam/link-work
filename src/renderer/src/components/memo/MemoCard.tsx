@@ -2,6 +2,7 @@ import { format } from 'date-fns'
 import { useMemo } from 'react'
 import type { Memo, MemoCategory } from '../../types'
 import MarkdownContent from './MarkdownContent'
+import { FOCUS_RING_CLASS, focusDomId, useFocusScroll } from '../../hooks/useFocusFlash'
 import { IconButton, StarIcon, PencilIcon, TrashIcon, UndoIcon, ArchiveIcon } from '../ui'
 
 interface MemoCardProps {
@@ -14,6 +15,9 @@ interface MemoCardProps {
   onRestore?: (id: number) => void
   onDelete?: (id: number) => void
   onToggleImportant?: (id: number) => void
+  // 앱 내 링크로 찾아온 카드면 true. 강조하고 화면 가운데로 스크롤한다.
+  // 강조 중에는 bg-white 를 빼서 강조 배경이 보이게 한다
+  highlighted?: boolean
 }
 
 interface ParsedMemo {
@@ -66,14 +70,18 @@ export default function MemoCard({
   onArchive,
   onRestore,
   onDelete,
-  onToggleImportant
+  onToggleImportant,
+  highlighted = false
 }: MemoCardProps): React.ReactNode {
   const { title, preview, hasMore } = useMemo(() => parseMemo(memo.content), [memo.content])
   const isImportant = memo.is_important === 1
+  const rootRef = useFocusScroll<HTMLDivElement>(highlighted)
 
   return (
     <div
-      className={`h-72 bg-white border rounded-lg shadow-sm hover:shadow-md transition flex flex-col overflow-hidden ${
+      ref={rootRef}
+      id={focusDomId('memo', memo.id)}
+      className={`h-72 border rounded-lg shadow-sm hover:shadow-md transition flex flex-col overflow-hidden ${
         onClick ? 'cursor-pointer' : ''
       } ${
         isArchived
@@ -81,7 +89,7 @@ export default function MemoCard({
           : isImportant
             ? 'border-yellow-300 bg-yellow-50/30'
             : 'border-gray-200'
-      }`}
+      } ${highlighted ? FOCUS_RING_CLASS : 'bg-white'}`}
       onClick={() => onClick?.(memo)}
     >
       <div className="px-4 pt-3 pb-2 border-b border-gray-100 flex flex-col gap-1 flex-shrink-0">

@@ -8,7 +8,8 @@ import type {
 } from '../../types'
 import MarkdownContent from '../memo/MarkdownContent'
 import { AlertTriangleIcon, Badge, Card, SectionTitle, button } from '../ui'
-import { hhmmOf, openInternalLink } from './PlanItemRow'
+import { hhmmOf } from './PlanItemRow'
+import { openInternalLink } from '../../utils/openInternalLink'
 
 // 회의 전 브리핑 카드 (docs/ASSISTANT.md 부록 I.10.1).
 // 계획이 없어도 보인다. 이유: 브리핑은 근무 중 여부와 무관하다.

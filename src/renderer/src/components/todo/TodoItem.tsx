@@ -40,7 +40,11 @@ export default function TodoItem({ todo, highlighted = false }: TodoItemProps): 
 
   const hasTags = todo.tags && todo.tags.length > 0
   const hasNotes = Boolean(todo.notes && todo.notes.trim().length > 0)
-  const [showNotes, setShowNotes] = useState(false)
+  // 링크로 찾아온 항목이면 메모를 펼쳐서 연다
+  const [showNotes, setShowNotes] = useState(highlighted)
+  useEffect(() => {
+    if (highlighted) setShowNotes(true)
+  }, [highlighted])
 
   // 박스 클릭 시 메모가 있으면 펼치고 접는다.
   // 단, 내부의 버튼/링크/입력 등 인터랙티브 요소 클릭은 토글에서 제외한다.

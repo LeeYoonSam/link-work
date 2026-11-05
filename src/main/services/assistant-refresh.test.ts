@@ -158,8 +158,8 @@ describe('planRefresh §8.4', () => {
   })
 
   it('A19: 액션아이템이 todo 로 옮겨지면 같은 행을 replace 하고 제안으로 넣지 않는다', () => {
-    const items = [item({ id: 4, candidate_id: 'action_item:7:0', source: 'action_item', rank: 2, status: 'in_progress', link: 'linkwork://view/notes' })]
-    const todo = cand({ id: 'todo:30', title: '자료 공유', link: 'linkwork://view/todos' })
+    const items = [item({ id: 4, candidate_id: 'action_item:7:0', source: 'action_item', rank: 2, status: 'in_progress', link: 'linkwork://note/7' })]
+    const todo = cand({ id: 'todo:30', title: '자료 공유', link: 'linkwork://todo/30' })
     const plan = run(
       snapshot({ seenCandidateIds: ['action_item:7:0'] }),
       { candidates: [todo], calendar: [], jira: [] },
@@ -170,7 +170,7 @@ describe('planRefresh §8.4', () => {
     expect(plan.updates).toEqual([
       {
         id: 4,
-        patch: expect.objectContaining({ candidate_id: 'todo:30', source: 'todo', link: 'linkwork://view/todos', title: '자료 공유' })
+        patch: expect.objectContaining({ candidate_id: 'todo:30', source: 'todo', link: 'linkwork://todo/30', title: '자료 공유' })
       }
     ])
     expect(plan.updates[0].patch).not.toHaveProperty('status')

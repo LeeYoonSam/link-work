@@ -8,6 +8,13 @@ import { getEventsInRange } from './google-calendar'
 import { buildAssistantTools } from './ai-assistant-tools'
 import { buildWriteTools, maskSecretVariable, TRUNCATION_MARKER } from './ai-write-tools'
 import {
+  BITBUCKET_NOT_CONNECTED_MESSAGE,
+  isBitbucketConnected,
+  readBitbucketSource,
+  type BitbucketSourceResult
+} from './bitbucket'
+import { isBitbucketUrl } from './bitbucket-url'
+import {
   getNotionDatabaseEntries,
   getNotionPageContent,
   isNotionConnected,
@@ -50,6 +57,8 @@ export const LINKWORK_TOOL_NAMES = [
   // Notion은 사용자 자신의 워크스페이스를 읽기 전용으로 조회하므로 자동 허용
   'search_notion',
   'get_notion_page',
+  // Bitbucket 은 사용자 token 계정의 저장소를 GET 으로만 조회하므로 자동 허용 (AI_GUARDRAILS 8.7)
+  'read_bitbucket',
   // 비서 도구는 읽기 전용 로컬 DB 만 읽는다. Jira 를 호출하지 않는다 (AI_GUARDRAILS 8.6)
   'get_today_plan',
   'get_recent_work',
@@ -82,6 +91,15 @@ function toErrorMessage(err: unknown): string {
     return '요청 시간이 초과되었습니다. 잠시 후 다시 시도하거나 다른 URL을 사용해 주세요.'
   }
   return message
+}
+
+// Bitbucket 결과가 잘렸으면 다른 외부 도구와 같은 TRUNCATION_MARKER 관례로 알린다
+function withBitbucketNotice(
+  result: BitbucketSourceResult
+): BitbucketSourceResult & { notice?: string } {
+  if (!result.truncated) return result
+  const what = result.type === 'file' ? '내용이 길어 앞부분만' : '항목이 많아 앞부분 목록만'
+  return { ...result, notice: `${what} 반환되었습니다${TRUNCATION_MARKER}` }
 }
 
 function truncate(text: string | null, max: number): string | null {
@@ -183,13 +201,14 @@ const getProject = tool(
          FROM tasks WHERE project_id = ?
          ORDER BY COALESCE(parent_task_id, id), parent_task_id IS NOT NULL, sort_order, id`
       )
-      .all(p.id)
+      .all(p.id) as { id: number }[]
     const documents = db
       .prepare('SELECT id, name, url, type, description FROM documents WHERE project_id = ? ORDER BY sort_order, id')
       .all(p.id)
     return jsonResult({
       project: applyProjectAutoStatus(project as ProjectStatusFields & Record<string, unknown>),
-      tasks,
+      // 작업 행마다 앱 내 링크를 준다. AI 가 작업 위치로 바로 안내할 수 있다.
+      tasks: tasks.map((t) => ({ ...t, link: `linkwork://project/${p.id}/task/${t.id}` })),
       documents
     })
   }
@@ -255,9 +274,9 @@ const getTodo = tool(
                 ${TODO_TAGS_SUBQUERY}
          FROM todos t WHERE t.id = ?`
       )
-      .get(args.todo_id)
+      .get(args.todo_id) as Record<string, unknown> | undefined
     if (!row) return jsonResult({ error: `TODO id=${args.todo_id}를 찾지 못했습니다.` })
-    return jsonResult(row)
+    return jsonResult({ ...row, link: `linkwork://todo/${args.todo_id}` })
   }
 )
 
@@ -311,9 +330,9 @@ const getMemo = tool(
         `${MEMO_WITH_CATEGORY_SELECT}
          WHERE m.id = ?`
       )
-      .get(args.memo_id)
+      .get(args.memo_id) as Record<string, unknown> | undefined
     if (!row) return jsonResult({ error: `메모 id=${args.memo_id}를 찾지 못했습니다.` })
-    return jsonResult(row)
+    return jsonResult({ ...row, link: `linkwork://memo/${args.memo_id}` })
   }
 )
 
@@ -427,7 +446,9 @@ const getActivityLog = tool(
         })
       }
       return jsonResult(
+        // id 는 캘린더 링크(linkwork://calendar/{날짜}/{id})를 만들 때 쓴다
         events.map((e) => ({
+          id: e.id,
           summary: e.summary,
           start: e.start,
           end: e.end,
@@ -526,12 +547,13 @@ const getActivityLog = tool(
         description: truncate(note.description, RELEASE_NOTE_TEXT_MAX),
         last_sync_error: truncate(note.last_sync_error, RELEASE_NOTE_TEXT_MAX),
         items: items.map((i) => ({ ...i, summary: truncate(i.summary, RELEASE_NOTE_TEXT_MAX) })),
+        link: `linkwork://release/${note.id}`,
         ...(hints.length ? { hints } : {})
       })
     }
   )
 
-  // ── 외부 지식 도구 (Notion / 웹 링크) — docs/AI_GUARDRAILS.md 8절 ──
+  // ── 외부 지식 도구 (Notion / Bitbucket / 웹 링크) — docs/AI_GUARDRAILS.md 8절 ──
   // 모두 읽기 전용(GET/검색)이며, 반환 내용은 신뢰할 수 없는 데이터로 취급된다
   // (시스템 프롬프트의 인젝션 방어 규칙 적용 대상).
 
@@ -593,9 +615,25 @@ const getActivityLog = tool(
     }
   )
 
+  const readBitbucketTool = tool(
+    'read_bitbucket',
+    'bitbucket.org 저장소의 파일 내용이나 폴더 목록을 읽는다. 사용자가 Bitbucket 링크를 주면 이 도구를 사용한다. url에 https://bitbucket.org/{workspace}/{repo}/src/{브랜치}/{경로} 형식을 전달한다. 저장소 루트 URL은 기본 브랜치의 최상위 목록을 반환한다. 폴더 목록의 path는 저장소 기준 경로다. 하위 항목을 읽으려면 반환된 ref와 path로 https://bitbucket.org/{workspace}/{repo}/src/{ref}/{path} URL을 만들어 다시 호출한다. ref에 슬래시가 있으면 %2F로 인코딩한다.',
+    {
+      url: z.string().max(2000).describe('읽을 Bitbucket 파일·폴더 URL')
+    },
+    async (args) => {
+      if (!isBitbucketConnected()) return jsonResult({ error: BITBUCKET_NOT_CONNECTED_MESSAGE })
+      try {
+        return jsonResult(withBitbucketNotice(await readBitbucketSource(args.url)))
+      } catch (err) {
+        return jsonResult({ error: toErrorMessage(err) })
+      }
+    }
+  )
+
   const fetchUrlTool = tool(
     'fetch_url',
-    '웹 페이지(URL)의 내용을 텍스트로 읽는다. 사용자가 링크를 공유하거나 특정 웹 문서의 내용을 물을 때 사용한다. http/https만 지원하며, Notion URL은 자동으로 Notion API로 읽는다. JS 렌더링이 필요한 페이지는 본문이 비어 있을 수 있다.',
+    '웹 페이지(URL)의 내용을 텍스트로 읽는다. 사용자가 링크를 공유하거나 특정 웹 문서의 내용을 물을 때 사용한다. http/https만 지원하며, Notion URL은 자동으로 Notion API로, Bitbucket URL은 Bitbucket API로 읽는다. JS 렌더링이 필요한 페이지는 본문이 비어 있을 수 있다.',
     {
       url: z.string().max(2000).describe('읽을 웹 페이지의 전체 URL')
     },
@@ -611,6 +649,11 @@ const getActivityLog = tool(
             error:
               'Notion 페이지는 fetch_url로 읽을 수 없습니다. mcp__claude_ai_Notion__notion-fetch 도구를 사용하세요 (없으면 ToolSearch로 로드). 그 도구도 없으면 Notion 연동이 필요하다고 안내하세요.'
           })
+        }
+        // Bitbucket 비공개 저장소는 인증 없이 404 다. 그래서 연동 token 으로 API 를 쓴다
+        if (isBitbucketUrl(args.url)) {
+          if (!isBitbucketConnected()) return jsonResult({ error: BITBUCKET_NOT_CONNECTED_MESSAGE })
+          return jsonResult(withBitbucketNotice(await readBitbucketSource(args.url)))
         }
         const page = await fetchUrlAsText(args.url)
         return jsonResult({
@@ -647,6 +690,7 @@ const getActivityLog = tool(
       getReleaseNote,
       searchNotionTool,
       getNotionPageTool,
+      readBitbucketTool,
       fetchUrlTool,
       ...writeTools
     ]

@@ -62,6 +62,14 @@ vi.mock('../../stores/releaseNoteStore', () => ({
   })
 }))
 
+// zustand v5 는 서버 렌더에서 setState 가 반영되지 않는다. 그래서 요청 훅을 모킹한다
+let focusRequest: { entity: 'release'; id: number; nonce: number } | null = null
+vi.mock('../../stores/focusStore', () => ({
+  useFocusRequest: () => focusRequest,
+  useFocusStore: { getState: () => ({ consume: () => {} }) }
+}))
+
+const { FOCUS_RING_CLASS } = await import('../../hooks/useFocusFlash')
 const mod = await import('./ReleasesView')
 const ReleasesView = mod.default
 const { filterReleaseNotes } = mod
@@ -205,5 +213,37 @@ describe('ReleasesView 분기', () => {
       jiraStatus: { ...CONNECTED, expired: true, expiresAt: '2026-08-01' }
     })
     expect(html).toContain('Jira 토큰이 만료됐습니다 (2026-08-01)')
+  })
+})
+
+describe('ReleasesView 포커스', () => {
+  const NOTES = [
+    note({ id: 7, version_name: '4.164.0' }),
+    note({ id: 8, version_name: '4.163.0' })
+  ]
+  const renderFocused = (id: number): string => {
+    focusRequest = { entity: 'release', id, nonce: 1 }
+    try {
+      return renderView({ jiraStatus: CONNECTED, allNotes: NOTES })
+    } finally {
+      focusRequest = null
+    }
+  }
+
+  it('요청한 릴리스 행에만 focused 를 넘긴다', () => {
+    const html = renderFocused(7)
+    const tag = html.match(/<div[^>]*id="release-7"[^>]*>/)?.[0]
+    expect(tag, 'id="release-7" 행이 없다').toBeDefined()
+    expect(tag).toContain(FOCUS_RING_CLASS)
+    expect(html).not.toContain('id="release-8"')
+    expect(html.split(FOCUS_RING_CLASS)).toHaveLength(2)
+  })
+
+  it('목록에 없는 릴리스를 요청하면 아무 행도 강조하지 않는다', () => {
+    expect(renderFocused(999)).not.toContain(FOCUS_RING_CLASS)
+  })
+
+  it('요청이 없으면 아무 행도 강조하지 않는다', () => {
+    expect(renderView({ jiraStatus: CONNECTED, allNotes: NOTES })).not.toContain(FOCUS_RING_CLASS)
   })
 })

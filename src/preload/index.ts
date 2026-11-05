@@ -127,12 +127,17 @@ const api = {
     notionStatus: () => ipcRenderer.invoke('ai:notionStatus'),
     notionSaveToken: (token: string) => ipcRenderer.invoke('ai:notionSaveToken', token),
     notionDisconnect: () => ipcRenderer.invoke('ai:notionDisconnect'),
-    approve: (requestId: string, approved: boolean) =>
-      ipcRenderer.invoke('ai:approve', requestId, approved),
+    approve: (requestId: string, approved: boolean, options?: { mode?: 'auto' | 'ask' }) =>
+      ipcRenderer.invoke('ai:approve', requestId, approved, options),
     setChatWriteMode: (chatId: number, mode: string) =>
       ipcRenderer.invoke('ai:setChatWriteMode', chatId, mode),
     getModel: () => ipcRenderer.invoke('ai:getModel'),
     setModel: (model: string) => ipcRenderer.invoke('ai:setModel', model),
+    getModelOptions: () => ipcRenderer.invoke('ai:getModelOptions'),
+    bitbucketStatus: () => ipcRenderer.invoke('ai:bitbucketStatus'),
+    bitbucketSaveToken: (email: string, token: string) =>
+      ipcRenderer.invoke('ai:bitbucketSaveToken', email, token),
+    bitbucketDisconnect: () => ipcRenderer.invoke('ai:bitbucketDisconnect'),
     onStream: (callback: (event: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => callback(data)
       ipcRenderer.on('ai:stream', handler)

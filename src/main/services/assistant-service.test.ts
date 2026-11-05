@@ -168,7 +168,7 @@ function candidate(id: number, over: Partial<Candidate> = {}): Candidate {
     priority: 'medium',
     jiraPriority: null,
     lastTouchedAt: null,
-    link: 'linkwork://view/todos',
+    link: `linkwork://todo/${id}`,
     parentKey: null,
     groupName: null,
     workType: 'etc',

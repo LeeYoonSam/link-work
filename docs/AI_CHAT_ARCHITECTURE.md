@@ -7,7 +7,7 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 
 - 사용자가 자연어로 질문하면 AI가 LinkWork의 실제 데이터(프로젝트/태스크/TODO/메모/
   문서/변수/활동로그/Google 캘린더)와 연결된 외부 지식(Notion, Atlassian(Jira),
-  웹 페이지)을 도구로 조회해서 답하는 로컬 전용 채팅 기능.
+  Bitbucket, 웹 페이지)을 도구로 조회해서 답하는 로컬 전용 채팅 기능.
 - 응답은 마크다운으로 렌더링되며, `linkwork://` 링크를 통해 앱 내 화면 이동·문서 열기
   같은 액션을 수행할 수 있다.
 - 채팅 목록/히스토리는 SQLite에 영속화되고, 채팅 재진입 시 AI 세션도 이어진다.
@@ -18,7 +18,8 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 |---|---|
 | AI 실행 | `@anthropic-ai/claude-agent-sdk` (^0.3.170), Electron **main 프로세스**에서 실행 |
 | 인증 | **Claude Code 구독 계정 OAuth 전용** — 시스템에 설치·로그인된 Claude Code의 인증을 그대로 사용 (구독 한도 소모, 별도 과금 없음). API 키/Bedrock/Vertex 등 과금 경로는 앱이 env에서 제거해 원천 차단 |
-| 모델 | `claude-sonnet-5` (`ai-agent.ts`의 `AI_MODEL` 상수) |
+| 모델 | 사용자가 Fable / Opus / Haiku 중 고른다. 기본값은 Opus 다. `ai-model.ts` 가 패밀리 별칭(`fable`·`opus`·`haiku`)을 SDK `model` 옵션에 그대로 넘긴다. CLI 가 별칭을 최신 버전으로 해석한다. |
+| 모델 라벨 | 화면 표시 이름(예 `Fable 5.1`)은 SDK `Query.supportedModels()` 의 displayName 에서 받는다. 캐시는 메모리와 `app_settings.ai_model_labels` 에 둔다. 캐시가 없으면 패밀리 이름(`Fable`)으로 표시한다. 설명은 항상 `AI_MODEL_FAMILIES` 의 한국어 hint 를 쓴다. SDK 설명은 영어라서 쓰지 않는다. |
 | 턴 제한 | `maxTurns: 30` |
 | 데이터 조회 | in-process MCP 서버 (`createSdkMcpServer` + `tool()`) — 별도 프로세스 없이 main 프로세스 안에서 도구 핸들러 실행 |
 | 영속화 | better-sqlite3 (`ai_chats`, `ai_messages`, `ai_audit_log`) |
@@ -47,6 +48,7 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 │   ├─ database.ts  getAiReadOnlyDatabase() ← 읽기 전용 커넥션   │
 │   ├─ google-calendar.ts  getEventsInRange()                 │
 │   ├─ notion.ts    Notion API (검색/페이지 읽기)                │
+│   ├─ bitbucket.ts Bitbucket API (비공개 저장소 파일 읽기)       │
 │   └─ web-fetch.ts fetch_url (SSRF 가드 + HTML→텍스트)         │
 └──────────────┬─────────────────────────────────────────────┘
                │ spawn (Agent SDK 내부)
@@ -71,11 +73,14 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 | `src/main/services/ai-tools.ts` | LinkWork 조회 도구 + 외부 지식 도구(Notion/웹) 정의 (zod 스키마 + SQL) |
 | `src/main/services/ai-write-tools.ts` | 쓰기 도구 12종 (생성 6종 `create_project`/`create_task`/`create_todo`/`create_memo`/`create_variable`/`create_document` + 수정 6종, HITL 승인 — 가드레일 문서 7절) |
 | `src/main/services/ai-audit.ts` | 감사 로그 기록 헬퍼 |
+| `src/main/services/ai-model.ts` | 모델 패밀리 레지스트리(`AI_MODEL_FAMILIES`), AI 대화 모델 선택 저장(`ai_model`), 동적 라벨 캐시(`ai_model_labels`). 개인 비서용 고정 ID 매핑(`resolveAiModelId`)도 둔다 |
 | `src/main/services/notion.ts` | Notion 연동 (토큰 safeStorage 저장, 검색/페이지/DB 조회 API) |
 | `src/main/services/notion-markdown.ts` | Notion 블록 → 마크다운 변환 (순수 함수, 단위 테스트) |
+| `src/main/services/bitbucket.ts` | Bitbucket 연동. 이메일과 API token 을 safeStorage 로 암호화해 저장하고, 저장소 폴더 목록·파일 내용을 읽는다 |
+| `src/main/services/bitbucket-url.ts` | bitbucket.org 웹 URL 을 workspace·저장소·ref·경로로 나누는 파서 (순수 함수, 단위 테스트) |
 | `src/main/services/web-fetch.ts` | fetch_url용 웹 페이지 로드 + HTML→텍스트 (SSRF 가드, 단위 테스트) |
 | `src/main/services/ai-attachments.ts` | 이미지 첨부 저장/검증/정리 (`userData/ai-attachments`) |
-| `src/main/ipc/ai.ipc.ts` | IPC 핸들러 (`ai:*` 채널), 입력/첨부 검증, 제목 자동 설정, Notion 연동 IPC |
+| `src/main/ipc/ai.ipc.ts` | IPC 핸들러 (`ai:*` 채널), 입력/첨부 검증, 제목 자동 설정, 모델 선택 IPC, Notion·Bitbucket 연동 IPC |
 | `src/main/db/database.ts` | 테이블 스키마 + AI 전용 읽기 전용 커넥션 |
 | `src/preload/index.ts` | `window.api.ai` 노출 |
 | `src/renderer/src/stores/aiChatStore.ts` | 채팅 상태 관리 (zustand) |
@@ -88,6 +93,8 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 ai_chats (                          -- 채팅(대화방)
   id, title,                        -- 제목: 첫 사용자 메시지 30자로 자동 설정
   session_id,                       -- Claude 세션 ID (resume용, 매 응답마다 갱신)
+  write_mode,                       -- 'readonly' | 'ask' | 'auto' | 'plan' (가드레일 7.3절)
+                                    -- 새 채팅은 'auto' 로 만든다. 컬럼 DEFAULT 는 'ask' 다
   created_at, updated_at
 )
 ai_messages (                       -- 메시지
@@ -125,6 +132,7 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
       7. SDK query() 실행:
          systemPrompt(오늘 날짜/규칙/링크 형식) + resume(session_id)
          + mcpServers(linkwork) + allowedTools/disallowedTools/canUseTool
+         + permissionMode (plan 채팅은 'plan' + planModeInstructions, 그 외 'default')
       8. 메시지 루프에서 webContents.send('ai:stream', ...) 으로 중계
          - stream_event(text_delta) → { event:'text', delta }
          - assistant(tool_use)      → { event:'tool', label } + 감사 tool_call
@@ -142,11 +150,21 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 | `start` | — | 쿼리 시작 |
 | `text` | `delta` | 응답 텍스트 조각 (renderer에서 누적) |
 | `tool` | `name`, `label` | 도구 사용 중 ("프로젝트 목록 조회 중…" 표시) |
+| `approval` | `request` | 승인 카드 요청. `request` 는 `{ requestId, kind, name, label, input, current }` 다. `kind` 는 `write` · `fetch` · `plan` 중 하나다 |
+| `approval_resolved` | `requestId`, `approved` | 승인 카드 응답 처리 완료 |
+| `mode_changed` | `mode` | 채팅 쓰기 모드가 바뀜. 계획 승인 뒤 auto 또는 ask 로 바뀔 때 보낸다 |
 | `done` | `message?`, `cancelled?` | 완료. message는 DB에 저장된 assistant 행 |
 | `error` | `error` | 실패 (사용자에게 표시) |
 
 다른 채팅을 보다가 돌아와도 진행 상태가 복원된다: main이 채팅별로 누적 텍스트와
 도구 상태를 보관하고(`ActiveQuery`), `openChat` 시 `ai:progress`로 조회해 복원.
+대기 중인 승인 카드(`pendingApproval`)도 `kind` 를 포함해 복원된다.
+
+### 승인 응답 (`ai:approve`)
+
+- 시그니처: `ai:approve(requestId: string, approved: boolean, options?: { mode?: 'auto' | 'ask' })`.
+- `options.mode` 는 계획 승인(`kind: 'plan'`)에서만 쓴다. 생략하거나 허용 밖 값이면 auto 로 본다.
+- 계획 승인 흐름과 근거는 가드레일 문서 7.4절에 있다.
 
 ## 7. 세션 관리 (멀티턴 컨텍스트)
 
@@ -180,14 +198,15 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 | `get_recent_work` | 최근 1~14일의 마지막 근무·남은 작업·한 일·회의 정리. Jira 는 보지 않는다 |
 | `list_meeting_action_items` | 회의 요약 액션아이템과 연결된 할 일의 완료 여부 (완료 여부·기간 필터, 200건) |
 
-### 8.2 외부 지식 (Notion / Atlassian(Jira) / 웹 링크)
+### 8.2 외부 지식 (Notion / Atlassian(Jira) / Bitbucket / 웹 링크)
 
 | 도구 | 용도 | 게이트 |
 |---|---|---|
 | `search_notion` | 연동된 Notion 워크스페이스 검색 (제목/ID/URL) | 자동 허용 (사용자 소유 데이터) |
 | `get_notion_page` | Notion 페이지 내용을 마크다운으로 읽기 (URL 또는 ID, DB면 항목 목록) | 자동 허용 |
 | Atlassian(Jira) 커넥터 6종 | Jira 티켓·프로젝트·JQL 검색 + Atlassian 통합 검색/리소스 본문 읽기 (claude.ai 커넥터, `mcp__claude_ai_Atlassian_Rovo__…`) | 자동 허용 (읽기 전용, 커넥터 연결 필요) |
-| `fetch_url` | 일반 웹 페이지를 텍스트로 읽기 (Notion URL은 API로 위임) | **조건부 승인 카드** — 사용자 메시지에 없는 호스트는 HITL |
+| `read_bitbucket` | bitbucket.org 링크의 저장소 폴더 목록이나 파일 내용을 읽기 | 자동 허용 (사용자 소유 데이터, Bitbucket 연동 필요) |
+| `fetch_url` | 일반 웹 페이지를 텍스트로 읽기 (Notion·Bitbucket URL은 API로 위임) | **조건부 승인 카드** — 사용자 메시지에 없는 호스트는 HITL |
 
 - **Notion 연동 (2가지 경로)**:
   1. **claude.ai Notion 커넥터 (기본, 제로 설정)** — 구독 계정에 커넥터가 연결돼
@@ -208,6 +227,14 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
   도구는 ToolSearch 뒤에 지연 로드되므로 `HARNESS_ALLOWED_TOOLS`의 ToolSearch 허용이
   전제 조건. 앱이 연결 여부를 감지할 수 없어 시스템 프롬프트는 "도구가 있으면 사용,
   없으면 claude.ai에서 커넥터 연결 안내"로 서술한다.
+- **Bitbucket 연동 (이메일 + API token)**:
+  - 사용자는 AI 대화 화면 하단의 "Bitbucket 연동" 버튼에서 Atlassian 계정 이메일과 API token 을 등록한다.
+  - main 은 Bitbucket API 로 자격 증명을 검증한 뒤 저장한다. 저장은 `bitbucket.ts` 가 safeStorage 로 암호화해서 한다.
+  - `read_bitbucket` 은 bitbucket.org 링크를 받는다. 대상은 저장소 루트, 폴더, 파일이다.
+  - `fetch_url` 에 bitbucket.org 링크가 오면 `read_bitbucket` 경로로 위임한다. 로그인 없이 읽으면 404 만 보이기 때문이다.
+  - 시스템 프롬프트는 연동 여부(`isBitbucketConnected()`)에 따라 문구를 바꾼다. 미연동이면 AI 가 등록 방법을 안내한다.
+  - 시스템 프롬프트는 읽지 못한 저장소 내용을 추측해서 지어내지 않도록 지시한다.
+  - IPC: `ai:bitbucketStatus` → `{ connected, email }`, `ai:bitbucketSaveToken(email, token)` → `{ success, account | error }`, `ai:bitbucketDisconnect` → `{ success: true }`.
 - **fetch_url**: http/https만, 로컬호스트/사설망 차단, 리다이렉트 5회(매 단계 재검증),
   2MB/15초/12,000자 상한 (`web-fetch.ts`). 승인 게이트의 근거는 가드레일 문서 8절.
 
@@ -228,12 +255,43 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 renderer의 `MarkdownContent`가 클릭을 가로채 처리한다
 (react-markdown의 기본 URL sanitize에서 `linkwork://`만 예외 처리).
 
-| 링크 | 동작 (AiChatView.handleInternalLink) |
+AI 채팅과 오늘 화면은 같은 처리기 `utils/openInternalLink.ts` 를 쓴다.
+파싱은 `utils/internalLink.ts` 의 `parseInternalLink` 가 맡는다. 모르는 형식이면 아무 동작도 하지 않는다.
+처리 순서는 다음과 같다.
+1. 처리기가 대상을 가리는 필터·탭을 푼다.
+2. 처리기가 데이터 조회를 시작한다.
+3. 처리기가 `focusStore.requestFocus` 로 포커스 요청을 남긴다. 할 일은 `todoStore.selectedTodoId`, 오늘은 `assistantStore.setFocus` 를 쓴다.
+4. 처리기가 메뉴를 바꾼다.
+5. 화면이 데이터 도착 뒤 요청을 소비한다. 화면은 항목을 강조(ring)하고 스크롤한다.
+
+화면이 10초(`FOCUS_REQUEST_TTL_MS`) 안에 요청을 소비하지 않으면, 스토어가 요청을 지운다.
+삭제된 항목의 링크는 강조 없이 화면만 연다.
+
+| 링크 | 동작 |
 |---|---|
 | `linkwork://project/{id}` | 프로젝트 상세 화면으로 이동 |
+| `linkwork://project/{projectId}/task/{taskId}` | 프로젝트 상세를 열고 작업 행을 강조 |
 | `linkwork://document/{id}` | 해당 문서 URL을 바로 열기 (없으면 Documents 메뉴로) |
-| `linkwork://view/{name}` | 메뉴 이동 (dashboard/projects/todos/…) |
+| `linkwork://memo/{id}` | 메모 카드를 강조하고 메모 보기 창을 연다. 보관 메모면 보관함을 연다 |
+| `linkwork://todo/{id}` | 할 일 항목을 강조한다. 태그 필터를 푼다 |
+| `linkwork://variable/{id}` | 변수 행을 강조한다. secret 값은 공개하지 않는다 |
+| `linkwork://release/{id}` | 검색어를 비우고 릴리스 행을 강조하고 펼친다 |
+| `linkwork://recording/{id}` | 종류 필터를 풀고 녹음 상세를 열고 카드를 강조 |
+| `linkwork://note/{meetingId}` | 회의록 필터를 풀고 회의록을 열고 목록 행을 강조 |
+| `linkwork://calendar/{YYYY-MM-DD}[/{eventId}]` | 그 날짜의 주로 이동해 날짜 카드와 일정을 강조 |
+| `linkwork://today/item/{id}`, `linkwork://today/meeting/{eventId}`, `linkwork://today/{inbox\|briefing\|timeline}` | 오늘 화면의 해당 위치로 스크롤 |
+| `linkwork://view/{name}` | 메뉴 이동 (today/projects/todos/…). `dashboard` 는 today 의 별칭이다 |
 | 일반 `https://` | 외부 브라우저로 열기 (기존 동작) |
+
+링크 규칙은 다음과 같다.
+- AI 는 특정 항목을 안내할 때 항목 링크를 쓴다. 메뉴 링크는 목록 전체를 안내할 때만 쓴다.
+- 쓰기 도구(`ai-write-tools.ts`)는 결과의 `link` 에 항목 링크를 넣는다. AI 는 생성·수정 뒤 그 값을 그대로 쓴다.
+- 단건 조회 도구 `get_memo`, `get_todo`, `get_release_note` 는 결과에 `link` 를 넣는다. `get_project` 는 `tasks` 각 행에 `link` 를 넣는다. 목록 도구에는 넣지 않는다.
+- `get_calendar_events` 는 일정 `id` 를 돌려준다. AI 는 이 값으로 캘린더 링크를 만든다.
+- 오늘 화면 후보의 링크는 다음과 같다.
+  - 할 일: `linkwork://todo/{id}`
+  - 작업: `linkwork://project/{projectId}/task/{taskId}`
+  - 액션아이템: `linkwork://note/{meetingId}`
 
 ## 10. 빌드/패키징 주의사항
 
@@ -257,7 +315,12 @@ renderer의 `MarkdownContent`가 클릭을 가로채 처리한다
   `TOOL_LABELS`에 한국어 라벨 추가.
 - **데이터 추가/수정/삭제 도구**: [AI_GUARDRAILS.md의 "쓰기 도구 도입 기준"](./AI_GUARDRAILS.md#7-쓰기-도구-도입-기준-향후)을
   반드시 따를 것 (HITL 승인, 소프트 삭제, 일괄 변경 금지, 채팅별 쓰기 모드 등).
-- **모델/턴 수 변경**: `ai-agent.ts`의 `AI_MODEL`, `MAX_TURNS` 상수.
+- **모델 선택지 변경**: `ai-model.ts` 의 `AI_MODEL_FAMILIES`(패밀리 정의)와 `AI_CHAT_MODEL_CHOICES`(AI 대화 선택지)를 고친다.
+  - 새 버전이 나오면 코드를 고치지 않는다. CLI 가 별칭을 최신 버전으로 해석하고, 라벨도 `supportedModels()` 에서 갱신된다.
+  - 저장된 값이 선택지 밖이면(예 이전 선택지 `sonnet`) `normalizeAiChatModel` 이 기본값 `opus` 로 바꾼다.
+  - 개인 비서(오늘 화면)는 `resolveAiModelId` 의 고정 ID 매핑을 따로 쓴다. 비서 결과에 modelId 를 기록하기 때문이다.
+- **라벨 갱신 시점**: (1) `runAiQuery` 가 query 를 만든 직후 `supportedModels()` 를 비동기로 부른다. 실패는 무시한다. (2) 캐시가 비었을 때 `ai:getModelOptions` 가 탐침 query 를 1회 띄운다. 탐침은 사용자 메시지 없이 CLI 초기화 응답만 받으므로 사용량을 쓰지 않는다. 탐침은 20초에 끝나고, 실패하면 10분 동안 다시 띄우지 않는다.
+- **턴 수 변경**: `ai-agent.ts`의 `MAX_TURNS` 상수.
 - **시스템 프롬프트(답변 포맷) 조정**: `ai-agent.ts`의 `buildSystemPrompt()`.
   ASD-STE100 글쓰기 규칙은 공통 조각 `src/main/services/writing-style.ts`의 `WRITING_STYLE_RULES` 한 곳에 정의한다.
   이 조각은 채팅·회의 요약·면접 요약 시스템 프롬프트가 모두 포함하므로, 문장 규칙은 이 파일만 고친다.

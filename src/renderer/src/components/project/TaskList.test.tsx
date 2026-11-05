@@ -48,15 +48,26 @@ const EXPECTED_ROWS = TASKS.filter(isRoot).flatMap((root) => [
   ...childrenOf(root).map((c) => ({ name: short(c), indent: 'child' }))
 ])
 
+// 포커스 렌더 검증에서만 작업·요청을 바꾼다. 기본 렌더는 원래 픽스처 그대로다.
+let currentTasks: Task[] = TASKS
+let focusRequest: { entity: 'task'; id: number; nonce: number } | null = null
+
 vi.mock('../../stores/projectStore', () => ({
   useProjectStore: () => ({
-    tasks: TASKS,
+    tasks: currentTasks,
     createTask: vi.fn(),
     updateTask: vi.fn(),
     deleteTask: vi.fn()
   })
 }))
 
+// zustand v5 는 서버 렌더에서 setState 가 반영되지 않는다. 그래서 요청 훅을 모킹한다
+vi.mock('../../stores/focusStore', () => ({
+  useFocusRequest: () => focusRequest,
+  useFocusStore: { getState: () => ({ consume: () => {} }) }
+}))
+
+const { FOCUS_RING_CLASS } = await import('../../hooks/useFocusFlash')
 const TaskList = (await import('./TaskList')).default
 const html = renderToStaticMarkup(<TaskList projectId={1} />)
 
@@ -139,5 +150,46 @@ describe('TaskList 계층 표현', () => {
     // 들여쓰기와 함께 "어느 작업이 어느 행에 왔는지"까지 비교해
     // 들여쓰기는 맞는데 순서가 뒤집히는 회귀도 잡는다
     expect(renderedRows()).toEqual(EXPECTED_ROWS)
+  })
+})
+
+describe('TaskList 포커스', () => {
+  // 행 컨테이너의 여는 태그를 id 로 찾는다
+  const rowTag = (markup: string, id: string): string | undefined =>
+    markup.match(new RegExp(`<div[^>]*id="${id}"[^>]*>`))?.[0]
+
+  const renderFocused = (request: typeof focusRequest): string => {
+    currentTasks = [...TASKS, mk(9, '[PROJ-1700] 하위C2 포커스 대상', 7)]
+    focusRequest = request
+    try {
+      return renderToStaticMarkup(<TaskList projectId={1} />)
+    } finally {
+      currentTasks = TASKS
+      focusRequest = null
+    }
+  }
+
+  it('모든 작업 행에 task-{id} DOM id 가 붙는다', () => {
+    for (const t of TASKS) expect(rowTag(html, `task-${t.id}`)).toBeDefined()
+  })
+
+  it('요청이 없으면 어느 행도 강조하지 않는다', () => {
+    expect(html).not.toContain(FOCUS_RING_CLASS)
+  })
+
+  it('요청한 작업 행만 강조한다', () => {
+    const markup = renderFocused({ entity: 'task', id: 9, nonce: 1 })
+    const tag = rowTag(markup, 'task-9')
+    expect(tag, 'id="task-9" 행이 없다').toBeDefined()
+    expect(tag).toContain(FOCUS_RING_CLASS)
+    // 목록 컨테이너가 overflow-hidden 이라 링을 안쪽에 그려야 보인다
+    expect(tag).toContain('ring-inset')
+    expect(rowTag(markup, 'task-8')).not.toContain(FOCUS_RING_CLASS)
+    expect(markup.split(FOCUS_RING_CLASS)).toHaveLength(2)
+  })
+
+  it('목록에 없는 작업을 요청하면 강조하지 않는다', () => {
+    const markup = renderFocused({ entity: 'task', id: 999, nonce: 2 })
+    expect(markup).not.toContain(FOCUS_RING_CLASS)
   })
 })

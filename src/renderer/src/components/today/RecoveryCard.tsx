@@ -2,7 +2,8 @@ import { useState } from 'react'
 import type { DailyPlan, RecoveryState } from '../../types'
 import MarkdownContent from '../memo/MarkdownContent'
 import { AlertTriangleIcon, Badge, Card, SectionTitle, button } from '../ui'
-import { hhmmOf, openInternalLink } from './PlanItemRow'
+import { hhmmOf } from './PlanItemRow'
+import { openInternalLink } from '../../utils/openInternalLink'
 
 interface RecoveryCardProps {
   plan: Pick<DailyPlan, 'recovery_text' | 'recovery_source' | 'recovery_at'>

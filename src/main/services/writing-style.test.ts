@@ -73,11 +73,15 @@ describe('INTERVIEW_SPEC.systemPrompt 평가 금지 유지', () => {
 
 describe('buildSystemPrompt', () => {
   it.each([
-    ['ask', false],
-    ['readonly', true]
-  ] as const)('writeMode=%s, notion=%s 결과가 공통 글쓰기 규칙을 포함한다', (mode, notion) => {
-    expect(buildSystemPrompt(mode, notion)).toContain(WRITING_STYLE_RULES)
-  })
+    ['ask', false, false],
+    ['readonly', true, true],
+    ['plan', false, true]
+  ] as const)(
+    'writeMode=%s, notion=%s, bitbucket=%s 결과가 공통 글쓰기 규칙을 포함한다',
+    (mode, notion, bitbucket) => {
+      expect(buildSystemPrompt(mode, notion, bitbucket)).toContain(WRITING_STYLE_RULES)
+    }
+  )
 })
 
 // ── 비서 말투 규칙 (부록 J.7) ──

@@ -1,4 +1,7 @@
+import { useEffect } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
+import { useFocusRequest, useFocusStore } from '../../stores/focusStore'
+import { FOCUS_RING_CLASS, focusDomId, useFlash, useFocusScroll } from '../../hooks/useFocusFlash'
 import type { Meeting, MeetingStatus } from '../../types'
 import { Badge, EmptyState } from '../ui'
 
@@ -29,8 +32,16 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' })
 }
 
-function MeetingCard({ meeting }: { meeting: Meeting }): React.ReactNode {
+// highlighted 는 앱 내 링크로 찾아온 카드를 잠시 강조한다
+export function MeetingCard({
+  meeting,
+  highlighted = false
+}: {
+  meeting: Meeting
+  highlighted?: boolean
+}): React.ReactNode {
   const { current, openMeeting, processing, cancelling, cancelProcessing } = useRecordingStore()
+  const scrollRef = useFocusScroll<HTMLDivElement>(highlighted)
   const isActive = current?.meeting.id === meeting.id
   const proc = processing[meeting.id]
   const isProcessing = !!proc
@@ -41,6 +52,8 @@ function MeetingCard({ meeting }: { meeting: Meeting }): React.ReactNode {
   // (button 안에 button은 유효하지 않은 마크업).
   return (
     <div
+      ref={scrollRef}
+      id={focusDomId('recording', meeting.id)}
       role="button"
       tabIndex={0}
       onClick={() => openMeeting(meeting.id)}
@@ -52,7 +65,7 @@ function MeetingCard({ meeting }: { meeting: Meeting }): React.ReactNode {
       }}
       className={`w-full text-left px-4 py-3 border-b border-gray-100 transition-colors hover:bg-gray-50 cursor-pointer ${
         isActive ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''
-      }`}
+      } ${highlighted ? FOCUS_RING_CLASS : ''}`}
     >
       <div className="flex items-start justify-between gap-2 mb-1">
         <span
@@ -135,7 +148,21 @@ function MeetingCard({ meeting }: { meeting: Meeting }): React.ReactNode {
 }
 
 export default function RecordingList(): React.ReactNode {
-  const { meetings, kindFilter } = useRecordingStore()
+  const { meetings, kindFilter, setKindFilter } = useRecordingStore()
+  const request = useFocusRequest('recording')
+  const [flashId, flash] = useFlash<number>()
+
+  // 앱 내 링크(linkwork://recording/{id})로 온 요청을 소비한다.
+  // 상세 열기는 openInternalLink 가 맡는다. 이 목록은 카드 강조와 스크롤만 맡는다
+  useEffect(() => {
+    if (!request) return
+    const target = meetings.find((m) => m.id === request.id)
+    // 목록이 아직 안 왔으면 기다린다. 끝내 없으면 TTL 이 요청을 지운다
+    if (!target) return
+    if (kindFilter !== 'all' && target.kind !== kindFilter) setKindFilter('all')
+    flash(target.id)
+    useFocusStore.getState().consume(request.nonce)
+  }, [request, meetings, kindFilter, setKindFilter, flash])
 
   const visible =
     kindFilter === 'all' ? meetings : meetings.filter((m) => m.kind === kindFilter)
@@ -168,7 +195,7 @@ export default function RecordingList(): React.ReactNode {
   return (
     <div>
       {visible.map((m) => (
-        <MeetingCard key={m.id} meeting={m} />
+        <MeetingCard key={m.id} meeting={m} highlighted={m.id === flashId} />
       ))}
     </div>
   )

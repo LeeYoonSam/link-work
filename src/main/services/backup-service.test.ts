@@ -335,6 +335,8 @@ describe('stripSecrets', () => {
       INSERT INTO app_settings (key, value) VALUES ('jira_site_url', 'https://x.atlassian.net');
       INSERT INTO app_settings (key, value) VALUES ('google_client_id', 'plain-id');
       INSERT INTO app_settings (key, value) VALUES ('google_client_secret', 'enc-google-secret');
+      INSERT INTO app_settings (key, value) VALUES ('bitbucket_api_token', 'enc-bitbucket');
+      INSERT INTO app_settings (key, value) VALUES ('bitbucket_email', 'me@example.com');
       INSERT INTO auth_tokens (id, provider, access_token) VALUES (1, 'google', 'enc-token');
     `)
 
@@ -344,11 +346,13 @@ describe('stripSecrets', () => {
     expect(removed).toContain('app_settings:notion_token')
     expect(removed).toContain('app_settings:jira_api_token')
     expect(removed).toContain('app_settings:google_client_secret')
+    expect(removed).toContain('app_settings:bitbucket_api_token')
 
+    // bitbucket_email 은 평문이라 남는다. token 이 없으니 복원 뒤 미연동으로 보인다.
     const keys = (
       db.prepare('SELECT key FROM app_settings ORDER BY key').all() as { key: string }[]
     ).map((r) => r.key)
-    expect(keys).toEqual(['google_client_id', 'jira_site_url'])
+    expect(keys).toEqual(['bitbucket_email', 'google_client_id', 'jira_site_url'])
 
     // 테이블 자체는 남는다 — 스키마가 달라지면 복원 후 마이그레이션이 꼬인다
     const authRows = db.prepare('SELECT COUNT(*) AS c FROM auth_tokens').all() as { c: number }[]
@@ -419,6 +423,7 @@ describe('export → inspect → import 라운드트립 (.zip)', () => {
       INSERT INTO app_settings (key, value) VALUES ('jira_api_token', 'enc-jira');
       INSERT INTO app_settings (key, value) VALUES ('google_client_id', 'plain-client-id');
       INSERT INTO app_settings (key, value) VALUES ('google_client_secret', 'enc-google-secret');
+      INSERT INTO app_settings (key, value) VALUES ('bitbucket_api_token', 'enc-bitbucket');
       INSERT INTO auth_tokens (id, provider, access_token) VALUES (1, 'google', 'enc-access');
       INSERT INTO meetings (title, status, audio_path) VALUES ('회의', 'done', 'rec-1.wav');
     `)

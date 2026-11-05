@@ -16,7 +16,7 @@ import {
 interface MeetingNoteFilter {
   q?: string
   kind?: 'all' | 'meeting' | 'interview'
-  projectId?: number | null
+  projectId?: number | null // null·undefined=전체, 숫자=해당 프로젝트
 }
 
 interface ListRow {
@@ -64,9 +64,8 @@ export function listMeetingNotes(db: Db, filter?: MeetingNoteFilter) {
     where.push('m.kind = ?')
     params.push(filter.kind)
   }
-  if (filter?.projectId === null) {
-    where.push('m.project_id IS NULL')
-  } else if (typeof filter?.projectId === 'number') {
+  // null·undefined 는 전체다. 이유: 화면의 "모든 프로젝트"와 스토어 기본값이 null 을 보낸다
+  if (typeof filter?.projectId === 'number') {
     where.push('m.project_id = ?')
     params.push(filter.projectId)
   }

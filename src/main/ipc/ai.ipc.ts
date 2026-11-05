@@ -10,8 +10,10 @@ import {
   canStartAiQuery,
   getAiProgress,
   findClaudeExecutable,
+  getAiChatModelOptions,
   resolveAiApproval,
   setChatWriteMode,
+  type AiApprovalOptions,
   type AiWriteMode
 } from '../services/ai-agent'
 import {
@@ -21,13 +23,23 @@ import {
   type AiAttachmentInput,
   type SavedAttachment
 } from '../services/ai-attachments'
-import { getAiModel, isAiModelChoice, setAiModel } from '../services/ai-model'
+import { getAiChatModel, isAiChatModelChoice, setAiChatModel } from '../services/ai-model'
+import {
+  disconnectBitbucket,
+  getBitbucketEmail,
+  isBitbucketConnected,
+  saveBitbucketCredentials
+} from '../services/bitbucket'
 import { disconnectNotion, isNotionConnected, saveNotionToken } from '../services/notion'
 
-const AI_WRITE_MODES: AiWriteMode[] = ['readonly', 'ask', 'auto']
+const AI_WRITE_MODES: AiWriteMode[] = ['readonly', 'ask', 'auto', 'plan']
 
 // 가드레일: 메시지 길이 상한 (과도한 입력으로 인한 토큰/리소스 낭비 방지)
 const MAX_MESSAGE_LENGTH = 4000
+
+// 가드레일: Bitbucket 연동 입력 길이 상한 (비정상 입력 차단)
+const MAX_BITBUCKET_EMAIL_LENGTH = 254
+const MAX_BITBUCKET_TOKEN_LENGTH = 1000
 
 export function registerAiIpc(): void {
   const db = getDatabase()
@@ -45,7 +57,8 @@ export function registerAiIpc(): void {
   })
 
   ipcMain.handle('ai:chatCreate', () => {
-    const result = db.prepare("INSERT INTO ai_chats (title) VALUES ('새 대화')").run()
+    // 새 채팅의 기본 모드는 자동 쓰기다. 컬럼 DEFAULT 는 바꾸지 않아 기존 채팅 값은 그대로다.
+    const result = db.prepare("INSERT INTO ai_chats (title, write_mode) VALUES ('새 대화', 'auto')").run()
     return { id: result.lastInsertRowid }
   })
 
@@ -147,11 +160,18 @@ export function registerAiIpc(): void {
     return { success: cancelAiQuery(chatId) }
   })
 
-  // 쓰기 도구 승인 카드의 승인/거절 응답 (가드레일: HITL)
-  ipcMain.handle('ai:approve', (_event, requestId: string, approved: boolean) => {
-    if (typeof requestId !== 'string') return { success: false }
-    return { success: resolveAiApproval(requestId, approved === true) }
-  })
+  // 쓰기 도구·웹 읽기·계획 승인 카드의 승인/거절 응답 (가드레일: HITL)
+  // options.mode 는 계획 승인 뒤 실행 모드다. 허용 값은 auto, ask 이고 그 외는 무시한다.
+  ipcMain.handle(
+    'ai:approve',
+    (_event, requestId: string, approved: boolean, options?: unknown) => {
+      if (typeof requestId !== 'string') return { success: false }
+      const rawMode = (options as { mode?: unknown } | null | undefined)?.mode
+      const approvalOptions: AiApprovalOptions =
+        rawMode === 'auto' || rawMode === 'ask' ? { mode: rawMode } : {}
+      return { success: resolveAiApproval(requestId, approved === true, approvalOptions) }
+    }
+  )
 
   // 채팅별 데이터 작성 모드 변경 (조회는 ai:chatList의 write_mode 컬럼으로)
   ipcMain.handle('ai:setChatWriteMode', (_event, chatId: number, mode: AiWriteMode) => {
@@ -163,15 +183,20 @@ export function registerAiIpc(): void {
 
   // AI 대화 모델 (앱 전역 설정 — 진행 중인 쿼리에는 영향 없고 다음 쿼리부터 적용)
   ipcMain.handle('ai:getModel', () => {
-    return getAiModel()
+    return getAiChatModel()
   })
 
   ipcMain.handle('ai:setModel', (_event, model: unknown) => {
-    if (!isAiModelChoice(model)) {
-      return { success: false, model: getAiModel() }
+    if (!isAiChatModelChoice(model)) {
+      return { success: false, model: getAiChatModel() }
     }
-    setAiModel(model)
+    setAiChatModel(model)
     return { success: true, model }
+  })
+
+  // 모델 선택지와 표시 라벨. 라벨 캐시가 비면 CLI 탐침을 1회 띄운다 (최대 20초).
+  ipcMain.handle('ai:getModelOptions', () => {
+    return getAiChatModelOptions()
   })
 
   ipcMain.handle('ai:progress', (_event, chatId: number) => {
@@ -205,6 +230,37 @@ export function registerAiIpc(): void {
 
   ipcMain.handle('ai:notionDisconnect', () => {
     disconnectNotion()
+    return { success: true }
+  })
+
+  // ── Bitbucket 연동 (AI 조회 도구 read_bitbucket 용) ──
+
+  ipcMain.handle('ai:bitbucketStatus', () => {
+    return { connected: isBitbucketConnected(), email: getBitbucketEmail() }
+  })
+
+  // 이메일과 API token 을 Bitbucket API 로 검증한 뒤 저장한다 (services/bitbucket.ts)
+  ipcMain.handle('ai:bitbucketSaveToken', async (_event, email: unknown, token: unknown) => {
+    const trimmedEmail = typeof email === 'string' ? email.trim() : ''
+    const trimmedToken = typeof token === 'string' ? token.trim() : ''
+    if (!trimmedEmail) return { success: false, error: 'Atlassian 계정 이메일을 입력해 주세요.' }
+    if (!trimmedToken) return { success: false, error: 'API token을 입력해 주세요.' }
+    if (trimmedEmail.length > MAX_BITBUCKET_EMAIL_LENGTH) {
+      return { success: false, error: '이메일이 너무 깁니다.' }
+    }
+    if (trimmedToken.length > MAX_BITBUCKET_TOKEN_LENGTH) {
+      return { success: false, error: 'API token이 너무 깁니다.' }
+    }
+    try {
+      const { account } = await saveBitbucketCredentials(trimmedEmail, trimmedToken)
+      return { success: true, account }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('ai:bitbucketDisconnect', () => {
+    disconnectBitbucket()
     return { success: true }
   })
 

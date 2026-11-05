@@ -10,7 +10,8 @@ vi.mock('../../stores/meetingNotesStore', () => ({
   useMeetingNotesStore: () => ({ ...state, selectedId: null, select: () => {} })
 }))
 
-const MeetingNoteList = (await import('./MeetingNoteList')).default
+const { default: MeetingNoteList, MeetingNoteRow } = await import('./MeetingNoteList')
+const { FOCUS_RING_CLASS } = await import('../../hooks/useFocusFlash')
 
 const note = (id: number, title: string, startedAt: string): MeetingNoteItem => ({
   id,
@@ -54,5 +55,24 @@ describe('MeetingNoteList', () => {
     const html = render([])
     expect(html).toContain('요약 완료된 회의가 없습니다')
     expect(html).toContain('녹음 메뉴에서 녹음 후 AI 요약을 생성하세요')
+  })
+})
+
+describe('MeetingNoteList 링크 포커스', () => {
+  it('목록 버튼에 note-{id} DOM id 를 붙인다', () => {
+    const html = render([note(3, '10월 회고', '2026-10-05 10:00:00'), note(1, '9월 정기회의', '2026-09-20 10:00:00')])
+    expect(html).toContain('id="note-3"')
+    expect(html).toContain('id="note-1"')
+  })
+
+  it('highlighted 행에만 강조 ring 을 붙인다', () => {
+    const n = note(3, '10월 회고', '2026-10-05 10:00:00')
+    const on = renderToStaticMarkup(
+      <MeetingNoteRow note={n} selected={false} highlighted onSelect={() => {}} />
+    )
+    expect(on).toContain('id="note-3"')
+    expect(on).toContain(FOCUS_RING_CLASS)
+    const off = renderToStaticMarkup(<MeetingNoteRow note={n} selected={false} onSelect={() => {}} />)
+    expect(off).not.toContain('ring-blue-400')
   })
 })

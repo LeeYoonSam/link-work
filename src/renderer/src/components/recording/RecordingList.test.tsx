@@ -22,7 +22,8 @@ vi.mock('../../stores/recordingStore', () => ({
   })
 }))
 
-const RecordingList = (await import('./RecordingList')).default
+const { default: RecordingList, MeetingCard } = await import('./RecordingList')
+const { FOCUS_RING_CLASS } = await import('../../hooks/useFocusFlash')
 
 const meeting = (id: number, title: string, kind: Meeting['kind']): Meeting => ({
   id,
@@ -92,5 +93,21 @@ describe('RecordingList 종류 필터', () => {
     const empty = render([], 'all')
     expect(empty).toContain('녹음된 항목이 없습니다')
     expect(empty).toContain('첫 녹음을 시작하세요')
+  })
+})
+
+describe('RecordingList 링크 포커스', () => {
+  it('카드 루트에 recording-{id} DOM id 를 붙인다', () => {
+    const html = render(MEETINGS, 'all')
+    expect(html).toContain('id="recording-3"')
+    expect(html).toContain('id="recording-1"')
+  })
+
+  it('highlighted 카드에만 강조 ring 을 붙인다', () => {
+    const on = renderToStaticMarkup(<MeetingCard meeting={MEETINGS[2]} highlighted />)
+    expect(on).toContain('id="recording-3"')
+    expect(on).toContain(FOCUS_RING_CLASS)
+    const off = renderToStaticMarkup(<MeetingCard meeting={MEETINGS[2]} />)
+    expect(off).not.toContain('ring-blue-400')
   })
 })

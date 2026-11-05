@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useMemoStore } from '../../stores/memoStore'
+import { useMemoStore, type MemoCategoryFilter } from '../../stores/memoStore'
+import { useFocusRequest, useFocusStore } from '../../stores/focusStore'
+import { useFlash } from '../../hooks/useFocusFlash'
 import MemoCard from './MemoCard'
 import MemoForm from './MemoForm'
 import MemoViewer from './MemoViewer'
@@ -8,6 +10,13 @@ import type { Memo, MemoCategory } from '../../types'
 import { EmptyState, ArchiveIcon, FileTextIcon, button } from '../ui'
 
 const UNCATEGORIZED_KEY = '__uncategorized__'
+
+// 카테고리 필터가 이 메모를 보여 주는지 본다
+export function memoVisibleInFilter(memo: Memo, filter: MemoCategoryFilter): boolean {
+  if (filter === 'all') return true
+  if (filter === 'uncategorized') return memo.category_id == null
+  return memo.category_id === filter
+}
 
 interface MemoGroup {
   key: string
@@ -45,6 +54,22 @@ export default function MemoView(): React.ReactNode {
     fetchArchivedMemos()
     fetchCategories()
   }, [])
+
+  // 앱 내 링크(linkwork://memo/{id})로 들어오면 탭·필터를 맞추고 카드를 강조한 뒤 메모를 연다.
+  // 목록에 아직 없으면 로드를 기다린다. 끝내 없으면 focusStore 의 TTL 이 요청을 지운다
+  const focusRequest = useFocusRequest('memo')
+  const [flashId, flash] = useFlash<number>()
+  useEffect(() => {
+    if (!focusRequest) return
+    const active = memos.find((m) => m.id === focusRequest.id)
+    const target = active ?? archivedMemos.find((m) => m.id === focusRequest.id)
+    if (!target) return
+    setShowArchived(!active)
+    if (!memoVisibleInFilter(target, categoryFilter)) setCategoryFilter('all')
+    flash(target.id)
+    setViewingMemo(target)
+    useFocusStore.getState().consume(focusRequest.nonce)
+  }, [focusRequest, memos, archivedMemos])
 
   const handleEdit = (memo: Memo): void => {
     setViewingMemo(null)
@@ -240,6 +265,7 @@ export default function MemoView(): React.ReactNode {
                     onRestore={restoreMemo}
                     onDelete={deleteMemo}
                     onToggleImportant={toggleImportant}
+                    highlighted={memo.id === flashId}
                   />
                 ))}
               </div>
@@ -260,6 +286,7 @@ export default function MemoView(): React.ReactNode {
               onRestore={restoreMemo}
               onDelete={deleteMemo}
               onToggleImportant={toggleImportant}
+              highlighted={memo.id === flashId}
             />
           ))}
         </div>

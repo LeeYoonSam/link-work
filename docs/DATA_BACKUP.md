@@ -14,7 +14,11 @@
 | `ai-attachments/` (AI 대화 이미지) | **포함** | |
 | `models/` (whisper·silero·sherpa, 1.4GB) | 제외 | 첫 실행 시 자동 다운로드 |
 | `Cache`, `GPUCache`, `Cookies`, `Session Storage` … | 제외 | Electron 캐시 |
-| `auth_tokens`(Google OAuth), `app_settings`의 `notion_token`·`jira_api_token`·`google_client_secret` 등 `safeStorage` 암호문 | **제외** | macOS 키체인 키로 암호화돼 다른 기기에서 복호화 불가 → 새 PC에서 다시 연결 |
+| `auth_tokens`(Google OAuth), `app_settings`의 `notion_token`·`jira_api_token`·`google_client_secret`·`bitbucket_api_token`. 모두 `safeStorage` 암호문이다 | **제외** | macOS 키체인 키로 암호화돼 다른 기기에서 복호화 불가 → 새 PC에서 다시 연결 |
+
+`bitbucket_email`은 평문이라 백업에 남는다.
+앱은 Bitbucket 연결을 token 기준으로 판정한다.
+그래서 복원 직후 Bitbucket 은 미연동으로 보인다. 사용자는 새 PC 에서 API token 만 다시 등록한다.
 
 Claude Code 구독 OAuth(AI 요약·AI 대화)는 앱 데이터가 아니라 `~/.claude`에 있으므로 새 PC에 Claude Code를 설치·로그인해야 한다.
 

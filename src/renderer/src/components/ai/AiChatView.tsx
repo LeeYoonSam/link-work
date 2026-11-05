@@ -1,34 +1,48 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAiChatStore } from '../../stores/aiChatStore'
-import { useProjectStore } from '../../stores/projectStore'
-import { normalizeView } from '../layout/navConfig'
+import { openInternalLink } from '../../utils/openInternalLink'
 import MarkdownContent from '../memo/MarkdownContent'
 import type {
   AiApprovalRequest,
   AiAttachmentInput,
   AiAttachmentMeta,
+  AiBitbucketStatus,
   AiChat,
+  AiChatModelOption,
   AiMessage,
-  AiModelChoice,
   AiStatus,
   AiStreamEvent,
   AiWriteMode
 } from '../../types'
 import { AlertTriangleIcon, Card, ImageIcon, XIcon, button } from '../ui'
 
-// 채팅별 데이터 작성 모드 선택지 (헤더 세그먼트 컨트롤)
-const WRITE_MODES: { value: AiWriteMode; label: string; title: string }[] = [
-  { value: 'readonly', label: '읽기 전용', title: 'AI가 데이터를 조회만 합니다' },
-  { value: 'ask', label: '승인 후 쓰기', title: 'AI가 생성·수정 전 항목마다 승인을 요청합니다' },
-  { value: 'auto', label: '자동 쓰기', title: 'AI가 승인 없이 즉시 생성·수정합니다 (변수는 항상 승인)' }
+// 채팅별 데이터 작성 모드 선택지. 입력창 아래 모드 select 에 이 순서로 표시한다
+export const WRITE_MODES: { value: AiWriteMode; label: string; title: string }[] = [
+  { value: 'auto', label: '자동 모드 (Auto)', title: '쓰기를 자동 승인합니다. 변수 변경은 계속 확인합니다.' },
+  { value: 'ask', label: '승인 후 쓰기 (Ask)', title: '쓰기마다 승인을 받습니다.' },
+  { value: 'plan', label: '계획 모드 (Plan)', title: '조회만 하고 계획을 먼저 보여 줍니다. 승인하면 실행합니다.' },
+  { value: 'readonly', label: '읽기 전용', title: '데이터를 바꾸지 않습니다.' }
 ]
 
-// AI 대화 모델 선택지 (앱 전역 설정 — 다음 메시지부터 적용)
-const MODELS: { value: AiModelChoice; label: string; title: string }[] = [
-  { value: 'opus', label: 'Opus', title: 'Opus — 가장 정확, 느림' },
-  { value: 'sonnet', label: 'Sonnet', title: 'Sonnet — 균형 (기본)' },
-  { value: 'haiku', label: 'Haiku', title: 'Haiku — 가장 빠름' }
-]
+// chat 이 없거나 write_mode 가 없으면 자동 모드로 본다
+export const DEFAULT_WRITE_MODE: AiWriteMode = 'auto'
+
+export function resolveWriteMode(chat: Pick<AiChat, 'write_mode'> | undefined | null): AiWriteMode {
+  return chat?.write_mode ?? DEFAULT_WRITE_MODE
+}
+
+// 계획 승인 요청 판정. kind 가 없는 payload 도 도구 이름으로 판정한다
+export function isPlanApproval(request: Pick<AiApprovalRequest, 'kind' | 'name'>): boolean {
+  return request.kind === 'plan' || request.name === 'ExitPlanMode'
+}
+
+// 모드 select 의 약한 색 강조. auto 는 기존 세그먼트의 amber 관례를 따른다
+const WRITE_MODE_STYLE: Record<AiWriteMode, string> = {
+  auto: 'border-amber-300 bg-amber-50 text-amber-800',
+  ask: 'border-gray-300 bg-white text-gray-700',
+  plan: 'border-indigo-300 bg-indigo-50 text-indigo-800',
+  readonly: 'border-gray-300 bg-gray-50 text-gray-500'
+}
 
 // "이 채팅에서 항상 승인"을 노출하지 않는 도구 — 변수는 auto 모드에서도 항상 승인
 // (main의 ALWAYS_CONFIRM_WRITE_TOOLS), fetch_url은 쓰기 모드와 무관한 별도 게이트
@@ -63,6 +77,7 @@ export default function AiChatView(): React.ReactNode {
     currentChatId,
     fetchChats,
     loadModel,
+    loadModelOptions,
     createChat,
     deleteChat,
     openChat,
@@ -73,6 +88,11 @@ export default function AiChatView(): React.ReactNode {
   const [listCollapsed, setListCollapsed] = useState(false)
   const [notionConnected, setNotionConnected] = useState(false)
   const [showNotionSettings, setShowNotionSettings] = useState(false)
+  const [bitbucketStatus, setBitbucketStatus] = useState<AiBitbucketStatus>({
+    connected: false,
+    email: null
+  })
+  const [showBitbucketSettings, setShowBitbucketSettings] = useState(false)
 
   const checkStatus = (): void => {
     window.api.ai.status().then(setAiStatus)
@@ -82,11 +102,21 @@ export default function AiChatView(): React.ReactNode {
     window.api.ai.notionStatus().then((s) => setNotionConnected(s.connected))
   }
 
+  const refreshBitbucketStatus = (): void => {
+    window.api.ai
+      .bitbucketStatus()
+      .then(setBitbucketStatus)
+      .catch(() => setBitbucketStatus({ connected: false, email: null }))
+  }
+
   useEffect(() => {
     fetchChats()
     void loadModel()
+    // 첫 조회는 main 의 모델 탐침 때문에 수 초 걸린다. 그동안 폴백 목록을 보여 준다
+    void loadModelOptions()
     checkStatus()
     refreshNotionStatus()
+    refreshBitbucketStatus()
     const unsubscribe = window.api.ai.onStream((event) =>
       handleStreamEvent(event as AiStreamEvent)
     )
@@ -174,6 +204,18 @@ export default function AiChatView(): React.ReactNode {
               />
               Notion 연동{notionConnected ? ' 중' : ''}
             </button>
+            <button
+              onClick={() => setShowBitbucketSettings(true)}
+              title="AI가 Bitbucket 저장소의 파일을 읽을 수 있게 연동합니다"
+              className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded transition-colors"
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  bitbucketStatus.connected ? 'bg-green-500' : 'bg-gray-300'
+                }`}
+              />
+              Bitbucket 연동{bitbucketStatus.connected ? ' 중' : ''}
+            </button>
           </div>
         </div>
       )}
@@ -207,7 +249,7 @@ export default function AiChatView(): React.ReactNode {
             <p className="text-sm text-gray-500 mb-6">
               프로젝트, TODO, 메모, 문서 등 LinkWork의 데이터를 검색하고 정리해 드립니다.
               <br />
-              Notion 문서와 웹 링크를 읽고, 첨부한 이미지를 보고 답할 수 있습니다.
+              Notion·Bitbucket 문서와 웹 링크를 읽고, 첨부한 이미지를 보고 답할 수 있습니다.
               <br />
               승인을 거쳐 프로젝트·TODO·메모·변수를 만들거나 수정해 드릴 수도 있습니다.
               (작성 방식은 채팅 상단에서 채팅별로 선택)
@@ -232,6 +274,13 @@ export default function AiChatView(): React.ReactNode {
           connected={notionConnected}
           onClose={() => setShowNotionSettings(false)}
           onChanged={refreshNotionStatus}
+        />
+      )}
+      {showBitbucketSettings && (
+        <BitbucketSettingsModal
+          status={bitbucketStatus}
+          onClose={() => setShowBitbucketSettings(false)}
+          onChanged={refreshBitbucketStatus}
         />
       )}
     </div>
@@ -339,12 +388,13 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
     sendMessage,
     cancelStream,
     respondApproval,
+    respondPlan,
     renameChat,
     setWriteMode,
     model,
+    modelOptions,
     setModel
   } = useAiChatStore()
-  const { setView, setProjectView, fetchProject } = useProjectStore()
   const [input, setInput] = useState('')
   const [editingTitle, setEditingTitle] = useState<string | null>(null)
   // 전송 전 이미지 첨부 대기열 (previewUrl은 blob URL — 제거/전송 시 revoke)
@@ -354,7 +404,7 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const chat = chats.find((c) => c.id === currentChatId)
-  const writeMode: AiWriteMode = chat?.write_mode ?? 'ask'
+  const writeMode: AiWriteMode = resolveWriteMode(chat)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -397,30 +447,6 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
     })
   }
 
-  // linkwork:// 링크 → 앱 내 네비게이션/문서 열기
-  const handleInternalLink = async (href: string): Promise<void> => {
-    const match = href.match(/^linkwork:\/\/([a-z]+)\/?(.*)$/)
-    if (!match) return
-    const [, kind, rest] = match
-    if (kind === 'project' && /^\d+$/.test(rest)) {
-      await fetchProject(Number(rest))
-      setProjectView('detail')
-      setView('projects')
-    } else if (kind === 'document' && /^\d+$/.test(rest)) {
-      const docs = await window.api.document.listAll()
-      const doc = docs.find((d) => d.id === Number(rest))
-      if (doc) {
-        await window.api.document.open(doc.url, doc.type)
-      } else {
-        setView('documents')
-      }
-    } else if (kind === 'view') {
-      // 예전 화면 ID(dashboard)도 새 ID 로 옮겨 연다
-      const target = normalizeView(rest)
-      if (target) setView(target)
-    }
-  }
-
   const handleSend = async (): Promise<void> => {
     const text = input.trim()
     if ((!text && attachments.length === 0) || isStreaming || disabled) return
@@ -452,7 +478,7 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
   return (
     <>
       {/* 채팅 헤더 */}
-      <div className="px-4 py-2.5 border-b border-gray-200 flex items-center justify-between">
+      <div className="px-4 py-2.5 border-b border-gray-200 flex items-center justify-between gap-3">
         {editingTitle !== null ? (
           <input
             autoFocus
@@ -463,67 +489,23 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
               if (e.key === 'Enter') submitTitle()
               if (e.key === 'Escape') setEditingTitle(null)
             }}
-            className="flex-1 text-sm font-semibold text-gray-800 border border-gray-300 rounded px-2 py-1 focus:outline-none focus:border-gray-500"
+            className="flex-1 min-w-0 text-sm font-semibold text-gray-800 border border-gray-300 rounded px-2 py-1 focus:outline-none focus:border-gray-500"
           />
         ) : (
           <h3
-            className="text-sm font-semibold text-gray-800 truncate cursor-text"
+            className="min-w-0 text-sm font-semibold text-gray-800 truncate cursor-text"
             onDoubleClick={() => setEditingTitle(chat?.title ?? '')}
             title="더블클릭하여 제목 수정"
           >
             {chat?.title ?? '대화'}
           </h3>
         )}
-        {chat && (
-          <div className="shrink-0 flex items-center gap-2">
-            <div
-              className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5"
-              title="AI 대화 모델 (모든 채팅 공통, 다음 메시지부터 적용)"
-            >
-              {MODELS.map((m) => (
-                <button
-                  key={m.value}
-                  onClick={() => void setModel(m.value)}
-                  title={m.title}
-                  className={`px-2 py-1 text-[11px] font-medium rounded-md transition-colors ${
-                    model === m.value
-                      ? 'bg-white text-gray-900 shadow-sm'
-                      : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-            <div
-              className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5"
-              title="이 채팅에서 AI의 데이터 작성 방식 (삭제는 항상 불가)"
-            >
-              {WRITE_MODES.map((m) => (
-                <button
-                  key={m.value}
-                  onClick={() => void setWriteMode(chat.id, m.value)}
-                  title={m.title}
-                  className={`px-2 py-1 text-[11px] font-medium rounded-md transition-colors ${
-                    writeMode === m.value
-                      ? m.value === 'auto'
-                        ? 'bg-amber-100 text-amber-800 shadow-sm'
-                        : 'bg-white text-gray-900 shadow-sm'
-                      : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* 메시지 영역 */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} onInternalLink={handleInternalLink} />
+          <MessageBubble key={message.id} message={message} onInternalLink={(href) => void openInternalLink(href)} />
         ))}
 
         {isStreaming && (
@@ -533,7 +515,7 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
                 <MarkdownContent
                   content={streamingText}
                   compact
-                  onInternalLink={handleInternalLink}
+                  onInternalLink={(href) => void openInternalLink(href)}
                 />
                 <span className="inline-block w-1.5 h-4 bg-gray-400 animate-pulse align-text-bottom" />
               </div>
@@ -549,7 +531,16 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
           </div>
         )}
 
-        {pendingApproval && (
+        {pendingApproval && isPlanApproval(pendingApproval) && (
+          <PlanApprovalCard
+            request={pendingApproval}
+            onRespond={(approved, mode) =>
+              void respondPlan(pendingApproval.requestId, approved, mode)
+            }
+          />
+        )}
+
+        {pendingApproval && !isPlanApproval(pendingApproval) && (
           <ApprovalCard
             request={pendingApproval}
             allowAlways={
@@ -648,7 +639,7 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
             placeholder={
               disabled
                 ? 'Claude Code 설치/로그인 후 사용할 수 있습니다.'
-                : 'LinkWork 데이터, Notion 문서, 웹 링크에 대해 질문해 보세요… (Enter 전송, 이미지 붙여넣기 가능)'
+                : 'LinkWork 데이터, Notion·Bitbucket 문서, 웹 링크에 대해 질문해 보세요… (Enter 전송, 이미지 붙여넣기 가능)'
             }
             className="flex-1 resize-none px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
           />
@@ -669,8 +660,121 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
             </button>
           )}
         </div>
+        <ComposerControls
+          writeMode={writeMode}
+          onWriteModeChange={chat ? (mode) => void setWriteMode(chat.id, mode) : undefined}
+          model={model}
+          modelOptions={modelOptions}
+          onModelChange={(value) => void setModel(value)}
+        />
       </div>
     </>
+  )
+}
+
+// 입력창 아래 한 줄 툴바: 모드 select 와 모델 select.
+// 모드는 스트리밍 중에도 바꿀 수 있다. 모델은 다음 메시지부터 적용한다.
+// onWriteModeChange 가 없으면 모드 select 를 비활성화한다 (채팅이 아직 없을 때)
+export function ComposerControls({
+  writeMode,
+  onWriteModeChange,
+  model,
+  modelOptions,
+  onModelChange
+}: {
+  writeMode: AiWriteMode
+  onWriteModeChange?: (mode: AiWriteMode) => void
+  model: string
+  modelOptions: AiChatModelOption[]
+  onModelChange: (model: string) => void
+}): React.ReactNode {
+  const modeInfo = WRITE_MODES.find((m) => m.value === writeMode) ?? WRITE_MODES[0]
+  // 저장된 모델이 목록에 없으면 현재 값을 그대로 보여 준다
+  const models = modelOptions.some((m) => m.value === model)
+    ? modelOptions
+    : [...modelOptions, { value: model, label: model, description: '' }]
+  const modelInfo = models.find((m) => m.value === model)
+  const selectBase =
+    'h-7 pl-2 pr-6 text-xs font-medium border rounded-md focus:outline-none focus:border-gray-500 disabled:opacity-50 disabled:cursor-not-allowed'
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <select
+        aria-label="모드"
+        title={`${modeInfo.label}: ${modeInfo.title} (삭제는 항상 불가)`}
+        value={writeMode}
+        disabled={!onWriteModeChange}
+        onChange={(e) => onWriteModeChange?.(e.target.value as AiWriteMode)}
+        className={`${selectBase} ${WRITE_MODE_STYLE[writeMode]}`}
+      >
+        {WRITE_MODES.map((m) => (
+          <option key={m.value} value={m.value} title={m.title}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label="모델"
+        title={`${modelInfo?.description || modelInfo?.label || model} (모든 채팅 공통, 다음 메시지부터 적용)`}
+        value={model}
+        onChange={(e) => onModelChange(e.target.value)}
+        className={`${selectBase} border-gray-300 bg-white text-gray-700`}
+      >
+        {models.map((m) => (
+          <option key={m.value} value={m.value} title={m.description || m.label}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+// 계획 모드에서 AI 가 실행 전에 보여 주는 계획 승인 카드.
+// 승인하면 고른 쓰기 모드(auto/ask)로 바꾸고 실행한다. 거절하면 AI 는 실행하지 않는다
+export function PlanApprovalCard({
+  request,
+  onRespond
+}: {
+  request: AiApprovalRequest
+  onRespond: (approved: boolean, mode?: 'auto' | 'ask') => void
+}): React.ReactNode {
+  const raw = request.input.plan
+  const plan = typeof raw === 'string' ? raw : JSON.stringify(request.input, null, 2)
+  return (
+    <div className="max-w-[85%] border border-indigo-300 bg-indigo-50 rounded-lg px-4 py-3">
+      <p className="text-sm font-semibold text-gray-900">계획 승인</p>
+      <p className="mt-0.5 text-xs text-gray-500">
+        AI가 아래 계획을 실행하려고 합니다. 승인 방식을 고르세요.
+      </p>
+      <div className="mt-2 mb-3 bg-white border border-indigo-200 rounded p-3 max-h-80 overflow-y-auto">
+        <MarkdownContent content={plan} compact />
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => onRespond(true, 'auto')}
+          title="자동 모드로 바꾸고 계획을 실행합니다. 변수 변경은 계속 확인합니다."
+          className={`px-4 py-1.5 text-sm rounded-lg ${button.dark}`}
+        >
+          승인 후 자동 실행
+        </button>
+        <button
+          onClick={() => onRespond(true, 'ask')}
+          title="승인 후 쓰기 모드로 바꾸고 계획을 실행합니다. 쓰기마다 승인을 받습니다."
+          className="px-4 py-1.5 text-sm rounded-lg bg-indigo-100 text-indigo-800 hover:bg-indigo-200 transition-colors"
+        >
+          승인 후 하나씩 확인
+        </button>
+        <button
+          onClick={() => onRespond(false)}
+          className={`px-4 py-1.5 text-sm rounded-lg ${button.subtle} border border-gray-300`}
+        >
+          거절
+        </button>
+      </div>
+      <p className="mt-2 text-[11px] text-gray-500">
+        거절한 뒤 입력창에 수정 요청을 쓰면 AI가 계획을 다시 세웁니다.
+      </p>
+    </div>
   )
 }
 
@@ -719,7 +823,7 @@ function ApprovalCard({
         {allowAlways && (
           <button
             onClick={() => onRespond(true, true)}
-            title="이 채팅을 자동 쓰기 모드로 바꾸고 승인합니다. 이후 이 채팅에서는 승인 없이 즉시 실행됩니다 (변수 제외)"
+            title="이 채팅을 자동 모드로 바꾸고 승인합니다. 이후 이 채팅에서는 승인 없이 즉시 실행됩니다 (변수 제외)"
             className="px-4 py-1.5 text-sm rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200 transition-colors"
           >
             이 채팅에서 항상 승인
@@ -916,6 +1020,160 @@ function NotionSettingsModal({
               {busy ? '확인 중…' : '저장'}
             </button>
           </div>
+
+          {error && (
+            <p className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2.5">
+              {error}
+            </p>
+          )}
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+// Bitbucket Cloud API token 등록·해제 모달이다.
+// main 이 token 을 검증한 뒤 safeStorage 로 암호화 저장한다. 데이터 백업에는 넣지 않는다.
+export function BitbucketSettingsModal({
+  status,
+  onClose,
+  onChanged
+}: {
+  status: AiBitbucketStatus
+  onClose: () => void
+  onChanged: () => void
+}): React.ReactNode {
+  const [email, setEmail] = useState(status.email ?? '')
+  const [token, setToken] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [savedAccount, setSavedAccount] = useState<string | null>(null)
+
+  const canSave = !!email.trim() && !!token.trim() && !busy
+
+  const handleSave = async (): Promise<void> => {
+    if (!canSave) return
+    setBusy(true)
+    setError('')
+    try {
+      const result = await window.api.ai.bitbucketSaveToken(email.trim(), token.trim())
+      if (result.success) {
+        setToken('')
+        setSavedAccount(result.account)
+        onChanged()
+      } else {
+        setError(result.error || 'token 저장에 실패했습니다.')
+      }
+    } catch {
+      setError('token 저장에 실패했습니다.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleDisconnect = async (): Promise<void> => {
+    if (
+      !window.confirm(
+        'Bitbucket 연동을 해제할까요? AI가 더 이상 Bitbucket 저장소를 읽을 수 없습니다.'
+      )
+    )
+      return
+    await window.api.ai.bitbucketDisconnect()
+    setSavedAccount(null)
+    onChanged()
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <Card padding="md" className="bg-white">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-base font-semibold text-gray-900">Bitbucket 연동</h3>
+            <button
+              onClick={onClose}
+              className="p-1 text-gray-400 hover:text-gray-700 transition-colors"
+              title="닫기"
+            >
+              <XIcon size={16} />
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mb-3">
+            연동하면 AI가 대화에서 Bitbucket 저장소의 파일과 폴더를 읽을 수 있습니다. (읽기 전용)
+          </p>
+
+          {(status.connected || savedAccount) && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4 flex items-center justify-between gap-2">
+              <p className="text-sm text-green-800 min-w-0 truncate">
+                {savedAccount
+                  ? `연동됨: ${savedAccount}`
+                  : `연동됨${status.email ? ` — ${status.email}` : ''}`}
+              </p>
+              <button
+                onClick={() => void handleDisconnect()}
+                className="shrink-0 px-3 py-1.5 text-xs text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
+              >
+                연동 해제
+              </button>
+            </div>
+          )}
+
+          <ol className="text-xs text-gray-600 space-y-1 mb-4 list-decimal pl-4">
+            <li>
+              Bitbucket → 개인 설정 → Atlassian 계정 → 보안 → API token 만들기 →
+              &apos;Bitbucket 용 범위 지정 API token&apos; 을 고릅니다.{' '}
+              <a
+                href="https://id.atlassian.com/manage-profile/security/api-tokens"
+                target="_blank"
+                rel="noreferrer"
+                className="text-blue-600 hover:underline"
+              >
+                API token 관리 열기
+              </a>
+            </li>
+            <li>
+              범위는 <code className="px-1 bg-gray-100 rounded font-mono">read:repository</code>{' '}
+              가 필요합니다. 권장 추가 범위는{' '}
+              <code className="px-1 bg-gray-100 rounded font-mono">read:pullrequest</code>,{' '}
+              <code className="px-1 bg-gray-100 rounded font-mono">read:user</code> 입니다.
+            </li>
+            <li>Atlassian 계정 이메일과 만든 token 을 아래에 입력합니다.</li>
+          </ol>
+
+          <div className="space-y-2">
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Atlassian 계정 이메일"
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500"
+            />
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleSave()
+                }}
+                placeholder={status.connected ? '새 token 으로 교체하려면 입력' : 'API token'}
+                className="flex-1 min-w-0 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500"
+              />
+              <button
+                onClick={() => void handleSave()}
+                disabled={!canSave}
+                className={`px-4 py-2 text-sm rounded-lg shrink-0 ${button.dark} disabled:opacity-40 disabled:cursor-not-allowed`}
+              >
+                {busy ? '확인 중…' : '저장'}
+              </button>
+            </div>
+          </div>
+
+          <p className="mt-3 text-[11px] text-gray-400">
+            token 은 이 기기에만 암호화 저장되고, 데이터 백업에 포함되지 않습니다.
+          </p>
 
           {error && (
             <p className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2.5">

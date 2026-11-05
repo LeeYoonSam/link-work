@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
+import { useFocusRequest, useFocusStore } from '../../stores/focusStore'
+import { FOCUS_RING_CLASS, focusDomId, useFlash, useFocusScroll } from '../../hooks/useFocusFlash'
 import type { Task } from '../../types'
 import { buildTaskTree } from '../../utils/taskTree'
 import {
@@ -23,6 +25,31 @@ function formatTaskRange(start: string | null, end: string | null): string | nul
   return `${s.slice(5)} ~ ${e.slice(5)}`
 }
 
+// 작업 행의 바깥 상자. 포커스 스크롤 훅을 행마다 걸어야 해서 렌더 함수가 아니라 컴포넌트로 둔다.
+// 목록 컨테이너가 overflow-hidden 이라 바깥 링은 잘린다. 그래서 ring-inset 으로 안쪽에 그린다.
+function TaskRowShell({
+  taskId,
+  focused,
+  className,
+  children
+}: {
+  taskId: number
+  focused: boolean
+  className: string
+  children: React.ReactNode
+}): React.ReactNode {
+  const ref = useFocusScroll<HTMLDivElement>(focused)
+  return (
+    <div
+      ref={ref}
+      id={focusDomId('task', taskId)}
+      className={focused ? `${className} ring-inset ${FOCUS_RING_CLASS}` : className}
+    >
+      {children}
+    </div>
+  )
+}
+
 interface TaskListProps {
   projectId: number
 }
@@ -40,6 +67,20 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
   const [childEndDate, setChildEndDate] = useState('')
 
   const tree = buildTaskTree(tasks)
+
+  // 앱 내 링크(linkwork://project/{id}/task/{taskId})로 들어온 작업을 강조한다.
+  // 작업 목록이 아직 오지 않았으면 기다린다. 끝내 없으면 focusStore 의 TTL 이 요청을 지운다.
+  const focusRequest = useFocusRequest('task')
+  const [flashTaskId, flashTask] = useFlash<number>()
+  const pendingFocusId =
+    focusRequest && tasks.some((t) => t.id === focusRequest.id) ? focusRequest.id : null
+  useEffect(() => {
+    if (!focusRequest || pendingFocusId === null) return
+    flashTask(pendingFocusId)
+    useFocusStore.getState().consume(focusRequest.nonce)
+  }, [focusRequest, pendingFocusId])
+  // 소비 전 첫 렌더부터 강조해 깜빡임 없이 이어지게 한다
+  const focusedTaskId = pendingFocusId ?? flashTaskId
 
   const handleAddTask = async (): Promise<void> => {
     if (!newTaskName.trim()) return
@@ -95,8 +136,10 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
 
   // 상위/하위 공용 행 렌더러. isChild면 들여쓰기 + 트리 글리프, 상위면 "하위 추가" 노출.
   const renderTaskRow = (task: Task, isChild: boolean): React.ReactNode => (
-    <div
+    <TaskRowShell
       key={task.id}
+      taskId={task.id}
+      focused={task.id === focusedTaskId}
       className={`group flex items-center gap-3 py-2.5 pr-3 hover:bg-gray-50 transition-colors ${
         isChild ? 'pl-9' : 'pl-3'
       }`}
@@ -196,7 +239,7 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
           </div>
         </>
       )}
-    </div>
+    </TaskRowShell>
   )
 
   // 상위 아래에 붙는 하위 추가 인라인 폼

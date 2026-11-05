@@ -45,10 +45,17 @@ export const SECRET_TABLES: readonly string[] = ['auth_tokens']
  * - `notion_token`: services/notion.ts:25 (TOKEN_KEY, encrypt로 저장)
  * - `jira_api_token`: services/jira.ts:38 (TOKEN_KEY, encrypt로 저장)
  * - `google_client_secret`: services/google-auth.ts saveSettings (encrypt로 저장 — 새 PC에서 다시 입력)
+ * - `bitbucket_api_token`: services/bitbucket.ts (TOKEN_KEY, encrypt로 저장)
+ *   `bitbucket_email`은 평문이라 남긴다. 연결 판정은 token 기준이라 복원 뒤에는 미연동으로 보인다.
  * ipc/ai.ipc.ts는 자체 키를 저장하지 않고 saveNotionToken()에 위임하므로 추가 키가 없다.
  * google_client_id, jira_site_url 같은 평문 설정은 기기 종속이 아니라 **남긴다**.
  */
-export const SECRET_SETTING_KEYS: readonly string[] = ['notion_token', 'jira_api_token', 'google_client_secret']
+export const SECRET_SETTING_KEYS: readonly string[] = [
+  'notion_token',
+  'jira_api_token',
+  'google_client_secret',
+  'bitbucket_api_token'
+]
 
 /** userData 바로 아래에서 통째로 옮기는 폴더. models/는 첫 실행 시 다시 받으므로 제외. */
 const FILE_GROUPS = [

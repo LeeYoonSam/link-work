@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CandidateSource, PlanItem, PlanItemStatus, WorkType } from '../../types'
 import { Badge, LinkIcon } from '../ui'
-import { useProjectStore } from '../../stores/projectStore'
-import { normalizeView } from '../layout/navConfig'
+import { openInternalLink } from '../../utils/openInternalLink'
+import { isInternalLink } from '../../utils/internalLink'
 
 // 출처 배지. 색은 tokens 의 파스텔 필 문법을 따른다
 export const SOURCE_BADGE: Record<CandidateSource, { label: string; color: string }> = {
@@ -141,33 +141,11 @@ export function freeTimeLabel(minutes: number): string {
   return r === 0 ? `${h}시간` : `${h}시간 ${r}분`
 }
 
-// linkwork:// 링크를 앱 안에서 연다. AiChatView.handleInternalLink 와 같은 규칙이다
-export async function openInternalLink(href: string): Promise<void> {
-  const match = href.match(/^linkwork:\/\/([a-z]+)\/?(.*)$/)
-  if (!match) return
-  const [, kind, rest] = match
-  const { fetchProject, setProjectView, setView } = useProjectStore.getState()
-  if (kind === 'project' && /^\d+$/.test(rest)) {
-    await fetchProject(Number(rest))
-    setProjectView('detail')
-    setView('projects')
-  } else if (kind === 'document' && /^\d+$/.test(rest)) {
-    const docs = await window.api.document.listAll()
-    const doc = docs.find((d) => d.id === Number(rest))
-    if (doc) await window.api.document.open(doc.url, doc.type)
-    else setView('documents')
-  } else if (kind === 'view') {
-    // 예전 화면 ID(dashboard)도 새 ID 로 옮겨 연다
-    const target = normalizeView(rest)
-    if (target) setView(target)
-  }
-}
-
 // 항목 링크. 내부 링크는 버튼, 외부 링크(Jira)는 새 창 링크다.
 // 외부 링크는 main 의 setWindowOpenHandler 가 브라우저로 연다
 export function ItemLink({ link }: { link: string | null }): React.ReactNode {
   if (!link) return null
-  if (link.startsWith('linkwork://')) {
+  if (isInternalLink(link)) {
     return (
       <button
         type="button"

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useReleaseNoteStore } from '../../stores/releaseNoteStore'
 import { useMorningSyncStore } from '../../stores/morningSyncStore'
+import { useFocusRequest, useFocusStore } from '../../stores/focusStore'
+import { useFlash } from '../../hooks/useFocusFlash'
 import { format } from 'date-fns'
 import type { ReleaseNoteSummary } from '../../types'
 import JiraSettingsModal from './JiraSettingsModal'
@@ -74,6 +76,21 @@ export default function ReleasesView(): React.ReactNode {
       if (entity === 'release_note') void fetchAllReleaseNotes()
     })
   }, [])
+
+  // 앱 내 링크(linkwork://release/{id})로 들어온 릴리스를 강조하고 펼친다.
+  // 검색어가 행을 숨길 수 있어 검색어를 비운다. 목록이 아직 오지 않았으면 기다린다
+  const focusRequest = useFocusRequest('release')
+  const [flashNoteId, flashNote] = useFlash<number>()
+  const pendingFocusId =
+    focusRequest && allNotes.some((n) => n.id === focusRequest.id) ? focusRequest.id : null
+  useEffect(() => {
+    if (!focusRequest || pendingFocusId === null) return
+    setQuery('')
+    flashNote(pendingFocusId)
+    useFocusStore.getState().consume(focusRequest.nonce)
+  }, [focusRequest, pendingFocusId])
+  // 소비 전 첫 렌더부터 강조해 깜빡임 없이 이어지게 한다
+  const focusedNoteId = pendingFocusId ?? flashNoteId
 
   const connected = jiraStatus?.connected === true
   const defaultProjectKey = jiraStatus?.defaultProjectKey ?? null
@@ -249,7 +266,7 @@ export default function ReleasesView(): React.ReactNode {
             <Card padding="none">
               <div className="px-3 py-3 space-y-2">
                 {visibleNotes.map((note) => (
-                  <ReleaseNoteRow key={note.id} note={note} />
+                  <ReleaseNoteRow key={note.id} note={note} focused={note.id === focusedNoteId} />
                 ))}
               </div>
             </Card>

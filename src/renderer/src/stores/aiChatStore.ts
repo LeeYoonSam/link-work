@@ -3,11 +3,19 @@ import type {
   AiApprovalRequest,
   AiAttachmentInput,
   AiChat,
+  AiChatModelOption,
   AiMessage,
-  AiModelChoice,
   AiStreamEvent,
   AiWriteMode
 } from '../types'
+
+// main 의 모델 선택지를 받기 전에 보여 줄 폴백 목록이다.
+// main 이 받은 목록으로 교체하므로, 버전 표기가 바뀌어도 이 목록은 고치지 않는다.
+export const FALLBACK_MODEL_OPTIONS: AiChatModelOption[] = [
+  { value: 'fable', label: 'Fable', description: '가장 강력, 느림' },
+  { value: 'opus', label: 'Opus', description: '정확, 균형' },
+  { value: 'haiku', label: 'Haiku', description: '가장 빠름' }
+]
 
 interface AiChatStore {
   chats: AiChat[]
@@ -18,7 +26,10 @@ interface AiChatStore {
   isStreaming: boolean
   error: string | null
   pendingApproval: AiApprovalRequest | null
-  model: AiModelChoice
+  // pendingApproval 을 받은 채팅. 계획 승인 응답이 이 채팅의 모드를 바꾼다
+  pendingApprovalChatId: number | null
+  model: string
+  modelOptions: AiChatModelOption[]
 
   fetchChats: () => Promise<void>
   createChat: () => Promise<number>
@@ -30,8 +41,11 @@ interface AiChatStore {
   cancelStream: () => Promise<void>
   setWriteMode: (chatId: number, mode: AiWriteMode) => Promise<void>
   loadModel: () => Promise<void>
-  setModel: (model: AiModelChoice) => Promise<void>
+  loadModelOptions: () => Promise<void>
+  setModel: (model: string) => Promise<void>
   respondApproval: (requestId: string, approved: boolean, alwaysForChat?: boolean) => Promise<void>
+  // 계획 승인 카드 응답. 승인하면 mode 로 쓰기 모드를 바꾸고 실행을 이어 간다
+  respondPlan: (requestId: string, approved: boolean, mode?: 'auto' | 'ask') => Promise<void>
   handleStreamEvent: (event: AiStreamEvent) => void
 }
 
@@ -44,7 +58,9 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
   isStreaming: false,
   error: null,
   pendingApproval: null,
-  model: 'sonnet',
+  pendingApprovalChatId: null,
+  model: 'opus',
+  modelOptions: FALLBACK_MODEL_OPTIONS,
 
   fetchChats: async () => {
     const chats = await window.api.ai.chatList()
@@ -82,6 +98,7 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
       streamingText: progress.running ? progress.text : '',
       toolStatus: progress.running ? progress.toolLabel : null,
       pendingApproval: progress.running ? (progress.pendingApproval ?? null) : null,
+      pendingApprovalChatId: progress.running && progress.pendingApproval ? id : null,
       error: null
     })
     if (progress.running) {
@@ -155,6 +172,16 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
     set({ model })
   },
 
+  loadModelOptions: async () => {
+    // 조회가 실패하거나 빈 목록이면 폴백 목록을 유지한다
+    try {
+      const options = await window.api.ai.getModelOptions()
+      if (Array.isArray(options) && options.length > 0) set({ modelOptions: options })
+    } catch {
+      // 폴백 목록을 그대로 둔다
+    }
+  },
+
   setModel: async (model) => {
     // 실패 시에도 main이 현재 저장값을 돌려주므로 응답 기준으로 맞춘다
     const result = await window.api.ai.setModel(model)
@@ -172,8 +199,57 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
     await window.api.ai.approve(requestId, approved)
   },
 
+  respondPlan: async (requestId, approved, mode) => {
+    // 승인 요청을 받은 채팅을 쓴다. 카드가 이미 닫혔으면 현재 채팅으로 본다
+    const before = get()
+    const chatId =
+      before.pendingApproval?.requestId === requestId
+        ? (before.pendingApprovalChatId ?? before.currentChatId)
+        : before.currentChatId
+    set((s) =>
+      s.pendingApproval?.requestId === requestId
+        ? { pendingApproval: null, pendingApprovalChatId: null }
+        : s
+    )
+    const nextMode = approved && mode ? mode : null
+    const prevMode = chatId ? before.chats.find((c) => c.id === chatId)?.write_mode : undefined
+    // main 이 mode_changed 이벤트를 보낸다. 화면은 응답 전에 먼저 바꿔 둔다
+    if (nextMode && chatId) {
+      set((s) => ({
+        chats: s.chats.map((c) => (c.id === chatId ? { ...c, write_mode: nextMode } : c))
+      }))
+    }
+    let success = false
+    try {
+      const result = await window.api.ai.approve(
+        requestId,
+        approved,
+        nextMode ? { mode: nextMode } : undefined
+      )
+      success = result?.success === true
+    } catch {
+      success = false
+    }
+    // 승인이 실패하면 (예: 이미 타임아웃) main 은 모드를 바꾸지 않았다. 화면 모드를 되돌린다.
+    // 그 사이 다른 모드로 바뀌었으면 그 값을 존중한다
+    if (!success && nextMode && chatId && prevMode) {
+      set((s) => ({
+        chats: s.chats.map((c) =>
+          c.id === chatId && c.write_mode === nextMode ? { ...c, write_mode: prevMode } : c
+        )
+      }))
+    }
+  },
+
   handleStreamEvent: (event) => {
     const { currentChatId } = get()
+    // 모드 변경은 채팅 목록 상태라서 보고 있지 않은 채팅에도 적용한다
+    if (event.event === 'mode_changed') {
+      set((s) => ({
+        chats: s.chats.map((c) => (c.id === event.chatId ? { ...c, write_mode: event.mode } : c))
+      }))
+      return
+    }
     // 보고 있지 않은 채팅의 이벤트: 리스트만 갱신
     if (event.chatId !== currentChatId) {
       if (event.event === 'done') void get().fetchChats()
@@ -191,7 +267,7 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
         set({ toolStatus: event.label })
         break
       case 'approval':
-        set({ pendingApproval: event.request, toolStatus: null })
+        set({ pendingApproval: event.request, pendingApprovalChatId: event.chatId, toolStatus: null })
         break
       case 'approval_resolved':
         set((s) =>

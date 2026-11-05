@@ -18,6 +18,8 @@ export type AiAuditEvent =
   | 'write_toggle'
   | 'fetch_approved'
   | 'fetch_rejected'
+  | 'plan_approved'
+  | 'plan_rejected'
 
 interface AiAuditEntry {
   chatId?: number | null

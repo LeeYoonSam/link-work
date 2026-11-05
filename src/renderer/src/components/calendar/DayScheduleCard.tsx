@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { format, isAfter, isBefore, isSameDay } from 'date-fns'
+import { FOCUS_RING_CLASS, focusDomId, useFocusScroll } from '../../hooks/useFocusFlash'
 import type { CalendarEvent } from '../../stores/calendarStore'
 import type { Todo } from '../../types'
 import { eventsForDay, todosForDay, type TodoScheduleItem } from '../../utils/schedule'
@@ -37,19 +38,31 @@ function CollapsibleNote({ content, allowHtml }: { content: string; allowHtml?: 
 }
 
 // 시간 지정 일정: 시간 컬럼 + 컬러 바 + 내용의 타임라인 행
+// highlighted 는 앱 내 링크(linkwork://calendar/{date}/{eventId})로 들어온 일정이다.
+// 카드가 overflow-hidden 이라 바깥 링은 잘린다. 그래서 ring-inset 으로 안쪽에 그린다.
 function EventRow({
   event,
   current,
-  timeText
+  timeText,
+  highlighted
 }: {
   event: CalendarEvent
   current: boolean
   timeText: string
+  highlighted: boolean
 }): React.ReactNode {
   const hasDescription = Boolean(event.description)
+  const ref = useFocusScroll<HTMLElement>(highlighted)
 
   return (
-    <article className={`flex gap-3 px-4 py-2.5 ${current ? 'bg-blue-50/60' : ''}`}>
+    <article
+      ref={ref}
+      // 여러 날에 걸친 일정은 여러 카드에 나온다. id 가 겹치지 않도록 강조한 행에만 단다
+      id={highlighted ? focusDomId('calendar-event', event.id) : undefined}
+      className={`flex gap-3 px-4 py-2.5 ${
+        highlighted ? `ring-inset ${FOCUS_RING_CLASS}` : current ? 'bg-blue-50/60' : ''
+      }`}
+    >
       <span
         className={`w-24 shrink-0 text-xs tabular-nums pt-0.5 text-right ${
           current ? 'text-blue-600 font-semibold' : 'text-gray-500'
@@ -165,6 +178,16 @@ interface Props {
   todos?: Todo[]
   onSelectTodo?: (todo: Todo) => void
   cardRef?: React.Ref<HTMLDivElement>
+  // 앱 내 링크(linkwork://calendar/{date})로 들어온 날이면 true. 카드를 강조하고 스크롤한다
+  focused?: boolean
+  // 강조할 일정 id. 이 날 카드에 그 일정이 있을 때만 강조한다
+  highlightEventId?: string | null
+}
+
+// 스크롤 훅의 ref 와 부모가 넘긴 cardRef 를 한 요소에 함께 단다
+function assignRef<T>(ref: React.Ref<T> | undefined, value: T | null): void {
+  if (typeof ref === 'function') ref(value)
+  else if (ref) (ref as React.RefObject<T | null>).current = value
 }
 
 export default function DayScheduleCard({
@@ -173,7 +196,9 @@ export default function DayScheduleCard({
   events,
   todos,
   onSelectTodo,
-  cardRef
+  cardRef,
+  focused = false,
+  highlightEventId = null
 }: Props): React.ReactNode {
   const dayEvents = useMemo(() => eventsForDay(events, day), [events, day])
   const todoItems = useMemo(() => (todos ? todosForDay(todos, day) : []), [todos, day])
@@ -181,6 +206,12 @@ export default function DayScheduleCard({
   const isToday = isSameDay(day, now)
   const allDayEvents = dayEvents.filter((e) => e.allDay)
   const timedEvents = dayEvents.filter((e) => !e.allDay)
+
+  const isHighlighted = (event: CalendarEvent): boolean =>
+    highlightEventId !== null && event.id === highlightEventId
+  // 강조할 시간 일정 행이 있으면 그 행이 스크롤한다. 카드까지 스크롤하면 행 위치를 덮어쓴다
+  const scrollCard = focused && !timedEvents.some(isHighlighted)
+  const scrollRef = useFocusScroll<HTMLDivElement>(scrollCard)
 
   const isCurrentEvent = (event: CalendarEvent): boolean => {
     if (event.allDay) return false
@@ -206,6 +237,7 @@ export default function DayScheduleCard({
           event={event}
           current={isCurrentEvent(event)}
           timeText={getEventTimeDisplay(event)}
+          highlighted={isHighlighted(event)}
         />
       )
     })),
@@ -221,9 +253,17 @@ export default function DayScheduleCard({
 
   return (
     <div
-      ref={cardRef}
-      className={`rounded-lg border bg-white overflow-hidden ${
-        isToday ? 'border-blue-300 ring-1 ring-blue-200' : 'border-gray-200'
+      ref={(el) => {
+        scrollRef.current = el
+        assignRef(cardRef, el)
+      }}
+      id={focusDomId('calendar-day', format(day, 'yyyy-MM-dd'))}
+      className={`rounded-lg border overflow-hidden ${
+        focused
+          ? `border-blue-300 ${FOCUS_RING_CLASS}`
+          : isToday
+            ? 'bg-white border-blue-300 ring-1 ring-blue-200'
+            : 'bg-white border-gray-200'
       }`}
     >
       <div
@@ -244,7 +284,10 @@ export default function DayScheduleCard({
           {allDayEvents.map((e) => (
             <span
               key={e.id}
-              className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-[11px] font-medium truncate max-w-[160px]"
+              id={isHighlighted(e) ? focusDomId('calendar-event', e.id) : undefined}
+              className={`inline-flex items-center px-2 py-0.5 rounded-full text-gray-600 text-[11px] font-medium truncate max-w-[160px] ${
+                isHighlighted(e) ? FOCUS_RING_CLASS : 'bg-gray-100'
+              }`}
               title={`${e.summary} · All Day`}
             >
               {e.summary}

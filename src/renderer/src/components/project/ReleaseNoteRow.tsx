@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { useReleaseNoteStore } from '../../stores/releaseNoteStore'
+import { FOCUS_RING_CLASS, focusDomId, useFocusScroll } from '../../hooks/useFocusFlash'
 import { buildReleaseNoteMarkdown } from '../../utils/releaseNoteExport'
 import type { ReleaseNoteItem, ReleaseNoteSummary } from '../../types'
 import {
@@ -208,12 +209,18 @@ export function ReleaseNoteItemList({ items }: { items: ReleaseNoteItem[] }): Re
 
 interface ReleaseNoteRowProps {
   note: ReleaseNoteSummary
+  // 앱 내 링크(linkwork://release/{id})로 들어온 행이면 true. 강조·스크롤·자동 펼침을 한다.
+  // 프로젝트 상세 카드도 이 행을 쓴다. 그래서 기본값은 false 다.
+  focused?: boolean
 }
 
 // 릴리스 한 건 — 프로젝트 상세 카드와 Releases 화면이 함께 쓴다.
 // 같은 규칙(0건 명시·실패 표시·상한 안내·계층 들여쓰기)이 두 곳에 복제되면
 // 한쪽만 고쳐져 어긋나므로 행 전체를 여기 한 곳에 둔다.
-export default function ReleaseNoteRow({ note }: ReleaseNoteRowProps): React.ReactNode {
+export default function ReleaseNoteRow({
+  note,
+  focused = false
+}: ReleaseNoteRowProps): React.ReactNode {
   const { details, syncingId, syncResults, syncErrors, fetchDetail, syncNote } =
     useReleaseNoteStore()
 
@@ -248,6 +255,12 @@ export default function ReleaseNoteRow({ note }: ReleaseNoteRowProps): React.Rea
     }
   }
 
+  const rootRef = useFocusScroll<HTMLDivElement>(focused)
+  // 링크로 들어오면 이슈 목록까지 연다. 이미 펼쳐져 있으면 그대로 둔다
+  useEffect(() => {
+    if (focused && !expanded) void toggleExpand()
+  }, [focused])
+
   const handleSync = async (): Promise<void> => {
     setActionError('')
     setSavedPath(null)
@@ -280,7 +293,11 @@ export default function ReleaseNoteRow({ note }: ReleaseNoteRowProps): React.Rea
   }
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
+    <div
+      ref={rootRef}
+      id={focused ? focusDomId('release', note.id) : undefined}
+      className={`border border-gray-200 rounded-lg overflow-hidden ${focused ? FOCUS_RING_CLASS : ''}`}
+    >
       {/* 행 어디를 눌러도 펼쳐진다 — 화살표만 누를 수 있으면 과녁이 14px짜리 아이콘 하나뿐이다.
           화살표 버튼은 그대로 남긴다: 키보드로 이 행을 여닫는 유일한 통로이고,
           펼침/접힘 상태를 눈으로 알려주는 표시이기도 하다. */}

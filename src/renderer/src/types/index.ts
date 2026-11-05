@@ -352,11 +352,20 @@ export interface TodoTagAPI {
 
 // AI Chat types
 
-// 채팅별 데이터 작성 모드: 읽기 전용 | 승인 후 쓰기(기본) | 자동 쓰기
-export type AiWriteMode = 'readonly' | 'ask' | 'auto'
+// 채팅별 데이터 작성 모드: 읽기 전용 | 승인 후 쓰기 | 자동 모드(기본) | 계획 모드.
+// plan 은 조회만 하고 계획을 먼저 보여 준다. 사용자가 계획을 승인하면 auto 또는 ask 로 바뀐다.
+export type AiWriteMode = 'readonly' | 'ask' | 'auto' | 'plan'
 
-// AI 대화 모델 (앱 전역 설정, 기본 sonnet) — 변경은 다음 메시지부터 적용
+// 오늘 화면 비서(AssistantSettings.llmModel)의 모델 선택지
 export type AiModelChoice = 'opus' | 'sonnet' | 'haiku'
+
+// AI 대화 모델 선택지 (앱 전역 설정, 다음 메시지부터 적용).
+// main 이 Claude Code 의 supportedModels() 로 라벨을 정한다. 예: value 'fable', label 'Fable 5.1'.
+export interface AiChatModelOption {
+  value: string
+  label: string
+  description: string
+}
 
 export interface AiChat {
   id: number
@@ -399,14 +408,30 @@ export interface AiNotionStatus {
   connected: boolean
 }
 
+export interface AiBitbucketStatus {
+  connected: boolean
+  email: string | null
+}
+
+export type AiBitbucketSaveResult =
+  | { success: true; account: string }
+  | { success: false; error: string }
+
 // 쓰기 도구 실행 전 사용자 승인 요청 (HITL)
 // current: 수정(update) 도구의 변경 전 현재 값 (생성 도구는 null)
+// kind: 'plan' 이면 계획 승인 요청이다. name 'ExitPlanMode', input { plan: 마크다운 }.
 export interface AiApprovalRequest {
   requestId: string
   name: string
   label: string
   input: Record<string, unknown>
   current?: Record<string, unknown> | null
+  kind?: 'write' | 'fetch' | 'plan'
+}
+
+// 계획 승인 시 바꿀 쓰기 모드
+export interface AiApproveOptions {
+  mode?: 'auto' | 'ask'
 }
 
 export type AiStreamEvent =
@@ -415,6 +440,7 @@ export type AiStreamEvent =
   | { chatId: number; event: 'tool'; name: string; label: string }
   | { chatId: number; event: 'approval'; request: AiApprovalRequest }
   | { chatId: number; event: 'approval_resolved'; requestId: string; approved: boolean }
+  | { chatId: number; event: 'mode_changed'; mode: AiWriteMode }
   | { chatId: number; event: 'done'; message?: AiMessage; cancelled?: boolean }
   | { chatId: number; event: 'error'; error: string }
 
@@ -448,10 +474,19 @@ export interface AiAPI {
   notionStatus: () => Promise<AiNotionStatus>
   notionSaveToken: (token: string) => Promise<{ success: boolean; workspace?: string; error?: string }>
   notionDisconnect: () => Promise<{ success: boolean }>
-  approve: (requestId: string, approved: boolean) => Promise<{ success: boolean }>
+  approve: (
+    requestId: string,
+    approved: boolean,
+    options?: AiApproveOptions
+  ) => Promise<{ success: boolean }>
   setChatWriteMode: (chatId: number, mode: AiWriteMode) => Promise<{ success: boolean }>
-  getModel: () => Promise<AiModelChoice>
-  setModel: (model: AiModelChoice) => Promise<{ success: boolean; model: AiModelChoice }>
+  getModel: () => Promise<string>
+  setModel: (model: string) => Promise<{ success: boolean; model: string }>
+  // 첫 호출은 main 의 모델 탐침 때문에 수 초 걸릴 수 있다
+  getModelOptions: () => Promise<AiChatModelOption[]>
+  bitbucketStatus: () => Promise<AiBitbucketStatus>
+  bitbucketSaveToken: (email: string, token: string) => Promise<AiBitbucketSaveResult>
+  bitbucketDisconnect: () => Promise<{ success: true }>
   onStream: (callback: (event: AiStreamEvent) => void) => () => void
   onDataChanged: (callback: (data: { entity: string }) => void) => () => void
 }
@@ -683,7 +718,7 @@ export interface ChannelEnergy {
 export interface MeetingNoteFilter {
   q?: string                      // 검색어(공백 trim, 빈 문자열은 무시)
   kind?: 'all' | MeetingKind      // 기본 'all'
-  projectId?: number | null       // undefined=전체, null=프로젝트 미지정만, 숫자=해당 프로젝트
+  projectId?: number | null       // undefined·null=전체, 숫자=해당 프로젝트
 }
 
 export interface MeetingNoteItem {
