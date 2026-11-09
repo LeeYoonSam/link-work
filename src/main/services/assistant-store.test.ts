@@ -55,6 +55,7 @@ import {
   closePlan,
   closeStalePlans,
   createPlan,
+  deleteExclusions,
   findEventByKey,
   getActivePlan,
   getEventById,
@@ -64,6 +65,7 @@ import {
   insertEvent,
   insertPlanItems,
   listEventsByDate,
+  listExclusions,
   listPlanItems,
   readAssistantSettings,
   reopenPlan,
@@ -76,11 +78,13 @@ import {
   updateEventPayload,
   updateEventStatus,
   updatePlanItems,
+  upsertExclusion,
   writeAssistantSettings
 } from './assistant-store'
 import type {
   NewAssistantEvent,
   NewPlanItem,
+  PlanExclusion,
   PlanItem,
   PlanItemStatus,
   RefreshPlan,
@@ -806,6 +810,56 @@ describe('비서 이벤트', () => {
   })
 })
 
+describe('A58: 계속 제외 저장', () => {
+  function exclusion(candidateId: string, over: Partial<PlanExclusion> = {}): PlanExclusion {
+    return { candidate_id: candidateId, jira_key: null, title: `제목 ${candidateId}`, source: 'task', excluded_at: AT, ...over }
+  }
+
+  it('A58: 빈 테이블은 빈 배열을 돌려준다', () => {
+    expect(listExclusions(db)).toEqual([])
+  })
+
+  it('A58: excluded_at 내림차순, 같으면 candidate_id 오름차순으로 돌려준다', () => {
+    upsertExclusion(db, exclusion('task:2', { excluded_at: '2026-11-02 09:00:00' }))
+    upsertExclusion(db, exclusion('task:9', { excluded_at: '2026-11-03 09:00:00' }))
+    upsertExclusion(db, exclusion('task:1', { excluded_at: '2026-11-02 09:00:00' }))
+    expect(listExclusions(db).map((e) => e.candidate_id)).toEqual(['task:9', 'task:1', 'task:2'])
+  })
+
+  it('A58: 같은 candidate_id 는 덮어쓰고 jira_key 를 대문자로 저장한다', () => {
+    upsertExclusion(db, exclusion('jira:ab-1', { jira_key: 'ab-1', source: 'jira', title: '옛 제목' }))
+    upsertExclusion(
+      db,
+      exclusion('jira:ab-1', { jira_key: 'ab-1', source: 'jira', title: '새 제목', excluded_at: '2026-11-03 10:00:00' })
+    )
+    expect(listExclusions(db)).toEqual([
+      { candidate_id: 'jira:ab-1', jira_key: 'AB-1', title: '새 제목', source: 'jira', excluded_at: '2026-11-03 10:00:00' }
+    ])
+  })
+
+  it('A58: excluded_at 형식이 틀리면 throw 한다 (A12)', () => {
+    expect(() => upsertExclusion(db, exclusion('task:1', { excluded_at: '2026-11-02T09:00:00Z' }))).toThrow()
+    expect(listExclusions(db)).toEqual([])
+  })
+
+  it('A58: deleteExclusions 는 candidate_id 또는 같은 jira_key 의 행을 지우고 수를 돌려준다', () => {
+    upsertExclusion(db, exclusion('jira:AB-1', { jira_key: 'AB-1', source: 'jira' }))
+    upsertExclusion(db, exclusion('task:5', { jira_key: 'AB-1' }))
+    upsertExclusion(db, exclusion('task:6', { jira_key: 'AB-2' }))
+    upsertExclusion(db, exclusion('task:7'))
+    expect(deleteExclusions(db, { candidateId: 'task:5', jiraKey: 'ab-1' })).toBe(2)
+    expect(listExclusions(db).map((e) => e.candidate_id)).toEqual(['task:6', 'task:7'])
+  })
+
+  it('A58: jiraKey 가 null 이면 candidate_id 만 맞춘다', () => {
+    upsertExclusion(db, exclusion('task:7'))
+    upsertExclusion(db, exclusion('task:8'))
+    expect(deleteExclusions(db, { candidateId: 'task:7', jiraKey: null })).toBe(1)
+    expect(deleteExclusions(db, { candidateId: 'task:99', jiraKey: null })).toBe(0)
+    expect(listExclusions(db).map((e) => e.candidate_id)).toEqual(['task:8'])
+  })
+})
+
 describe('A2: 원본 테이블 보호', () => {
   it('A2: 저장소는 비서 테이블과 app_settings 만 쓴다', () => {
     // 원본 테이블이 없는 DB 에서 모든 쓰기 함수가 동작하면, 원본 테이블을 건드리지 않는다
@@ -817,7 +871,9 @@ describe('A2: 원본 테이블 보호', () => {
     reopenPlan(db, plan.id, AT)
     closeStalePlans(db, '2026-11-03', AT)
     writeAssistantSettings(db, { enabled: false })
+    upsertExclusion(db, { candidate_id: 'jira:A-1', jira_key: 'A-1', title: 't', source: 'jira', excluded_at: AT })
+    deleteExclusions(db, { candidateId: 'jira:A-1', jiraKey: 'A-1' })
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[]).map((r) => r.name)
-    expect(tables).toEqual(['app_settings', 'assistant_events', 'daily_plans', 'plan_items'])
+    expect(tables).toEqual(['app_settings', 'assistant_events', 'assistant_exclusions', 'daily_plans', 'plan_items'])
   })
 })

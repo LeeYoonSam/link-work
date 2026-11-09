@@ -1,5 +1,5 @@
 // 빈 구간 계산과 블록 타임라인 (docs/ASSISTANT.md 부록 B.3). 순수 모듈이다 (A3·A14).
-import { isUrgent } from './assistant-candidates'
+import { isExcludedCandidate, isUrgent } from './assistant-candidates'
 import { rankCandidates } from './assistant-score'
 import type {
   BusyBlock,
@@ -7,6 +7,7 @@ import type {
   Candidate,
   DayTimeline,
   NewPlanItem,
+  PlanExclusion,
   PlanItem,
   PlanItemStatus,
   Slot,
@@ -105,9 +106,19 @@ export function workFieldsOf(
   return { work_type: c.workType, work_version: c.workVersion, parent_key: c.parentKey, group_name: c.groupName }
 }
 
-/** 하루 시작 계획 항목. 묶음 후보를 뺀 뒤 점수 순 상위 planSize 개를 시간 없이 만든다 (B.6, A49). */
-export function buildStartPlanItems(candidates: Candidate[], today: string, planSize: number): NewPlanItem[] {
-  const pool = candidates.filter((c) => !isGroupCandidate(c, candidates))
+/**
+ * 하루 시작 계획 항목. 점수 순 상위 planSize 개를 시간 없이 만든다 (B.6, A49).
+ * 묶음 후보, 액션아이템 후보(A57), 계속 제외 후보(A58)는 순위 매기기 전에 뺀다.
+ */
+export function buildStartPlanItems(
+  candidates: Candidate[],
+  today: string,
+  planSize: number,
+  exclusions: Pick<PlanExclusion, 'candidate_id' | 'jira_key'>[] = []
+): NewPlanItem[] {
+  const pool = candidates.filter(
+    (c) => !isGroupCandidate(c, candidates) && c.source !== 'action_item' && !isExcludedCandidate(c, exclusions)
+  )
   return rankCandidates(pool, today)
     .slice(0, Math.max(0, Math.floor(planSize)))
     .map(({ candidate: c, score }, idx) => ({
@@ -169,7 +180,11 @@ export function buildTimeline(input: TimelineInput): DayTimeline {
       const en = toMinutes(e.end)
       return s !== null && en !== null && en > s
     })
-    .map((e): TimelineEntry => ({ kind: 'meeting', start: fromMinutes(toMinutes(e.start) as number), end: fromMinutes(toMinutes(e.end) as number), title: e.title }))
+    .map((e): TimelineEntry => ({
+      kind: 'meeting', start: fromMinutes(toMinutes(e.start) as number), end: fromMinutes(toMinutes(e.end) as number), title: e.title,
+      // 옛 스냅샷에는 장소·메모가 없다. null 로 둔다 (M.9)
+      location: e.location ?? null, note: e.note ?? null
+    }))
 
   // 규칙 1·2: dayStart~workEnd 에서 회의를 뺀 구간. 30분 미만도 보인다.
   const dayStart = roundUpToQuarter(input.dayStart)

@@ -311,6 +311,9 @@ const api = {
     setItemStatus: (itemId: number, status: string, note?: string) =>
       ipcRenderer.invoke('assistant:setItemStatus', itemId, status, note),
     focusItem: (itemId: number) => ipcRenderer.invoke('assistant:focusItem', itemId),
+    // 계속 제외 (부록 M.5.6)
+    excludeItem: (itemId: number) => ipcRenderer.invoke('assistant:excludeItem', itemId),
+    removeExclusion: (candidateId: string) => ipcRenderer.invoke('assistant:removeExclusion', candidateId),
     // 명령 입력 (부록 G.9). 조작 형식 검증은 서비스가 한다
     interpretCommand: (text: string, scopeItemId?: number) =>
       ipcRenderer.invoke('assistant:interpretCommand', text, scopeItemId),

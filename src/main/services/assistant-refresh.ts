@@ -1,5 +1,5 @@
 // 최신화 변경 계산·반영 계획·최신화 알림 (docs/ASSISTANT.md §8.3·§8.4, 부록 B.4·B.7·E.3). 순수 모듈이다 (A3·A14).
-import { isUrgent } from './assistant-candidates'
+import { isExcludedCandidate, isUrgent } from './assistant-candidates'
 import { compareDue, compareId, rankCandidates, scoreCandidate, SOURCE_ORDER } from './assistant-score'
 import { ACTIVE_STATUSES, buildTimeline, compareByRank, toMinutes, workFieldsOf } from './assistant-slots'
 import { isGroupCandidate, isGroupItem } from './assistant-worktype'
@@ -48,6 +48,11 @@ function skipSourceUpdate(it: PlanItem, c: Candidate, current: CurrentSources): 
 
 function calendarEqual(a: CalendarRef, b: CalendarRef): boolean {
   return a.start === b.start && a.end === b.end && a.title === b.title && !!a.allDay === !!b.allDay
+}
+
+// 시각·제목은 같고 장소·메모만 다른가 (M.9). 없는 필드는 null 로 본다.
+function calendarDetailEqual(a: CalendarRef, b: CalendarRef): boolean {
+  return (a.location ?? null) === (b.location ?? null) && (a.note ?? null) === (b.note ?? null)
 }
 
 function jiraRefChanged(a: JiraSnapshotRef, b: JiraSnapshotRef): boolean {
@@ -215,9 +220,14 @@ export function planRefresh(
     current.calendar !== null &&
     diff.calendarAdded.length + diff.calendarChanged.length + diff.calendarRemoved.length > 0
 
-  // 4. 새 후보는 suggested 로만 넣는다 (A19). replace 대상과 기존 항목, 묶음 후보는 뺀다 (A49).
+  // 4. 새 후보는 suggested 로만 넣는다 (A19). replace 대상과 기존 항목, 묶음 후보(A49), 계속 제외 후보(A58)는 뺀다.
+  const exclusions = ctx.exclusions ?? []
   const fresh = diff.newCandidates.filter(
-    (c) => !replaceTargets.has(c.id) && !itemCandidateIds.has(c.id) && !isGroupCandidate(c, current.candidates)
+    (c) =>
+      !replaceTargets.has(c.id) &&
+      !itemCandidateIds.has(c.id) &&
+      !isGroupCandidate(c, current.candidates) &&
+      !isExcludedCandidate(c, exclusions)
   )
   const inserts: NewPlanItem[] = rankCandidates(fresh, ctx.today).map(({ candidate: c, score }) => ({
     candidate_id: c.id,
@@ -257,6 +267,16 @@ export function planRefresh(
   })
   const currentOrNextChanged = !sameCurrentAndNext(currentAndNextBlocks(before), currentAndNextBlocks(after))
 
+  // 5-1. 장소·메모만 바뀐 일정 수. 스냅샷은 6 에서 새 값으로 바뀐다. 일정 변경 건수(알림)에는 넣지 않는다 (M.9)
+  let calendarDetailChanged = 0
+  if (current.calendar !== null) {
+    const prevById = new Map(prev.calendar.map((e) => [e.id, e]))
+    for (const e of current.calendar) {
+      const p = prevById.get(e.id)
+      if (p && calendarEqual(p, e) && !calendarDetailEqual(p, e)) calendarDetailChanged++
+    }
+  }
+
   // 6. 스냅샷: 조회하지 못한 출처는 이전 값을 유지한다
   const seenIds = new Set(prev.seenCandidateIds)
   for (const c of current.candidates) seenIds.add(c.id)
@@ -281,7 +301,8 @@ export function planRefresh(
       dropped,
       replaced,
       timelineChanged,
-      currentOrNextChanged
+      currentOrNextChanged,
+      calendarDetailChanged
     }
   }
 }

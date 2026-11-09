@@ -72,6 +72,15 @@ export const ASSISTANT_SCHEMA = `
     created_at TEXT DEFAULT (datetime('now','localtime'))
   );
   CREATE INDEX IF NOT EXISTS idx_assistant_events_date ON assistant_events(plan_date, kind);
+
+  -- 계속 제외 기록 (부록 M, A58). jira_key 로 같은 티켓의 다른 후보 id 도 맞춘다
+  CREATE TABLE IF NOT EXISTS assistant_exclusions (
+    candidate_id TEXT PRIMARY KEY,
+    jira_key TEXT,
+    title TEXT NOT NULL,
+    source TEXT NOT NULL,
+    excluded_at TEXT NOT NULL
+  );
 `
 
 // 기존 DB 에 없는 비서 컬럼을 더한다. 여러 번 실행해도 결과가 같다 (부록 G.7.1).

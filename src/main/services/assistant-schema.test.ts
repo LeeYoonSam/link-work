@@ -95,6 +95,16 @@ describe('ASSISTANT_SCHEMA', () => {
     db.close()
   })
 
+  it('A58: assistant_exclusions 테이블과 컬럼 5개를 만든다 (부록 M)', () => {
+    const db = new Database(':memory:')
+    db.exec(ASSISTANT_SCHEMA)
+    expect(names(db, 'table')).toContain('assistant_exclusions')
+    expect(columns(db, 'assistant_exclusions')).toEqual([
+      'candidate_id', 'jira_key', 'title', 'source', 'excluded_at'
+    ])
+    db.close()
+  })
+
   it('MVP3 맥락 복구 컬럼 3개가 daily_plans 에 있다 (부록 F.6)', () => {
     const db = new Database(':memory:')
     db.exec(ASSISTANT_SCHEMA)
@@ -258,7 +268,7 @@ describe('initDatabase', () => {
     initDatabase()
     const db = getDatabase()
     expect(names(db, 'table')).toEqual(
-      expect.arrayContaining(['daily_plans', 'plan_items', 'assistant_events', 'app_settings'])
+      expect.arrayContaining(['daily_plans', 'plan_items', 'assistant_events', 'assistant_exclusions', 'app_settings'])
     )
     expect(names(db, 'index')).toContain('idx_daily_plans_one_active')
     // database.ts 가 ASSISTANT_SCHEMA 다음에 migrateAssistantSchema 를 부른다

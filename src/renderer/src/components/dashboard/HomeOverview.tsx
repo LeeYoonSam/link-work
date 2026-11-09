@@ -11,18 +11,17 @@ import { Badge, Card, EmptyState, SectionTitle, StarIcon } from '../ui'
 // 배치 로드 결과에 프로젝트 키가 없을 때 넘기는 빈 목록. 매번 새 배열을 만들지 않는다
 const NO_TASKS: Task[] = []
 
-// 홈('오늘' 화면)의 개요. 중요 메모, 진행 중 프로젝트, 우선순위 미지정 배지를 둔다.
+// 홈('오늘' 화면)의 진행 중 프로젝트 구역. 우선순위 미지정 배지를 같이 둔다 (부록 M.11 Q1).
 // 집중 대상은 오늘 계획의 집중 작업 1개뿐이다 (D2). 그래서 여기에는 집중 카드가 없다.
-export default function HomeOverview(): React.ReactNode {
+// 프로젝트·작업만 읽는다 (Q5). 이유: 메모 구역과 따로 그려도 중복 조회가 없다
+export function HomeProjects(): React.ReactNode {
   const { projects, fetchProjects, setView } = useProjectStore()
-  const { importantMemos, fetchImportantMemos } = useMemoStore()
   // 카드에는 항상 배치 결과를 넘긴다. 이유: initialTasks 가 없으면 카드가 각자 작업을 읽는다(N+1)
   const [tasksByProject, setTasksByProject] = useState<Record<number, Task[]>>({})
 
   // 홈은 스피너를 보이지 않는다. 그래서 silent 로 읽는다. 실패하면 이전 목록을 그대로 둔다
   useEffect(() => {
     fetchProjects(undefined, { silent: true }).catch(() => undefined)
-    fetchImportantMemos().catch(() => undefined)
   }, [])
 
   // 정렬·필터 규칙은 utils/projectOrder.ts 한 곳에만 있다
@@ -57,69 +56,85 @@ export default function HomeOverview(): React.ReactNode {
   }, [activeProjects])
 
   return (
-    <div id="home-overview" className="space-y-5">
-      {importantMemos.length > 0 ? (
-        <section>
-          <SectionTitle variant="page" className="mb-3">
-            <span className="inline-flex items-center gap-1.5">
-              <StarIcon size={16} filled className="text-amber-400" />
-              중요 메모
-            </span>
-          </SectionTitle>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {importantMemos.map((memo) => (
-              <div
-                key={memo.id}
-                className="bg-yellow-50 border border-yellow-200 rounded-lg p-4"
-              >
-                {/* 메모 전문을 보인다. 이유: 홈 카드는 말줄임 없이 다 보인다 (사용자 피드백 2026-11-05) */}
-                <div className="break-words">
-                  <MarkdownContent content={memo.content} compact />
-                </div>
-                {/* 오늘 화면은 ISO 날짜를 보이지 않는다 (A53). 그래서 'M/d HH:mm' 으로 줄인다 */}
-                <div className="text-xs text-gray-500 mt-2 tabular-nums">
-                  {formatDateSafe(memo.created_at, 'M/d HH:mm')}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <section>
-        {/* 배지를 제목 바로 옆에 둔다. 이유: 양 끝에 벌리면 넓은 창에서 어느 영역의 배지인지 알 수 없다 */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-3">
-          <SectionTitle variant="page">진행 중 프로젝트</SectionTitle>
-          {activeProjects.length > 0 ? (
-            <span className="text-sm text-gray-500 tabular-nums">{activeProjects.length}건</span>
-          ) : null}
-          {unprioritizedDevCount > 0 ? (
-            <Badge
-              color="bg-amber-100 text-amber-700"
-              onClick={() => setView('projects')}
-              title="개발 중인데 우선순위가 지정되지 않은 프로젝트입니다. 프로젝트 목록에서 지정하세요."
-            >
-              우선순위 미지정 {unprioritizedDevCount}건 · 지정하기 →
-            </Badge>
-          ) : null}
+    <section id="home-projects">
+      {/* 배지를 제목 바로 옆에 둔다. 이유: 양 끝에 벌리면 넓은 창에서 어느 영역의 배지인지 알 수 없다 */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-3">
+        <SectionTitle variant="page">진행 중 프로젝트</SectionTitle>
+        {activeProjects.length > 0 ? (
+          <span className="text-sm text-gray-500 tabular-nums">{activeProjects.length}건</span>
+        ) : null}
+        {unprioritizedDevCount > 0 ? (
+          <Badge
+            color="bg-amber-100 text-amber-700"
+            onClick={() => setView('projects')}
+            title="개발 중인데 우선순위가 지정되지 않은 프로젝트입니다. 프로젝트 목록에서 지정하세요."
+          >
+            우선순위 미지정 {unprioritizedDevCount}건 · 지정하기 →
+          </Badge>
+        ) : null}
+      </div>
+      {activeProjects.length === 0 ? (
+        <Card padding="sm">
+          <EmptyState compact>진행 중인 프로젝트가 없어요.</EmptyState>
+        </Card>
+      ) : (
+        <div className="grid gap-3 min-w-0 [&>*]:min-w-0">
+          {/* 카드는 가로 전체 폭을 쓴다. 이유: 진행률 막대와 일정이 넓어야 읽기 쉽다 (사용자 피드백 2026-11-05) */}
+          {activeProjects.map((project) => (
+            <ProjectProgress
+              key={project.id}
+              project={project}
+              initialTasks={tasksByProject[project.id] ?? NO_TASKS}
+            />
+          ))}
         </div>
-        {activeProjects.length === 0 ? (
-          <Card padding="sm">
-            <EmptyState compact>진행 중인 프로젝트가 없어요.</EmptyState>
-          </Card>
-        ) : (
-          <div className="grid gap-3 min-w-0 [&>*]:min-w-0">
-            {/* 카드는 가로 전체 폭을 쓴다. 이유: 진행률 막대와 일정이 넓어야 읽기 쉽다 (사용자 피드백 2026-11-05) */}
-            {activeProjects.map((project) => (
-              <ProjectProgress
-                key={project.id}
-                project={project}
-                initialTasks={tasksByProject[project.id] ?? NO_TASKS}
-              />
-            ))}
+      )}
+    </section>
+  )
+}
+
+// 홈의 중요 메모 구역 (부록 M.11 Q1). 중요 메모만 읽는다 (Q5).
+// 중요 메모가 0건이면 아무것도 그리지 않는다
+export function HomeMemos(): React.ReactNode {
+  const { importantMemos, fetchImportantMemos } = useMemoStore()
+
+  useEffect(() => {
+    fetchImportantMemos().catch(() => undefined)
+  }, [])
+
+  if (importantMemos.length === 0) return null
+  return (
+    <section id="home-overview">
+      <SectionTitle variant="page" className="mb-3">
+        <span className="inline-flex items-center gap-1.5">
+          <StarIcon size={16} filled className="text-amber-400" />
+          중요 메모
+        </span>
+      </SectionTitle>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {importantMemos.map((memo) => (
+          <div key={memo.id} className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            {/* 메모 전문을 보인다. 이유: 홈 카드는 말줄임 없이 다 보인다 (사용자 피드백 2026-11-05) */}
+            <div className="break-words">
+              <MarkdownContent content={memo.content} compact />
+            </div>
+            {/* 오늘 화면은 ISO 날짜를 보이지 않는다 (A53). 그래서 'M/d HH:mm' 으로 줄인다 */}
+            <div className="text-xs text-gray-500 mt-2 tabular-nums">
+              {formatDateSafe(memo.created_at, 'M/d HH:mm')}
+            </div>
           </div>
-        )}
-      </section>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+// 진행 중 프로젝트와 중요 메모를 이 순서로 그린다. 기존 사용처를 위해 남긴다 (Q1)
+export default function HomeOverview(): React.ReactNode {
+  return (
+    <div className="space-y-5">
+      <HomeProjects />
+      <HomeMemos />
     </div>
   )
 }

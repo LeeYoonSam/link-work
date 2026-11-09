@@ -112,6 +112,73 @@ describe('buildStartPlanItems B.6', () => {
   })
 })
 
+describe('M.9: 회의 장소·메모 전달', () => {
+  it('buildTimeline 은 meeting 항목에 장소·메모를 옮긴다', () => {
+    const t = tl({ calendar: [{ ...ev('m', '10:00', '11:00', '주간'), location: '3층', note: '안건\n정리' }], items: [] })
+    expect(t.entries.find((e) => e.kind === 'meeting')).toEqual({
+      kind: 'meeting', start: '10:00', end: '11:00', title: '주간', location: '3층', note: '안건\n정리'
+    })
+  })
+
+  it('옛 스냅샷처럼 필드가 없으면 null 로 둔다', () => {
+    const t = tl({ calendar: [ev('m', '10:00', '11:00', '주간')], items: [] })
+    expect(t.entries.find((e) => e.kind === 'meeting')).toEqual({
+      kind: 'meeting', start: '10:00', end: '11:00', title: '주간', location: null, note: null
+    })
+  })
+})
+
+describe('A57·A58: 하루 시작 후보 분리 (부록 M)', () => {
+  it('A57: 하루 시작은 action_item 후보를 계획에 넣지 않는다', () => {
+    const items = buildStartPlanItems(
+      [
+        cand({ id: 'action_item:7:0', dueDate: TODAY, priority: 'high' }),
+        cand({ id: 'todo:1' }),
+        cand({ id: 'action_item:7:1' })
+      ],
+      TODAY,
+      5
+    )
+    expect(items.map((i) => i.candidate_id)).toEqual(['todo:1'])
+    expect(items[0].rank).toBe(1)
+  })
+
+  it('A57: action_item 만 있으면 빈 목록이다', () => {
+    expect(buildStartPlanItems([cand({ id: 'action_item:1:0' })], TODAY, 3)).toEqual([])
+  })
+
+  it('A58: 계속 제외 후보는 candidate_id 가 같으면 빠지고 남은 후보가 순위를 받는다', () => {
+    const items = buildStartPlanItems(
+      [cand({ id: 'task:1', dueDate: TODAY }), cand({ id: 'task:2' }), cand({ id: 'todo:3' })],
+      TODAY,
+      2,
+      [{ candidate_id: 'task:1', jira_key: null }]
+    )
+    expect(items.map((i) => [i.candidate_id, i.rank])).toEqual([['task:2', 1], ['todo:3', 2]])
+  })
+
+  it('A58: 후보 id 가 달라도 jira_key 가 같으면 계속 제외 후보다', () => {
+    // 같은 티켓의 후보 id 가 jira:KEY 에서 task:N 으로 바뀌어도 맞춘다 (M2)
+    const items = buildStartPlanItems(
+      [
+        cand({ id: 'task:12', jiraKey: 'ica-1', priority: 'high' }),
+        cand({ id: 'jira:ICA-2', jiraKey: 'ICA-2' }),
+        cand({ id: 'todo:1' })
+      ],
+      TODAY,
+      5,
+      [{ candidate_id: 'jira:ICA-1', jira_key: 'ICA-1' }]
+    )
+    expect(items.map((i) => i.candidate_id)).not.toContain('task:12')
+    expect(items.map((i) => i.candidate_id).sort()).toEqual(['jira:ICA-2', 'todo:1'])
+  })
+
+  it('A58: jira_key 가 null 인 제외 기록은 Jira 키가 없는 다른 후보를 빼지 않는다', () => {
+    const items = buildStartPlanItems([cand({ id: 'task:2' })], TODAY, 5, [{ candidate_id: 'task:1', jira_key: null }])
+    expect(items.map((i) => i.candidate_id)).toEqual(['task:2'])
+  })
+})
+
 describe('buildTimeline B.3', () => {
   it('A23: 회의를 뺀 구간이 블록이고 회의와 시간순으로 섞인다. 종일 일정은 뺀다', () => {
     const t = tl({

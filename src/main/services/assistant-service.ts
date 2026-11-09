@@ -48,13 +48,14 @@ import {
 import { requestLlmCommand } from './assistant-command-llm'
 import { computeDueMeetingBriefings } from './assistant-schedule'
 import { buildMeetingBriefing, hasMeetingContext, meetingNoticeText } from './assistant-meeting'
-import { isUrgent } from './assistant-candidates'
+import { isExcludedCandidate, isUrgent } from './assistant-candidates'
 import { rankCandidates, scoreCandidate } from './assistant-score'
 import {
   applyRefreshPlan,
   closePlan,
   closeStalePlans,
   createPlan,
+  deleteExclusions,
   getEventById,
   getLastPlanBefore,
   getPlanByDate,
@@ -62,6 +63,7 @@ import {
   insertEvent,
   insertPlanItems,
   listEventsByDate,
+  listExclusions,
   listPlanItems,
   readAssistantSettings,
   reopenPlan,
@@ -72,6 +74,7 @@ import {
   setRecovery,
   updateEventPayload,
   updatePlanItems,
+  upsertExclusion,
   writeAssistantSettings
 } from './assistant-store'
 import type {
@@ -79,6 +82,7 @@ import type {
   AssistantSettings,
   AutoRefreshOutcome,
   Candidate,
+  CandidateSource,
   CommandApplyOutcome,
   CommandContext,
   CommandInterpretation,
@@ -120,6 +124,8 @@ const SETTABLE_STATUSES: PlanItemStatus[] = ['planned', 'in_progress', 'done', '
 const FOCUSABLE_STATUSES: PlanItemStatus[] = ['planned', 'in_progress']
 // 원본이 사라지지 않은 채 다시 계획에 넣을 수 있는 상태
 const REVIVABLE_STATUSES: PlanItemStatus[] = ['suggested', 'dismissed', 'dropped', 'deferred']
+// 계속 제외할 수 있는 출처다. 액션아이템은 자동으로 들어가지 않고, todo·임시는 사용자가 만든 일이다 (M4)
+const EXCLUDABLE_SOURCES: CandidateSource[] = ['jira', 'task']
 
 let changedListener: ((e: AssistantChangedEvent) => void) | null = null
 // 마지막 수집 결과. 오늘 화면의 연결 상태·오류 문구에 쓴다
@@ -257,7 +263,8 @@ function buildPayload(db: Db, settings: AssistantSettings, today: string, now: D
     recovery:
       recoveryState.date === today
         ? { inFlight: recoveryState.inFlight, error: recoveryState.error }
-        : { inFlight: false, error: null }
+        : { inFlight: false, error: null },
+    exclusions: listExclusions(db)
   }
 }
 
@@ -439,7 +446,8 @@ async function startDayImpl(now: Date): Promise<TodayPayload> {
   const sources = await collectSources(db, settings, 'full', now)
   lastCollected = sources
 
-  const items = buildStartPlanItems(sources.candidates, today, settings.planSize)
+  // A57·A58: 액션아이템과 계속 제외 후보는 넣지 않는다
+  const items = buildStartPlanItems(sources.candidates, today, settings.planSize, listExclusions(db))
   const snapshot: SourceSnapshot = {
     calendar: sources.calendar ?? [],
     jira: sources.jira ?? [],
@@ -567,7 +575,9 @@ async function runRefreshImpl(mode: RefreshMode, now: Date, notify: boolean): Pr
     nowHHmm,
     workEnd: settings.workEnd,
     dayStart: dayStartOf(fresh),
-    resolutions
+    resolutions,
+    // A58: 계속 제외 후보는 새 제안에 넣지 않는다
+    exclusions: listExclusions(db)
   })
 
   // planRefresh 의 takenAt 은 논리 날짜 기준이다. 날짜 경계 전 새벽에는 실제 날짜와 다르므로 실제 시각으로 덮어쓴다
@@ -589,8 +599,10 @@ async function runRefreshImpl(mode: RefreshMode, now: Date, notify: boolean): Pr
     logPlanUpdate(db, today, at, JSON.stringify(record))
   }
 
-  // 자동 최신화는 변경이 없으면 알리지 않는다. 수동 full 은 항상 알린다 (E.2.6)
-  if (hasChange || (!notify && mode === 'full')) emitChanged({ date: today, reason: 'refresh' })
+  // 자동 최신화는 변경이 없으면 알리지 않는다. 수동 full 은 항상 알린다 (E.2.6).
+  // 장소·메모만 바뀐 일정은 알림·기록을 만들지 않지만 화면은 다시 그린다 (M.9)
+  const detailChanged = (s.calendarDetailChanged ?? 0) > 0
+  if (hasChange || detailChanged || (!notify && mode === 'full')) emitChanged({ date: today, reason: 'refresh' })
   return { today: buildPayload(db, settings, today, now), notices }
 }
 
@@ -698,9 +710,12 @@ export async function listCandidates(now: Date = new Date()): Promise<Candidate[
       .filter((i) => !REVIVABLE_STATUSES.includes(i.status))
       .map((i) => i.candidate_id)
   )
+  // A58: 계속 제외 후보는 빼지 않고 excluded 로 표시한다. 후보 카드에서 다시 추가할 수 있다
+  const exclusions = listExclusions(db)
   return rankCandidates(sources.candidates, today)
     .map((s) => s.candidate)
     .filter((c) => !taken.has(c.id))
+    .map((c) => (isExcludedCandidate(c, exclusions) ? { ...c, excluded: true } : c))
 }
 
 // 점수 순서로 rank 를 다시 매긴다. in_progress 항목은 rank 를 유지한다 (B.4)
@@ -722,9 +737,11 @@ async function addItemImpl(candidateId: string, now: Date): Promise<TodayPayload
   const plan = requireActivePlan(db, today)
 
   const existing = listPlanItems(db, plan.id).find((i) => i.candidate_id === candidateId)
+  let jiraKey: string | null
   if (existing) {
     if (!REVIVABLE_STATUSES.includes(existing.status)) throw new Error('이미 계획에 있는 항목입니다.')
     updatePlanItems(db, [{ id: existing.id, patch: { status: 'planned', status_note: null } }], at)
+    jiraKey = existing.jira_issue_key
   } else {
     // local 은 네트워크를 쓰지 않는다. Jira 후보는 '후보 더 보기' 조회의 캐시에서 찾는다
     const sources = await collectSources(db, settings, 'local', now)
@@ -750,8 +767,11 @@ async function addItemImpl(candidateId: string, now: Date): Promise<TodayPayload
       ...workFieldsOf(c)
     }
     insertPlanItems(db, plan.id, [item])
+    jiraKey = c.jiraKey
   }
 
+  // A58: 다시 추가하면 계속 제외 기록을 지운다. 같은 Jira 키의 다른 후보 id 기록도 지운다 (M2·M6)
+  deleteExclusions(db, { candidateId, jiraKey: upperKey(jiraKey) })
   applyRerank(db, plan, at)
   return buildPayload(db, settings, today, now)
 }
@@ -819,6 +839,70 @@ async function setItemStatusImpl(
   const revived = status === 'planned' && (item.status === 'deferred' || item.status === 'dropped')
   if (revived) applyRerank(db, plan, at)
   return buildPayload(db, settings, today, now)
+}
+
+// ── 계속 제외 (부록 M.5.5) ──
+
+function upperKey(key: string | null | undefined): string | null {
+  return key ? key.toUpperCase() : null
+}
+
+export function excludeItem(itemId: number, now: Date = new Date()): Promise<TodayPayload> {
+  return serialized(() => excludeItemImpl(itemId, now))
+}
+
+// 기록을 남기고 그날 항목을 dropped 로 둔다. 다음 하루 시작·최신화 제안이 이 후보를 넣지 않는다 (A58)
+async function excludeItemImpl(itemId: number, now: Date): Promise<TodayPayload> {
+  const db = getDatabase()
+  const { settings, today, at } = todayOf(db, now)
+  const plan = requireActivePlan(db, today)
+  const item = requireItemOfPlan(db, itemId, plan)
+  if (!EXCLUDABLE_SOURCES.includes(item.source)) throw new Error('계속 제외는 Jira·작업 항목만 할 수 있어요.')
+  if (item.status === 'suggested' || item.status === 'dismissed') {
+    throw new Error('제안 항목은 계속 제외할 수 없어요.')
+  }
+  // 기록과 상태를 한 번에 바꾼다. 둘 중 하나만 남지 않게 한다
+  db.transaction(() => {
+    upsertExclusion(db, {
+      candidate_id: item.candidate_id,
+      jira_key: upperKey(item.jira_issue_key),
+      title: item.title,
+      source: item.source,
+      excluded_at: at
+    })
+    // setItemStatus 의 dropped 경로와 같은 패치다
+    if (item.status !== 'dropped') {
+      updatePlanItems(db, [{ id: item.id, patch: { status: 'dropped', status_note: null } }], at)
+    }
+  })()
+  return buildPayload(db, settings, today, now)
+}
+
+export function removeExclusion(candidateId: string, now: Date = new Date()): Promise<TodayPayload> {
+  return serialized(() => removeExclusionImpl(candidateId, now))
+}
+
+// 계속 제외 기록만 지운다. 계획 항목은 바꾸지 않는다. 근무 중이 아니어도 된다 (M6)
+async function removeExclusionImpl(candidateId: unknown, now: Date): Promise<TodayPayload> {
+  if (typeof candidateId !== 'string' || candidateId.length === 0 || candidateId.length > 200) {
+    throw new Error('후보 ID 가 올바르지 않습니다.')
+  }
+  const db = getDatabase()
+  const { settings, today } = todayOf(db, now)
+  // 같은 Jira 키로 남은 다른 후보 id 기록도 지운다 (M2)
+  deleteExclusions(db, { candidateId, jiraKey: exclusionJiraKeyOf(db, candidateId, today) })
+  return buildPayload(db, settings, today, now)
+}
+
+// 제외 해제에 쓸 Jira 키다. 최신화가 항목의 후보 id 를 jira:KEY 에서 task:N 으로 바꿔도 기록을 찾는다.
+// 순서: 같은 id 의 제외 행 → 오늘 계획의 같은 id 항목 → 'jira:' 접두사 뒤 키
+function exclusionJiraKeyOf(db: Db, candidateId: string, today: string): string | null {
+  const row = listExclusions(db).find((e) => e.candidate_id === candidateId)
+  if (row?.jira_key) return row.jira_key
+  const plan = getPlanByDate(db, today)
+  const item = plan ? listPlanItems(db, plan.id).find((i) => i.candidate_id === candidateId) : undefined
+  if (item?.jira_issue_key) return upperKey(item.jira_issue_key)
+  return candidateId.startsWith('jira:') ? upperKey(candidateId.slice(5)) : null
 }
 
 export function focusItem(itemId: number, now: Date = new Date()): Promise<TodayPayload> {

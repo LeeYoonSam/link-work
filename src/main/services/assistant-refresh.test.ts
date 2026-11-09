@@ -847,3 +847,64 @@ describe('A49: 묶음 항목 rank·집중', () => {
     ])
   })
 })
+
+describe('A58: 계속 제외 후보는 최신화 제안이 아니다 (부록 M)', () => {
+  it('A58: planRefresh 는 계속 제외 후보를 suggested 로 넣지 않는다', () => {
+    const cands = [cand({ id: 'jira:ICA-1', jiraKey: 'ICA-1' }), cand({ id: 'task:3' }), cand({ id: 'todo:4' })]
+    const plan = run(snapshot(), { candidates: cands, calendar: [], jira: [] }, [], {
+      exclusions: [{ candidate_id: 'task:3', jira_key: null }]
+    })
+    expect(plan.inserts.map((i) => i.candidate_id).sort()).toEqual(['jira:ICA-1', 'todo:4'])
+    expect(plan.summary.suggested).toBe(2)
+  })
+
+  it('A58: 후보 id 가 달라도 jira_key 가 같으면 제안하지 않는다', () => {
+    const cands = [cand({ id: 'task:12', jiraKey: 'ICA-1' }), cand({ id: 'todo:4' })]
+    const plan = run(snapshot(), { candidates: cands, calendar: [], jira: [] }, [], {
+      exclusions: [{ candidate_id: 'jira:ICA-1', jira_key: 'ICA-1' }]
+    })
+    expect(plan.inserts.map((i) => i.candidate_id)).toEqual(['todo:4'])
+    expect(plan.summary.suggested).toBe(1)
+  })
+
+  it('A58: exclusions 가 없으면 지금처럼 모든 새 후보를 제안한다', () => {
+    const cands = [cand({ id: 'task:3' }), cand({ id: 'todo:4' })]
+    const plan = run(snapshot(), { candidates: cands, calendar: [], jira: [] }, [])
+    expect(plan.inserts.map((i) => i.candidate_id).sort()).toEqual(['task:3', 'todo:4'])
+  })
+})
+
+describe('M.9: 회의 장소·메모 최신화', () => {
+  it('장소·메모만 바뀐 일정은 일정 변경 건수와 알림에 들지 않고 스냅샷·시간표에는 새 값이 든다', () => {
+    const before = { ...ev('m', '10:00', '11:00', '주간'), location: '3층', note: null }
+    const after = { ...ev('m', '10:00', '11:00', '주간'), location: '5층', note: '안건 정리' }
+    const prev = snapshot({ calendar: [before] })
+    const current = { candidates: [], calendar: [after], jira: [] }
+    const diff = diffSources(prev, current, [])
+    expect(diff.calendarChanged).toEqual([])
+    const plan = planRefresh(diff, current, prev, [], ctx())
+    expect(plan.summary).toMatchObject({
+      calendarAdded: 0, calendarChanged: 0, calendarRemoved: 0, timelineChanged: false, calendarDetailChanged: 1
+    })
+    // 알림 건수 0
+    const items = [item({ id: 1, rank: 1, title: 'API 설계' })]
+    expect(buildPlanUpdateNotices(noticeInput({ diff, summary: plan.summary, items }))).toEqual([])
+    // 스냅샷과 시간표에 새 장소·메모가 든다
+    expect(plan.snapshot.calendar).toEqual([after])
+    expect(timeline(plan.snapshot.calendar, [], '09:00').entries.find((e) => e.kind === 'meeting')).toEqual({
+      kind: 'meeting', start: '10:00', end: '11:00', title: '주간', location: '5층', note: '안건 정리'
+    })
+  })
+
+  it('옛 스냅샷(필드 없음)과 null 은 같은 값이다. 시각이 바뀐 일정은 장소 변경 건수에 넣지 않는다', () => {
+    const prev = snapshot({ calendar: [ev('a', '10:00', '11:00'), ev('b', '13:00', '14:00')] })
+    const current = {
+      candidates: [],
+      calendar: [{ ...ev('a', '10:00', '11:00'), location: null, note: null }, { ...ev('b', '13:30', '14:00'), location: '3층' }],
+      jira: []
+    }
+    const plan = run(prev, current, [])
+    expect(plan.summary.calendarChanged).toBe(1)
+    expect(plan.summary.calendarDetailChanged).toBe(0)
+  })
+})

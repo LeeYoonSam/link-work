@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import type { Memo, Project } from '../../types'
 
 // 홈('오늘' 화면) 개요의 내용을 마크업으로 잠근다 (메뉴 통합 D1·D2).
@@ -23,7 +25,7 @@ vi.mock('../../stores/memoStore', () => ({
   })
 }))
 
-const HomeOverview = (await import('./HomeOverview')).default
+const { default: HomeOverview, HomeProjects, HomeMemos } = await import('./HomeOverview')
 
 const project = (over: Partial<Project> & Pick<Project, 'id' | 'name'>): Project => ({
   description: null,
@@ -121,5 +123,50 @@ describe('HomeOverview 우선순위 미지정 배지', () => {
   it('모두 지정돼 있으면 배지가 없다', () => {
     state.projects = [project({ id: 1, name: '지정됨' })]
     expect(render()).not.toContain('우선순위 미지정')
+  })
+})
+
+// 부록 M.11 Q1. 오늘 화면이 두 부분을 다른 자리에 그린다
+describe('HomeProjects·HomeMemos 분리 (부록 M.11 Q1)', () => {
+  it('HomeProjects 는 진행 중 프로젝트만 그린다. 메모가 있어도 메모를 그리지 않는다', () => {
+    state.projects = [project({ id: 1, name: '지금 프로젝트' })]
+    state.importantMemos = [memo({ id: 1, content: '배포 동결 기간 확인' })]
+    const html = renderToStaticMarkup(<HomeProjects />)
+    expect(html).toContain('id="home-projects"')
+    expect(html).toContain('진행 중 프로젝트')
+    expect(html).toContain('지금 프로젝트')
+    expect(html).not.toContain('중요 메모')
+    expect(html).not.toContain('배포 동결 기간 확인')
+    expect(html).not.toContain('id="home-overview"')
+  })
+
+  it('HomeMemos 는 중요 메모만 그린다. 0건이면 아무것도 그리지 않는다', () => {
+    state.projects = [project({ id: 1, name: '지금 프로젝트' })]
+    state.importantMemos = [memo({ id: 1, content: '배포 동결 기간 확인' })]
+    const html = renderToStaticMarkup(<HomeMemos />)
+    expect(html).toContain('id="home-overview"')
+    expect(html).toContain('배포 동결 기간 확인')
+    expect(html).not.toContain('진행 중 프로젝트')
+    expect(html).not.toContain('지금 프로젝트')
+    state.importantMemos = []
+    expect(renderToStaticMarkup(<HomeMemos />)).toBe('')
+  })
+
+  it('기본 HomeOverview 는 진행 중 프로젝트 → 중요 메모 순서로 그린다', () => {
+    state.projects = [project({ id: 1, name: '지금 프로젝트' })]
+    state.importantMemos = [memo({ id: 1, content: '배포 동결 기간 확인' })]
+    const html = render()
+    expect(html.indexOf('id="home-projects"')).toBeGreaterThan(-1)
+    expect(html.indexOf('id="home-projects"')).toBeLessThan(html.indexOf('id="home-overview"'))
+  })
+
+  it('HomeProjects 는 메모 스토어를, HomeMemos 는 프로젝트 스토어를 읽지 않는다 (Q5)', () => {
+    const src = readFileSync(resolve(__dirname, 'HomeOverview.tsx'), 'utf-8')
+    const projects = src.slice(src.indexOf('export function HomeProjects'), src.indexOf('export function HomeMemos'))
+    const memos = src.slice(src.indexOf('export function HomeMemos'), src.indexOf('export default function HomeOverview'))
+    expect(projects).not.toContain('useMemoStore')
+    expect(projects).not.toContain('fetchImportantMemos')
+    expect(memos).not.toContain('useProjectStore')
+    expect(memos).not.toContain('listByProjectIds')
   })
 })

@@ -5,6 +5,7 @@ import {
   applyCommand,
   closeDay,
   dismissSuggestion,
+  excludeItem,
   focusItem,
   generateRecovery,
   getSettings,
@@ -13,6 +14,7 @@ import {
   listCandidates,
   refreshBriefing,
   regenerateMeetingBriefing,
+  removeExclusion,
   reopenDay,
   runRefresh,
   saveSettings,
@@ -86,6 +88,15 @@ export function registerAssistantIpc(): void {
 
   ipcMain.handle('assistant:focusItem', (_e, itemId: number) =>
     wrap(async () => ({ today: await focusItem(itemId) }))
+  )
+
+  // 계속 제외 (부록 M.5.6). 출처·상태 검증은 서비스가 한다
+  ipcMain.handle('assistant:excludeItem', (_e, itemId: number) =>
+    wrap(async () => ({ today: await excludeItem(itemId) }))
+  )
+
+  ipcMain.handle('assistant:removeExclusion', (_e, candidateId: string) =>
+    wrap(async () => ({ today: await removeExclusion(candidateId) }))
   )
 
   // 명령 입력 (부록 G.9). 해석은 DB 를 쓰지 않는다. 적용은 사용자가 미리보기에서 확인한 조작만 받는다 (A34)

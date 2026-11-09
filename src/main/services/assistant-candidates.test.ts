@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCandidates, isUrgent } from './assistant-candidates'
+import { buildCandidates, isExcludedCandidate, isUrgent } from './assistant-candidates'
 import type { CandidateInput, JiraCandidateInput, TaskRow, TodoRow } from './assistant-types'
 import { cand, deepFreeze, TODAY } from './__fixtures__/assistant/factories'
 
@@ -241,5 +241,21 @@ describe('isUrgent', () => {
   it('Jira Highest 는 긴급이다. High 는 아니다', () => {
     expect(isUrgent(cand({ id: 'jira:P-1', jiraPriority: 'Highest' }), TODAY)).toBe(true)
     expect(isUrgent(cand({ id: 'jira:P-1', jiraPriority: 'High' }), TODAY)).toBe(false)
+  })
+})
+
+describe('A58: isExcludedCandidate', () => {
+  it('A58: candidate_id 가 같으면 true 다', () => {
+    expect(isExcludedCandidate({ id: 'task:1', jiraKey: null }, [{ candidate_id: 'task:1', jira_key: null }])).toBe(true)
+  })
+
+  it('A58: 둘 다 Jira 키가 있고 같으면 대소문자와 무관하게 true 다', () => {
+    expect(isExcludedCandidate({ id: 'task:12', jiraKey: 'ica-1' }, [{ candidate_id: 'jira:ICA-1', jira_key: 'ICA-1' }])).toBe(true)
+  })
+
+  it('A58: 한쪽이라도 Jira 키가 없고 id 가 다르면 false 다', () => {
+    expect(isExcludedCandidate({ id: 'task:12', jiraKey: null }, [{ candidate_id: 'jira:ICA-1', jira_key: 'ICA-1' }])).toBe(false)
+    expect(isExcludedCandidate({ id: 'task:12', jiraKey: 'ICA-1' }, [{ candidate_id: 'task:1', jira_key: null }])).toBe(false)
+    expect(isExcludedCandidate({ id: 'task:12', jiraKey: 'ICA-1' }, [])).toBe(false)
   })
 })

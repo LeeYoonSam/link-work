@@ -1148,6 +1148,19 @@ export interface Candidate {
   groupName: string | null
   workType: WorkType
   workVersion: string | null
+  // 계속 제외한 후보다. listCandidates 만 채운다 (부록 M.5.1)
+  excluded?: boolean
+}
+
+// 계속 제외 기록 (부록 M.5.1). jira·task 출처만 있다
+export interface PlanExclusion {
+  candidate_id: string
+  // 대문자. 없으면 null
+  jira_key: string | null
+  title: string
+  source: CandidateSource
+  // 'YYYY-MM-DD HH:mm:ss'
+  excluded_at: string
 }
 
 export type PlanStatus = 'active' | 'closed'
@@ -1219,7 +1232,15 @@ export interface PlanItem {
 
 // 오늘 타임라인 (부록 B.7)
 export type TimelineEntry =
-  | { kind: 'meeting'; start: string; end: string; title: string }
+  | {
+      kind: 'meeting'
+      start: string
+      end: string
+      title: string
+      // 장소·메모 (부록 M.9). 옛 스냅샷에는 없다. 없으면 null 로 본다
+      location?: string | null
+      note?: string | null
+    }
   | {
       kind: 'block'
       start: string
@@ -1318,6 +1339,8 @@ export interface TodayPayload {
   timeline: DayTimeline
   // 맥락 복구 진행·실패 상태 (부록 F.6). 메모리 값이다
   recovery: RecoveryState
+  // 계속 제외 기록. excluded_at 내림차순 (부록 M.5.1)
+  exclusions: PlanExclusion[]
 }
 
 // 맥락 복구 상태 (부록 F.9.1)
@@ -1447,6 +1470,9 @@ export interface AssistantAPI {
   dismissSuggestion: (itemId: number) => Promise<TodayResult>
   setItemStatus: (itemId: number, status: PlanItemStatus, note?: string) => Promise<TodayResult>
   focusItem: (itemId: number) => Promise<TodayResult>
+  // 계속 제외 (부록 M.5.6). jira·task 항목만 된다
+  excludeItem: (itemId: number) => Promise<TodayResult>
+  removeExclusion: (candidateId: string) => Promise<TodayResult>
   getSettings: () => Promise<AssistantSettings>
   saveSettings: (
     patch: Partial<AssistantSettings>

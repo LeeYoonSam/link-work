@@ -21,6 +21,16 @@ export interface Candidate {
   groupName: string | null         // Jira 부모 요약 또는 WBS 프로젝트 이름
   workType: WorkType
   workVersion: string | null
+  excluded?: boolean               // 계속 제외한 후보. listCandidates 만 채운다 (부록 M)
+}
+
+// 계속 제외 기록 (부록 M, A58)
+export interface PlanExclusion {
+  candidate_id: string
+  jira_key: string | null          // 대문자. 없으면 null
+  title: string
+  source: CandidateSource          // 'jira' | 'task'
+  excluded_at: string              // 'YYYY-MM-DD HH:mm:ss'
 }
 
 export interface TaskRow {
@@ -56,7 +66,11 @@ export type PlanClosedBy = 'button' | 'auto'
 export type PlanItemStatus = 'suggested' | 'planned' | 'in_progress' | 'done' | 'deferred' | 'dropped' | 'dismissed'
 export type PlanAddedBy = 'start' | 'user' | 'refresh'
 
-export interface CalendarRef { id: string; title: string; start: string; end: string; allDay: boolean }  // start·end 는 오늘 기준 'HH:mm'
+export interface CalendarRef {
+  id: string; title: string; start: string; end: string; allDay: boolean   // start·end 는 오늘 기준 'HH:mm'
+  location?: string | null         // 장소. 옛 스냅샷에는 없다. 없으면 null 로 본다 (M.9 N5)
+  note?: string | null             // 정리한 설명 (meetingNoteOf). 옛 스냅샷에는 없다 (M.9 N6)
+}
 export interface JiraSnapshotRef { key: string; status: string; priority: string | null; duedate: string | null; updated: string }
 export interface SourceSnapshot { calendar: CalendarRef[]; jira: JiraSnapshotRef[]; seenCandidateIds: string[]; takenAt: string }
 
@@ -120,6 +134,7 @@ export interface RefreshContext {
   today: string; nowHHmm: string; workEnd: string
   dayStart: string                 // 타임라인 시작 'HH:mm'. started_at 을 15분 단위로 올린 값
   resolutions: Record<string, VanishedResolution>
+  exclusions?: Pick<PlanExclusion, 'candidate_id' | 'jira_key'>[]   // 계속 제외. 없으면 빈 배열 (A58)
 }
 export interface RefreshSummary {
   calendarAdded: number; calendarChanged: number; calendarRemoved: number
@@ -127,6 +142,7 @@ export interface RefreshSummary {
   completed: number; dropped: number; replaced: number
   timelineChanged: boolean         // 일정 변경 여부
   currentOrNextChanged: boolean    // current 블록 end·itemId, 다음 future 블록 start·end·itemId 변경 여부 (E.3.1)
+  calendarDetailChanged?: number   // 시각·제목은 같고 장소·메모만 바뀐 일정 수. 일정 변경 건수에 넣지 않는다 (M.9)
 }
 export interface RefreshPlan { inserts: NewPlanItem[]; updates: PlanItemUpdate[]; snapshot: SourceSnapshot; summary: RefreshSummary }
 
@@ -144,7 +160,7 @@ export interface AssistantSettings {
 }
 
 export type TimelineEntry =
-  | { kind: 'meeting'; start: string; end: string; title: string }
+  | { kind: 'meeting'; start: string; end: string; title: string; location?: string | null; note?: string | null }
   | {
       kind: 'block'; start: string; end: string; minutes: number
       state: 'past' | 'current' | 'future'
@@ -168,6 +184,7 @@ export interface TodayPayload {
   aiAvailable: boolean; jiraConnected: boolean; calendarConnected: boolean; jiraTruncated: boolean
   lastErrors: string[]             // 마지막 수집에서 실패한 출처의 사용자용 문구
   recovery: RecoveryState          // 맥락 복구 진행·실패 상태 (부록 F.6)
+  exclusions: PlanExclusion[]      // 계속 제외. excluded_at 내림차순, 같으면 candidate_id 오름차순 (부록 M)
 }
 export interface AssistantChangedEvent { date: string; reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' | 'meeting' }
 export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'meeting'; id?: string } }

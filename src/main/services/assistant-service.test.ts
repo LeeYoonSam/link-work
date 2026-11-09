@@ -116,14 +116,17 @@ import {
   applyCommand,
   closeDay,
   dismissSuggestion,
+  excludeItem,
   focusItem,
   generateRecovery,
   getRecoveryState,
   getSourceCheckTimes,
   getToday,
   interpretCommand,
+  listCandidates,
   refreshBriefing,
   regenerateMeetingBriefing,
+  removeExclusion,
   runAutoRefresh,
   runDueMeetingBriefings,
   runRefresh,
@@ -133,7 +136,7 @@ import {
   startDay,
   waitForAssistantBackground
 } from './assistant-service'
-import { getEventById, getPlanByDate, getPlanItem, insertEvent, listPlanItems } from './assistant-store'
+import { getEventById, getPlanByDate, getPlanItem, insertEvent, listPlanItems, upsertExclusion } from './assistant-store'
 import type {
   AssistantChangedEvent,
   CalendarRef,
@@ -328,7 +331,7 @@ describe('timeline', () => {
     const entries = started.timeline.entries
     // 09:40 시작은 09:45 로 올린다. 09:40 은 첫 블록 전이므로 future 다. 블록은 근무 종료 18:00 까지다
     expect(entries[0]).toMatchObject({ kind: 'block', start: '09:45', end: '12:00', state: 'future' })
-    expect(entries).toContainEqual({ kind: 'meeting', start: '12:00', end: '13:00', title: '점심 회의' })
+    expect(entries).toContainEqual({ kind: 'meeting', start: '12:00', end: '13:00', title: '점심 회의', location: null, note: null })
     expect(entries[entries.length - 1]).toMatchObject({ kind: 'block', start: '13:00', end: '18:00' })
     // 작업에 시간을 붙이지 않는다. 새 항목의 슬롯은 비어 있다 (B.6)
     expect(started.items.every((i) => i.slot_start === null && i.slot_end === null && !i.pinned)).toBe(true)
@@ -339,7 +342,7 @@ describe('timeline', () => {
     // 캘린더를 새로 조회하지 않는 getToday 도 스냅샷 일정으로 같은 타임라인을 만든다
     sources.collectSources.mockResolvedValue(collected([candidate(1, { dueDate: '2026-11-02' }), candidate(2)]))
     const later = await getToday(MON_1100)
-    expect(later.timeline.entries).toContainEqual({ kind: 'meeting', start: '12:00', end: '13:00', title: '점심 회의' })
+    expect(later.timeline.entries).toContainEqual({ kind: 'meeting', start: '12:00', end: '13:00', title: '점심 회의', location: null, note: null })
     expect(blocksOf(later.timeline.entries)[0]).toMatchObject({ start: '09:45', state: 'current' })
   })
 
@@ -427,6 +430,118 @@ describe('A49: 묶음 항목 (부록 J.4)', () => {
     expect(group).toMatchObject({ status: 'planned', rank: null, work_type: 'qa' })
     expect(added.timeline.focusItemId).not.toBe(group!.id)
     await expect(focusItem(group!.id, MON_1100)).rejects.toThrow('묶음 항목은 집중 작업이 될 수 없어요.')
+  })
+})
+
+describe('A57·A58: 액션아이템·계속 제외 (부록 M)', () => {
+  const ticket = (over: Partial<Candidate> = {}): Candidate =>
+    candidate(1, { id: 'jira:ICA-1', source: 'jira', jiraKey: 'ICA-1', title: '늘 열린 에픽', link: null, ...over })
+  const actionItem = (): Candidate =>
+    candidate(9, { id: 'action_item:9', source: 'action_item', title: '회의에서 나온 일', link: null })
+
+  beforeEach(() => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+  })
+
+  it('A57: 하루 시작은 action_item 후보를 계획에 넣지 않는다', async () => {
+    sources.collectSources.mockResolvedValue(collected([actionItem(), candidate(2)]))
+    const started = await startDay(MON_0940)
+    expect(started.items.map((i) => i.candidate_id)).toEqual(['todo:2'])
+    expect(started.exclusions).toEqual([])
+  })
+
+  it('A58: 계속 제외하면 그날 dropped 가 되고, 다음 날 하루 시작과 최신화 제안에 들어가지 않는다', async () => {
+    sources.collectSources.mockResolvedValue(collected([ticket(), candidate(2)]))
+    const mon = await startDay(MON_0940)
+    const item = mon.items.find((i) => i.candidate_id === 'jira:ICA-1')!
+
+    const excluded = await excludeItem(item.id, MON_1100)
+    expect(excluded.items.find((i) => i.id === item.id)?.status).toBe('dropped')
+    expect(excluded.exclusions).toEqual([
+      { candidate_id: 'jira:ICA-1', jira_key: 'ICA-1', title: '늘 열린 에픽', source: 'jira', excluded_at: '2026-11-02 11:00:00' }
+    ])
+
+    const tue = await startDay(TUE_0930)
+    expect(tue.items.map((i) => i.candidate_id)).toEqual(['todo:2'])
+    expect(tue.exclusions).toHaveLength(1)
+
+    const refreshed = await runRefresh('local', new Date(2026, 10, 3, 10, 0, 0))
+    expect(refreshed?.items.map((i) => i.candidate_id)).toEqual(['todo:2'])
+  })
+
+  it('A58: listCandidates 는 계속 제외 후보를 빼지 않고 excluded:true 로 남긴다. addItem 은 제외 기록을 지운다', async () => {
+    sources.collectSources.mockResolvedValue(collected([ticket(), candidate(2)]))
+    const mon = await startDay(MON_0940)
+    await excludeItem(mon.items.find((i) => i.candidate_id === 'jira:ICA-1')!.id, MON_1100)
+    await startDay(TUE_0930)
+
+    const list = await listCandidates(TUE_0930)
+    expect(list.find((c) => c.id === 'jira:ICA-1')?.excluded).toBe(true)
+    expect(list.find((c) => c.id === 'todo:2')?.excluded).toBeUndefined()
+
+    const added = await addItem('jira:ICA-1', TUE_0930)
+    expect(added.items.find((i) => i.candidate_id === 'jira:ICA-1')?.status).toBe('planned')
+    expect(added.exclusions).toEqual([])
+    expect((await listCandidates(TUE_0930)).some((c) => c.excluded)).toBe(false)
+  })
+
+  it('A58: 같은 Jira 키는 후보 id 가 jira: 에서 task: 로 바뀌어도 제외되고, addItem 이 그 기록을 지운다', async () => {
+    sources.collectSources.mockResolvedValue(collected([ticket(), candidate(2)]))
+    const mon = await startDay(MON_0940)
+    await excludeItem(mon.items.find((i) => i.candidate_id === 'jira:ICA-1')!.id, MON_1100)
+
+    const asTask = candidate(5, { id: 'task:5', source: 'task', jiraKey: 'ICA-1', title: '늘 열린 에픽' })
+    sources.collectSources.mockResolvedValue(collected([asTask, candidate(2)]))
+    const tue = await startDay(TUE_0930)
+    expect(tue.items.map((i) => i.candidate_id)).toEqual(['todo:2'])
+    expect((await listCandidates(TUE_0930)).find((c) => c.id === 'task:5')?.excluded).toBe(true)
+
+    const added = await addItem('task:5', TUE_0930)
+    expect(added.exclusions).toEqual([])
+  })
+
+  it('A58: 계속 제외는 jira·task 출처만 된다. 제안 항목도 거절한다', async () => {
+    sources.collectSources.mockResolvedValue(collected([ticket(), candidate(2)]))
+    const mon = await startDay(MON_0940)
+    const todo = mon.items.find((i) => i.candidate_id === 'todo:2')!
+    await expect(excludeItem(todo.id, MON_1100)).rejects.toThrow('계속 제외는 Jira·작업 항목만 할 수 있어요.')
+
+    sources.collectSources.mockResolvedValue(collected([ticket(), candidate(2), ticket({ id: 'jira:ICA-3', jiraKey: 'ICA-3' })]))
+    const r = await runRefresh('local', MON_1100)
+    const suggested = r!.items.find((i) => i.candidate_id === 'jira:ICA-3')!
+    expect(suggested.status).toBe('suggested')
+    await expect(excludeItem(suggested.id, MON_1100)).rejects.toThrow('제안 항목은 계속 제외할 수 없어요.')
+    expect((await getToday(MON_1100)).exclusions).toEqual([])
+  })
+
+  it('A58: removeExclusion 은 기록만 지운다. 근무 중이 아니어도 되고 잘못된 id 는 거절한다', async () => {
+    sources.collectSources.mockResolvedValue(collected([ticket(), candidate(2)]))
+    const mon = await startDay(MON_0940)
+    const item = mon.items.find((i) => i.candidate_id === 'jira:ICA-1')!
+    await excludeItem(item.id, MON_1100)
+    await closeDay(null, MON_1100)
+
+    const removed = await removeExclusion('jira:ICA-1', MON_1100)
+    expect(removed.exclusions).toEqual([])
+    expect(removed.items.find((i) => i.id === item.id)?.status).toBe('dropped')
+    await expect(removeExclusion('', MON_1100)).rejects.toThrow('후보 ID 가 올바르지 않습니다.')
+  })
+
+  it('A58: removeExclusion 은 후보 id 가 기록과 달라도 Jira 키로 기록을 지운다', async () => {
+    const asTask = candidate(5, { id: 'task:5', source: 'task', jiraKey: 'ICA-1', title: '늘 열린 에픽' })
+    sources.collectSources.mockResolvedValue(collected([asTask, candidate(2)]))
+    await startDay(MON_0940)
+    const record = (id: string): Parameters<typeof upsertExclusion>[1] => ({
+      candidate_id: id, jira_key: 'ICA-1', title: '늘 열린 에픽', source: 'jira', excluded_at: '2026-11-02 09:00:00'
+    })
+
+    // 기록은 jira:ICA-1 이고 오늘 항목은 task:5 다. 항목의 Jira 키로 찾는다
+    upsertExclusion(getDatabase(), record('jira:ICA-1'))
+    expect((await removeExclusion('task:5', MON_1100)).exclusions).toEqual([])
+
+    // 기록은 task:5 이고 넘긴 id 는 jira:ICA-1 이다. 접두사 뒤 키로 찾는다
+    upsertExclusion(getDatabase(), { ...record('task:5'), source: 'task' })
+    expect((await removeExclusion('jira:ICA-1', MON_1100)).exclusions).toEqual([])
   })
 })
 
@@ -613,6 +728,21 @@ describe('runAutoRefresh (부록 E.3·E.6.5)', () => {
     expect(out?.today.plan?.status).toBe('active')
     expect(changed).toEqual([])
     expect((await eventsOf(MON_1100)).records).toEqual([])
+  })
+
+  it('M.9: 장소·메모만 바뀐 일정은 알림·기록 없이 assistant:changed 를 보내고 스냅샷에 반영한다', async () => {
+    sources.collectSources.mockResolvedValue(collected(base(), [review]))
+    await start()
+    sources.collectSources.mockResolvedValue(
+      collected(base(), [{ ...review, location: '3층 회의실', note: '안건 정리' }])
+    )
+    const out = await runAutoRefresh('calendar', MON_1000)
+    expect(out?.notices).toEqual([])
+    expect(changed).toEqual([{ date: '2026-11-02', reason: 'refresh' }])
+    expect((await eventsOf(MON_1000)).records).toEqual([])
+    expect(out?.today.timeline.entries).toContainEqual({
+      kind: 'meeting', start: '14:00', end: '15:00', title: '제품 리뷰', location: '3층 회의실', note: '안건 정리'
+    })
   })
 
   it('E.2.6: 수동 full 은 변경이 없어도 assistant:changed 를 보낸다', async () => {

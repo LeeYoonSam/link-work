@@ -55,6 +55,10 @@ interface AssistantStore {
   setItemStatus: (itemId: number, status: PlanItemStatus, note?: string) => Promise<void>
   // 항목을 집중 작업으로 바꾼다 (부록 B.4)
   focusItem: (itemId: number) => Promise<void>
+  // 계속 제외한다. jira·task 항목만 된다 (부록 M.5.6)
+  excludeItem: (itemId: number) => Promise<void>
+  // 계속 제외 기록을 지운다. 계획 항목은 바꾸지 않는다 (부록 M.5.6)
+  removeExclusion: (candidateId: string) => Promise<void>
   completeOrigin: (item: PlanItem) => Promise<boolean>
   saveSettings: (patch: Partial<AssistantSettings>) => Promise<boolean>
   setFocus: (focus: Focus | null) => void
@@ -119,6 +123,13 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
       set({ error: errorText(e, fallback), busy: false })
       return false
     }
+  }
+
+  // 후보 목록을 한 번이라도 불러왔으면 다시 읽는다. 후보의 excluded 표시가 바뀐다 (부록 M.5.6).
+  // 기다리지 않는다. 이유: 후보 조회는 Jira 를 거쳐 느리다
+  const reloadCandidatesIfOpen = (): void => {
+    const { candidates, candidatesLoading } = get()
+    if (candidates.length > 0 && !candidatesLoading) void get().loadCandidates()
   }
 
   return {
@@ -242,6 +253,19 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
 
     focusItem: async (itemId) => {
       await run(() => window.api.assistant.focusItem(itemId), '집중 작업을 바꾸지 못했습니다')
+    },
+
+    excludeItem: async (itemId) => {
+      const ok = await run(() => window.api.assistant.excludeItem(itemId), '계속 제외하지 못했습니다')
+      if (ok) reloadCandidatesIfOpen()
+    },
+
+    removeExclusion: async (candidateId) => {
+      const ok = await run(
+        () => window.api.assistant.removeExclusion(candidateId),
+        '제외를 해제하지 못했습니다'
+      )
+      if (ok) reloadCandidatesIfOpen()
     },
 
     // 비서 main 코드는 원본을 쓰지 않는다(A2). 원본 완료는 기존 API 로 렌더러가 부른다

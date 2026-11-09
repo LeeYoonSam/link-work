@@ -10,17 +10,17 @@ import MeetingBriefingCard, {
   nearestUpcomingEventId,
   splitBriefingsByTimeline
 } from './MeetingBriefingCard'
-import InboxSection from './InboxSection'
-import PlanItemRow, { isActiveItem } from './PlanItemRow'
+import CandidatesCard from './CandidatesCard'
+import PlanItemRow, { isActiveItem, isItemExcluded, itemSlotLabel } from './PlanItemRow'
 import SummaryTiles, { summaryTiles } from './SummaryTiles'
 import Timeline from './Timeline'
 import ChangeLog from './ChangeLog'
-import CandidatePicker from './CandidatePicker'
+import { SUBSECTION_TITLE } from './todayTokens'
 import CommandInput from './CommandInput'
 import AssistantSettingsModal from './AssistantSettingsModal'
 import MoreSection from './MoreSection'
 import HomeSchedule from '../dashboard/HomeSchedule'
-import HomeOverview from '../dashboard/HomeOverview'
+import { HomeMemos, HomeProjects } from '../dashboard/HomeOverview'
 
 // '오늘 할 일' 순서 목록. 제안·무시 항목은 뺀다.
 // 활성 항목을 rank 순으로 먼저 두고, 완료·미룸·제외 항목을 rank 순으로 뒤에 둔다
@@ -117,6 +117,8 @@ export default function TodayView({
     acceptSuggestion,
     dismissSuggestion,
     setItemStatus,
+    excludeItem,
+    removeExclusion,
     focusItem,
     completeOrigin,
     saveSettings,
@@ -146,7 +148,7 @@ export default function TodayView({
     setFocus(null)
   }, [focus, today])
 
-  // 오늘 계획을 못 읽어도 홈의 일정·개요는 보인다. 일정은 로컬 날짜 기준이다
+  // 오늘 계획을 못 읽어도 홈의 프로젝트·일정·메모는 보인다. 일정은 로컬 날짜 기준이다 (부록 M.11 Q4)
   if (!today) {
     return (
       <div className="max-w-6xl mx-auto space-y-5">
@@ -164,8 +166,9 @@ export default function TodayView({
         ) : (
           <EmptyState>{loading ? '오늘 계획을 불러오는 중…' : '오늘 계획이 아직 없어요.'}</EmptyState>
         )}
+        <HomeProjects />
         <HomeSchedule />
-        <HomeOverview />
+        <HomeMemos />
       </div>
     )
   }
@@ -175,6 +178,11 @@ export default function TodayView({
   const ordered = orderPlanItems(items)
   const timeline = today.timeline
   const unplaced = unplacedDeadlineItems(today)
+  const unplacedIds = new Set(unplaced.map((i) => i.id))
+  const exclusions = today.exclusions ?? []
+  // '오늘' 카드 머리의 건수. 할 일은 활성 항목, 회의는 시간표의 회의 행이다 (부록 M.3)
+  const activeCount = items.filter(isActiveItem).length
+  const meetingCount = timeline ? timeline.entries.filter((e) => e.kind === 'meeting').length : 0
   const notices = todayNotices(today)
   const wrapupPromptDate =
     today.missingWrapupDate && today.missingWrapupDate !== skippedWrapupDate
@@ -218,7 +226,9 @@ export default function TodayView({
     logicalDate: today.logicalDate,
     focusItemId: timeline?.focusItemId ?? null,
     onFocus: (id: number) => void focusItem(id),
-    onCompleteOrigin: completeOrigin
+    onCompleteOrigin: completeOrigin,
+    onExclude: (id: number) => void excludeItem(id),
+    onRemoveExclusion: (candidateId: string) => void removeExclusion(candidateId)
   }
 
   const meetingBriefingCard = (title?: string, expandedEventId?: number | null): React.ReactNode => (
@@ -233,10 +243,10 @@ export default function TodayView({
     />
   )
 
-  // 순서: 헤더(하루 브리핑 요약 포함) → 오류 → 요약 타일 → 2열 그리드 → 맥락 복구 → 홈 개요 → 더 보기 (2차 개편, A56).
-  // 왼쪽 열은 오늘 할 일 → 새로 들어온 일, 오른쪽 열은 시간표(회의 행 인라인 브리핑) → 기타 회의 브리핑이다.
-  // 2열은 lg(뷰포트 1024 이상)에서만 켠다. 날짜는 DayHeader 1곳에만 보인다.
-  // 계획이 없으면 타일·그리드가 없고 홈 일정 → 회의 브리핑이 전체 폭으로 온다
+  // 순서: 헤더(하루 브리핑 요약 포함) → 오류 → 요약 타일 → 진행 중 프로젝트 → 오늘(할 일 → 회의) → 후보
+  // → 기타 회의 브리핑 → 맥락 복구 → 중요 메모 → 더 보기 (부록 M.11 Q2, A60). 모든 카드는 가로 전체 폭을 쓴다.
+  // 날짜는 DayHeader 1곳에만 보인다.
+  // 계획이 없으면 진행 중 프로젝트 → 홈 일정 → 회의 브리핑 → 중요 메모 → 더 보기다 (Q3)
   return (
     <div className="max-w-6xl mx-auto space-y-5">
       <DayHeader
@@ -277,54 +287,21 @@ export default function TodayView({
         </div>
       ) : null}
 
+      {/* 진행 중 프로젝트는 오늘 카드·홈 일정 위에 둔다. 계획 유무와 무관하다 (부록 M.11 Q2·Q3) */}
+      <HomeProjects />
+
       {plan ? (
-        <div className="space-y-5">
-          <div id="today-main" className="min-w-0 space-y-5">
+        <>
+          {/* 할 일과 회의를 카드 1개로 본다 (부록 M7). 할 일이 행동 대상이라 먼저 온다 */}
+          <div id="today-agenda">
             <Card padding="none">
               <div className="flex items-center justify-between px-5 pt-5 pb-3">
-                <SectionTitle variant="page">오늘 할 일</SectionTitle>
-                <span className="text-sm text-gray-500 tabular-nums">{ordered.length}건</span>
+                <SectionTitle variant="page">오늘</SectionTitle>
+                <span className="text-sm text-gray-500 tabular-nums">
+                  {`할 일 ${activeCount} · 회의 ${meetingCount}`}
+                </span>
               </div>
-              {ordered.length === 0 ? (
-                <EmptyState compact>계획 항목이 없어요. 아래 더 보기에서 후보를 추가해 주세요.</EmptyState>
-              ) : (
-                <div className="border-t border-gray-100">
-                  {ordered.map((item) => (
-                    <PlanItemRow key={item.id} item={item} {...rowProps} />
-                  ))}
-                </div>
-              )}
-            </Card>
 
-            <InboxSection
-              items={items}
-              busy={busy}
-              readOnly={readOnly}
-              onAccept={(id) => void acceptSuggestion(id)}
-              onDismiss={(id) => void dismissSuggestion(id)}
-            />
-          </div>
-
-          <div id="today-side" className="min-w-0 space-y-5">
-            {/* 계획이 있으면 시간표가 오늘 일정을 맡는다. HomeSchedule 은 그리지 않는다 */}
-            <Card padding="none">
-              <div id="today-timeline" className="flex items-center justify-between px-5 pt-5 pb-3">
-                <SectionTitle variant="page">시간표</SectionTitle>
-              </div>
-              {timeline && timeline.entries.length > 0 ? (
-                <Timeline
-                  timeline={timeline}
-                  items={items}
-                  logicalDate={today.logicalDate}
-                  meetingBriefings={meetingRows}
-                  now={now}
-                  regeneratingIds={regeneratingIds}
-                  canRegenerate={canRegenerateMeeting}
-                  onRegenerate={(eventId) => void regenerateMeetingBriefing(eventId)}
-                />
-              ) : (
-                <EmptyState compact>오늘 남은 시간 블록이 없어요.</EmptyState>
-              )}
               {unplaced.length > 0 ? (
                 <div className="px-5 py-3 border-t border-amber-100 bg-amber-50">
                   <p className="text-sm text-amber-800">오늘 남은 빈 시간이 없어 배정하지 못한 마감 항목</p>
@@ -337,13 +314,68 @@ export default function TodayView({
                   </ul>
                 </div>
               ) : null}
-            </Card>
 
-            {/* 시간표에 짝이 없는 회의 브리핑만 따로 보인다 (2차 개편 V4) */}
-            {/* 기본 펼침은 시간표와 합쳐 화면 전체에서 1건이다. Timeline 도 전체 행 기준이다 */}
-            {meetingBriefingCard('기타 회의 브리핑', nearestUpcomingEventId(meetingRows, now))}
+              {/* 할 일 구역. 순위순 목록 1개다. 배정 시각은 행의 1열에 쓴다 (부록 M8) */}
+              <div id="today-tasks" className="border-t border-gray-100">
+                <h4 className={SUBSECTION_TITLE}>할 일</h4>
+                {ordered.length === 0 ? (
+                  <EmptyState compact>계획 항목이 없어요. 아래 후보에서 추가해 주세요.</EmptyState>
+                ) : (
+                  <div>
+                    {ordered.map((item) => (
+                      <PlanItemRow
+                        key={item.id}
+                        item={item}
+                        {...rowProps}
+                        slotLabel={timeline ? itemSlotLabel(item.id, timeline) : null}
+                        unplaced={unplacedIds.has(item.id)}
+                        excluded={isItemExcluded(item, exclusions)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 회의 구역. 시간표의 회의 행만 그린다 (부록 M9) */}
+              <div id="today-timeline" className="border-t border-gray-100">
+                <h4 className={SUBSECTION_TITLE}>회의</h4>
+                {timeline && meetingCount > 0 ? (
+                  <Timeline
+                    timeline={timeline}
+                    meetingBriefings={meetingRows}
+                    now={now}
+                    regeneratingIds={regeneratingIds}
+                    canRegenerate={canRegenerateMeeting}
+                    onRegenerate={(eventId) => void regenerateMeetingBriefing(eventId)}
+                  />
+                ) : (
+                  <EmptyState compact>오늘 회의가 없어요.</EmptyState>
+                )}
+              </div>
+            </Card>
           </div>
-        </div>
+
+          {/* 새로 들어온 제안과 후보 더 보기·계속 제외 목록을 카드 1개로 둔다 (부록 M10) */}
+          <CandidatesCard
+            items={items}
+            candidates={candidates}
+            candidatesLoading={candidatesLoading}
+            candidatesError={candidatesError}
+            exclusions={exclusions}
+            logicalDate={today.logicalDate}
+            busy={busy}
+            readOnly={readOnly}
+            onAccept={(id) => void acceptSuggestion(id)}
+            onDismiss={(id) => void dismissSuggestion(id)}
+            onLoadCandidates={() => void loadCandidates()}
+            onAdd={(id) => void addItem(id)}
+            onRemoveExclusion={(id) => void removeExclusion(id)}
+          />
+
+          {/* 시간표에 짝이 없는 회의 브리핑만 따로 보인다 (2차 개편 V4) */}
+          {/* 기본 펼침은 회의 구역과 합쳐 화면 전체에서 1건이다. Timeline 도 전체 행 기준이다 */}
+          {meetingBriefingCard('기타 회의 브리핑', nearestUpcomingEventId(meetingRows, now))}
+        </>
       ) : (
         <>
           {/* 계획이 없으면 오늘 일정을 1번만 그린다. 회의 브리핑은 계획이 없어도 보인다 (부록 I.10.1) */}
@@ -354,8 +386,8 @@ export default function TodayView({
 
       {plan && showRecovery ? recoveryCard : null}
 
-      {/* 중요 메모·진행 중 프로젝트·우선순위 미지정 배지 (메뉴 통합 D1) */}
-      <HomeOverview />
+      {/* 중요 메모. 0건이면 그리지 않는다 (메뉴 통합 D1, 부록 M.11 Q1) */}
+      <HomeMemos />
 
       {/* 조작 UI 는 접힌 더 보기 안에 둔다 (부록 J.8, J-8) */}
       <MoreSection open={moreOpen} onToggle={() => setMoreOpen((o) => !o)}>
@@ -364,18 +396,6 @@ export default function TodayView({
           <Card padding="sm">
             <CommandInput />
           </Card>
-        ) : null}
-
-        {plan && !readOnly ? (
-          <CandidatePicker
-            candidates={candidates}
-            items={items}
-            loading={candidatesLoading}
-            error={candidatesError}
-            busy={busy}
-            onLoad={() => void loadCandidates()}
-            onAdd={(id) => void addItem(id)}
-          />
         ) : null}
 
         <ChangeLog events={today.events} />

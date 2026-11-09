@@ -5,6 +5,7 @@ import type {
   CandidateInput,
   CandidatePriority,
   JiraCandidateInput,
+  PlanExclusion,
   TaskRow,
   TodoRow
 } from './assistant-types'
@@ -227,4 +228,15 @@ export function buildCandidates(input: CandidateInput): Candidate[] {
 export function isUrgent(c: Candidate, today: string): boolean {
   if (c.dueDate !== null && c.dueDate <= today) return true
   return c.jiraPriority === 'Highest'
+}
+
+/** 계속 제외 후보인가 (A58). id 가 같거나, 둘 다 Jira 키가 있고 대소문자 무시로 같으면 true 다. */
+export function isExcludedCandidate(
+  c: Pick<Candidate, 'id' | 'jiraKey'>,
+  exclusions: Pick<PlanExclusion, 'candidate_id' | 'jira_key'>[]
+): boolean {
+  const key = c.jiraKey ? c.jiraKey.toUpperCase() : null
+  return exclusions.some(
+    (e) => e.candidate_id === c.id || (key !== null && e.jira_key !== null && e.jira_key.toUpperCase() === key)
+  )
 }

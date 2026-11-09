@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { AssistantEvent, DayTimeline, MeetingBriefingPayload, PlanItem } from '../../types'
+import type { AssistantEvent, DayTimeline, MeetingBriefingPayload } from '../../types'
 import type { MeetingBriefingRow } from './MeetingBriefingCard'
-import Timeline from './Timeline'
+import Timeline, { isOnlineLocation, meetingEntriesOf, meetingTiming, nextMeetingIndex } from './Timeline'
 
-// 시간표 회의 행의 인라인 회의 브리핑 (docs/ASSISTANT.md 부록 L.8 V3·V4·V7, 2차 개편 완료 조건 5).
+// 오늘 카드의 회의 구역 (docs/ASSISTANT.md 부록 M.4·M.5.7)과 인라인 회의 브리핑 (부록 L.8 V3·V4·V7).
 // 자동 클릭 검증은 불가하다. renderToStaticMarkup 으로 첫 그리기를 확인한다
 
 const timeline: DayTimeline = {
@@ -20,16 +20,6 @@ const timeline: DayTimeline = {
   focusItemId: 1,
   unplacedDeadlineItemIds: []
 }
-
-const items = [
-  {
-    id: 1,
-    title: '환불 API 정리',
-    status: 'in_progress',
-    first_planned_date: '2026-11-02',
-    due_date: null
-  }
-] as unknown as PlanItem[]
 
 const payloadAt = (
   title: string,
@@ -87,10 +77,8 @@ const render = (
   renderToStaticMarkup(
     <Timeline
       timeline={timeline}
-      items={items}
-      logicalDate="2026-11-02"
       meetingBriefings={opts.briefings}
-      now={opts.now}
+      now={opts.now ?? ''}
       regeneratingIds={opts.regeneratingIds}
       canRegenerate={opts.canRegenerate}
       onRegenerate={() => {}}
@@ -140,7 +128,7 @@ describe('Timeline 인라인 회의 브리핑 (완료 조건 5)', () => {
     }
   })
 
-  it('now 가 없으면 기본 펼침이 없다', () => {
+  it('now 가 빈 문자열이면 기본 펼침이 없다', () => {
     const html = render({ briefings: BRIEFINGS })
     expect(html).not.toContain('aria-expanded="true"')
     expect(html).not.toContain('본문 ')
@@ -198,8 +186,6 @@ describe('Timeline 인라인 회의 브리핑 (완료 조건 5)', () => {
     const html = renderToStaticMarkup(
       <Timeline
         timeline={dup}
-        items={[]}
-        logicalDate="2026-11-02"
         meetingBriefings={BRIEFINGS}
         now="2026-11-02 10:50:00"
       />
@@ -208,26 +194,246 @@ describe('Timeline 인라인 회의 브리핑 (완료 조건 5)', () => {
   })
 })
 
-describe('Timeline 브리핑 prop 이 없을 때 (완료 조건 5)', () => {
-  it('회의 행에 브리핑 버튼과 블록이 없고 개편 전 모양이다', () => {
-    const html = render()
+describe('meetingTiming·nextMeetingIndex (부록 M.5.7)', () => {
+  const m = { start: '11:00', end: '12:00' }
+
+  it('끝났으면 past, 진행 중이면 current, 15분 이내면 soon, 나머지는 later 다', () => {
+    expect(meetingTiming(m, '12:00')).toBe('past')
+    expect(meetingTiming(m, '13:10')).toBe('past')
+    expect(meetingTiming(m, '11:00')).toBe('current')
+    expect(meetingTiming(m, '11:59')).toBe('current')
+    expect(meetingTiming(m, '10:45')).toBe('soon')
+    expect(meetingTiming(m, '10:59')).toBe('soon')
+    expect(meetingTiming(m, '10:44')).toBe('later')
+    expect(meetingTiming(m, '09:00')).toBe('later')
+  })
+
+  it('형식이 아닌 시각은 later 로 본다', () => {
+    expect(meetingTiming(m, '')).toBe('later')
+  })
+
+  it('진행 중 행이 있으면 그 행, 없으면 시작 전 첫 행, 둘 다 없으면 -1 이다', () => {
+    const entries = [
+      { start: '10:00', end: '10:30' },
+      { start: '11:00', end: '12:00' },
+      { start: '14:00', end: '15:00' }
+    ]
+    expect(nextMeetingIndex(entries, '11:20')).toBe(1)
+    expect(nextMeetingIndex(entries, '10:40')).toBe(1)
+    expect(nextMeetingIndex(entries, '09:00')).toBe(0)
+    expect(nextMeetingIndex(entries, '12:30')).toBe(2)
+    expect(nextMeetingIndex(entries, '16:00')).toBe(-1)
+  })
+
+  it('meetingEntriesOf 는 회의만 시작순으로 꺼낸다', () => {
+    expect(meetingEntriesOf(timeline).map((e) => e.start)).toEqual(['10:00', '11:00', '14:00', '16:00'])
+  })
+})
+
+describe('Timeline 회의 구역 (부록 M.4)', () => {
+  // 회의 행 <li> 들만 순서대로 꺼낸다
+  const meetingRows = (html: string): string[] =>
+    [...html.matchAll(/<li data-timing="[^"]*"[\s\S]*?<\/li>/g)].map((x) => x[0])
+
+  it('회의 행만 그리고 빈 시간 블록 행은 그리지 않는다', () => {
+    const html = render({ now: '2026-11-02 10:50:00' })
+    expect(meetingRows(html)).toHaveLength(4)
+    expect(html).not.toContain('빈 시간')
+    expect(html).not.toContain('data-state=')
+  })
+
+  it('회의 제목 앞에 회의 접두사를 붙이지 않는다', () => {
+    const html = render({ now: '2026-11-02 10:50:00' })
+    expect(html).not.toContain('[회의]')
+    expect(html).toContain('>아침 스탠드업<')
+  })
+
+  it('회의 행은 4열 그리드이고 1열에 오른쪽 정렬 HH:mm - HH:mm 을 쓴다 (P1)', () => {
+    const html = render({ now: '2026-11-02 10:50:00' })
+    const row = rowHtml(html, '결제 주간 회의')
+    expect(row).toContain('grid grid-cols-[6.5rem_0.125rem_minmax(0,1fr)_auto]')
+    expect(row).toMatch(/<span class="pt-0\.5 text-right [^"]*whitespace-nowrap">11:00 - 12:00<\/span>/)
+    expect(row).toContain('border-l-[3px]')
+    // 제목은 text-base font-medium 이다 (P5)
+    expect(row).toMatch(/<p class="[^"]*text-base[^"]*font-medium">결제 주간 회의<\/p>/)
+  })
+
+  it('지난 회의는 흐리고 다음 회의 1건만 보라 막대를 받는다', () => {
+    const html = render({ now: '2026-11-02 10:50:00' })
+    const rows = meetingRows(html)
+    expect(rows[0]).toContain('data-timing="past"')
+    expect(rows[0]).toContain('opacity-60')
+    expect(rows[1]).toContain('data-timing="soon"')
+    expect(rows[1]).toContain('<div data-meeting-bar="" class="w-0.5 rounded-full bg-purple-400"></div>')
+    expect(html.split('bg-purple-400')).toHaveLength(2)
+    for (const r of [rows[0], rows[2], rows[3]]) {
+      expect(r).toContain('<div data-meeting-bar="" class="w-0.5 rounded-full bg-gray-200"></div>')
+    }
+    // 바깥 3px 막대는 모든 회의 행에서 투명이다 (P2)
+    for (const r of rows) expect(r).toContain('border-l-transparent')
+    expect(html).not.toContain('border-l-purple-400')
+  })
+
+  it('15분 이내 회의는 n분 후 를 보라 굵은 글자로 쓴다', () => {
+    const html = render({ now: '2026-11-02 10:50:00' })
+    const row = rowHtml(html, '결제 주간 회의')
+    expect(row).toMatch(/<p class="[^"]*text-purple-700 font-semibold[^"]*">10분 후<\/p>/)
+    expect(rowHtml(html, '[디자인] 홈 화면 리뷰')).not.toContain('분 후')
+  })
+
+  it('진행 중 회의는 진행 중 을 쓰고 그 행이 강조를 받는다', () => {
+    const html = render({ now: '2026-11-02 11:20:00' })
+    const row = rowHtml(html, '결제 주간 회의')
+    expect(row).toContain('data-timing="current"')
+    expect(row).toContain('bg-purple-400')
+    expect(row).toMatch(/text-purple-700 font-semibold[^"]*">진행 중<\/p>/)
+    expect(html.split('bg-purple-400')).toHaveLength(2)
+  })
+
+  it('지난·진행 중 회의와 시작 전 회의 사이에 현재 시각 선을 1줄 그린다', () => {
+    const html = render({ now: '2026-11-02 11:20:00' })
+    expect(html.split('data-now-line')).toHaveLength(2)
+    expect(html).toContain('지금 11:20')
+    expect(html).toContain('h-px flex-1 bg-blue-500')
+    const line = html.indexOf('data-now-line')
+    expect(html.indexOf('결제 주간 회의')).toBeLessThan(line)
+    expect(line).toBeLessThan(html.indexOf('[디자인] 홈 화면 리뷰'))
+  })
+
+  it('모든 회의가 시작 전이거나 모두 지났으면 현재 시각 선이 없다', () => {
+    expect(render({ now: '2026-11-02 08:00:00' })).not.toContain('data-now-line')
+    expect(render({ now: '2026-11-02 18:00:00' })).not.toContain('data-now-line')
+  })
+
+  it('모든 회의가 지났으면 강조 막대가 없다', () => {
+    expect(render({ now: '2026-11-02 18:00:00' })).not.toContain('bg-purple-400')
+  })
+
+  it('브리핑이 없으면 버튼과 블록이 없다', () => {
+    const html = render({ now: '2026-11-02 10:50:00' })
     expect(html).not.toContain('<button')
-    expect(html).not.toMatch(/>브리핑( 접기)?</)
     expect(html).not.toContain('meeting-briefing-')
-    // 회의 행 모양은 그대로다. 제목은 말줄임 없이 줄바꿈한다(사용자 피드백 2026-11-05)
-    expect(html).toContain(
-      '<li class="flex items-center gap-3 px-5 py-3 border-b border-gray-100 last:border-b-0">'
-    )
-    expect(html).toContain('<span class="min-w-0 break-words text-base text-gray-700">')
     expect(html).not.toContain('truncate')
   })
 
-  it('항목이 없으면 그리지 않는다', () => {
-    const empty: DayTimeline = { ...timeline, entries: [] }
+  it('회의가 없으면 그리지 않는다', () => {
+    const blocksOnly: DayTimeline = {
+      ...timeline,
+      entries: timeline.entries.filter((e) => e.kind === 'block')
+    }
     expect(
-      renderToStaticMarkup(
-        <Timeline timeline={empty} items={[]} logicalDate="2026-11-02" meetingBriefings={BRIEFINGS} />
-      )
+      renderToStaticMarkup(<Timeline timeline={blocksOnly} now="2026-11-02 10:50:00" meetingBriefings={BRIEFINGS} />)
     ).toBe('')
+    expect(
+      renderToStaticMarkup(<Timeline timeline={{ ...timeline, entries: [] }} now="2026-11-02 10:50:00" />)
+    ).toBe('')
+  })
+})
+
+describe('Timeline 회의 메모·장소 (부록 M.10 P3·P4)', () => {
+  const HTML_NOTE =
+    '<p>안건을 미리 봐 주세요.</p><ul><li>환불 API</li><li>정산 일정</li></ul>' +
+    '<p>자료: <a href="https://docs.example.com/x">회의 자료</a></p><script>alert(1)</script>'
+  const withPlaces: DayTimeline = {
+    ...timeline,
+    entries: [
+      { kind: 'meeting', start: '10:00', end: '10:30', title: '아침 스탠드업', location: '본사 3층 회의실 A', note: null },
+      {
+        kind: 'meeting',
+        start: '11:00',
+        end: '12:00',
+        title: '결제 주간 회의',
+        location: 'https://meet.google.com/abc-defg-hij',
+        note: HTML_NOTE
+      },
+      { kind: 'meeting', start: '14:00', end: '15:00', title: '메모 없는 회의' },
+      { kind: 'meeting', start: '16:00', end: '17:00', title: '빈 값 회의', location: '  ', note: '  ' }
+    ]
+  }
+  const renderPlaces = (notesExpandedInitial?: boolean): string =>
+    renderToStaticMarkup(
+      <Timeline
+        timeline={withPlaces}
+        now="2026-11-02 10:50:00"
+        notesExpandedInitial={notesExpandedInitial}
+      />
+    )
+  // 메모 안에 <li> 가 있다. 그래서 다음 회의 행 앞까지를 한 행으로 자른다
+  const rowOfTitle = (html: string, title: string): string => {
+    const at = html.indexOf(title)
+    const start = html.lastIndexOf('<li data-timing=', at)
+    const next = html.indexOf('<li data-timing=', at)
+    return html.slice(start, next === -1 ? undefined : next)
+  }
+
+  it('isOnlineLocation 은 http 로 시작하는 값만 참이다', () => {
+    expect(isOnlineLocation('https://zoom.us/j/1')).toBe(true)
+    expect(isOnlineLocation('http://meet.example.com')).toBe(true)
+    expect(isOnlineLocation('본사 3층')).toBe(false)
+  })
+
+  it('HTML 메모를 링크·목록 태그로 그린다', () => {
+    const row = rowOfTitle(renderPlaces(), '결제 주간 회의')
+    expect(row).toContain('data-meeting-note')
+    expect(row).toMatch(/<ul[^>]*>[\s\S]*<li[^>]*>환불 API<\/li>[\s\S]*<li[^>]*>정산 일정<\/li>/)
+    expect(row).toMatch(/<a [^>]*href="https:\/\/docs\.example\.com\/x"[^>]*>회의 자료<\/a>/)
+    expect(row).toContain('안건을 미리 봐 주세요.')
+  })
+
+  it('위험 태그 script 는 메모에서 빠진다', () => {
+    const html = renderPlaces(true)
+    expect(html).not.toContain('<script')
+    expect(html).not.toContain('alert(1)')
+  })
+
+  it('메모는 기본으로 접혀 있고 더 보기 버튼이 있다', () => {
+    const row = rowOfTitle(renderPlaces(), '결제 주간 회의')
+    expect(row).toContain('<div class="mt-1 max-h-[3.25rem] overflow-hidden">')
+    expect(row).toMatch(/<button type="button" aria-expanded="false" class="mt-1 text-sm text-blue-600[^"]*">더 보기<\/button>/)
+  })
+
+  it('펼친 상태를 주입하면 접힘 클래스가 없고 접기 버튼이 있다', () => {
+    const row = rowOfTitle(renderPlaces(true), '결제 주간 회의')
+    expect(row).not.toContain('max-h-[3.25rem]')
+    expect(row).toMatch(/aria-expanded="true" class="mt-1 text-sm text-blue-600[^"]*">접기<\/button>/)
+  })
+
+  it('메모 본문 글자는 text-sm 이고 text-xs 를 쓰지 않는다 (P5)', () => {
+    const row = rowOfTitle(renderPlaces(), '결제 주간 회의')
+    expect(row).toContain('[&amp;_p]:text-sm')
+    expect(row).not.toContain('text-xs')
+  })
+
+  it('장소는 메모 아래에 라벨 없이 회색 글자로 보인다', () => {
+    const html = renderPlaces()
+    const row = rowOfTitle(html, '아침 스탠드업')
+    expect(row).toContain('<p data-meeting-location="" class="mt-1 text-sm text-gray-400 break-words">본사 3층 회의실 A</p>')
+    expect(html).not.toContain('장소 ')
+    const pay = rowOfTitle(html, '결제 주간 회의')
+    expect(pay.indexOf('data-meeting-note')).toBeLessThan(pay.indexOf('data-meeting-location'))
+  })
+
+  it('http 장소는 온라인 회의 글자의 외부 링크로 보인다', () => {
+    const row = rowOfTitle(renderPlaces(), '결제 주간 회의')
+    expect(row).toMatch(
+      /<a href="https:\/\/meet\.google\.com\/abc-defg-hij" target="_blank" rel="noreferrer"[^>]*>온라인 회의<\/a>/
+    )
+    expect(row).not.toContain('>https://meet.google.com')
+  })
+
+  it('장소와 메모가 없거나 비면 줄과 더 보기 버튼이 없다', () => {
+    const html = renderPlaces()
+    for (const title of ['메모 없는 회의', '빈 값 회의']) {
+      const row = rowOfTitle(html, title)
+      expect(row).not.toContain('data-meeting-location')
+      expect(row).not.toContain('data-meeting-note')
+      expect(row).not.toContain('더 보기')
+    }
+  })
+
+  it('지난 회의 흐림과 다음 회의 보라 막대를 유지한다', () => {
+    const html = renderPlaces()
+    expect(rowOfTitle(html, '아침 스탠드업')).toContain('opacity-60')
+    expect(rowOfTitle(html, '결제 주간 회의')).toContain('bg-purple-400')
   })
 })

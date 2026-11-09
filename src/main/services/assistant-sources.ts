@@ -215,9 +215,28 @@ function hhmmOf(localDateTime: string): string {
   return localDateTime.slice(11, 16)
 }
 
+const NOTE_MAX = 5000
+
+// 캘린더 설명을 회의 메모로 정리한다 (M.10 P6). HTML 은 렌더러가 sanitize 해서 그리므로 그대로 둔다.
+// 상한은 스냅샷 크기를 막는다. 결과가 비면 null 이다.
+export function meetingNoteOf(description: string | null | undefined): string | null {
+  if (!description) return null
+  const text = description.replace(/\r\n?/g, '\n').trim()
+  if (!text) return null
+  const chars = Array.from(text)
+  return chars.length > NOTE_MAX ? chars.slice(0, NOTE_MAX).join('') : text
+}
+
+function locationOf(location: string | undefined): string | null {
+  const v = location?.trim()
+  return v ? v : null
+}
+
 // 오늘 로컬 'HH:mm' 으로 바꾼다. 오늘 밖으로 넘친 시각은 하루 경계로 자른다.
+// 장소·메모도 채운다 (M.9 N5·N6).
 export function toCalendarRef(e: CalendarEvent, today: string): CalendarRef | null {
-  if (e.allDay) return { id: e.id, title: e.summary, start: '00:00', end: '23:59', allDay: true }
+  const details = { location: locationOf(e.location), note: meetingNoteOf(e.description) }
+  if (e.allDay) return { id: e.id, title: e.summary, start: '00:00', end: '23:59', allDay: true, ...details }
   const start = isoToLocalDateTime(e.start)
   const end = isoToLocalDateTime(e.end)
   if (!start || !end) return null
@@ -229,7 +248,8 @@ export function toCalendarRef(e: CalendarEvent, today: string): CalendarRef | nu
     title: e.summary,
     start: startDate < today ? '00:00' : hhmmOf(start),
     end: endDate > today ? '23:59' : hhmmOf(end),
-    allDay: false
+    allDay: false,
+    ...details
   }
 }
 

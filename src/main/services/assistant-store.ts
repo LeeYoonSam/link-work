@@ -1,5 +1,5 @@
 // 비서 테이블 읽기·쓰기 전부 (docs/ASSISTANT.md 부록 A.3).
-// A2: 비서 테이블 3개와 app_settings 의 assistant_* 키만 쓴다. 원본 테이블은 건드리지 않는다.
+// A2: 비서 테이블 4개와 app_settings 의 assistant_* 키만 쓴다. 원본 테이블은 건드리지 않는다.
 // A12: datetime 인자는 로컬 'YYYY-MM-DD HH:mm:ss' 만 받는다. 형식이 틀리면 throw 한다.
 // 쓰기 함수는 각자 db.transaction 으로 감싼다. 내부 헬퍼는 트랜잭션을 열지 않는다.
 import type Database from 'better-sqlite3'
@@ -14,6 +14,7 @@ import type {
   NewAssistantEvent,
   NewPlanItem,
   PlanClosedBy,
+  PlanExclusion,
   PlanItem,
   PlanItemUpdate,
   RefreshPlan,
@@ -522,4 +523,40 @@ export function findLatestEventByKind(db: Db, kind: AssistantEventKind): Assista
     .prepare('SELECT * FROM assistant_events WHERE kind = ? ORDER BY plan_date DESC, id DESC LIMIT 1')
     .get(kind) as AssistantEvent | undefined
   return row ? toEvent(row) : null
+}
+
+// ── 계속 제외 (부록 M, A58) ──────────────────────────────
+// 문장 1개라 트랜잭션을 열지 않는다. 서비스가 다른 쓰기와 묶을 수 있다.
+
+function normalizeJiraKey(key: string | null): string | null {
+  return key ? key.toUpperCase() : null
+}
+
+// excluded_at 내림차순, 같으면 candidate_id 오름차순이다.
+export function listExclusions(db: Db): PlanExclusion[] {
+  return db
+    .prepare(
+      'SELECT candidate_id, jira_key, title, source, excluded_at FROM assistant_exclusions ' +
+        'ORDER BY excluded_at DESC, candidate_id ASC'
+    )
+    .all() as PlanExclusion[]
+}
+
+// 같은 candidate_id 는 덮어쓴다.
+export function upsertExclusion(db: Db, e: PlanExclusion): void {
+  assertDateTime(e.excluded_at, 'excluded_at')
+  db.prepare(
+    'INSERT INTO assistant_exclusions (candidate_id, jira_key, title, source, excluded_at) VALUES (?, ?, ?, ?, ?) ' +
+      'ON CONFLICT(candidate_id) DO UPDATE SET jira_key = excluded.jira_key, title = excluded.title, ' +
+      'source = excluded.source, excluded_at = excluded.excluded_at'
+  ).run(e.candidate_id, normalizeJiraKey(e.jira_key), e.title, e.source, e.excluded_at)
+}
+
+// candidate_id 가 같거나, jiraKey 가 있고 jira_key 가 같은 행을 지운다. 지운 행 수를 돌려준다.
+export function deleteExclusions(db: Db, match: { candidateId: string; jiraKey: string | null }): number {
+  const key = normalizeJiraKey(match.jiraKey)
+  const result = key
+    ? db.prepare('DELETE FROM assistant_exclusions WHERE candidate_id = ? OR jira_key = ?').run(match.candidateId, key)
+    : db.prepare('DELETE FROM assistant_exclusions WHERE candidate_id = ?').run(match.candidateId)
+  return Number(result.changes)
 }

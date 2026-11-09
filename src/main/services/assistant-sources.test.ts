@@ -110,6 +110,7 @@ import {
   readRecoveryLocal,
   MEETING_LIMITS,
   resolveVanished,
+  meetingNoteOf,
   toCalendarRef,
   toMeetingRef
 } from './assistant-sources'
@@ -262,8 +263,8 @@ describe('collectSources 캘린더', () => {
     ]
     const r = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'full', NOW)
     expect(r.calendar).toEqual([
-      { id: 'e1', title: '회의', start: '14:00', end: '15:00', allDay: false },
-      { id: 'e2', title: '종일', start: '00:00', end: '23:59', allDay: true }
+      { id: 'e1', title: '회의', start: '14:00', end: '15:00', allDay: false, location: null, note: null },
+      { id: 'e2', title: '종일', start: '00:00', end: '23:59', allDay: true, location: null, note: null }
     ])
     expect(r.busy).toEqual([{ start: '14:00', end: '15:00' }])
     expect(r.calendarConnected).toBe(true)
@@ -275,7 +276,9 @@ describe('collectSources 캘린더', () => {
       { id: 'late', summary: '어제 늦은 회의', start: localIso(22, 0, 1), end: localIso(23, 0, 1), allDay: false }
     ]
     const r = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'full', new Date(2026, 10, 2, 1, 30))
-    expect(r.calendar).toEqual([{ id: 'late', title: '어제 늦은 회의', start: '22:00', end: '23:00', allDay: false }])
+    expect(r.calendar).toEqual([
+      { id: 'late', title: '어제 늦은 회의', start: '22:00', end: '23:00', allDay: false, location: null, note: null }
+    ])
     expect(state.rangeCalls).toHaveLength(1)
     const [from, to] = state.rangeCalls[0]
     expect(toLocalDateTime(from)).toBe('2026-11-01 00:00:00')
@@ -339,11 +342,53 @@ describe('collectSources 캘린더', () => {
 
   it('A12: 하루 경계를 넘는 일정은 오늘 범위로 자르고 오늘 밖 일정은 뺀다', () => {
     const cross = { id: 'x', summary: 's', start: localIso(23, 0, 1), end: localIso(1, 0), allDay: false }
-    expect(toCalendarRef(cross, TODAY)).toEqual({ id: 'x', title: 's', start: '00:00', end: '01:00', allDay: false })
+    expect(toCalendarRef(cross, TODAY)).toEqual({
+      id: 'x', title: 's', start: '00:00', end: '01:00', allDay: false, location: null, note: null
+    })
     const late = { id: 'y', summary: 's', start: localIso(23, 0), end: localIso(1, 0, 3), allDay: false }
     expect(toCalendarRef(late, TODAY)?.end).toBe('23:59')
     const tomorrow = { id: 'z', summary: 's', start: localIso(1, 0, 3), end: localIso(2, 0, 3), allDay: false }
     expect(toCalendarRef(tomorrow, TODAY)).toBeNull()
+  })
+})
+
+describe('M.9: 회의 장소·메모', () => {
+  it('meetingNoteOf 는 HTML 태그와 엔티티를 그대로 둔다', () => {
+    const html = '<p>안건 <b>1</b></p><p>A&nbsp;&amp;&nbsp;B<br>끝</p>'
+    expect(meetingNoteOf(html)).toBe(html)
+  })
+
+  it('meetingNoteOf 는 \\r\\n·\\r 을 \\n 으로 바꾸고 앞뒤 공백을 지운다', () => {
+    expect(meetingNoteOf('\n  첫 줄\r\n둘째 줄\r셋째 줄  \n\n')).toBe('첫 줄\n둘째 줄\n셋째 줄')
+  })
+
+  it('meetingNoteOf 는 5000자를 넘으면 5000자에서 자르고 접미사를 붙이지 않는다', () => {
+    expect(meetingNoteOf('가'.repeat(5001))).toBe('가'.repeat(5000))
+    expect(meetingNoteOf('나'.repeat(5000))).toBe('나'.repeat(5000))
+    // 서로게이트 쌍을 1자로 센다
+    expect(Array.from(meetingNoteOf('😀'.repeat(5001)) ?? '')).toHaveLength(5000)
+  })
+
+  it('meetingNoteOf 는 결과가 비면 null 이다', () => {
+    expect(meetingNoteOf(null)).toBeNull()
+    expect(meetingNoteOf(undefined)).toBeNull()
+    expect(meetingNoteOf('')).toBeNull()
+    expect(meetingNoteOf(' \r\n\t ')).toBeNull()
+  })
+
+  it('toCalendarRef 는 장소를 trim 하고 설명을 meetingNoteOf 로 채운다', () => {
+    const e = {
+      id: 'm', summary: '주간 회의', start: localIso(10, 0), end: localIso(11, 0), allDay: false,
+      location: '  3층 대회의실 ', description: '<p>안건&nbsp;정리</p>'
+    }
+    expect(toCalendarRef(e, TODAY)).toEqual({
+      id: 'm', title: '주간 회의', start: '10:00', end: '11:00', allDay: false, location: '3층 대회의실', note: '<p>안건&nbsp;정리</p>'
+    })
+  })
+
+  it('toCalendarRef 는 빈 장소·설명을 null 로 둔다', () => {
+    const e = { id: 'm', summary: 's', start: localIso(10, 0), end: localIso(11, 0), allDay: false, location: '   ', description: ' \r\n ' }
+    expect(toCalendarRef(e, TODAY)).toMatchObject({ location: null, note: null })
   })
 })
 

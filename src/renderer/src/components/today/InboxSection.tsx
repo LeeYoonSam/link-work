@@ -34,6 +34,8 @@ interface InboxSectionProps {
   readOnly?: boolean
   onAccept: (itemId: number) => void
   onDismiss: (itemId: number) => void
+  // true 면 바깥 Card 와 머리 제목을 그리지 않는다. 후보 카드 구역 1이 쓴다 (부록 M.5.7)
+  embedded?: boolean
 }
 
 export default function InboxSection({
@@ -41,7 +43,8 @@ export default function InboxSection({
   busy,
   readOnly = false,
   onAccept,
-  onDismiss
+  onDismiss,
+  embedded = false
 }: InboxSectionProps): React.ReactNode {
   const [expanded, setExpanded] = useState(false)
   const suggestions = sortSuggestions(items)
@@ -50,19 +53,8 @@ export default function InboxSection({
   const shown = expanded ? suggestions : suggestions.slice(0, INBOX_SHOWN)
   const hidden = suggestions.length - INBOX_SHOWN
 
-  return (
-    <Card padding="none">
-      <div id="today-inbox" className="flex items-center gap-2 px-5 pt-5 pb-3 min-w-0">
-        <InboxIcon size={18} className="text-gray-400 shrink-0" />
-        <SectionTitle variant="page" className="shrink-0">새로 들어온 일</SectionTitle>
-        <span className="text-sm text-gray-500 tabular-nums shrink-0">{suggestions.length}건</span>
-        <span
-          className="ml-auto min-w-0 text-xs text-gray-500 tabular-nums break-words"
-          title={inboxSourceSummary(suggestions)}
-        >
-          {inboxSourceSummary(suggestions)}
-        </span>
-      </div>
+  const rows = (
+    <>
       <div>
         {shown.map((item) => (
           <div
@@ -121,6 +113,25 @@ export default function InboxSection({
           </button>
         </div>
       ) : null}
+    </>
+  )
+
+  if (embedded) return rows
+
+  return (
+    <Card padding="none">
+      <div id="today-inbox" className="flex items-center gap-2 px-5 pt-5 pb-3 min-w-0">
+        <InboxIcon size={18} className="text-gray-400 shrink-0" />
+        <SectionTitle variant="page" className="shrink-0">새로 들어온 일</SectionTitle>
+        <span className="text-sm text-gray-500 tabular-nums shrink-0">{suggestions.length}건</span>
+        <span
+          className="ml-auto min-w-0 text-xs text-gray-500 tabular-nums break-words"
+          title={inboxSourceSummary(suggestions)}
+        >
+          {inboxSourceSummary(suggestions)}
+        </span>
+      </div>
+      {rows}
     </Card>
   )
 }

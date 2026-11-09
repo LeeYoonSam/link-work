@@ -2,12 +2,24 @@ import { useEffect, useState, useCallback } from 'react'
 import type { Project, Task } from '../../types'
 import { differenceInCalendarDays, format } from 'date-fns'
 import ScheduleTimeline from '../project/ScheduleTimeline'
-import { Badge, ProgressBar, projectStatus, urgency } from '../ui'
+import { Badge, ProgressBar, projectStatus } from '../ui'
 import PhaseHint from '../project/PhaseHint'
 import PriorityBadge from '../project/PriorityBadge'
 import { countLeafProgress } from '../../utils/taskTree'
 
-type UrgencyLevel = 'early' | 'mid' | 'late'
+export type ScheduleLevel = 'early' | 'mid' | 'late'
+
+// 일정 진행률 색 (부록 M.12 R3). 공용 토큰을 쓰지 않는다.
+// 이유: 이 카드는 요약 타일 바로 아래에 와서 타일 4색(파랑·초록·보라·청록)을 쓰면 다른 뜻으로 읽힌다.
+// late 빨강은 '위험' 뜻이다. 오늘 화면의 마감 빨강과 뜻이 같다
+export const SCHEDULE_TONE: Record<ScheduleLevel, { bar: string; text: string }> = {
+  early: { bar: 'bg-lime-500', text: 'text-lime-700' },
+  mid: { bar: 'bg-amber-500', text: 'text-amber-700' },
+  late: { bar: 'bg-red-500', text: 'text-red-700' }
+}
+
+// 작업 진행률 막대 색 (R4). 카드 안 강조는 일정 진행률 1개만 둔다
+export const TASK_PROGRESS_BAR = 'bg-slate-400'
 
 function calculateProgress(startDate: string, endDate: string): number {
   const start = new Date(startDate)
@@ -23,20 +35,21 @@ function calculateProgress(startDate: string, endDate: string): number {
   return Math.min(100, Math.max(0, Math.round((elapsed / total) * 100)))
 }
 
-function getUrgencyLevel(progress: number): UrgencyLevel {
+export function scheduleLevel(progress: number): ScheduleLevel {
   if (progress <= 33) return 'early'
   if (progress <= 66) return 'mid'
   return 'late'
 }
 
-const statusCardBg: Record<string, string> = {
+// 상태별 카드 색 (R2). 활성 상태끼리 서로 다르고, 요약 타일 4색·중요 메모 yellow 와도 다르다
+export const statusCardBg: Record<string, string> = {
   scheduled: 'bg-slate-50 border-slate-200',
-  development: 'bg-green-50 border-green-200',
-  qa_pending: 'bg-teal-50 border-teal-200',
+  development: 'bg-lime-50 border-lime-300',
+  qa_pending: 'bg-pink-50 border-pink-200',
   qa: 'bg-orange-50 border-orange-200',
-  deploy_pending: 'bg-amber-50 border-amber-200',
+  deploy_pending: 'bg-fuchsia-50 border-fuchsia-200',
   deploy: 'bg-red-50 border-red-200',
-  completed: 'bg-blue-50 border-blue-200',
+  completed: 'bg-stone-50 border-stone-200',
   // 중단은 되돌아올 수 있는 상태다 — 끝난 취소(회색 실선)와 달리 점선으로 "멈춰 있음"을 낸다
   on_hold: 'bg-zinc-50 border-zinc-300 border-dashed',
   cancelled: 'bg-gray-50 border-gray-200'
@@ -76,8 +89,7 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
   const isDevOver = today > project.dev_end_date
 
   const progress = calculateProgress(project.dev_start_date, project.dev_end_date)
-  const level = getUrgencyLevel(progress)
-  const config = urgency[level]
+  const tone = SCHEDULE_TONE[scheduleLevel(progress)]
   const status = projectStatus[project.status] ?? projectStatus.cancelled
 
   // 하위를 가진 상위는 롤업 대상에서 제외하고 leaf만 집계
@@ -110,7 +122,7 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
           </div>
           <div className="flex flex-col items-end gap-1">
             {!isDevOver && (
-              <span className={`text-2xl font-bold ${config.text}`}>{progress}%</span>
+              <span className={`text-2xl font-bold ${tone.text}`}>{progress}%</span>
             )}
             <Badge color={status.badge}>{status.label}</Badge>
             <PhaseHint project={project} today={today} />
@@ -119,7 +131,7 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
 
         {!isDevOver && (
           <div className="mb-3">
-            <ProgressBar percent={progress} color={config.bar} height="h-2.5" />
+            <ProgressBar percent={progress} color={tone.bar} height="h-2.5" />
           </div>
         )}
 
@@ -130,7 +142,7 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
             </span>
             <div className="flex items-center gap-2">
               <div className="w-24">
-                <ProgressBar percent={taskProgress} color="bg-green-500" height="h-1.5" />
+                <ProgressBar percent={taskProgress} color={TASK_PROGRESS_BAR} height="h-1.5" />
               </div>
               <span className="text-xs text-gray-500">{taskProgress}%</span>
             </div>

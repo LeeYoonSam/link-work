@@ -34,6 +34,7 @@
 - 오늘 화면 개편 (2026-11-03): 업무 유형 분류·묶음 항목·표 브리핑·해요체·화면 재배치를 부록 J 에 둔다. 부록 J 가 §9 브리핑 형식과 §12 오늘 화면 순서를 대체한다. 규칙 A48~A53 은 부록 J.10 에 있다. A3 대상에 `assistant-worktype.ts` 를 더한다.
 - 메뉴 통합·아침 자동 동기화 (2026-11-05): Dashboard 를 없애고 '오늘' 을 유일한 홈으로 둔다. 첫 화면 규칙 A24 를 다시 쓴다(부록 C). 아침 자동 동기화 규칙 A54 와 화면 자동 갱신을 부록 K 에 둔다. 부록 K 가 §12.2 의 Sidebar·Dashboard 항목과 §19 결정 14·15 를 대체한다.
 - 체크인 제거·홈 개편 (2026-11-05): 작업 경계 체크인을 지운다. 오늘 화면을 요약 타일과 2열 배치로 바꾼다. 내용은 부록 L 이다. 부록 L 이 J.8 과 A53 을 대체한다.
+- 후보 분리·계속 제외·오늘 카드 통합 (2026-11-09): 하루 시작이 액션아이템을 넣지 않는다. 계속 제외를 저장한다. 시간표와 오늘 할 일을 카드 1개로 합친다. 오늘 화면 정렬·강조 규칙을 정한다. 내용은 부록 M 이다. 부록 M 이 L.2 의 주열 순서와 L.8 3차 조정의 카드 순서를 대체한다. 규칙 A57~A59 는 M.6 에 있다.
 
 ---
 
@@ -5085,3 +5086,296 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 - `Timeline` 에 브리핑 prop 을 주지 않으면 출력이 개편 전과 같다.
 
 - 3차 조정 (2026-11-05, 사용자 피드백): V5 의 2열 그리드를 없앴다. 모든 홈 카드는 가로 전체 폭을 쓰고 세로로 쌓인다. 순서는 오늘 할 일, 새로 들어온 일, 시간표다. 홈 카드의 말줄임(truncate)과 중요 메모 높이 제한을 없앴다. 글은 줄바꿈으로 끝까지 보인다. 캘린더와 함께 쓰는 DayScheduleCard 는 바꾸지 않았다.
+
+## 부록 M. 후보 분리·계속 제외·오늘 카드 통합 (2026-11-09)
+
+사용자 피드백 4가지를 반영한다.
+1. 하루 시작 뒤 고르지 않은 액션아이템이 오늘 할 일에 들어간다. 액션아이템은 회의록에서 추측한 일이다. 그래서 기본은 후보에만 둔다. 사용자가 추가할 때만 오늘 할 일에 들어간다.
+2. 늘 열려 있는 에픽·티켓은 오늘 '제외'해도 다음 날 다시 들어온다. 그래서 '계속 제외'를 만든다. 앱이 제외를 기억한다. 제외한 항목은 후보에 남아 다시 추가할 수 있다.
+3. 시간표와 오늘 할 일은 비슷한 목록에 회의만 더한 모양이다. 그래서 카드 1개로 합친다.
+4. 오늘 화면의 정렬·색·강조 규칙을 정한다.
+
+### M.1 토론 요약
+참가자 3명이 2라운드 토론을 했다. 역할은 정보 구조 설계자, 비주얼 디자이너, 사용자 대변인이다.
+
+- 1라운드: 정보 구조와 비주얼은 시간표 뼈대에 할 일을 끼우는 전면 통합을 냈다. 사용자 대변인은 통합에 반대했다.
+- 확인한 사실: `buildTimeline` 은 빈 시간 블록에 1순위 집중 항목과 오늘·지난 마감 항목만 배정한다. 나머지 활성 항목은 시간표에 없다. 집중 항목이 여러 블록을 이어서 받는다.
+- 2라운드: 세 참가자가 아래 안으로 모였다. 할 일은 순위순 목록 1개다. 배정 시각은 할 일 행의 1열에 작게 쓴다. 빈 시간 블록 행은 그리지 않는다. 회의는 같은 카드의 아래 구역에 시간순으로 둔다.
+- 사용자 대변인의 조건을 받는다. 모든 할 일 행에 순위 번호를 보인다. 상태 버튼을 호버로 숨기지 않는다. 계속 제외는 2단계로 한다.
+
+### M.2 결정
+
+| # | 결정 | 근거 |
+|---|------|------|
+| M1 | 하루 시작은 `action_item` 후보를 계획에 넣지 않는다. 최신화는 새 액션아이템을 지금처럼 제안(suggested)으로만 넣는다 | 제안은 후보 카드에 보이고 사용자가 수락해야 계획이 된다 |
+| M2 | 계속 제외는 새 비서 테이블 `assistant_exclusions` 에 저장한다. 키는 `candidate_id` 다. `jira_key` 도 저장해 같은 Jira 키의 다른 후보 id 도 맞춘다 | task 가 나중에 생기면 같은 티켓의 후보 id 가 `jira:KEY` 에서 `task:N` 으로 바뀐다 |
+| M3 | 계속 제외한 후보는 하루 시작에 들어가지 않는다. 최신화 제안에도 들어가지 않는다 | 사용자 요구 2 |
+| M4 | 계속 제외는 `jira`·`task` 출처 항목만 할 수 있다 | 액션아이템은 자동으로 들어가지 않는다. todo·임시는 사용자가 직접 만든 일이다 |
+| M5 | 계속 제외는 2단계다. 행의 '제외'를 누르면 그날만 제외된다. 제외된 행에 `오늘만 제외했어요.` 와 `계속 제외` 버튼이 보인다 | 실수로 영구 제외하지 않는다. 화면 상태가 아니라 항목 상태로 그려 정적 렌더 테스트가 된다 |
+| M6 | 후보에서 '다시 추가'하면 제외 기록을 지우고 오늘 계획에 넣는다. '제외 해제'는 기록만 지운다 | 복구 경로가 후보 카드 1곳이다 |
+| M7 | '오늘 할 일' 카드와 '시간표' 카드를 카드 1개 `오늘` 로 합친다. 위 구역은 할 일, 아래 구역은 회의다 | 할 일이 행동 대상이라 먼저 온다. 회의는 시간 정보다 |
+| M8 | 할 일 구역은 지금 순서(`orderPlanItems`)를 그대로 쓴다. 1열에 순위와 배정 시각을 쓴다. 빈 시간 블록 행은 그리지 않는다 | 순위 훑기가 깨지지 않는다. 남은 빈 시간은 요약 타일이 보인다 |
+| M9 | 회의 구역은 시간표의 회의 행만 그린다. 회의 브리핑 펼침(L.8 V3)을 유지한다 | 회의 브리핑은 그 회의의 정보다 |
+| M10 | 새로 들어온 일(InboxSection)과 후보 더 보기(CandidatePicker)를 카드 1개 `후보` 로 합친다. `오늘` 카드 바로 아래에 둔다. '더 보기' 에서 후보 더 보기를 뺀다 | 지금은 화면 맨 아래 2클릭이라 아침에 못 찾는다 |
+| M11 | 상태 버튼은 `완료`·`제외`·`⋯` 3개를 늘 보인다. `⋯` 는 `진행 중`·`미룸`·`지금 집중` 을 펼친다 | 행당 버튼 5개가 색 노이즈를 만든다. 호버 숨김은 발견성과 정적 테스트를 해친다 |
+| M12 | 출처 배지 Jira·작업·TODO 는 회색 1색이다. 액션아이템(amber)·임시(gray)는 지금 색을 둔다. 업무 유형 배지는 지금 색을 둔다 | 출처는 판단 신호가 아니다. 추측 항목은 알아볼 수 있어야 한다 |
+| M13 | 공용 `ui/index.tsx`·`ui/tokens.ts` 는 고치지 않는다. 오늘 화면 상수는 `today/todayTokens.ts` 에 둔다 | 다른 화면 64곳이 공용 토큰을 쓴다 |
+| M14 | 요약 타일 값 크기는 지금(`text-2xl font-bold`)을 둔다 | 부록 L 의 사용자 피드백은 큰 글자다 |
+| M15 | 다크 모드는 범위 밖이다 | 앱에 `dark:` 변형이 0건이다 |
+
+### M.3 오늘 화면 순서 (A59)
+근무 중 DOM 순서:
+1. `DayHeader` (하루 브리핑 요약 포함). 변경 없음.
+2. 오류 배너. 조건부. 변경 없음.
+3. 요약 타일 `id="today-summary"`.
+4. `오늘` 카드 `id="today-agenda"`.
+   - 머리: `SectionTitle variant="page"` 로 `오늘`. 오른쪽에 `할 일 n · 회의 n` (`text-sm text-gray-500 tabular-nums`). n 은 활성 할 일 수와 회의 행 수다.
+   - 배정 못한 마감 경고(amber). 조건부. 지금 문구를 둔다.
+   - 할 일 구역 `id="today-tasks"`. 구역 머리 `할 일`. 행은 `orderPlanItems(items)` 순서의 `PlanItemRow` 다. 비면 `EmptyState compact` 로 `계획 항목이 없어요. 아래 후보에서 추가해 주세요.`
+   - 회의 구역 `id="today-timeline"`. 구역 머리 `회의`. `Timeline` 이 회의 행만 그린다. 회의가 없으면 `EmptyState compact` 로 `오늘 회의가 없어요.`
+5. `후보` 카드 `id="today-inbox"`. 계획이 있을 때만 보인다.
+6. 기타 회의 브리핑. 변경 없음.
+7. 맥락 복구. 조건부. 변경 없음.
+8. `HomeOverview`. 변경 없음.
+9. `MoreSection`. 명령 입력, 변경 내역, 연결 안내, 본문 없는 맥락 복구 1줄, 비서 설정. 후보 더 보기는 없다.
+
+계획 없음 분기와 오늘 데이터 없음 분기는 바꾸지 않는다.
+알림 focus id 를 유지한다: `today-inbox`, `today-timeline`, `plan-item-<id>`, `meeting-briefing-<eventId>`, `today-briefing`.
+
+### M.4 시각 규칙
+상수는 `src/renderer/src/components/today/todayTokens.ts` 에 있다. 리더가 만들었다. 팀원은 상수를 import 해서 쓴다. 새 상수가 필요하면 그 컴포넌트 파일 안에 둔다.
+
+- 행 그리드: 할 일 행과 회의 행은 `ROW_GRID` 와 `ROW_BOX` 를 쓴다. 1열 `7rem`, 2열 제목·메타, 3열 버튼이다.
+- 왼쪽 막대: 모든 행이 3px 막대 자리를 가진다. 막대가 없으면 `NO_BAR` 다.
+- 강조 5가지만 쓴다.
+  1. 집중 작업 행: `EMPHASIS.focusRow` + 제목 `EMPHASIS.focusTitle` + `집중 중` 배지(`bg-blue-100 text-blue-700`).
+  2. 마감 오늘·지남·긴급: 메타의 마감 글자 `EMPHASIS.urgentText`.
+  3. 진행 중 회의 또는 다음 회의 1건: `EMPHASIS.nextMeetingRow`. 시작 15분 이내면 `n분 후` 를 `EMPHASIS.soonMeetingText` 로 쓴다. 진행 중이면 `진행 중` 을 같은 글자로 쓴다.
+  4. 후보 카드 머리의 제안 건수: `EMPHASIS.suggestionCount` 필.
+  5. 끝난 할 일(done·deferred·dropped)과 지난 회의: `EMPHASIS.dimmed`. done 제목은 `line-through` 를 더한다.
+- 할 일 행 1열: 1줄 순위(`RANK_TEXT`, 묶음은 `–`). 2줄 배정 시각(`TIME_TEXT`, 없으면 줄 없음).
+- 할 일 행 2열: 1줄 제목(`TITLE_TEXT`). 2줄 메타(`META_TEXT`): 업무 유형 배지, 출처 배지, 묶음 배지, `집중 중` 배지, 마감, n일째, 묶음 이름, `미배정`. 묶음 이름은 메타 끝에 둔다.
+- 회의 행 1열: `HH:mm–HH:mm` (`TIME_TEXT`). 2열: 회의 제목(`TITLE_TEXT`). `[회의]` 접두사를 지운다. 3열: `브리핑` 버튼(짝 브리핑이 있을 때).
+- 현재 시각 선: 회의 구역에서 지난·진행 중 회의와 시작 전 회의 사이에 1줄을 그린다. `h-px bg-blue-500` 선과 `지금 HH:mm` (`text-xs text-blue-600 font-medium tabular-nums`) 이다. 모든 회의가 지났거나 모두 시작 전이면 그리지 않는다.
+- `text-[10px]`·`text-[11px]` 는 0건이다 (L.3 유지).
+
+### M.5 모듈 계약
+
+#### M.5.1 타입 (`assistant-types.ts`, 렌더러 `types/index.ts` 에 같게)
+```ts
+export interface PlanExclusion {
+  candidate_id: string
+  jira_key: string | null      // 대문자. 없으면 null
+  title: string
+  source: CandidateSource       // 'jira' | 'task'
+  excluded_at: string           // 'YYYY-MM-DD HH:mm:ss'
+}
+// Candidate 에 필드 1개를 더한다. listCandidates 만 채운다. 다른 곳은 비워 둔다
+//   excluded?: boolean
+// TodayPayload 에 필드 1개를 더한다. excluded_at 내림차순, 같으면 candidate_id 오름차순
+//   exclusions: PlanExclusion[]
+```
+
+#### M.5.2 스키마 (`assistant-schema.ts`)
+`ASSISTANT_SCHEMA` 끝에 더한다. `CREATE TABLE IF NOT EXISTS` 라 기존 DB 도 다음 실행에서 생긴다. ALTER 마이그레이션은 없다.
+```sql
+CREATE TABLE IF NOT EXISTS assistant_exclusions (
+  candidate_id TEXT PRIMARY KEY,
+  jira_key TEXT,
+  title TEXT NOT NULL,
+  source TEXT NOT NULL,
+  excluded_at TEXT NOT NULL
+);
+```
+
+#### M.5.3 저장소 (`assistant-store.ts`)
+- `listExclusions(db): PlanExclusion[]`. 정렬은 M.5.1 과 같다.
+- `upsertExclusion(db, e: PlanExclusion): void`. 같은 candidate_id 는 덮어쓴다.
+- `deleteExclusions(db, match: { candidateId: string; jiraKey: string | null }): number`. candidate_id 가 같거나, jiraKey 가 null 이 아니고 jira_key 가 같은 행을 지운다. 지운 행 수를 돌려준다.
+
+#### M.5.4 순수 모듈
+- `assistant-candidates.ts`: `isExcludedCandidate(c: Pick<Candidate, 'id' | 'jiraKey'>, exclusions: Pick<PlanExclusion, 'candidate_id' | 'jira_key'>[]): boolean`. id 가 같거나, 둘 다 jira 키가 있고 같으면 true 다.
+- `assistant-slots.ts`: `buildStartPlanItems(candidates, today, planSize, exclusions = [])`. 묶음 후보, `source === 'action_item'` 후보, 제외 후보를 순위 매기기 전에 뺀다. 나머지 동작은 같다.
+- `assistant-refresh.ts`: `planRefresh` 입력에 `exclusions: Pick<PlanExclusion, 'candidate_id' | 'jira_key'>[]` 를 더한다. 위치는 `RefreshContext` 다. 4단계 새 제안에서 제외 후보를 뺀다. `RefreshContext.exclusions` 는 선택 필드(`exclusions?:`)로 두고 없으면 빈 배열로 본다. 이유: 기존 테스트 호출을 깨지 않는다.
+
+#### M.5.5 조정 (`assistant-service.ts`)
+- `startDayImpl`: `listExclusions(db)` 를 `buildStartPlanItems` 에 넘긴다.
+- `runRefreshImpl`: `listExclusions(db)` 를 `planRefresh` 의 ctx 에 넘긴다.
+- `buildPayload`: `exclusions: listExclusions(db)` 를 더한다.
+- `listCandidates`: 제외 후보를 빼지 않는다. `excluded: true` 를 붙인다. 순서는 같다.
+- 새 함수 `excludeItem(itemId: number, now?): Promise<TodayPayload>`. `serialized` 로 감싼다.
+  1. 근무 중 계획을 요구한다 (`requireActivePlan`).
+  2. 항목을 요구한다 (`requireItemOfPlan`).
+  3. 출처가 `jira`·`task` 가 아니면 `계속 제외는 Jira·작업 항목만 할 수 있어요.` 오류를 낸다.
+  4. 상태가 `suggested`·`dismissed` 면 `제안 항목은 계속 제외할 수 없어요.` 오류를 낸다.
+  5. `upsertExclusion` 한다. jira_key 는 `item.jira_issue_key` 를 대문자로 바꾼 값이다.
+  6. 상태가 `dropped` 가 아니면 `setItemStatus` 와 같은 내부 경로로 `dropped` 로 바꾼다.
+  7. `emitChanged` 의 reason 은 `setItemStatus` 와 같은 값을 쓴다.
+- 새 함수 `removeExclusion(candidateId: string, now?): Promise<TodayPayload>`. `serialized` 로 감싼다. 문자열 1~200자를 검증한다. 근무 중 계획을 요구하지 않는다. Jira 키는 다음 순서로 정한다. 1) candidateId 와 같은 제외 행의 jira_key. 2) 오늘 계획에서 candidate_id 가 같은 항목의 jira_issue_key. 3) candidateId 가 `jira:` 로 시작하면 그 뒤 키. 그 값을 `deleteExclusions` 에 넘긴다. 이유: 최신화 replace 로 항목의 후보 id 가 `jira:KEY` 에서 `task:N` 으로 바뀔 수 있다.
+- `addItemImpl`: 추가에 성공하면 그 후보의 제외 기록을 지운다. `deleteExclusions(db, { candidateId, jiraKey })` 다. jiraKey 는 후보 또는 기존 항목의 Jira 키다.
+- A2 유지: 이 파일은 비서 테이블만 쓴다. `assistant_exclusions` 는 비서 테이블이다.
+
+#### M.5.6 IPC·preload·렌더러 store
+- IPC `assistant:excludeItem(itemId)` → `{ today }`. IPC `assistant:removeExclusion(candidateId)` → `{ today }`. 기존 `wrap` 형식을 쓴다.
+- preload `assistant.excludeItem`, `assistant.removeExclusion`. 렌더러 `AssistantApi` 타입에 둘을 더한다.
+- `assistantStore.ts`: `excludeItem(itemId)`, `removeExclusion(candidateId)` 액션. 실패 문구는 `계속 제외하지 못했습니다`, `제외를 해제하지 못했습니다` 다. 기존 `run` 패턴을 쓴다. 성공하면 후보 목록이 열려 있을 때 후보를 다시 읽는다. 이유: `excluded` 표시가 바뀐다.
+
+#### M.5.7 화면 컴포넌트
+`PlanItemRow.tsx` (팀원 C):
+- 새 순수 함수 `itemSlotLabel(itemId: number, timeline: Pick<DayTimeline, 'entries'>): string | null`. 그 항목에 배정된 블록 중 `state !== 'past'` 인 것을 시작순으로 본다. 없으면 null 이다. 첫 블록이 `HH:mm–HH:mm` 이다. 이어지는 블록이 더 있으면 ` +n` 을 붙인다. 1열 시각 줄은 줄바꿈하지 않는다(`whitespace-nowrap`). 이유: ` 외 n` 은 7rem 열을 넘었다.
+- 새 prop: `slotLabel?: string | null`, `unplaced?: boolean`, `excluded?: boolean`, `onExclude?: (itemId: number) => void`, `onRemoveExclusion?: (candidateId: string) => void`, `menuOpenInitial?: boolean`(테스트용).
+- 버튼: M11. 같은 상태를 다시 누르면 '예정'으로 되돌리는 지금 동작을 유지한다. 원본 완료 체크박스 동작을 유지한다.
+- 제외 안내 줄: `!readOnly && status === 'dropped' && source ∈ {jira, task}` 일 때 메타 아래에 그린다.
+  - `excluded` 가 false: `오늘만 제외했어요.` + 버튼 `계속 제외` (`onExclude(item.id)`).
+  - `excluded` 가 true: `계속 제외했어요. 내일부터 자동으로 넣지 않아요.` + 버튼 `제외 취소` (`onRemoveExclusion(item.candidate_id)`).
+- `SOURCE_BADGE` 의 jira·task·todo 색을 `NEUTRAL_BADGE` 로 바꾼다 (M12).
+- 새 순수 함수 `isItemExcluded(item: Pick<PlanItem, 'candidate_id' | 'jira_issue_key'>, exclusions: Pick<PlanExclusion, 'candidate_id' | 'jira_key'>[]): boolean`. main 의 `isExcludedCandidate` 와 같은 규칙이다.
+
+`SummaryTiles.tsx` (팀원 C):
+- '남은 할 일' 타일 보조 문구: 활성 항목 중 마감이 오늘·지남이거나 `urgent` 인 항목이 1건 이상이면 `마감 n건` 을 `EMPHASIS.urgentText` 로 덧붙인다. 순수 함수 `dueAlertCount(items, logicalDate): number` 를 내보낸다.
+
+`Timeline.tsx` (팀원 D):
+- 회의 행만 그린다. 블록 행과 `blockItemMeta`·`SHORT_BLOCK_MIN` 을 지운다.
+- props: `{ timeline: DayTimeline; now: string; meetingBriefings?: MeetingBriefingRow[]; regeneratingIds?: number[]; canRegenerate?: boolean; onRegenerate?: (eventId: number) => void }`. `items`·`logicalDate` 를 지운다.
+- 새 순수 함수 `meetingTiming(entry: { start: string; end: string }, nowHHmm: string): 'past' | 'current' | 'soon' | 'later'`. soon 은 시작 전 15분 이내다.
+- 새 순수 함수 `nextMeetingIndex(entries, nowHHmm): number`. current 가 있으면 그 행, 없으면 시작 전 첫 행이다. 없으면 -1 이다. 이 행 1개만 `EMPHASIS.nextMeetingRow` 를 받는다.
+- M.4 의 현재 시각 선을 그린다. 브리핑 펼침·`meeting-briefing-<id>` 블록·기본 펼침 규칙은 유지한다.
+
+`CandidatesCard.tsx` (새, 팀원 D):
+- props: `{ items: PlanItem[]; candidates: Candidate[]; candidatesLoading: boolean; candidatesError: string; exclusions: PlanExclusion[]; logicalDate: string; busy: boolean; readOnly: boolean; onAccept: (itemId: number) => void; onDismiss: (itemId: number) => void; onLoadCandidates: () => void; onAdd: (candidateId: string) => void; onRemoveExclusion: (candidateId: string) => void; candidatesOpenInitial?: boolean; excludedOpenInitial?: boolean }`.
+- 루트 `id="today-inbox"`. 카드 1개다.
+- 머리: `SectionTitle variant="page"` 로 `후보`. 오른쪽에 제안 건수 필(`EMPHASIS.suggestionCount`, 0이면 없음)과 `제외 n` (0이면 없음).
+- 구역 1 `새로 들어온 제안`: `InboxSection` 을 `embedded` 로 그린다. 제안이 0건이면 구역이 없다.
+- 구역 2 `후보 더 보기`: 버튼 1번으로 펼치고 그때 `onLoadCandidates` 를 부른다. 목록은 `candidatesNotInPlan(candidates, items)` 중 `excluded` 가 아닌 후보다.
+- 닫힌 날(`readOnly`)에는 구역 2 를 그리지 않는다. 이유: 닫힌 계획에는 추가할 수 없다.
+- 구역 3 `계속 제외한 항목 n건`: 기본 접힘. 행마다 출처 배지, 제목, 버튼 `다시 추가`(`readOnly` 면 비활성)·`제외 해제`. 후보를 불러온 뒤 같은 후보의 마감이 오늘·지남이면 마감 글자를 `EMPHASIS.urgentText` 로 쓴다.
+
+`InboxSection.tsx` (팀원 D): 새 prop `embedded?: boolean`. true 면 바깥 Card 와 머리 제목을 그리지 않는다. 기존 export(`sortSuggestions`, `INBOX_SHOWN`, `inboxSourceSummary`, 기본 컴포넌트)는 유지한다.
+
+`CandidatePicker.tsx` (팀원 D): `candidatesNotInPlan` 의 뜻을 바꾼다. 계획 항목 중 상태가 `planned`·`in_progress`·`done`·`suggested` 인 후보만 뺀다. `dropped`·`deferred`·`dismissed` 후보는 남긴다. 이유: 제외·미룸 항목을 후보에서 다시 추가할 수 있다. 새 prop `embedded?: boolean` 은 바깥 Card 와 머리를 그리지 않는다.
+
+`TodayView.tsx` (팀원 C): M.3 순서로 조립한다. `exclusions` 는 `today.exclusions ?? []` 로 읽는다. 각 `PlanItemRow` 에 `slotLabel`, `unplaced`, `excluded`, `onExclude`, `onRemoveExclusion` 을 넘긴다.
+
+### M.6 규칙
+
+| ID | 규칙 | 이유 | 판정 |
+|----|------|------|------|
+| A57 | 하루 시작은 `action_item` 후보를 계획에 넣지 않는다 | 액션아이템은 추측이다 | 테스트 `A57` (assistant-slots.test.ts) |
+| A58 | 계속 제외 후보는 하루 시작과 최신화 제안에 들어가지 않는다. `listCandidates` 에는 `excluded: true` 로 남는다. `addItem` 은 제외 기록을 지운다 | 사용자가 다시 추가할 수 있어야 한다 | 테스트 `A58` (assistant-slots.test.ts, assistant-refresh.test.ts, assistant-service.test.ts) |
+| A59 | 근무 중 홈 순서는 헤더 → 요약 타일 → `today-agenda`(할 일 → 회의) → `today-inbox` → 기타 회의 브리핑 → 홈 개요 → 더 보기다. 더 보기에 후보 더 보기가 없다 | 할 일과 회의를 한 카드에서 본다. 후보를 1클릭으로 연다 | 테스트 `A59` (TodayView.test.tsx). A55 테스트는 A59 로 바꾼다 |
+
+### M.7 팀 구성과 소유 파일
+- 팀원 A (main 순수·저장): `assistant-types.ts`, `assistant-schema.ts`, `assistant-store.ts`, `assistant-candidates.ts`, `assistant-slots.ts`, `assistant-refresh.ts` 와 각 `.test.ts`.
+- 팀원 B (조정·IPC): `assistant-service.ts`, `assistant-service.test.ts`, `src/main/ipc/assistant.ipc.ts`, `src/preload/index.ts`, `src/renderer/src/types/index.ts`, `src/renderer/src/stores/assistantStore.ts`.
+- 팀원 C (할 일 화면): `TodayView.tsx`, `TodayView.test.tsx`, `PlanItemRow.tsx`, `SummaryTiles.tsx`.
+- 팀원 D (회의·후보 화면): `Timeline.tsx`, `Timeline.test.tsx`, `CandidatesCard.tsx`(새), `CandidatesCard.test.tsx`(새), `InboxSection.tsx`, `CandidatePicker.tsx`.
+- 리더: `docs/ASSISTANT.md`, `today/todayTokens.ts`.
+- 검증자: 코드를 고치지 않는다.
+
+### M.8 완료 조건
+최대 반복 5회. 같은 실패가 2회 연속이면 접근을 바꾸거나 중단하고 보고한다.
+1. `npx vitest run` 종료 코드 0, 실패 0건.
+2. `npm run typecheck` 에러 0건.
+3. `npm run build` 종료 코드 0.
+4. `grep -c "A57" src/main/services/assistant-slots.test.ts` 결과 1 이상.
+5. `grep -l "A58" src/main/services/assistant-slots.test.ts src/main/services/assistant-refresh.test.ts src/main/services/assistant-service.test.ts` 결과 3줄.
+6. `grep -c "A59" src/renderer/src/components/today/TodayView.test.tsx` 결과 1 이상.
+7. `grep -c "assistant_exclusions" src/main/services/assistant-schema.ts` 결과 1 이상.
+8. `grep -c "assistant:excludeItem\|assistant:removeExclusion" src/main/ipc/assistant.ipc.ts` 결과 2.
+9. `grep -c "CandidatePicker" src/renderer/src/components/today/TodayView.tsx` 결과 0.
+10. `grep -c "\[회의\]" src/renderer/src/components/today/Timeline.tsx` 결과 0.
+11. `grep -n "text-\[1[01]px\]" src/renderer/src/components/today/{TodayView,PlanItemRow,SummaryTiles,Timeline,CandidatesCard,InboxSection,CandidatePicker}.tsx` 결과 0건. 대상은 이번에 고친 파일이다. 이유: `CommandInput.tsx`·`AssistantSettingsModal.tsx` 는 L.3 대상이 아니고 이번 범위 밖이다.
+12. `git diff --name-only -- src/renderer/src/components/ui` 결과 0줄.
+
+### M.9 2차 피드백 (2026-11-09)
+사용자 피드백: 할 일 행의 순위 숫자가 무슨 뜻인지 모른다. 집중 항목이 맨 위로 올라가 `2, 1, 3` 순서로 보였다. `12:00–14:00 +1` 도 무슨 뜻인지 모른다. 1열이 너무 넓다. 요약 타일 4개는 색으로 서로 구별되어야 한다. 회의는 장소와 메모를 같이 보여야 한다. 이 절이 M.4 의 할 일 행 1열 규칙과 M.5.7 의 `itemSlotLabel` 형식을 대체한다.
+
+| # | 결정 | 근거 |
+|---|------|------|
+| N1 | 할 일 행에서 순위 숫자 열을 없앤다. 할 일 행은 `TASK_ROW_GRID`(제목·메타 \| 버튼) 2열이다 | 순서가 곧 순위다. 숫자는 뜻을 전하지 못했다 |
+| N2 | 배정 시각은 메타 줄의 글자 `작업 시간 12:00–14:00, 15:00–16:00` 으로 쓴다. 지나지 않은 배정 블록을 시작순으로 모두 쉼표로 잇는다. 3개를 넘으면 앞 3개 뒤에 ` 외 n개` 를 붙인다 | `+1` 은 뜻을 알 수 없었다 |
+| N3 | 회의 행은 `MEETING_ROW_GRID`(시각 6rem \| 제목·장소·메모 \| 버튼) 3열이다 | 시각 1줄 폭이면 충분하다 |
+| N4 | 요약 타일은 `TILE_TONE` 의 색을 쓴다. 남은 할 일 파랑, 완료 초록, 다음 회의 보라, 집중 가능 시간 청록이다. 마감 경고 글자는 빨강을 유지한다 | 타일끼리 대비가 생긴다. 색 뜻은 M.4 와 같다 |
+| N5 | 회의 행은 제목 아래에 장소와 메모를 보인다. 장소는 `장소 ` 라벨 뒤 1줄이다. 장소가 `http` 로 시작하면 `온라인 회의` 링크로 보인다. 메모는 그 아래 `text-sm text-gray-500 whitespace-pre-line` 이다. 둘 다 없으면 줄이 없다 | 회의 준비에 필요한 정보다 |
+| N6 | 메모는 main 이 정리한다. 순수 함수 `meetingNoteOf(description)` 가 HTML 태그를 지우고 `<br>`·`</p>` 를 줄바꿈으로 바꾼다. 엔티티 `&nbsp; &amp; &lt; &gt; &quot; &#39;` 를 푼다. 빈 줄을 1줄로 줄이고 앞뒤 공백을 지운다. 300자를 넘으면 300자에서 자르고 `…` 를 붙인다. 결과가 비면 null 이다 | 캘린더 설명은 HTML 과 긴 화상회의 안내문이 많다 |
+
+모듈 계약:
+- `CalendarRef`·`TimelineEntry` 의 meeting 에 선택 필드 `location?: string | null`, `note?: string | null` 을 더한다. 옛 스냅샷에는 없다. 없으면 null 로 본다.
+- `assistant-sources.ts` 가 캘린더 이벤트를 `CalendarRef` 로 바꿀 때 `location`(trim, 비면 null)과 `note`(`meetingNoteOf`)를 채운다.
+- `buildTimeline` 은 meeting 항목에 두 필드를 그대로 옮긴다.
+- 장소·메모만 바뀐 일정도 다음 최신화에서 화면에 반영한다. 최신화 알림의 일정 변경 건수는 시각·제목 변경만 센다.
+
+소유:
+- 팀원 A: `assistant-types.ts`, `assistant-sources.ts`(+ test), `assistant-slots.ts`(+ test), `assistant-refresh.ts`(+ test).
+- 팀원 B: 렌더러 `types/index.ts`.
+- 팀원 C: `PlanItemRow.tsx`, `SummaryTiles.tsx`, `TodayView.tsx`, `TodayView.test.tsx`.
+- 팀원 D: `Timeline.tsx`, `Timeline.test.tsx`.
+- 리더: `todayTokens.ts`, 이 문서.
+
+완료 조건 (M.8 에 더한다. 최대 반복 5회):
+13. `grep -cw "RANK_TEXT\|ROW_GRID" src/renderer/src/components/today/PlanItemRow.tsx` 결과 0. `-w` 는 `TASK_ROW_GRID` 를 세지 않는다.
+14. `grep -c "작업 시간" src/renderer/src/components/today/PlanItemRow.tsx` 결과 1 이상.
+15. `grep -c "meetingNoteOf" src/main/services/assistant-sources.test.ts` 결과 1 이상.
+16. `grep -c "TILE_TONE" src/renderer/src/components/today/SummaryTiles.tsx` 결과 1 이상.
+17. `grep -c "장소\|온라인 회의" src/renderer/src/components/today/Timeline.tsx` 결과 1 이상.
+
+### M.10 3차 피드백: 회의 행을 캘린더처럼 (2026-11-09)
+사용자 피드백: 회의 정보는 캘린더 화면(`calendar/DayScheduleCard.tsx` 의 `EventRow`)처럼 회의 장소와 메모를 보여야 한다. 이 절이 M.9 의 N3·N5·N6 을 대체한다.
+
+| # | 결정 | 근거 |
+|---|------|------|
+| P1 | 회의 행 배치는 캘린더 `EventRow` 와 같다. 오른쪽 정렬 시각 `HH:mm - HH:mm` → 세로 막대 → 제목 → 메모 → 장소 → (오른쪽) 브리핑 버튼이다. `MEETING_ROW_GRID` 를 쓴다 | 사용자가 캘린더 모양을 원한다. 두 화면이 같은 회의를 같은 모양으로 보인다 |
+| P2 | 세로 막대는 `MEETING_BAR` 다. 진행 중이거나 다음 회의 1건은 `MEETING_BAR_NEXT`(보라)다. 회의 행의 바깥 왼쪽 3px 막대는 쓰지 않는다(`NO_BAR`) | 막대 1개가 다음 회의 강조를 맡는다 |
+| P3 | 메모는 캘린더 설명 원문(HTML)을 `MarkdownContent` `allowHtml compact` 로 그린다. 기본은 접힌 미리보기(`max-h-[3.25rem] overflow-hidden`)다. 아래 `더 보기`·`접기` 버튼(`text-sm text-blue-600`)으로 펼친다. 테스트용 prop 으로 펼친 상태를 주입한다 | 캘린더와 같다. 링크·목록 서식이 살아 있다. `MarkdownContent` 가 rehype-sanitize 로 안전한 태그만 남긴다 |
+| P4 | 장소는 메모 아래 라벨 없이 `text-sm text-gray-400 break-words` 1줄이다. `http` 로 시작하면 `온라인 회의` 링크다 | 캘린더와 같다. 긴 화상회의 URL 은 읽을 수 없다 |
+| P5 | 글자 크기는 오늘 화면 규칙(L.3)을 따른다. 제목 `text-base font-medium`, 메모·장소·시각 `text-sm` 이다. 캘린더의 `text-xs`·`text-[11px]` 는 쓰지 않는다 | 홈 화면은 큰 글자로 수렴했다 |
+| P6 | main `meetingNoteOf` 는 HTML 을 지우지 않는다. 줄바꿈 `\r\n` 을 `\n` 으로 바꾸고 앞뒤 공백을 지운다. 비면 null 이다. 5000자를 넘으면 5000자에서 자른다 | 렌더러가 HTML 을 그린다. 상한은 스냅샷 크기를 막는다 |
+
+소유: 팀원 A `assistant-sources.ts`(+ test). 팀원 D `Timeline.tsx`(+ test). 리더 `todayTokens.ts`, 이 문서. `DayScheduleCard.tsx` 는 고치지 않는다.
+
+완료 조건 (최대 반복 5회):
+18. `grep -c "MarkdownContent" src/renderer/src/components/today/Timeline.tsx` 결과 1 이상.
+19. `grep -c "MEETING_BAR" src/renderer/src/components/today/Timeline.tsx` 결과 1 이상.
+20. `grep -c ">장소 \|'장소 '\|장소 <" src/renderer/src/components/today/Timeline.tsx` 결과 0.
+21. 조건 1·2·3 통과.
+
+### M.11 4차 피드백: 진행 중 프로젝트를 위로 (2026-11-09)
+사용자 피드백: 진행 중 프로젝트를 상단으로 올린다. `오늘` 카드 위에 둔다. 이 절이 M.3 의 순서와 A59 를 대체한다.
+
+| # | 결정 | 근거 |
+|---|------|------|
+| Q1 | `HomeOverview.tsx` 를 두 부분으로 나눈다. named export `HomeProjects` 는 진행 중 프로젝트 구역이다(`id="home-projects"`). named export `HomeMemos` 는 중요 메모 구역이다(`id="home-overview"` 유지). 기본 export `HomeOverview` 는 둘을 이 순서로 그린다 | 위치를 따로 정할 수 있다. 기존 사용처가 깨지지 않는다 |
+| Q2 | 근무 중·닫힘 순서: 헤더 → 오류 → 요약 타일 → `HomeProjects` → `today-agenda` → `today-inbox` → 기타 회의 브리핑 → 맥락 복구 → `HomeMemos` → 더 보기 | 사용자가 `오늘` 카드 바로 위를 원했다. 요약 타일은 화면 첫 줄 요약이라 맨 위에 둔다 |
+| Q3 | 계획 없음 순서: 헤더 → 오류 → `HomeProjects` → `HomeSchedule` → 회의 브리핑 → `HomeMemos` → 더 보기 | 근무 중과 같이 프로젝트가 일정 위에 온다 |
+| Q4 | 오늘 데이터 없음 순서: 오류 또는 빈 카드 → `HomeProjects` → `HomeSchedule` → `HomeMemos` | 같은 이유 |
+| Q5 | 각 부분은 자기 데이터만 읽는다. `HomeProjects` 는 프로젝트·작업, `HomeMemos` 는 중요 메모다 | 한 화면에 두 번 그려도 중복 조회가 없다 |
+
+| ID | 규칙 | 판정 |
+|----|------|------|
+| A60 | 근무 중 홈 순서는 Q2 다. 계획 없음은 Q3 다 | 테스트 `A60` (TodayView.test.tsx). A59 순서 테스트는 A60 으로 바꾼다 |
+
+소유: 팀원 C `TodayView.tsx`·`TodayView.test.tsx`·`dashboard/HomeOverview.tsx`·`dashboard/HomeOverview.test.tsx`·`today/homeTypography.test.ts`. 리더 이 문서.
+
+완료 조건 (최대 반복 5회):
+22. `grep -c "A60" src/renderer/src/components/today/TodayView.test.tsx` 결과 1 이상.
+23. `grep -c "export function HomeProjects\|export function HomeMemos" src/renderer/src/components/dashboard/HomeOverview.tsx` 결과 2.
+24. 조건 1·2·3 통과.
+
+### M.12 5차 피드백: 진행 중 프로젝트 색 (2026-11-09)
+사용자 피드백: 진행 중 프로젝트 카드의 포인트 색이 요약 타일 색과 겹친다. 다른 색으로 바꾼다.
+
+| # | 결정 | 근거 |
+|---|------|------|
+| R1 | `dashboard/ProjectProgress.tsx` 의 카드 배경·테두리, 일정 진행률, 작업 진행률 색은 요약 타일 4색(blue·green·purple·teal)을 쓰지 않는다 | 카드가 타일 바로 아래에 와서 같은 색이 다른 뜻으로 읽힌다 |
+| R2 | 상태별 카드 색: scheduled `bg-slate-50 border-slate-200`, development `bg-lime-50 border-lime-300`, qa_pending `bg-pink-50 border-pink-200`, qa `bg-orange-50 border-orange-200`, deploy_pending `bg-fuchsia-50 border-fuchsia-200`, deploy `bg-red-50 border-red-200`, completed `bg-stone-50 border-stone-200`, on_hold 그대로, cancelled 그대로 | 활성 상태끼리도 서로 다르다. 중요 메모의 yellow 와도 다르다 |
+| R3 | 일정 진행률(막대·% 글자)은 파일 안 상수로 early `bg-lime-500`/`text-lime-700`, mid `bg-amber-500`/`text-amber-700`, late `bg-red-500`/`text-red-700` 이다. 공용 `urgency` 토큰은 이 파일에서 쓰지 않는다 | late 빨강은 '위험' 뜻이 오늘 화면의 마감 빨강과 같다 |
+| R4 | 작업 진행률 막대는 `bg-slate-400` 이다 | 카드 안 강조를 일정 진행률 1개로 줄인다 |
+| R5 | 상태 배지(`projectStatus` 토큰)와 공용 `ui/tokens.ts` 는 바꾸지 않는다 | 다른 화면 전체가 같은 배지 색을 쓴다 |
+
+소유: 팀원 C `dashboard/ProjectProgress.tsx`(+ 테스트가 있으면 그 파일, 없으면 `dashboard/ProjectProgress.test.tsx` 새로).
+
+완료 조건 (최대 반복 5회):
+25. `grep -cE "(bg|border|text)-(blue|green|purple|teal)-" src/renderer/src/components/dashboard/ProjectProgress.tsx` 결과 0.
+26. `grep -c "urgency" src/renderer/src/components/dashboard/ProjectProgress.tsx` 결과 0.
+27. `git status --porcelain src/renderer/src/components/ui` 결과 0줄.
+28. 조건 1·2·3 통과.
