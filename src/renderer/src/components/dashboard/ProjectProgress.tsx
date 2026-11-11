@@ -1,15 +1,16 @@
 import { useEffect, useState, useCallback } from 'react'
 import type { Project, Task } from '../../types'
-import { differenceInCalendarDays, format } from 'date-fns'
+import { format } from 'date-fns'
 import ScheduleTimeline from '../project/ScheduleTimeline'
 import { Badge, ProgressBar, projectStatus } from '../ui'
 import PhaseHint from '../project/PhaseHint'
 import PriorityBadge from '../project/PriorityBadge'
 import { countLeafProgress } from '../../utils/taskTree'
+import { devScheduleProgress, localToday } from '../../utils/projectPhase'
 
 export type ScheduleLevel = 'early' | 'mid' | 'late'
 
-// 일정 진행률 색 (부록 M.12 R3). 공용 토큰을 쓰지 않는다.
+// 일정 막대 색 (부록 M.12 R3, M.13). 공용 토큰을 쓰지 않는다.
 // 이유: 이 카드는 요약 타일 바로 아래에 와서 타일 4색(파랑·초록·보라·청록)을 쓰면 다른 뜻으로 읽힌다.
 // late 빨강은 '위험' 뜻이다. 오늘 화면의 마감 빨강과 뜻이 같다
 export const SCHEDULE_TONE: Record<ScheduleLevel, { bar: string; text: string }> = {
@@ -18,22 +19,8 @@ export const SCHEDULE_TONE: Record<ScheduleLevel, { bar: string; text: string }>
   late: { bar: 'bg-red-500', text: 'text-red-700' }
 }
 
-// 작업 진행률 막대 색 (R4). 카드 안 강조는 일정 진행률 1개만 둔다
+// 작업 완료율 막대 색 (부록 M.13). 큰 숫자와 굵은 막대는 작업 완료율이다
 export const TASK_PROGRESS_BAR = 'bg-slate-400'
-
-function calculateProgress(startDate: string, endDate: string): number {
-  const start = new Date(startDate)
-  const end = new Date(endDate)
-  const today = new Date()
-
-  const total = differenceInCalendarDays(end, start)
-  if (total <= 0) return 100
-
-  const elapsed = differenceInCalendarDays(today, start)
-  if (elapsed < 0) return 0
-
-  return Math.min(100, Math.max(0, Math.round((elapsed / total) * 100)))
-}
 
 export function scheduleLevel(progress: number): ScheduleLevel {
   if (progress <= 33) return 'early'
@@ -85,11 +72,9 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
     setTasks(updated)
   }, [project.id])
 
-  const today = new Date().toISOString().split('T')[0]
-  const isDevOver = today > project.dev_end_date
-
-  const progress = calculateProgress(project.dev_start_date, project.dev_end_date)
-  const tone = SCHEDULE_TONE[scheduleLevel(progress)]
+  const today = localToday()
+  // 일정은 영업일 기준이다(PhaseHint 의 N/M일차와 같다). 개발 기간 밖이면 null 이다
+  const schedule = devScheduleProgress(project, today)
   const status = projectStatus[project.status] ?? projectStatus.cancelled
 
   // 하위를 가진 상위는 롤업 대상에서 제외하고 leaf만 집계
@@ -121,35 +106,45 @@ export default function ProjectProgress({ project, initialTasks }: Props): React
             </div>
           </div>
           <div className="flex flex-col items-end gap-1">
-            {!isDevOver && (
-              <span className={`text-2xl font-bold ${tone.text}`}>{progress}%</span>
+            {totalTasks > 0 && (
+              <div className="flex items-baseline gap-1">
+                <span className="text-[11px] text-gray-400">작업 완료</span>
+                <span className="text-2xl font-bold text-slate-800">{taskProgress}%</span>
+              </div>
             )}
             <Badge color={status.badge}>{status.label}</Badge>
             <PhaseHint project={project} today={today} />
           </div>
         </div>
 
-        {!isDevOver && (
+        {totalTasks > 0 && (
           <div className="mb-3">
-            <ProgressBar percent={progress} color={tone.bar} height="h-2.5" />
+            <ProgressBar percent={taskProgress} color={TASK_PROGRESS_BAR} height="h-2.5" />
           </div>
         )}
 
-        {totalTasks > 0 ? (
-          <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between">
+          {totalTasks > 0 ? (
             <span className="text-xs text-gray-600 font-medium">
-              Tasks: {doneTasks}/{totalTasks} done
+              작업 {doneTasks}/{totalTasks} 완료
             </span>
+          ) : (
+            <span className="text-xs text-gray-400">No tasks</span>
+          )}
+          {schedule && (
             <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400">일정</span>
               <div className="w-24">
-                <ProgressBar percent={taskProgress} color={TASK_PROGRESS_BAR} height="h-1.5" />
+                <ProgressBar
+                  percent={schedule.percent}
+                  color={SCHEDULE_TONE[scheduleLevel(schedule.percent)].bar}
+                  height="h-1.5"
+                />
               </div>
-              <span className="text-xs text-gray-500">{taskProgress}%</span>
+              <span className="text-xs text-gray-500 tabular-nums">{schedule.percent}%</span>
             </div>
-          </div>
-        ) : (
-          <span className="text-xs text-gray-400">No tasks</span>
-        )}
+          )}
+        </div>
       </div>
 
       {expanded && totalTasks > 0 && (

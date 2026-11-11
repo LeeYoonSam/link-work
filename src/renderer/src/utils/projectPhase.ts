@@ -1,4 +1,4 @@
-import { differenceInCalendarDays } from 'date-fns'
+import { differenceInCalendarDays, format } from 'date-fns'
 import { isWeekend, isKoreanHoliday } from './timeline'
 
 // getPhaseHint가 필요로 하는 최소 필드(본 앱 Project / 트레이 위젯 데이터 모두 충족).
@@ -35,6 +35,34 @@ function businessDaysBetween(startStr: string, endStr: string): number {
   return count
 }
 
+// 오늘 날짜 'YYYY-MM-DD'. 로컬 시각 기준이다.
+// UTC 날짜를 쓰면 한국 시간 오전 9시 전에는 어제 날짜가 된다.
+export function localToday(now: Date = new Date()): string {
+  return format(now, 'yyyy-MM-dd')
+}
+
+// start~end 기간에서 오늘이 몇 번째 영업일인지 센다. 오늘이 기간 밖이면 경계로 보정한다.
+// current 는 1 이상 total 이하다. 기간 중 주말·공휴일이면 직전 영업일 차수다.
+function businessDayOrdinal(start: string, end: string, today: string): { current: number; total: number } {
+  const total = Math.max(businessDaysBetween(start, end), 1)
+  const clamped = today < start ? start : today > end ? end : today
+  const current = Math.min(Math.max(businessDaysBetween(start, clamped), 1), total)
+  return { current, total }
+}
+
+// 개발 기간 일정 진행률. 영업일 기준이고 PhaseHint 의 'N/M일차' 와 정의가 같다.
+// percent = round(N / M × 100). 오늘이 개발 기간 밖(시작 전·종료 후)이면 null 이다.
+export function devScheduleProgress(
+  project: Pick<PhaseFields, 'dev_start_date' | 'dev_end_date'>,
+  today: string
+): { current: number; total: number; percent: number } | null {
+  const start = project.dev_start_date
+  const end = project.dev_end_date
+  if (!start || !end || today < start || today > end) return null
+  const { current, total } = businessDayOrdinal(start, end, today)
+  return { current, total, percent: Math.round((current / total) * 100) }
+}
+
 export type PhaseHint =
   // 진행 단계의 N/M일차(영업일 기준)
   | { kind: 'day'; text: string }
@@ -46,13 +74,10 @@ export type PhaseHint =
 // - qa_pending / deploy_pending / scheduled: 다음 단계까지 'D-N'
 // 그 외(completed/cancelled/deploy/on_hold)는 null — 끝났거나 멈춰 있어 남은 일수가 뜻이 없다.
 export function getPhaseHint(project: PhaseFields, todayStr?: string): PhaseHint | null {
-  const today = todayStr ?? new Date().toISOString().split('T')[0]
+  const today = todayStr ?? localToday()
 
   const dayHint = (start: string, end: string): PhaseHint => {
-    const total = Math.max(businessDaysBetween(start, end), 1)
-    // 오늘이 기간을 벗어나면 경계로 보정한 뒤 영업일 차수를 센다.
-    const clamped = today < start ? start : today > end ? end : today
-    const current = Math.min(Math.max(businessDaysBetween(start, clamped), 1), total)
+    const { current, total } = businessDayOrdinal(start, end, today)
     return { kind: 'day', text: `${current}/${total}일차` }
   }
 

@@ -5379,3 +5379,29 @@ CREATE TABLE IF NOT EXISTS assistant_exclusions (
 26. `grep -c "urgency" src/renderer/src/components/dashboard/ProjectProgress.tsx` 결과 0.
 27. `git status --porcelain src/renderer/src/components/ui` 결과 0줄.
 28. 조건 1·2·3 통과.
+
+### M.13 6차 피드백: 진행률 기준 (2026-11-11)
+사용자 피드백: 진행 중 프로젝트 카드의 큰 숫자 `8%` 가 작업 진행률처럼 읽힌다. 실제 값은 개발 기간의 달력일 경과율이다. 같은 카드의 작업 % 와 `N/M일차` 와 기준이 서로 다르다.
+
+이 절이 M.12 의 R3·R4 를 대체한다. M.12 의 R1·R2·R5 는 그대로 유효하다.
+
+| # | 결정 | 근거 |
+|---|------|------|
+| R1 | 큰 숫자는 작업 완료율이다. 값은 `countLeafProgress(tasks)` 의 done/total 을 반올림한 % 다. 큰 숫자 옆에 작은 회색 라벨 `작업 완료` 를 붙인다. 글자 색은 `text-slate-800` 이다. 작업이 0건이면 큰 숫자와 라벨을 그리지 않는다. 개발 기간이 끝나도 작업 완료율을 보인다 | 사용자는 큰 숫자를 작업 진행률로 읽는다 |
+| R2 | 굵은 막대(`h-2.5`)는 작업 완료율이다. 색은 `TASK_PROGRESS_BAR`(`bg-slate-400`)다. 작업이 0건이면 그리지 않는다 | 큰 숫자와 굵은 막대가 같은 값을 보인다 |
+| R3 | 아래 줄 왼쪽은 `작업 N/M 완료` 다. 오른쪽은 라벨 `일정` + 얇은 막대(`h-1.5`) + `x%` 다. 막대 색은 `SCHEDULE_TONE[scheduleLevel(x)].bar` 다. 작업이 0건이면 왼쪽은 기존 `No tasks` 다 | 일정은 보조 정보로 내린다 |
+| R4 | 일정 % 는 영업일 기준이다. 공유 함수 `devScheduleProgress`(`utils/projectPhase.ts`)가 PhaseHint 의 `N/M일차` 와 같은 정의로 round(N / M × 100) 을 낸다. 오늘이 개발 기간 밖이면 null 이다. null 이면 카드는 일정 묶음을 그리지 않는다. `getPhaseHint` 의 `N/M일차` 도 같은 계산을 쓴다 | 한 카드 안의 두 일정 표시가 같은 기준이다. 예: 11/10~11/23, 오늘 11/11 → 2/10 → 20% |
+| R5 | 큰 숫자의 일정 강조색(`SCHEDULE_TONE` 의 text 색)과 굵은 일정 막대는 없앤다. 달력일 계산 `calculateProgress` 는 렌더러 카드에서 삭제한다. `scheduleLevel`·`SCHEDULE_TONE` 은 일정 막대 색에 계속 쓴다 | 카드 안에 서로 다른 기준의 % 가 3개 있었다 |
+| R6 | 오늘 날짜는 로컬 기준이다. `localToday()`(`utils/projectPhase.ts`)가 `format(new Date(), 'yyyy-MM-dd')` 를 돌려준다. 카드와 `getPhaseHint` 의 기본값이 이 함수를 쓴다 | UTC 날짜는 한국 시간 오전 9시 전에 어제 날짜가 된다 |
+| R7 | M.12 의 색 제약을 유지한다. `ProjectProgress.tsx` 는 타일 4색(blue·green·purple·teal)과 `urgency` 를 쓰지 않는다. `components/ui` 는 바꾸지 않는다 | 카드가 요약 타일 바로 아래에 온다 |
+
+카드의 나머지 배치는 그대로다. 이름, 우선순위 배지, Dev/Deploy 날짜, 상태 배지, PhaseHint, 펼치기, ScheduleTimeline 이 해당한다.
+
+소유: 팀원 `dashboard/ProjectProgress.tsx`(+ test), `utils/projectPhase.ts`(+ test), 이 절.
+
+완료 조건 (최대 반복 5회):
+29. 조건 1·2·3 통과.
+30. `grep -c "calculateProgress" src/renderer/src/components/dashboard/ProjectProgress.tsx` 결과 0.
+31. `grep -c "toISOString" src/renderer/src/components/dashboard/ProjectProgress.tsx src/renderer/src/utils/projectPhase.ts` 결과 각각 0.
+32. 조건 25·26·27 통과.
+33. `grep -c "67%" src/renderer/src/components/dashboard/ProjectProgress.test.tsx` 결과 1 이상. `grep -c "20%" src/renderer/src/components/dashboard/ProjectProgress.test.tsx` 결과 1 이상.
