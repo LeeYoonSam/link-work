@@ -763,7 +763,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
 
   const updateTask = tool(
     'update_task',
-    '프로젝트의 세부 작업(태스크)을 수정한다. task_id로 대상을 지정한다 (get_project가 태스크 id를 반환). 변경할 필드만 전달한다. parent_task_id로 상위 작업(최상위여야 함) 아래로 옮기거나 null로 최상위로 이동할 수 있다. 실행 전 사용자 승인이 필요하다.',
+    '프로젝트의 세부 작업(태스크)을 수정한다. task_id로 대상을 지정한다 (get_project가 태스크 id를 반환). 변경할 필드만 전달한다. parent_task_id로 상위 작업(최상위여야 함) 아래로 옮기거나 null로 최상위로 이동할 수 있다. Jira 연결 작업(jira_issue_key 있음)의 status는 Jira를 따르므로 바뀌지 않는다. 실행 전 사용자 승인이 필요하다.',
     {
       task_id: z.number().int().positive().describe('수정할 태스크 id'),
       name: z.string().min(1).max(200).optional().describe('작업 이름'),
@@ -781,13 +781,21 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
     async (args) => {
       const db = getDatabase()
       const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(args.task_id) as
-        | { name: string; project_id: number }
+        | { name: string; project_id: number; jira_issue_key: string | null }
         | undefined
       if (!row) {
         return jsonResult({
           error: `태스크 id=${args.task_id}를 찾지 못했습니다. get_project로 태스크 id를 확인하세요.`
         })
       }
+      // R12: Jira 연결 작업의 상태는 Jira 가 원본이다. status 는 바꾸지 않고 안내만 한다.
+      const statusNotice =
+        row.jira_issue_key && args.status !== undefined
+          ? `Jira 연결 작업(${row.jira_issue_key})의 상태는 Jira 를 따릅니다. Jira 에서 바꿔 주세요.`
+          : null
+      const columns = statusNotice
+        ? ['name', 'start_date', 'end_date', 'parent_task_id']
+        : ['name', 'start_date', 'end_date', 'status', 'parent_task_id']
       // parent_task_id 변경 검증 (null=최상위 이동은 항상 허용). 1단계 계층 규약:
       // 자기 참조 금지 / 하위를 가진 작업은 남의 하위가 될 수 없음 / 부모는 같은 프로젝트의 최상위여야 함.
       if (args.parent_task_id != null) {
@@ -805,14 +813,8 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         const parentError = validateTaskParent(db, args.parent_task_id, row.project_id)
         if (parentError) return jsonResult({ error: parentError })
       }
-      const { set, values, keys } = buildSetClause(args, [
-        'name',
-        'start_date',
-        'end_date',
-        'status',
-        'parent_task_id'
-      ])
-      if (set.length === 0) return jsonResult({ error: '변경할 필드가 없습니다.' })
+      const { set, values, keys } = buildSetClause(args, columns)
+      if (set.length === 0) return jsonResult({ error: statusNotice ?? '변경할 필드가 없습니다.' })
       db.prepare(`UPDATE tasks SET ${set.join(', ')} WHERE id = ?`).run(...values, args.task_id)
       logActivity('task', 'update', args.task_id, args.name ?? row.name, `AI 수정: ${keys.join(', ')}`)
       logWriteExecuted('update_task', `id=${args.task_id}, fields=${keys.join(',')}`)
@@ -822,6 +824,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         task_id: args.task_id,
         project_id: row.project_id,
         updated_fields: keys,
+        ...(statusNotice ? { notice: statusNotice } : {}),
         link: `linkwork://project/${row.project_id}/task/${args.task_id}`
       })
     }

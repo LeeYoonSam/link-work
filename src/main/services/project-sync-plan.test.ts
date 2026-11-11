@@ -7,11 +7,20 @@ import {
   projSnapshot,
   issue
 } from './__fixtures__/project-sync/proj-snapshot'
+import {
+  REFRESH_PROJECT_ID,
+  REFRESH_ROOT_KEY,
+  refreshIssues,
+  refreshSnapshot,
+  refreshTask,
+  refreshTasks
+} from './__fixtures__/project-sync/task-refresh-snapshot'
 import type { JiraSyncIssue } from './jira'
 import { adfToPlainText, extractAdfLinks, guessLinkName } from './project-sync-adf'
 import {
   browseKeyOf,
   buildProjectSyncPlan,
+  buildTaskRefreshPlan,
   EMPTY_SELECTION_MESSAGE,
   INVALID_SELECTION_MESSAGE,
   normalizeProjectName,
@@ -21,12 +30,15 @@ import {
   selectAutoSyncSelection,
   selectProjectSyncOps,
   SYNC_LOG_LABELS,
+  TASK_REFRESH_LOG_LABEL,
   UNKNOWN_SELECTION_MESSAGE,
   type DbSyncState,
+  type DbTaskRow,
   type JiraSyncSnapshot,
   type ProjectSyncComputation,
   type ProjectSyncOp,
-  type ProjectSyncSelection
+  type ProjectSyncSelection,
+  type TaskRefreshPlan
 } from './project-sync-plan'
 
 const TODAY = '2026-10-02'
@@ -1321,5 +1333,280 @@ describe('R11 아침 자동 싱크업 — 안전 자동 적용 선택', () => {
     ]) {
       expect(parseSyncCreatedKey(bad), String(bad)).toBeNull()
     }
+  })
+})
+
+describe('R12 Jira 연결 작업 새로고침', () => {
+  const refresh = (
+    tasks: DbTaskRow[] = refreshTasks(),
+    issues: JiraSyncIssue[] = refreshIssues()
+  ): TaskRefreshPlan => buildTaskRefreshPlan(refreshSnapshot(issues), REFRESH_PROJECT_ID, tasks)
+
+  /** 계획을 작업 배열에 적용한다 — project-sync.ts 의 R12 쓰기와 같은 의미 */
+  function applyRefresh(tasks: DbTaskRow[], p: TaskRefreshPlan): DbTaskRow[] {
+    const next = tasks.map((t) => ({ ...t }))
+    for (const b of p.backfills) {
+      const t = next.find((x) => x.id === b.taskId)!
+      if (!t.jira_issue_key) t.jira_issue_key = b.jiraKey
+    }
+    for (const c of p.statusChanges) {
+      const t = next.find((x) => x.id === c.taskId)!
+      if (t.jira_issue_key === c.jiraKey) t.status = c.to
+    }
+    let id = 1000
+    const newIds = new Map<string, number>()
+    for (const t of p.newTasks) {
+      const taskId = id++
+      newIds.set(t.jiraKey, taskId)
+      next.push({
+        id: taskId,
+        project_id: p.projectId,
+        parent_task_id: t.parentTaskId ?? (t.parentJiraKey ? newIds.get(t.parentJiraKey)! : null),
+        name: t.name,
+        status: t.status,
+        sort_order: t.sortOrder,
+        jira_issue_key: t.jiraKey,
+        end_date: t.endDate
+      })
+    }
+    return next
+  }
+
+  const statusOf = (issues: JiraSyncIssue[], key: string, patch: Partial<JiraSyncIssue>): void => {
+    Object.assign(issues.find((i) => i.key === key)!, patch)
+  }
+
+  it('R12: 연결 작업의 상태를 Jira 값으로 맞춘다 (in_progress → done, pending → in_progress)', () => {
+    const p = refresh()
+    expect(p.projectId).toBe(REFRESH_PROJECT_ID)
+    expect(p.rootKey).toBe(REFRESH_ROOT_KEY)
+    expect(p.statusChanges).toEqual([
+      { taskId: 101, jiraKey: 'ICA-9047', from: 'in_progress', to: 'done' },
+      { taskId: 103, jiraKey: 'ICA-9049', from: 'in_progress', to: 'done' },
+      { taskId: 104, jiraKey: 'ICA-9051', from: 'in_progress', to: 'done' },
+      { taskId: 105, jiraKey: 'ICA-9052', from: 'in_progress', to: 'done' },
+      { taskId: 106, jiraKey: 'ICA-9053', from: 'pending', to: 'in_progress' }
+    ])
+    expect(p.backfills).toEqual([])
+    expect(p.missingKeys).toEqual([])
+    expect(TASK_REFRESH_LOG_LABEL).toBe('Jira 상태 동기화')
+  })
+
+  it('R12: Jira 에서 되돌린 상태도 맞춘다 (done → in_progress 역행)', () => {
+    const issues = refreshIssues()
+    statusOf(issues, 'ICA-9048', { status: '처리중', statusCategory: 'indeterminate' })
+    statusOf(issues, 'ICA-9047', { status: '할 일', statusCategory: 'new' })
+    const tasks = refreshTasks().map((t) => (t.id === 101 ? { ...t, status: 'done' } : t))
+    const p = refresh(tasks, issues)
+    expect(p.statusChanges).toEqual(
+      expect.arrayContaining([
+        { taskId: 101, jiraKey: 'ICA-9047', from: 'done', to: 'pending' },
+        { taskId: 102, jiraKey: 'ICA-9048', from: 'done', to: 'in_progress' }
+      ])
+    )
+  })
+
+  it('R12: 같은 값이면 statusChanges 0건이고, 적용 뒤 다시 계획하면 변경 0건이다 (멱등)', () => {
+    const first = refresh()
+    const after = applyRefresh(refreshTasks(), first)
+    const second = refresh(after)
+    expect(second.statusChanges).toEqual([])
+    expect(second.backfills).toEqual([])
+    expect(second.newTasks).toEqual([])
+    expect(second.missingKeys).toEqual([])
+  })
+
+  it('R12: 수동 작업(키 없음, 이름에 키 없음)은 statusChanges·backfills 에 없다', () => {
+    const p = refresh()
+    const touched = [...p.statusChanges, ...p.backfills].map((x) => x.taskId)
+    expect(touched).not.toContain(107)
+  })
+
+  it('R12: 이름에 (KEY) 가 있는 키 없는 작업은 backfills 에 들어가고 상태도 맞춘다', () => {
+    const tasks = [...refreshTasks(), refreshTask(108, '순위 배지 UI (ICA-9050)', 'pending')]
+    const p = refresh(tasks)
+    expect(p.backfills).toEqual([{ taskId: 108, jiraKey: 'ICA-9050' }])
+    expect(p.statusChanges).toContainEqual({
+      taskId: 108,
+      jiraKey: 'ICA-9050',
+      from: 'pending',
+      to: 'in_progress'
+    })
+    expect(p.newTasks.map((t) => t.jiraKey)).not.toContain('ICA-9050')
+    // 새 하위 작업의 부모는 백필된 기존 작업이다
+    expect(p.newTasks.find((t) => t.jiraKey === 'ICA-9055')).toMatchObject({
+      parentTaskId: 108,
+      parentJiraKey: null
+    })
+  })
+
+  it('R12: 에픽 루트에 새로 생긴 작업·하위 작업을 newTasks 로 낸다 (부모가 기존이면 parentTaskId, 새것이면 parentJiraKey)', () => {
+    const p = refresh()
+    expect(p.newTasks).toEqual([
+      {
+        jiraKey: 'ICA-9054',
+        name: '에러 처리 (ICA-9054)',
+        status: 'pending',
+        endDate: null,
+        parentJiraKey: null,
+        parentTaskId: 101,
+        sortOrder: 8
+      },
+      {
+        jiraKey: 'ICA-9050',
+        name: '순위 배지 UI (ICA-9050)',
+        status: 'in_progress',
+        endDate: '2026-11-20',
+        parentJiraKey: null,
+        parentTaskId: null,
+        sortOrder: 9
+      },
+      {
+        jiraKey: 'ICA-9055',
+        name: '배지 애니메이션 (ICA-9055)',
+        status: 'pending',
+        endDate: null,
+        parentJiraKey: 'ICA-9050',
+        parentTaskId: null,
+        sortOrder: 10
+      }
+    ])
+  })
+
+  it('R12: 기존 상위가 이미 하위 작업이면 1단계 계층을 지켜 그 최상위 아래에 둔다', () => {
+    // ICA-9047 이 수동 작업 107 아래에 있으면 새 하위 ICA-9054 의 부모는 107 이다 (R6 와 같다)
+    const tasks = refreshTasks().map((t) => (t.id === 101 ? { ...t, parent_task_id: 107 } : t))
+    const p = refresh(tasks)
+    expect(p.newTasks.find((t) => t.jiraKey === 'ICA-9054')?.parentTaskId).toBe(107)
+  })
+
+  it('R12: Sustain 루트(level standard)는 하위 작업만 최상위 newTasks 로 낸다 (QA·남의 하위 작업 제외)', () => {
+    const issues: JiraSyncIssue[] = [
+      issue('ICA-9100', '상품 상세 크래시 수정', 'task', 'doing'),
+      issue('ICA-9101', '원인 분석', 'subtask', 'done', { parentKey: 'ICA-9100' }),
+      issue('ICA-9102', '수정 배포', 'subtask', 'todo', { parentKey: 'ICA-9100' }),
+      issue('ICA-9103', '서버 확인', 'subtask', 'todo', {
+        parentKey: 'ICA-9100',
+        assigneeAccountId: OTHER
+      }),
+      issue('ICA-9104', '회귀 확인', 'subtask', 'todo', {
+        parentKey: 'ICA-9100',
+        issueType: 'QA'
+      })
+    ]
+    const tasks = [
+      refreshTask(201, '원인 분석 (ICA-9101)', 'in_progress', { jira_issue_key: 'ICA-9101' })
+    ]
+    const p = buildTaskRefreshPlan(
+      { myAccountId: ME, rootKey: 'ICA-9100', issues },
+      REFRESH_PROJECT_ID,
+      tasks
+    )
+    expect(p.statusChanges).toEqual([
+      { taskId: 201, jiraKey: 'ICA-9101', from: 'in_progress', to: 'done' }
+    ])
+    expect(p.newTasks).toEqual([
+      {
+        jiraKey: 'ICA-9102',
+        name: '수정 배포 (ICA-9102)',
+        status: 'pending',
+        endDate: null,
+        parentJiraKey: null,
+        parentTaskId: null,
+        sortOrder: 102
+      }
+    ])
+  })
+
+  it('R12: QA 작업은 추가하지 않는다', () => {
+    const keys = refresh().newTasks.map((t) => t.jiraKey)
+    expect(keys).not.toContain('ICA-9056')
+  })
+
+  it('R12: DB 에 연결됐지만 스냅샷에 없는 키는 missingKeys 로 내고 상태는 그대로 둔다', () => {
+    const tasks = [
+      ...refreshTasks(),
+      refreshTask(109, '사라진 작업 (ICA-10001)', 'in_progress', { jira_issue_key: 'ICA-10001' }),
+      refreshTask(110, '권한 없는 작업 (ICA-9999)', 'pending', { jira_issue_key: 'ICA-9999' })
+    ]
+    const p = refresh(tasks)
+    expect(p.missingKeys).toEqual(['ICA-9999', 'ICA-10001'])
+    const touched = [...p.statusChanges, ...p.backfills].map((x) => x.taskId)
+    expect(touched).not.toContain(109)
+    expect(touched).not.toContain(110)
+  })
+
+  it('R12: 남에게 할당된 이슈는 새로 추가하지 않지만, 이미 연결된 작업이면 상태는 맞춘다', () => {
+    const p = refresh()
+    expect(p.newTasks.map((t) => t.jiraKey)).not.toContain('ICA-9057')
+    // ICA-9052 는 담당자가 남으로 바뀌었지만 연결돼 있다
+    expect(p.statusChanges).toContainEqual({
+      taskId: 105,
+      jiraKey: 'ICA-9052',
+      from: 'in_progress',
+      to: 'done'
+    })
+    // 담당자 필터와 무관하게 스냅샷에만 있는 연결 작업도 맞춘다 (자손이 아닌 이슈)
+    const issues = [
+      ...refreshIssues(),
+      issue('ICA-8000', '다른 에픽으로 옮겨진 작업', 'task', 'done', {
+        parentKey: 'ICA-7000',
+        assigneeAccountId: OTHER
+      })
+    ]
+    const tasks = [
+      ...refreshTasks(),
+      refreshTask(111, '옮겨진 작업 (ICA-8000)', 'pending', { jira_issue_key: 'ICA-8000' })
+    ]
+    expect(refresh(tasks, issues).statusChanges).toContainEqual({
+      taskId: 111,
+      jiraKey: 'ICA-8000',
+      from: 'pending',
+      to: 'done'
+    })
+  })
+
+  it('R12: 기존 작업의 name·end_date 는 계획에 나오지 않는다', () => {
+    const issues = refreshIssues()
+    statusOf(issues, 'ICA-9051', { summary: 'Jira 에서 바뀐 요약', duedate: '2026-12-31' })
+    const p = refresh(refreshTasks(), issues)
+    expect(Object.keys(p).sort()).toEqual(
+      ['backfills', 'missingKeys', 'newTasks', 'projectId', 'rootKey', 'statusChanges'].sort()
+    )
+    for (const c of p.statusChanges) {
+      expect(Object.keys(c).sort()).toEqual(['from', 'jiraKey', 'taskId', 'to'])
+    }
+    for (const b of p.backfills) expect(Object.keys(b).sort()).toEqual(['jiraKey', 'taskId'])
+    // 연결된 작업은 새 작업으로 다시 나오지 않는다
+    expect(p.newTasks.map((t) => t.jiraKey)).not.toContain('ICA-9051')
+    const after = applyRefresh(refreshTasks(), p)
+    expect(after.find((t) => t.id === 104)).toMatchObject({
+      name: '노출 로그 추가 (ICA-9051)',
+      end_date: null
+    })
+  })
+
+  it('R12: 루트를 스냅샷에서 못 찾거나 루트가 subtask 면 newTasks 0건이고 상태만 맞춘다', () => {
+    const withoutRoot = refreshIssues().filter((i) => i.key !== REFRESH_ROOT_KEY)
+    const missing = refresh(refreshTasks(), withoutRoot)
+    expect(missing.newTasks).toEqual([])
+    expect(missing.statusChanges).toHaveLength(5)
+
+    const subtaskRoot = refreshIssues().map((i) =>
+      i.key === REFRESH_ROOT_KEY ? { ...i, issueType: '하위 작업', level: 'subtask' as const } : i
+    )
+    const sub = refresh(refreshTasks(), subtaskRoot)
+    expect(sub.newTasks).toEqual([])
+    expect(sub.statusChanges).toHaveLength(5)
+  })
+
+  it('R12: 입력(tasks 배열과 스냅샷)을 바꾸지 않는다', () => {
+    const tasks = [...refreshTasks(), refreshTask(108, '순위 배지 UI (ICA-9050)', 'pending')]
+    const snapshot = refreshSnapshot()
+    const tasksCopy = JSON.parse(JSON.stringify(tasks))
+    const snapshotCopy = JSON.parse(JSON.stringify(snapshot))
+    buildTaskRefreshPlan(snapshot, REFRESH_PROJECT_ID, tasks)
+    expect(tasks).toEqual(tasksCopy)
+    expect(snapshot).toEqual(snapshotCopy)
   })
 })

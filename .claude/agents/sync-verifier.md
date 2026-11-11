@@ -23,7 +23,7 @@ disallowedTools: Edit, Write, NotebookEdit
 4. **싱크업 테스트** — `npx vitest run src/main/services/project-sync` → 종료 코드 0
 5. **규칙 ID 테스트** — 출력 없음 (문서에 R11 이상이 있으면 그 번호도 루프에 넣는다)
    ```sh
-   for i in 1 2 3 4 5 6 7 8 9 10; do grep -qE "R$i([^0-9]|$)" src/main/services/project-sync-plan.test.ts || echo "MISSING R$i"; done
+   for i in 1 2 3 4 5 6 7 8 9 10 11 12; do grep -qE "R$i([^0-9]|$)" src/main/services/project-sync-plan.test.ts || echo "MISSING R$i"; done
    ```
 6. **Jira GET 전용** — `grep -n "method:" src/main/services/jira.ts` → 모든 줄이 `'GET'`
 7. **계획 모듈 순수성** — 0건

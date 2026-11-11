@@ -279,7 +279,10 @@ const api = {
     apply: (selection: { jiraKey: string; force: boolean; projectId: number | null }[]) =>
       ipcRenderer.invoke('projectSync:apply', selection),
     // 아침 자동 동기화(R11·A54) 상태. 읽기 전용이다
-    morningStatus: () => ipcRenderer.invoke('projectSync:morningStatus')
+    morningStatus: () => ipcRenderer.invoke('projectSync:morningStatus'),
+    // R12: Jira 연결 작업 상태 맞춤·새 작업 추가. 'enter' 는 5분 안 재호출이면 건너뛴다
+    refreshTasks: (projectId: number, reason?: 'manual' | 'enter') =>
+      ipcRenderer.invoke('projectSync:refreshTasks', projectId, reason)
   },
   backup: {
     // 저장 위치를 고르면 LinkWork-backup-<시각>.zip 파일 하나를 만든다

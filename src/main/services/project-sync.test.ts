@@ -65,7 +65,8 @@ const jira = vi.hoisted(() => ({
 vi.mock('./jira', () => jira)
 
 import { closeDatabase, getDatabase, initDatabase } from '../db/database'
-import { ME, SITE_URL, projSnapshot } from './__fixtures__/project-sync/proj-snapshot'
+import { issue, ME, OTHER, SITE_URL, projSnapshot } from './__fixtures__/project-sync/proj-snapshot'
+import type { JiraSyncIssue } from './jira'
 import {
   applyProjectSync,
   applyProjectSyncSnapshot,
@@ -74,9 +75,14 @@ import {
   PREVIEW_EXPIRED_MESSAGE,
   previewProjectSync,
   readProjectSyncDbState,
+  PROJECT_NOT_FOUND_MESSAGE,
+  PROJECT_NOT_LINKED_MESSAGE,
   readSyncCreatedKeys,
+  refreshAllJiraProjects,
+  refreshProjectJiraTasks,
   runAutoProjectSync,
-  SYNC_CREATED_KEYS_SETTING
+  SYNC_CREATED_KEYS_SETTING,
+  TASK_REFRESH_ENTER_INTERVAL_MS
 } from './project-sync'
 import {
   buildProjectSyncPlan,
@@ -84,6 +90,7 @@ import {
   INVALID_SELECTION_MESSAGE,
   localToday,
   PROJECT_CHANGED_MESSAGE,
+  TASK_REFRESH_LOG_LABEL,
   UNKNOWN_SELECTION_MESSAGE,
   type JiraSyncSnapshot,
   type ProjectSyncResult
@@ -892,5 +899,475 @@ describe('R11 아침 자동 싱크업 (runAutoProjectSync)', () => {
         force: false
       }))
     )
+  })
+})
+
+// ── R12: Jira 연결 작업 새로고침 ──
+
+const ROOT = 'PROJ-9046'
+
+/**
+ * R12 시나리오. 에픽 ROOT(처리중) 아래:
+ * - 9047 해결됨(done) / 9053 리뷰중(indeterminate) / 9050 할 일(new): DB 에 연결된 작업
+ * - 9054 하위 작업(9053 아래, 내 담당): DB 에 없음 → 기존 상위 아래 새 하위 작업
+ * - 9060 작업 + 9061 하위 작업: DB 에 없음 → 새 상위·하위
+ * - 9055 처리중: DB 에 키 없이 이름에 (PROJ-9055) 만 있음 → 백필 + 상태
+ * - 9070 남의 작업: 추가하지 않는다
+ */
+function r12Issues(): JiraSyncIssue[] {
+  return [
+    issue(ROOT, 'PDP 소셜 프루프', 'epic', 'doing'),
+    issue('PROJ-9047', '랭킹 API', 'task', 'done', { parentKey: ROOT }),
+    issue('PROJ-9050', '로그 정의', 'task', 'todo', { parentKey: ROOT }),
+    issue('PROJ-9053', '배지 UI', 'task', 'doing', { parentKey: ROOT }),
+    issue('PROJ-9054', '배지 애니메이션', 'subtask', 'todo', { parentKey: 'PROJ-9053' }),
+    issue('PROJ-9055', '결제 화면', 'task', 'doing', { parentKey: ROOT }),
+    issue('PROJ-9060', '카테고리 베스트', 'task', 'todo', { parentKey: ROOT, duedate: '2026-12-01' }),
+    issue('PROJ-9061', '베스트 순위 바인딩', 'subtask', 'todo', { parentKey: 'PROJ-9060' }),
+    issue('PROJ-9070', '서버 캐시', 'task', 'todo', { parentKey: ROOT, assigneeAccountId: OTHER })
+  ]
+}
+
+function mockJiraIssues(issues: JiraSyncIssue[]): void {
+  jira.getJiraSiteUrl.mockReturnValue(SITE_URL)
+  jira.getDefaultJiraProjectKey.mockReturnValue('PROJ')
+  jira.getJiraMyAccountId.mockResolvedValue(ME)
+  jira.listIssuesByKeys.mockImplementation(async (keys: string[]) => ({
+    issues: issues.filter((i) => keys.includes(i.key)),
+    truncated: false
+  }))
+  jira.listChildIssues.mockImplementation(async (parents: string[]) => ({
+    issues: issues.filter((i) => i.parentKey !== null && parents.includes(i.parentKey)),
+    truncated: false
+  }))
+}
+
+/** Jira 키가 있는 프로젝트. status_manual=1 로 유효 상태를 날짜와 무관하게 고정한다 */
+function seedLinkedProject(name: string, key: string | null, status = 'in_progress'): number {
+  const res = db()
+    .prepare(
+      `INSERT INTO projects (name, description, dev_start_date, dev_end_date, qa_start_date, qa_end_date,
+                             deploy_date, status, status_manual, priority, jira_issue_key)
+       VALUES (?, '내 메모', '2026-11-01', '2026-11-20', '2026-11-21', '2026-11-25', '2026-12-01', ?, 1, 'now', ?)`
+    )
+    .run(name, status, key)
+  return Number(res.lastInsertRowid)
+}
+
+function seedLinkedTask(
+  projectId: number,
+  name: string,
+  status: string,
+  key: string | null,
+  extra: { sortOrder?: number; endDate?: string | null; parentId?: number | null } = {}
+): number {
+  const res = db()
+    .prepare(
+      `INSERT INTO tasks (project_id, name, status, sort_order, jira_issue_key, end_date, parent_task_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      projectId,
+      name,
+      status,
+      extra.sortOrder ?? 0,
+      key,
+      extra.endDate ?? null,
+      extra.parentId ?? null
+    )
+  return Number(res.lastInsertRowid)
+}
+
+interface R12Seed {
+  projectId: number
+  done: number
+  review: number
+  reverted: number
+  byName: number
+  manual: number
+  gone: number
+}
+
+/** ICA-9046 실례를 본뜬 DB. 상태가 Jira 와 어긋나 있다 */
+function seedR12(): R12Seed {
+  const projectId = seedLinkedProject('PDP 소셜 프루프 넛징', ROOT)
+  return {
+    projectId,
+    done: seedLinkedTask(projectId, '랭킹 API 내가 고친 이름', 'in_progress', 'PROJ-9047', {
+      sortOrder: 0,
+      endDate: '2026-11-15'
+    }),
+    review: seedLinkedTask(projectId, '배지 UI (PROJ-9053)', 'pending', 'PROJ-9053', { sortOrder: 1 }),
+    reverted: seedLinkedTask(projectId, '로그 정의 (PROJ-9050)', 'done', 'PROJ-9050', { sortOrder: 2 }),
+    byName: seedLinkedTask(projectId, '결제 화면 (PROJ-9055)', 'pending', null, { sortOrder: 3 }),
+    manual: seedLinkedTask(projectId, '수동 메모', 'in_progress', null, { sortOrder: 4 }),
+    gone: seedLinkedTask(projectId, '지워진 이슈 (PROJ-9999)', 'pending', 'PROJ-9999', { sortOrder: 5 })
+  }
+}
+
+function taskById(id: number): TaskRow & { sort_order: number } {
+  return db().prepare('SELECT * FROM tasks WHERE id = ?').get(id) as unknown as TaskRow & {
+    sort_order: number
+  }
+}
+
+function jiraCallCount(): number {
+  return (
+    jira.listIssuesByKeys.mock.calls.length +
+    jira.listChildIssues.mock.calls.length +
+    jira.getJiraMyAccountId.mock.calls.length
+  )
+}
+
+function r12Logs(): Array<{ entity_id: number; action: string; details: string }> {
+  return db()
+    .prepare(
+      "SELECT entity_id, action, details FROM activity_log WHERE entity_type = 'project' ORDER BY id"
+    )
+    .all() as unknown as Array<{ entity_id: number; action: string; details: string }>
+}
+
+describe('R12 Jira 연결 작업 새로고침 (refreshProjectJiraTasks)', () => {
+  it('R12: 연결 작업 상태를 역행 포함 Jira 값으로 맞추고 수동 작업·못 찾은 키는 그대로 둔다', async () => {
+    mockJiraIssues(r12Issues())
+    const seed = seedR12()
+
+    const result = await refreshProjectJiraTasks(seed.projectId, { reason: 'manual' })
+
+    expect(taskById(seed.done).status).toBe('done')
+    expect(taskById(seed.review).status).toBe('in_progress')
+    // 앱에서 완료했어도 Jira 가 할 일이면 되돌린다
+    expect(taskById(seed.reverted).status).toBe('pending')
+    expect(taskById(seed.manual)).toMatchObject({ status: 'in_progress', jira_issue_key: null })
+    expect(taskById(seed.gone)).toMatchObject({ status: 'pending', jira_issue_key: 'PROJ-9999' })
+    expect(result).toMatchObject({
+      projectId: seed.projectId,
+      skipped: false,
+      // 9047·9053·9050 + 이름 매칭 9055
+      statusChanged: 4,
+      missingKeys: ['PROJ-9999']
+    })
+    expect(Number.isNaN(Date.parse(result.refreshedAt))).toBe(false)
+
+    const logs = r12Logs()
+    expect(logs).toEqual([
+      {
+        entity_id: seed.projectId,
+        action: 'update',
+        details: `${TASK_REFRESH_LOG_LABEL} (${ROOT}): 상태 4건, 작업 추가 ${result.tasksAdded}건`
+      }
+    ])
+  })
+
+  it('R12: 이름으로 매칭된 작업은 키를 백필하고 상태도 Jira 값으로 맞춘다', async () => {
+    mockJiraIssues(r12Issues())
+    const seed = seedR12()
+
+    await refreshProjectJiraTasks(seed.projectId)
+
+    expect(taskById(seed.byName)).toMatchObject({
+      name: '결제 화면 (PROJ-9055)',
+      jira_issue_key: 'PROJ-9055',
+      status: 'in_progress'
+    })
+  })
+
+  it('R12: Jira 에 새로 생긴 작업·하위 작업을 추가하고 parent 를 연결한다. 남의 작업은 추가하지 않는다', async () => {
+    mockJiraIssues(r12Issues())
+    const seed = seedR12()
+
+    const result = await refreshProjectJiraTasks(seed.projectId)
+
+    const tasks = tasksOf(seed.projectId)
+    const byKey = (k: string): TaskRow | undefined => tasks.find((t) => t.jira_issue_key === k)
+    const best = byKey('PROJ-9060')!
+    expect(best).toMatchObject({
+      name: '카테고리 베스트 (PROJ-9060)',
+      status: 'pending',
+      end_date: '2026-12-01',
+      parent_task_id: null
+    })
+    // 이번에 함께 만든 상위 작업 아래
+    expect(byKey('PROJ-9061')).toMatchObject({
+      name: '베스트 순위 바인딩 (PROJ-9061)',
+      parent_task_id: best.id
+    })
+    // 이미 있던 상위 작업 아래
+    expect(byKey('PROJ-9054')).toMatchObject({ parent_task_id: seed.review })
+    expect(byKey('PROJ-9070')).toBeUndefined()
+    expect(result.tasksAdded).toBe(3)
+    // 키마다 작업은 하나만 있다
+    const keys = tasks.map((t) => t.jira_issue_key).filter((k): k is string => k !== null)
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  it('R12: 기존 작업의 이름·마감일·순서·상위와 프로젝트 필드·문서는 바꾸지 않는다', async () => {
+    mockJiraIssues(r12Issues())
+    const seed = seedR12()
+    seedDoc(seed.projectId, '기획서', 'https://www.notion.so/acme/pdp')
+    const projectBefore = db().prepare('SELECT * FROM projects WHERE id = ?').get(seed.projectId)
+    const docsBefore = docsOf(seed.projectId)
+    const pick = (id: number): unknown => {
+      const t = taskById(id)
+      return [t.name, t.end_date, t.sort_order, t.parent_task_id]
+    }
+    const ids = [seed.done, seed.review, seed.reverted, seed.byName, seed.manual, seed.gone]
+    const before = ids.map(pick)
+
+    await refreshProjectJiraTasks(seed.projectId)
+
+    expect(ids.map(pick)).toEqual(before)
+    expect(taskById(seed.done).name).toBe('랭킹 API 내가 고친 이름')
+    expect(taskById(seed.done).end_date).toBe('2026-11-15')
+    expect(db().prepare('SELECT * FROM projects WHERE id = ?').get(seed.projectId)).toEqual(
+      projectBefore
+    )
+    expect(docsOf(seed.projectId)).toEqual(docsBefore)
+  })
+
+  it('R12: 같은 Jira 값으로 두 번 돌리면 두 번째는 변경 0건이고 DB·활동 로그가 그대로다 (R8 멱등)', async () => {
+    mockJiraIssues(r12Issues())
+    const seed = seedR12()
+
+    await refreshProjectJiraTasks(seed.projectId)
+    const once = dumpAll()
+    const logsOnce = r12Logs().length
+
+    const second = await refreshProjectJiraTasks(seed.projectId)
+    expect(second).toMatchObject({ skipped: false, statusChanged: 0, tasksAdded: 0 })
+    expect(dumpAll()).toEqual(once)
+    expect(r12Logs()).toHaveLength(logsOnce)
+  })
+
+  it('R12: 다른 프로젝트의 작업은 건드리지 않는다', async () => {
+    mockJiraIssues(r12Issues())
+    const seed = seedR12()
+    const other = seedLinkedProject('다른 프로젝트', 'PROJ-1')
+    const otherTask = seedLinkedTask(other, '같은 키 다른 프로젝트', 'pending', 'PROJ-9047')
+
+    await refreshProjectJiraTasks(seed.projectId)
+
+    expect(taskById(otherTask)).toMatchObject({ status: 'pending', jira_issue_key: 'PROJ-9047' })
+  })
+
+  it('R12: Jira 키 없는 프로젝트·없는 프로젝트는 오류이고 Jira 를 부르지 않는다', async () => {
+    mockJiraIssues(r12Issues())
+    const manual = seedLinkedProject('수동 프로젝트', null)
+
+    await expect(refreshProjectJiraTasks(manual)).rejects.toThrow(PROJECT_NOT_LINKED_MESSAGE)
+    await expect(refreshProjectJiraTasks(9999)).rejects.toThrow(PROJECT_NOT_FOUND_MESSAGE)
+    expect(jiraCallCount()).toBe(0)
+  })
+
+  it('R12: Jira 미연결이면 조치를 담은 오류를 던지고 DB 를 건드리지 않는다', async () => {
+    mockJiraIssues(r12Issues())
+    jira.getJiraSiteUrl.mockReturnValue(null)
+    const seed = seedR12()
+    const before = dumpAll()
+
+    await expect(refreshProjectJiraTasks(seed.projectId)).rejects.toThrow(/Jira에 연결되어 있지 않습니다/)
+    expect(dumpAll()).toEqual(before)
+    expect(jiraCallCount()).toBe(0)
+  })
+
+  it('R12: Jira 조회가 실패하면 throw 하고 DB 를 건드리지 않는다', async () => {
+    mockJiraIssues(r12Issues())
+    jira.listChildIssues.mockRejectedValue(new Error('401'))
+    const seed = seedR12()
+    const before = dumpAll()
+
+    await expect(refreshProjectJiraTasks(seed.projectId)).rejects.toThrow('401')
+    expect(dumpAll()).toEqual(before)
+  })
+
+  it('R12: enter 는 5분 안 재호출이면 Jira 를 부르지 않고 skipped 다. 5분이 지나면 다시 실행한다', async () => {
+    mockJiraIssues(r12Issues())
+    const seed = seedR12()
+    const t0 = Date.UTC(2026, 10, 11, 0, 0, 0)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(t0)
+
+    const first = await refreshProjectJiraTasks(seed.projectId, { reason: 'enter' })
+    expect(first.skipped).toBe(false)
+    const calls = jiraCallCount()
+
+    now.mockReturnValue(t0 + TASK_REFRESH_ENTER_INTERVAL_MS - 1)
+    const second = await refreshProjectJiraTasks(seed.projectId, { reason: 'enter' })
+    expect(second).toMatchObject({
+      projectId: seed.projectId,
+      skipped: true,
+      statusChanged: 0,
+      tasksAdded: 0,
+      missingKeys: [],
+      refreshedAt: new Date(t0).toISOString()
+    })
+    expect(jiraCallCount()).toBe(calls)
+
+    now.mockReturnValue(t0 + TASK_REFRESH_ENTER_INTERVAL_MS)
+    const third = await refreshProjectJiraTasks(seed.projectId, { reason: 'enter' })
+    expect(third.skipped).toBe(false)
+    expect(jiraCallCount()).toBeGreaterThan(calls)
+  })
+
+  it('R12: manual 은 5분 안이어도 실행한다. manual 도 진입 새로고침 시각을 기록한다', async () => {
+    mockJiraIssues(r12Issues())
+    const seed = seedR12()
+    const t0 = Date.UTC(2026, 10, 11, 0, 0, 0)
+    vi.spyOn(Date, 'now').mockReturnValue(t0)
+
+    await refreshProjectJiraTasks(seed.projectId, { reason: 'manual' })
+    const calls = jiraCallCount()
+    const again = await refreshProjectJiraTasks(seed.projectId, { reason: 'manual' })
+    expect(again.skipped).toBe(false)
+    expect(jiraCallCount()).toBeGreaterThan(calls)
+
+    const afterManual = jiraCallCount()
+    const enter = await refreshProjectJiraTasks(seed.projectId, { reason: 'enter' })
+    expect(enter.skipped).toBe(true)
+    expect(jiraCallCount()).toBe(afterManual)
+  })
+
+  it('R12: 실패한 새로고침은 시각을 기록하지 않는다. 다음 진입에서 다시 조회한다', async () => {
+    mockJiraIssues(r12Issues())
+    const seed = seedR12()
+    jira.listChildIssues.mockRejectedValueOnce(new Error('network'))
+
+    await expect(refreshProjectJiraTasks(seed.projectId, { reason: 'enter' })).rejects.toThrow('network')
+    const again = await refreshProjectJiraTasks(seed.projectId, { reason: 'enter' })
+    expect(again.skipped).toBe(false)
+  })
+
+  it('R12: Sustain 작업 루트는 그 하위 작업을 최상위 작업으로 추가한다', async () => {
+    mockJiraIssues([
+      issue('PROJ-1893', '상품 상세 크래시 수정', 'task', 'doing', { parentKey: 'PROJ-1892' }),
+      issue('PROJ-1894', '원인 분석', 'subtask', 'done', { parentKey: 'PROJ-1893' }),
+      issue('PROJ-1896', '수정 배포', 'subtask', 'todo', { parentKey: 'PROJ-1893' })
+    ])
+    const projectId = seedLinkedProject('상품 상세 크래시 수정', 'PROJ-1893')
+    const existing = seedLinkedTask(projectId, '원인 분석 (PROJ-1894)', 'in_progress', 'PROJ-1894')
+
+    const result = await refreshProjectJiraTasks(projectId)
+
+    expect(result).toMatchObject({ statusChanged: 1, tasksAdded: 1 })
+    expect(taskById(existing).status).toBe('done')
+    expect(tasksOf(projectId).find((t) => t.jira_issue_key === 'PROJ-1896')).toMatchObject({
+      parent_task_id: null,
+      status: 'pending'
+    })
+    // 에픽이 아니면 손자 조회를 하지 않는다
+    expect(jira.listChildIssues).toHaveBeenCalledTimes(1)
+  })
+
+  it('R12: 루트 이슈를 Jira 에서 못 찾으면 새 작업은 추가하지 않고 연결 작업 상태만 맞춘다', async () => {
+    mockJiraIssues(r12Issues().filter((i) => i.key !== ROOT))
+    const seed = seedR12()
+
+    const result = await refreshProjectJiraTasks(seed.projectId)
+
+    expect(result.tasksAdded).toBe(0)
+    expect(taskById(seed.done).status).toBe('done')
+    expect(taskById(seed.reverted).status).toBe('pending')
+    expect(jira.listChildIssues).not.toHaveBeenCalled()
+  })
+
+  it('R12: 미리보기 캐시를 만들거나 바꾸지 않는다', async () => {
+    mockJiraIssues(r12Issues())
+    const seed = seedR12()
+    await refreshProjectJiraTasks(seed.projectId)
+    expect(hasFreshPreview()).toBe(false)
+
+    // 미리보기가 있으면 새로고침 뒤에도 같은 미리보기로 적용할 수 있다
+    mockJiraFromFixture()
+    const plan = await previewProjectSync()
+    const fixtureIssues = projSnapshot().issues
+    const merged = [...fixtureIssues, ...r12Issues()]
+    jira.listIssuesByKeys.mockImplementation(async (keys: string[]) => ({
+      issues: merged.filter((i) => keys.includes(i.key)),
+      truncated: false
+    }))
+    jira.listChildIssues.mockImplementation(async (parents: string[]) => ({
+      issues: merged.filter((i) => i.parentKey !== null && parents.includes(i.parentKey)),
+      truncated: false
+    }))
+    jira.listMyTodoIssues.mockClear()
+
+    await refreshProjectJiraTasks(seed.projectId)
+
+    expect(hasFreshPreview()).toBe(true)
+    expect(jira.listMyTodoIssues).not.toHaveBeenCalled()
+    const result = await applyProjectSync(
+      plan.items.map((i) => ({ jiraKey: i.jiraKey, force: false, projectId: i.projectId }))
+    )
+    expect(result.created).toBe(plan.items.filter((i) => i.action === 'create').length)
+  })
+})
+
+describe('R12 아침 일괄 새로고침 (refreshAllJiraProjects)', () => {
+  it('R12: 끝난 프로젝트(completed·cancelled)와 키 없는 프로젝트는 건너뛰고 합계를 돌려준다', async () => {
+    mockJiraIssues(r12Issues())
+    const seed = seedR12()
+    const completed = seedLinkedProject('끝난 프로젝트', 'PROJ-500', 'completed')
+    const cancelled = seedLinkedProject('취소된 프로젝트', 'PROJ-600', 'cancelled')
+    seedLinkedProject('수동 프로젝트', null)
+    const doneTask = seedLinkedTask(completed, '끝난 작업 (PROJ-9047)', 'pending', 'PROJ-9047')
+    const cancelledTask = seedLinkedTask(cancelled, '취소 작업 (PROJ-9047)', 'pending', 'PROJ-9047')
+
+    const total = await refreshAllJiraProjects()
+
+    expect(total).toEqual({ projects: 1, statusChanged: 4, tasksAdded: 3 })
+    const rootQueries = jira.listIssuesByKeys.mock.calls.map((c) => c[0] as string[])
+    expect(rootQueries.some((keys) => keys.includes('PROJ-500') || keys.includes('PROJ-600'))).toBe(false)
+    expect(taskById(doneTask).status).toBe('pending')
+    expect(taskById(cancelledTask).status).toBe('pending')
+    expect(taskById(seed.done).status).toBe('done')
+    // 계정 조회는 한 번만 한다
+    expect(jira.getJiraMyAccountId).toHaveBeenCalledTimes(1)
+  })
+
+  it('R12: 자동 상태가 날짜로 끝난 프로젝트도 건너뛴다 (유효 상태 기준)', async () => {
+    mockJiraIssues(r12Issues())
+    // 배포일이 지난 자동 상태 프로젝트 — 화면에는 완료로 보인다
+    const past = seedProject('지난 프로젝트')
+    db().prepare('UPDATE projects SET jira_issue_key = ? WHERE id = ?').run(ROOT, past)
+
+    const total = await refreshAllJiraProjects()
+
+    expect(total).toEqual({ projects: 0, statusChanged: 0, tasksAdded: 0 })
+    expect(jiraCallCount()).toBe(0)
+  })
+
+  it('R12: 한 프로젝트가 실패해도 나머지를 계속한다', async () => {
+    const issues = r12Issues()
+    mockJiraIssues(issues)
+    const broken = seedLinkedProject('먼저 실패', 'PROJ-100')
+    const seed = seedR12()
+    jira.listIssuesByKeys.mockImplementation(async (keys: string[]) => {
+      if (keys.includes('PROJ-100')) throw new Error('403')
+      return { issues: issues.filter((i) => keys.includes(i.key)), truncated: false }
+    })
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const total = await refreshAllJiraProjects()
+
+    expect(errSpy).toHaveBeenCalled()
+    expect(total.projects).toBe(1)
+    expect(taskById(seed.done).status).toBe('done')
+    expect(broken).toBeGreaterThan(0)
+  })
+
+  it('R12: 대상이 모두 실패하면 첫 오류를 throw 한다 (호출자가 failed 로 기록)', async () => {
+    mockJiraIssues(r12Issues())
+    seedR12()
+    jira.getJiraMyAccountId.mockRejectedValue(new Error('token expired'))
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await expect(refreshAllJiraProjects()).rejects.toThrow('token expired')
+  })
+
+  it('R12: 대상이 없으면 Jira 를 부르지 않고 0건이다', async () => {
+    mockJiraIssues(r12Issues())
+    seedLinkedProject('수동 프로젝트', null)
+
+    expect(await refreshAllJiraProjects()).toEqual({ projects: 0, statusChanged: 0, tasksAdded: 0 })
+    expect(jiraCallCount()).toBe(0)
   })
 })

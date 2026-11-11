@@ -68,6 +68,7 @@ vi.mock('../../stores/focusStore', () => ({
 }))
 
 const { FOCUS_RING_CLASS } = await import('../../hooks/useFocusFlash')
+const { taskStatus } = await import('../ui')
 const TaskList = (await import('./TaskList')).default
 const html = renderToStaticMarkup(<TaskList projectId={1} />)
 
@@ -191,5 +192,40 @@ describe('TaskList 포커스', () => {
   it('목록에 없는 작업을 요청하면 강조하지 않는다', () => {
     const markup = renderFocused({ entity: 'task', id: 999, nonce: 2 })
     expect(markup).not.toContain(FOCUS_RING_CLASS)
+  })
+})
+
+// R12: Jira 연결 작업의 상태는 동기화가 Jira 값으로 덮는다. 그래서 UI 에서 바꿀 수 없어야 한다.
+describe('R12 Jira 연결 작업 상태 잠금', () => {
+  const render = (tasks: Task[]): string => {
+    currentTasks = tasks
+    try {
+      return renderToStaticMarkup(<TaskList projectId={1} />)
+    } finally {
+      currentTasks = TASKS
+    }
+  }
+  const linked: Task = { ...mk(1, '[ICA-9047] 연결 작업'), jira_issue_key: 'ICA-9047' }
+  const manual: Task = { ...mk(2, '수동 작업'), jira_issue_key: null }
+
+  it('R12 jira_issue_key 가 있는 작업은 select 없이 배지와 Jira 툴팁만 보인다', () => {
+    const markup = render([linked])
+    expect(markup).not.toContain('<select')
+    expect(markup).toContain('title="Jira 상태를 따릅니다 (ICA-9047)"')
+    // 배지는 드롭다운과 같은 색 토큰과 상태 라벨을 보여 준다
+    const { badge, label } = taskStatus[linked.status]
+    expect(markup).toMatch(new RegExp(`<span class="[^"]*${badge}[^"]*" title="Jira[^"]*">${label}</span>`))
+  })
+
+  it('R12 jira_issue_key 가 없는 작업은 상태 select 를 그대로 보인다', () => {
+    const markup = render([manual])
+    expect(markup).toContain('<select')
+    expect(markup).not.toContain('Jira 상태를 따릅니다')
+  })
+
+  it('R12 섞여 있으면 수동 작업에만 select 가 붙는다', () => {
+    const markup = render([linked, manual])
+    expect(markup.split('<select')).toHaveLength(2)
+    expect(markup.split('Jira 상태를 따릅니다')).toHaveLength(2)
   })
 })

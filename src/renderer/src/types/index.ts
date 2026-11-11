@@ -36,6 +36,9 @@ export interface Project {
   // 않을 수 있어 옵셔널이다 — 정렬은 utils/projectOrder.ts가 미지정을 흡수한다.
   priority?: ProjectPriority | null
   sort_order?: number
+  /** 싱크업이 연결한 Jira 루트 이슈 키(에픽 또는 작업). 수동 프로젝트는 null 이다.
+   * 구버전 테스트 픽스처가 값을 갖지 않을 수 있어 옵셔널이다 */
+  jira_issue_key?: string | null
   created_at: string
   updated_at: string
 }
@@ -50,6 +53,9 @@ export interface Task {
   end_date: string | null
   status: 'pending' | 'in_progress' | 'done'
   sort_order: number
+  /** 연결된 Jira 이슈 키. 값이 있으면 상태는 Jira 값을 따르고 UI 에서 잠긴다 (PROJECT_SYNC R12).
+   * DB 는 항상 내려준다. 구버전 테스트 픽스처가 값을 갖지 않을 수 있어 옵셔널이다 */
+  jira_issue_key?: string | null
   created_at: string
 }
 
@@ -1058,6 +1064,24 @@ export interface ProjectSyncAPI {
   morningStatus: () => Promise<
     { success: true; status: MorningSyncStatus } | { success: false; error: string }
   >
+  /** 한 프로젝트의 Jira 연결 작업 상태를 Jira 값으로 맞추고 새 작업을 추가한다 (R12).
+   * reason 'enter' 는 5분 안 재호출을 건너뛴다. 기본은 'manual' 이다 */
+  refreshTasks: (
+    projectId: number,
+    reason?: 'manual' | 'enter'
+  ) => Promise<{ success: true; result: TaskRefreshResult } | { success: false; error: string }>
+}
+
+/** R12 새로고침 결과. main 의 project-sync.ts 와 같은 모양이다 */
+export interface TaskRefreshResult {
+  projectId: number
+  /** 진입 새로고침이 5분 안이라 건너뜀 */
+  skipped: boolean
+  statusChanged: number
+  tasksAdded: number
+  missingKeys: string[]
+  /** ISO */
+  refreshedAt: string
 }
 
 // ── 앱 데이터 백업 · 복원 (docs/DATA_BACKUP.md) ──

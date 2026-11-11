@@ -343,28 +343,38 @@ export default function ScheduleTimeline({
           <div className="h-9 flex items-end justify-center pb-0.5">
             <span className={typo.microLabel}>Status</span>
           </div>
-          {orderedTasks.map(({ task, isGroupStart }) => (
-            <div
-              key={task.id}
-              className={`${rowH} flex items-center justify-center${isGroupStart ? ` ${groupGap}` : ''}`}
-            >
-              <Badge
-                color={taskStatus[task.status].badge}
-                size="xs"
-                title={onCycleStatus ? 'Click to change status' : undefined}
-                onClick={
-                  onCycleStatus
-                    ? (e) => {
-                        e.stopPropagation()
-                        onCycleStatus(task)
-                      }
-                    : undefined
-                }
+          {orderedTasks.map(({ task, isGroupStart }) => {
+            // Jira 연결 작업의 상태는 동기화가 Jira 값으로 덮는다(R12). 클릭으로 바꾸지 못하게 잠근다.
+            const cycle = onCycleStatus && !task.jira_issue_key ? onCycleStatus : undefined
+            return (
+              <div
+                key={task.id}
+                className={`${rowH} flex items-center justify-center${isGroupStart ? ` ${groupGap}` : ''}`}
               >
-                {taskStatus[task.status].label}
-              </Badge>
-            </div>
-          ))}
+                <Badge
+                  color={taskStatus[task.status].badge}
+                  size="xs"
+                  title={
+                    task.jira_issue_key
+                      ? `Jira 상태를 따릅니다 (${task.jira_issue_key})`
+                      : cycle
+                        ? 'Click to change status'
+                        : undefined
+                  }
+                  onClick={
+                    cycle
+                      ? (e) => {
+                          e.stopPropagation()
+                          cycle(task)
+                        }
+                      : undefined
+                  }
+                >
+                  {taskStatus[task.status].label}
+                </Badge>
+              </div>
+            )
+          })}
           <div className="h-6 mt-1.5" />
         </div>
       </div>

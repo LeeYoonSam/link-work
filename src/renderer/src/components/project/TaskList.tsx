@@ -52,9 +52,11 @@ function TaskRowShell({
 
 interface TaskListProps {
   projectId: number
+  /** Tasks 제목 오른쪽에 놓을 컨트롤. 상세 화면의 Jira 동기화 버튼이 쓴다 */
+  headerActions?: React.ReactNode
 }
 
-export default function TaskList({ projectId }: TaskListProps): React.ReactNode {
+export default function TaskList({ projectId, headerActions }: TaskListProps): React.ReactNode {
   const { tasks, createTask, updateTask, deleteTask } = useProjectStore()
   const [newTaskName, setNewTaskName] = useState('')
   const [newStartDate, setNewStartDate] = useState('')
@@ -118,6 +120,7 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
   }
 
   const handleStatusChange = async (task: Task, status: string): Promise<void> => {
+    if (task.jira_issue_key) return
     await updateTask(task.id, { status })
   }
 
@@ -195,23 +198,33 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
               {formatTaskRange(task.start_date, task.end_date)}
             </span>
           )}
-          {/* 네이티브 select 화살표를 숨기고 커스텀 셰브론으로 겹침 방지 */}
-          <span
-            className={`relative inline-flex items-center rounded-full shrink-0 ${taskStatus[task.status].badge}`}
-          >
-            <select
-              value={task.status}
-              onChange={(e) => handleStatusChange(task, e.target.value)}
-              className="appearance-none bg-transparent text-xs font-medium pl-2.5 pr-6 py-1 cursor-pointer focus:outline-none"
+          {task.jira_issue_key ? (
+            // Jira 연결 작업의 상태는 동기화가 Jira 값으로 덮는다(R12). 바꿔도 되돌아가므로 배지만 보여 준다.
+            <span
+              className={`inline-flex items-center rounded-full shrink-0 text-xs font-medium px-2.5 py-1 ${taskStatus[task.status].badge}`}
+              title={`Jira 상태를 따릅니다 (${task.jira_issue_key})`}
             >
-              {Object.entries(taskStatus).map(([value, { label }]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-            <ChevronDownIcon size={12} className="absolute right-2 pointer-events-none" />
-          </span>
+              {taskStatus[task.status].label}
+            </span>
+          ) : (
+            // 네이티브 select 화살표를 숨기고 커스텀 셰브론으로 겹침 방지
+            <span
+              className={`relative inline-flex items-center rounded-full shrink-0 ${taskStatus[task.status].badge}`}
+            >
+              <select
+                value={task.status}
+                onChange={(e) => handleStatusChange(task, e.target.value)}
+                className="appearance-none bg-transparent text-xs font-medium pl-2.5 pr-6 py-1 cursor-pointer focus:outline-none"
+              >
+                {Object.entries(taskStatus).map(([value, { label }]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDownIcon size={12} className="absolute right-2 pointer-events-none" />
+            </span>
+          )}
           <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
             {!isChild && (
               <button
@@ -293,7 +306,14 @@ export default function TaskList({ projectId }: TaskListProps): React.ReactNode 
 
   return (
     <div>
-      <SectionTitle className="mb-3">Tasks</SectionTitle>
+      {headerActions ? (
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <SectionTitle>Tasks</SectionTitle>
+          {headerActions}
+        </div>
+      ) : (
+        <SectionTitle className="mb-3">Tasks</SectionTitle>
+      )}
 
       {tasks.length === 0 ? (
         <p className="text-sm text-gray-400 mb-3">No tasks yet</p>

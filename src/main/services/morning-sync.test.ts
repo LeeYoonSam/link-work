@@ -70,7 +70,7 @@ vi.mock('./jira', () => jira)
 const release = vi.hoisted(() => ({ syncAllReleases: vi.fn() }))
 vi.mock('./release-note-sync', () => release)
 
-const projectSync = vi.hoisted(() => ({ runAutoProjectSync: vi.fn() }))
+const projectSync = vi.hoisted(() => ({ runAutoProjectSync: vi.fn(), refreshAllJiraProjects: vi.fn() }))
 vi.mock('./project-sync', () => projectSync)
 
 import { getMorningSyncStatus, morningSyncEventKey, runMorningSyncIfDue, toProjectOutcome } from './morning-sync'
@@ -117,6 +117,7 @@ beforeEach(() => {
   jira.getDefaultJiraProjectKey.mockReturnValue('APP')
   releaseOk()
   projectOk()
+  projectSync.refreshAllJiraProjects.mockResolvedValue({ projects: 1, statusChanged: 2, tasksAdded: 1 })
 })
 
 describe('A54: 아침 자동 동기화 실행기', () => {
@@ -344,5 +345,62 @@ describe('R11 결과 변환 (toProjectOutcome)', () => {
   it('형식이 틀린 값은 0 으로 센다', () => {
     expect(toProjectOutcome(null)).toMatchObject({ status: 'ok', newCount: 0 })
     expect(toProjectOutcome({ result: { created: -1, updated: 'x' } })).toMatchObject({ newCount: 0, updatedCount: 0 })
+  })
+})
+
+describe('R12 아침 Jira 연결 작업 새로고침', () => {
+  it('R12: R11 자동 싱크업 뒤에 refreshAllJiraProjects 를 1번 부르고 부분 결과는 R11 값이다', async () => {
+    await runMorningSyncIfDue(false, NOW)
+    expect(projectSync.refreshAllJiraProjects).toHaveBeenCalledTimes(1)
+    const r11Order = projectSync.runAutoProjectSync.mock.invocationCallOrder[0]
+    const r12Order = projectSync.refreshAllJiraProjects.mock.invocationCallOrder[0]
+    expect(r12Order).toBeGreaterThan(r11Order)
+    expect(payloadOf().project).toMatchObject({ status: 'ok', newCount: 2, updatedCount: 1, reviewCount: 1 })
+  })
+
+  it('R12: R11 이 deferred 여도 R12 는 돈다. 부분은 deferred 로 남는다', async () => {
+    projectSync.runAutoProjectSync.mockResolvedValueOnce({ status: 'deferred' })
+    await runMorningSyncIfDue(false, NOW)
+    expect(projectSync.refreshAllJiraProjects).toHaveBeenCalledTimes(1)
+    expect(payloadOf().project).toMatchObject({ status: 'deferred', attempts: 0 })
+  })
+
+  it('R12: 새로고침이 throw 하면 싱크업 부분은 failed 이고 R11 의 수는 남는다', async () => {
+    projectSync.refreshAllJiraProjects.mockRejectedValue(new Error('token expired'))
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await runMorningSyncIfDue(false, NOW)
+    errSpy.mockRestore()
+    expect(payloadOf().project).toMatchObject({
+      status: 'failed',
+      error: 'token expired',
+      attempts: 1,
+      newCount: 2,
+      updatedCount: 1,
+      reviewCount: 1
+    })
+  })
+
+  it('R12: R11 이 deferred 이고 새로고침이 throw 하면 failed 다', async () => {
+    projectSync.runAutoProjectSync.mockResolvedValueOnce({ status: 'deferred' })
+    projectSync.refreshAllJiraProjects.mockRejectedValue(new Error('403'))
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await runMorningSyncIfDue(false, NOW)
+    errSpy.mockRestore()
+    expect(payloadOf().project).toMatchObject({ status: 'failed', error: '403', attempts: 1 })
+  })
+
+  it('R12: R11 이 throw 하면 새로고침을 부르지 않고 failed 다', async () => {
+    projectSync.runAutoProjectSync.mockRejectedValue(new Error('network'))
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await runMorningSyncIfDue(false, NOW)
+    errSpy.mockRestore()
+    expect(projectSync.refreshAllJiraProjects).not.toHaveBeenCalled()
+    expect(payloadOf().project).toMatchObject({ status: 'failed', error: 'network' })
+  })
+
+  it('R12: Jira 미연결이면 새로고침도 부르지 않는다', async () => {
+    jira.isJiraConnected.mockReturnValue(false)
+    await runMorningSyncIfDue(false, NOW)
+    expect(projectSync.refreshAllJiraProjects).not.toHaveBeenCalled()
   })
 })

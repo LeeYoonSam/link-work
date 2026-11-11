@@ -128,11 +128,19 @@ export function registerTaskIpc(): void {
       }
     }
 
+    // R12: Jira 연결 작업의 상태는 Jira 가 원본이다. 입력의 status 는 무시하고 나머지 필드만 반영한다.
+    // 오류를 던지지 않는다. 오늘 화면의 '원본 완료'가 실패로 보이지 않게 하기 위해서다.
+    const linked = db.prepare('SELECT jira_issue_key FROM tasks WHERE id = ?').get(id) as
+      | { jira_issue_key: string | null }
+      | undefined
+    const statusLocked = !!linked?.jira_issue_key
+
     const fields: string[] = []
     const values: unknown[] = []
 
     for (const [key, value] of Object.entries(input)) {
       if (!ALLOWED_TASK_FIELDS.has(key)) continue
+      if (key === 'status' && statusLocked) continue
       fields.push(`${key} = ?`)
       values.push(value)
     }
@@ -146,7 +154,8 @@ export function registerTaskIpc(): void {
 
     db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`).run(...values)
     const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as { name: string }
-    logActivity('task', 'update', id, row.name, Object.keys(input).join(', '))
+    const loggedKeys = Object.keys(input).filter((k) => !(k === 'status' && statusLocked))
+    logActivity('task', 'update', id, row.name, loggedKeys.join(', '))
     return row
   })
 

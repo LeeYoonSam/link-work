@@ -10,7 +10,7 @@ argument-hint: [변경 또는 조사 내용]
 설계 판단이 들어가는 변경이면 CLAUDE.md 정책대로 `/team-dev`와 함께 쓰고, 이 스킬의 완료 조건을 플랜에 포함한다.
 
 ## 1. 기준 문서를 먼저 읽는다
-`docs/PROJECT_SYNC.md`가 단일 기준이다. 특히 §3 규칙(R1~R10)과 이유, §5 덮어쓰지 않는 필드, §8 가드레일, §11 알려진 한계.
+`docs/PROJECT_SYNC.md`가 단일 기준이다. 특히 §3 규칙(R1~R12)과 이유, §5 덮어쓰지 않는 필드, §8 가드레일, §11 알려진 한계.
 요청된 동작이 문서와 충돌하면 코드부터 고치지 말고 그 충돌을 먼저 사용자/리더에게 확인한다.
 
 ## 2. 변경 순서 — 문서 → 픽스처·테스트 → 구현
@@ -33,7 +33,7 @@ argument-hint: [변경 또는 조사 내용]
 - [ ] `npm run build` 종료 코드 0
 - [ ] `npx vitest run src/main/services/project-sync` 종료 코드 0
 - [ ] 규칙 ID별 테스트 존재 — 아래가 `MISSING`을 출력하지 않음
-      `for i in 1 2 3 4 5 6 7 8 9 10; do grep -qE "R$i([^0-9]|$)" src/main/services/project-sync-plan.test.ts || echo "MISSING R$i"; done`
+      `for i in 1 2 3 4 5 6 7 8 9 10 11 12; do grep -qE "R$i([^0-9]|$)" src/main/services/project-sync-plan.test.ts || echo "MISSING R$i"; done`
       (R11 이상을 추가했다면 그 번호도 루프에 넣는다)
 - [ ] Jira 쓰기 호출 없음 — `grep -n "method:" src/main/services/jira.ts` 결과가 전부 `'GET'`
 - [ ] 계획 모듈 순수성 — `grep -nE "from '(electron|better-sqlite3|\.\./db)" src/main/services/project-sync-plan.ts src/main/services/project-sync-adf.ts` 0건
@@ -49,5 +49,5 @@ CLAUDE.md 검증 루프 정책과 같다.
 ## 6. 금지 사항
 - **Jira 쓰기 금지** — `jira.ts`에 GET 외 메서드를 추가하지 않는다. 조사 중에도 이슈 생성·수정·상태 전환·댓글·워크로그·이슈 링크 생성 도구를 호출하지 않는다.
 - **싱크업에서의 삭제 금지** — 프로젝트·작업·문서를 지우는 경로를 만들지 않는다 (R4).
-- **덮어쓰기 범위 확대 금지** — 보수 경로(§5)를 완화하거나 강제 업데이트(R10)가 덮는 필드를 늘리는 것은 문서 변경 없이 하지 않는다. 덮어쓰기는 `force=true`(사용자 확인)일 때만이다.
+- **덮어쓰기 범위 확대 금지** — 보수 경로(§5)를 완화하거나 강제 업데이트(R10)가 덮는 필드를 늘리는 것은 문서 변경 없이 하지 않는다. 덮어쓰기는 `force=true`(사용자 확인)일 때만이다. 예외는 R12 다. R12 는 Jira 연결 작업의 status 만 Jira 값으로 맞춘다.
 - **사용자 실 DB에 쓰기 테스트 금지** — 적용 테스트는 `project-sync.test.ts`처럼 better-sqlite3를 `node:sqlite` 인메모리 shim으로 바꿔 실제 스키마로만 돌린다(`release-note-sync.test.ts` 패턴). 앱을 실행해 실데이터로 apply를 시험하지 않는다. 실 DB 확인이 필요하면 읽기 전용으로 조회만 한다.

@@ -23,7 +23,7 @@ import type {
   MorningSyncStatus
 } from './assistant-types'
 import { getDefaultJiraProjectKey, isJiraConnected } from './jira'
-import { runAutoProjectSync } from './project-sync'
+import { refreshAllJiraProjects, runAutoProjectSync } from './project-sync'
 import { syncAllReleases } from './release-note-sync'
 
 const PART_STATUSES: readonly MorningSyncPartStatus[] = ['running', 'ok', 'skipped', 'failed', 'deferred']
@@ -262,11 +262,24 @@ export function toProjectOutcome(r: unknown): PartOutcome {
   }
 }
 
+/**
+ * R11 자동 싱크업 뒤에 R12 Jira 연결 작업 새로고침을 한다.
+ * R11 이 deferred 여도 R12 는 돈다. R12 는 미리보기 캐시를 건드리지 않는다.
+ * 부분 결과의 수는 R11 결과로만 센다.
+ * R12 가 throw 하면 이 부분은 failed 다. 이때도 R11 의 수는 남긴다. R11 은 이미 적용되었기 때문이다.
+ * R11 이 throw 하면 R12 를 부르지 않는다. 호출자가 failed 로 기록한다.
+ */
 async function runProjectPart(): Promise<PartOutcome> {
   const skip = skipReason()
   if (skip) return emptyOutcome('skipped', skip)
-  const r: unknown = await runAutoProjectSync()
-  return toProjectOutcome(r)
+  const r11 = toProjectOutcome(await runAutoProjectSync())
+  try {
+    await refreshAllJiraProjects()
+  } catch (err) {
+    logError('project R12', err)
+    return { ...r11, status: 'failed', error: messageOf(err) }
+  }
+  return r11
 }
 
 function writePayload(eventId: number, payload: MorningSyncPayload): void {

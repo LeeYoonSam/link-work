@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { Project } from '../../types'
+import type { Project, TaskRefreshResult } from '../../types'
 
 // 상세 헤더의 중단/재개 버튼이 현재 상태를 라벨로 드러내는지 고정한다.
 // 버튼이 보내는 페이로드는 statusSelectionPatch 테스트가 맡는다.
@@ -14,7 +14,8 @@ vi.mock('../../stores/projectStore', () => ({
     setEditingProject: () => {},
     deleteProject: async () => {},
     patchProject: async () => {},
-    updateTask: async () => {}
+    updateTask: async () => {},
+    fetchTasks: async () => {}
   })
 }))
 
@@ -28,10 +29,15 @@ vi.mock('../../stores/documentStore', () => ({
 }))
 
 // 작업 목록과 릴리스 노트는 각자 스토어·IPC를 끌고 온다. 이 테스트의 관심사가 아니라 잘라낸다.
-vi.mock('./TaskList', () => ({ default: () => null }))
+// 단, 헤더 슬롯(headerActions)은 ProjectDetail 이 채우므로 그대로 그린다.
+vi.mock('./TaskList', () => ({
+  default: ({ headerActions }: { headerActions?: React.ReactNode }) => headerActions ?? null
+}))
 vi.mock('./ReleaseNotesCard', () => ({ default: () => null }))
 
-const { default: ProjectDetail, detailMenuItems } = await import('./ProjectDetail')
+const { default: ProjectDetail, detailMenuItems, refreshOnEnter, refreshResultLabel } = await import(
+  './ProjectDetail'
+)
 
 const PROJECT: Project = {
   id: 1,
@@ -121,5 +127,100 @@ describe('detailMenuItems', () => {
     items[1].onSelect()
     expect(toggle).toHaveBeenCalledOnce()
     expect(remove).toHaveBeenCalledOnce()
+  })
+})
+
+// R12: Jira 와 연결된 프로젝트만 작업 상태를 Jira 값으로 다시 맞추는 버튼을 둔다.
+describe('R12 Jira 동기화 버튼', () => {
+  it('R12 jira_issue_key 가 있는 프로젝트는 Jira 동기화 버튼을 보인다', () => {
+    expect(buttonLabels(render({ jira_issue_key: 'ICA-9046' }))).toContain('Jira 동기화')
+  })
+
+  it('R12 jira_issue_key 가 없는 프로젝트는 버튼을 보이지 않는다', () => {
+    expect(buttonLabels(render({ jira_issue_key: null }))).not.toContain('Jira 동기화')
+    expect(buttonLabels(render())).not.toContain('Jira 동기화')
+  })
+})
+
+describe('R12 refreshResultLabel', () => {
+  const result = (over: Partial<TaskRefreshResult>): TaskRefreshResult => ({
+    projectId: 1,
+    skipped: false,
+    statusChanged: 0,
+    tasksAdded: 0,
+    missingKeys: [],
+    refreshedAt: '2026-11-11T00:00:00.000Z',
+    ...over
+  })
+
+  it('R12 변경이 있으면 상태·작업 추가 건수를 보인다', () => {
+    expect(refreshResultLabel(result({ statusChanged: 4, tasksAdded: 1 }))).toBe(
+      '상태 4건 · 작업 추가 1건'
+    )
+  })
+
+  it('R12 변경이 없으면 변경 없음을 보인다', () => {
+    expect(refreshResultLabel(result({}))).toBe('변경 없음')
+  })
+})
+
+describe('R12 진입 새로고침 refreshOnEnter', () => {
+  const ok = (over: Partial<TaskRefreshResult>) =>
+    vi.fn(async () => ({
+      success: true as const,
+      result: {
+        projectId: 29,
+        skipped: false,
+        statusChanged: 0,
+        tasksAdded: 0,
+        missingKeys: [],
+        refreshedAt: '2026-11-11T00:00:00.000Z',
+        ...over
+      }
+    }))
+
+  it('R12 enter 사유로 1번 부르고 변경이 있으면 작업 목록을 다시 읽는다', async () => {
+    const refresh = ok({ statusChanged: 5 })
+    const fetchTasks = vi.fn(async () => {})
+    await refreshOnEnter(29, { refresh, fetchTasks, isCurrent: () => true })
+    expect(refresh).toHaveBeenCalledOnce()
+    expect(refresh).toHaveBeenCalledWith(29, 'enter')
+    expect(fetchTasks).toHaveBeenCalledWith(29)
+  })
+
+  it('R12 건너뛰었거나 변경이 없으면 다시 읽지 않는다', async () => {
+    const fetchTasks = vi.fn(async () => {})
+    await refreshOnEnter(29, { refresh: ok({ skipped: true }), fetchTasks, isCurrent: () => true })
+    await refreshOnEnter(29, { refresh: ok({}), fetchTasks, isCurrent: () => true })
+    expect(fetchTasks).not.toHaveBeenCalled()
+  })
+
+  it('R12 프로젝트를 떠난 뒤 늦게 온 응답은 무시한다', async () => {
+    const fetchTasks = vi.fn(async () => {})
+    await refreshOnEnter(29, { refresh: ok({ tasksAdded: 2 }), fetchTasks, isCurrent: () => false })
+    expect(fetchTasks).not.toHaveBeenCalled()
+  })
+
+  it('R12 실패는 콘솔에만 남기고 throw 하지 않는다', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const fetchTasks = vi.fn(async () => {})
+    try {
+      await refreshOnEnter(29, {
+        refresh: vi.fn(async () => ({ success: false as const, error: 'Jira 와 연결된 프로젝트가 아닙니다.' })),
+        fetchTasks,
+        isCurrent: () => true
+      })
+      await refreshOnEnter(29, {
+        refresh: vi.fn(async () => {
+          throw new Error('IPC 끊김')
+        }),
+        fetchTasks,
+        isCurrent: () => true
+      })
+      expect(err).toHaveBeenCalledTimes(2)
+      expect(fetchTasks).not.toHaveBeenCalled()
+    } finally {
+      err.mockRestore()
+    }
   })
 })

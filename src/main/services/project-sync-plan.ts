@@ -5,11 +5,12 @@ import { adfToPlainText, extractAdfLinks } from './project-sync-adf'
 /**
  * Jira 프로젝트 싱크업의 계획 단계 — **순수 함수만** 둔다(electron·DB import 금지).
  *
- * Jira 스냅샷 + 현재 DB 스냅샷 → 무엇을 만들고/채우고/건너뛸지. 규칙(R1~R11)은
+ * Jira 스냅샷 + 현재 DB 스냅샷 → 무엇을 만들고/채우고/건너뛸지. 규칙(R1~R12)은
  * docs/PROJECT_SYNC.md에 있고, 이 파일의 주석은 규칙 ID로 그 문서를 가리킨다.
  * 기본 계획은 "추가"와 "빈 칸 채우기"만 만든다. 덮어쓰기는 사용자가 기존 프로젝트를 골라
  * 강제 업데이트를 확인했을 때(R10)만 쓰이는 별도 op(force)이고, 삭제 op는 어디에도 없다(R4).
  * 아침 자동 싱크업(R11)은 이 계획에서 안전한 항목만 고른다. 강제 업데이트와 삭제는 고르지 않는다.
+ * 연결 작업 새로고침(R12)은 별도 계획이다. Jira 연결 작업의 status 만 Jira 값으로 맞추고 새 작업을 더한다.
  */
 
 // ── IPC 계약 (renderer의 types/index.ts와 같은 형태를 유지할 것) ──
@@ -617,6 +618,40 @@ function nextSortOrder(rows: Array<{ sort_order: number }>): number {
   return rows.reduce((max, r) => Math.max(max, r.sort_order ?? 0), -1) + 1
 }
 
+/** R6 작업 매칭: `tasks.jira_issue_key` → 키가 빈 작업 중 이름에 `(KEY)`/`[KEY]` */
+function findExistingTask(
+  projectTasks: DbTaskRow[],
+  key: string,
+  usedTaskIds: ReadonlySet<number>
+): DbTaskRow | undefined {
+  return (
+    projectTasks.find((t) => t.jira_issue_key === key && !usedTaskIds.has(t.id)) ??
+    projectTasks.find(
+      (t) => !t.jira_issue_key && !usedTaskIds.has(t.id) && taskNameHasKey(t.name, key)
+    )
+  )
+}
+
+/** R6 새 작업. 상위가 기존 작업이면 그 id, 이번에 함께 만들어지면 키로 잇는다 */
+function plannedNewTask(
+  d: DesiredTask,
+  existingByJiraKey: ReadonlyMap<string, DbTaskRow>,
+  sortOrder: number
+): PlannedTask {
+  const key = d.issue.key
+  // 기존 상위가 이미 누군가의 하위라면 1단계 계층을 지키려고 그 최상위 아래에 둔다.
+  const parentExisting = d.parentKey ? existingByJiraKey.get(d.parentKey) : undefined
+  return {
+    jiraKey: key,
+    name: `${d.issue.summary} (${key})`,
+    status: statusFromCategory(d.issue.statusCategory),
+    endDate: d.issue.duedate ?? null,
+    parentJiraKey: d.parentKey && !parentExisting ? d.parentKey : null,
+    parentTaskId: parentExisting ? (parentExisting.parent_task_id ?? parentExisting.id) : null,
+    sortOrder
+  }
+}
+
 export function buildProjectSyncPlan(
   snapshot: JiraSyncSnapshot,
   db: DbSyncState,
@@ -675,11 +710,7 @@ export function buildProjectSyncPlan(
 
     for (const d of collectDesiredTasks(root, snapshot.issues, isWanted)) {
       const key = d.issue.key
-      const existing =
-        projectTasks.find((t) => t.jira_issue_key === key && !usedTaskIds.has(t.id)) ??
-        projectTasks.find(
-          (t) => !t.jira_issue_key && !usedTaskIds.has(t.id) && taskNameHasKey(t.name, key)
-        )
+      const existing = findExistingTask(projectTasks, key, usedTaskIds)
       const status = statusFromCategory(d.issue.statusCategory)
 
       if (existing) {
@@ -720,17 +751,7 @@ export function buildProjectSyncPlan(
       }
 
       // 상위가 기존 작업이면 그 id로, 새 작업이면 적용 시 키로 이어 붙인다.
-      // 기존 상위가 이미 누군가의 하위라면 1단계 계층을 지키려고 그 최상위 아래에 둔다.
-      const parentExisting = d.parentKey ? existingByJiraKey.get(d.parentKey) : undefined
-      newTasks.push({
-        jiraKey: key,
-        name: `${d.issue.summary} (${key})`,
-        status,
-        endDate: d.issue.duedate ?? null,
-        parentJiraKey: d.parentKey && !parentExisting ? d.parentKey : null,
-        parentTaskId: parentExisting ? (parentExisting.parent_task_id ?? parentExisting.id) : null,
-        sortOrder: taskOrder++
-      })
+      newTasks.push(plannedNewTask(d, existingByJiraKey, taskOrder++))
     }
 
     // 문서 diff — URL(끝 슬래시 무시, 같은 사이트 browse는 키) 기준으로 없는 것만
@@ -964,4 +985,132 @@ export function parseSyncCreatedKey(detail: string | null | undefined): string |
   if (typeof detail !== 'string') return null
   const m = SYNC_CREATED_DETAIL_PATTERN.exec(detail)
   return m ? m[1] : null
+}
+
+// ── Jira 연결 작업 새로고침 (R12) ──
+
+/** 활동 로그 detail 의 머리말. 형식은 `Jira 상태 동기화 (<ROOTKEY>): 상태 n건, 작업 추가 m건` */
+export const TASK_REFRESH_LOG_LABEL = 'Jira 상태 동기화'
+
+export interface TaskRefreshStatusChange {
+  taskId: number
+  jiraKey: string
+  /** 현재 DB 값 */
+  from: string
+  /** Jira 매핑 값. 역행도 허용한다 */
+  to: TaskStatus
+}
+
+/** 이름의 `(KEY)`/`[KEY]` 로 매칭된 키 없는 작업에 키를 채운다 */
+export interface TaskRefreshBackfill {
+  taskId: number
+  jiraKey: string
+}
+
+export interface TaskRefreshPlan {
+  projectId: number
+  rootKey: string
+  /** 순서는 입력 tasks 순서다 */
+  statusChanges: TaskRefreshStatusChange[]
+  /** 순서는 입력 tasks 순서다 */
+  backfills: TaskRefreshBackfill[]
+  /** parentJiraKey·parentTaskId·sortOrder 규칙은 R6 와 같다 */
+  newTasks: PlannedTask[]
+  /** DB 작업에 연결된 키 중 snapshot.issues 에 없는 키 (중복 없음, 키 번호순) */
+  missingKeys: string[]
+}
+
+export interface TaskRefreshSnapshot {
+  myAccountId: string | null
+  rootKey: string
+  /** 루트 이슈 + 자손(작업·하위 작업) + DB 에 연결된 작업 키로 조회한 이슈 전부 */
+  issues: JiraSyncIssue[]
+}
+
+/** 루트 이슈 level 로 구조를 정한다. subtask 이거나 없으면 null — 새 작업을 추가하지 않는다 */
+function refreshRootOf(issue: JiraSyncIssue | undefined): ProjectRoot | null {
+  if (!issue) return null
+  if (issue.level === 'epic') return { key: issue.key, kind: 'epic' }
+  if (issue.level === 'standard') return { key: issue.key, kind: 'sustain' }
+  return null
+}
+
+const byIssueKeyText = (a: string, b: string): number =>
+  a.localeCompare(b, 'en', { numeric: true })
+
+/**
+ * R12: Jira 연결 프로젝트 하나의 작업 새로고침 계획.
+ * - 연결 작업(`jira_issue_key` 있음)의 status 를 Jira 값으로 맞춘다. 역행도 맞춘다.
+ * - 루트의 자손 중 없는 작업은 R6 와 같이 새 작업으로 낸다. 이름 `(KEY)` 매칭은 키 백필과 status 맞춤.
+ * - 기존 작업의 name·end_date·sort_order·parent_task_id, 프로젝트, 문서는 계획에 넣지 않는다.
+ * - 스냅샷에 없는 연결 키는 missingKeys 로만 보고한다. 삭제 op 는 없다.
+ */
+export function buildTaskRefreshPlan(
+  snapshot: TaskRefreshSnapshot,
+  projectId: number,
+  tasks: DbTaskRow[]
+): TaskRefreshPlan {
+  const byKey = issueMap(snapshot.issues)
+  const linkedKeys = new Set(
+    tasks.map((t) => t.jira_issue_key).filter((k): k is string => !!k)
+  )
+
+  // R6 담당자 필터. 트리거 대신 이미 연결된 키를 항상 포함한다.
+  const isWanted = (i: JiraSyncIssue): boolean =>
+    linkedKeys.has(i.key) ||
+    i.assigneeAccountId === null ||
+    (snapshot.myAccountId !== null && i.assigneeAccountId === snapshot.myAccountId)
+
+  const statusByTaskId = new Map<number, TaskRefreshStatusChange>()
+  const backfillByTaskId = new Map<number, TaskRefreshBackfill>()
+  const usedTaskIds = new Set<number>()
+  const existingByJiraKey = new Map<string, DbTaskRow>()
+  const newTasks: PlannedTask[] = []
+  let taskOrder = nextSortOrder(tasks)
+
+  const matchStatus = (task: DbTaskRow, issue: JiraSyncIssue): void => {
+    const to = statusFromCategory(issue.statusCategory)
+    if (task.status !== to) {
+      statusByTaskId.set(task.id, { taskId: task.id, jiraKey: issue.key, from: task.status, to })
+    }
+  }
+
+  const root = refreshRootOf(byKey.get(snapshot.rootKey))
+  if (root) {
+    for (const d of collectDesiredTasks(root, snapshot.issues, isWanted)) {
+      const key = d.issue.key
+      const existing = findExistingTask(tasks, key, usedTaskIds)
+      if (existing) {
+        usedTaskIds.add(existing.id)
+        existingByJiraKey.set(key, existing)
+        if (!existing.jira_issue_key) {
+          backfillByTaskId.set(existing.id, { taskId: existing.id, jiraKey: key })
+        }
+        matchStatus(existing, d.issue)
+        continue
+      }
+      newTasks.push(plannedNewTask(d, existingByJiraKey, taskOrder++))
+    }
+  }
+
+  // 자손 수집에 들지 않은 연결 작업(담당자 변경·다른 부모로 이동·루트 없음)도 스냅샷에 있으면 맞춘다.
+  const missing = new Set<string>()
+  for (const t of tasks) {
+    if (!t.jira_issue_key || usedTaskIds.has(t.id)) continue
+    const issue = byKey.get(t.jira_issue_key)
+    if (issue) matchStatus(t, issue)
+    else missing.add(t.jira_issue_key)
+  }
+
+  const inTaskOrder = <T>(byId: Map<number, T>): T[] =>
+    tasks.flatMap((t) => (byId.has(t.id) ? [byId.get(t.id)!] : []))
+
+  return {
+    projectId,
+    rootKey: snapshot.rootKey,
+    statusChanges: inTaskOrder(statusByTaskId),
+    backfills: inTaskOrder(backfillByTaskId),
+    newTasks,
+    missingKeys: [...missing].sort(byIssueKeyText)
+  }
 }

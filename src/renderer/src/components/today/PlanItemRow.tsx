@@ -11,6 +11,7 @@ import type {
 import { Badge, LinkIcon, button } from '../ui'
 import { openInternalLink } from '../../utils/openInternalLink'
 import { isInternalLink } from '../../utils/internalLink'
+import { isJiraLinkedTaskItem } from '../../stores/assistantStore'
 import {
   EMPHASIS,
   META_TEXT,
@@ -322,8 +323,11 @@ export default function PlanItemRow({
   const group = isGroupItem(item, items)
   const focused = !group && focusItemId !== null && item.id === focusItemId
   const focusEmphasis = focused && !finished
+  // Jira 연결 작업은 상태를 Jira 가 정하므로 원본 완료를 내놓지 않는다 (PROJECT_SYNC R12)
   const canCompleteOrigin =
-    (item.source === 'todo' || item.source === 'task') && /^(todo|task):\d+$/.test(item.candidate_id)
+    (item.source === 'todo' || item.source === 'task') &&
+    /^(todo|task):\d+$/.test(item.candidate_id) &&
+    !isJiraLinkedTaskItem(item)
   const dayCount = dayCountLabel(item.first_planned_date, logicalDate)
   const due = dueLabel(item.due_date, logicalDate)
   const dueUrgent = !finished && isDueAlert(item, logicalDate)

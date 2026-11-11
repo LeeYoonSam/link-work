@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { format } from 'date-fns'
-import type { Task } from '../../types'
+import type { ProjectSyncAPI, Task, TaskRefreshResult } from '../../types'
 import TaskList from './TaskList'
 import ScheduleTimeline from './ScheduleTimeline'
 import ReleaseNotesCard from './ReleaseNotesCard'
@@ -46,6 +46,41 @@ export function detailMenuItems({
   ]
 }
 
+/** R12 새로고침 결과 문구. 상태 변경과 작업 추가가 모두 0건이면 `변경 없음` 이다 */
+export function refreshResultLabel(r: TaskRefreshResult): string {
+  return r.statusChanged + r.tasksAdded > 0
+    ? `상태 ${r.statusChanged}건 · 작업 추가 ${r.tasksAdded}건`
+    : '변경 없음'
+}
+
+/**
+ * 상세 화면 진입 새로고침(R12). 변경이 있을 때만 작업 목록을 다시 읽는다.
+ * 실패는 콘솔에만 남긴다. 이유: 진입은 사용자가 요청한 동작이 아니라 화면을 막으면 안 된다.
+ * isCurrent 가 false 면 늦게 온 응답이라 버린다. 이유: 다른 프로젝트의 작업 목록을 덮는다.
+ */
+export async function refreshOnEnter(
+  projectId: number,
+  deps: {
+    refresh: ProjectSyncAPI['refreshTasks']
+    fetchTasks: (projectId: number) => Promise<void>
+    isCurrent: () => boolean
+  }
+): Promise<void> {
+  try {
+    const res = await deps.refresh(projectId, 'enter')
+    if (!deps.isCurrent()) return
+    if (!res.success) {
+      console.error('[R12] 진입 새로고침 실패:', res.error)
+      return
+    }
+    const { skipped, statusChanged, tasksAdded } = res.result
+    if (skipped || statusChanged + tasksAdded === 0) return
+    await deps.fetchTasks(projectId)
+  } catch (e) {
+    if (deps.isCurrent()) console.error('[R12] 진입 새로고침 실패:', e)
+  }
+}
+
 export default function ProjectDetail(): React.ReactNode {
   const {
     currentProject,
@@ -54,12 +89,21 @@ export default function ProjectDetail(): React.ReactNode {
     deleteProject,
     patchProject,
     tasks,
-    updateTask
+    updateTask,
+    fetchTasks
   } = useProjectStore()
   const { documents, fetchDocuments, openDocument, deleteDocument } = useDocumentStore()
   const [showDocForm, setShowDocForm] = useState(false)
+  // Jira 동기화 버튼 상태 (R12). 프로젝트가 바뀌면 초기화한다.
+  const [jiraSyncing, setJiraSyncing] = useState(false)
+  const [jiraSyncMsg, setJiraSyncMsg] = useState<{ text: string; error: boolean } | null>(null)
+  // 비동기 응답이 도착했을 때 화면이 아직 같은 프로젝트인지 판정한다
+  const projectIdRef = useRef<number | null>(null)
+  projectIdRef.current = currentProject?.id ?? null
 
   const cycleStatus = async (task: Task): Promise<void> => {
+    // Jira 연결 작업은 상태가 Jira 값을 따른다(R12). 바꿔도 다음 동기화가 되돌린다.
+    if (task.jira_issue_key) return
     const nextStatus: Record<string, string> = {
       pending: 'in_progress',
       in_progress: 'done',
@@ -74,6 +118,23 @@ export default function ProjectDetail(): React.ReactNode {
     }
   }, [currentProject?.id])
 
+  // 진입 새로고침 (R12). main 이 같은 프로젝트를 5분 안에 다시 부르면 건너뛴다.
+  useEffect(() => {
+    setJiraSyncing(false)
+    setJiraSyncMsg(null)
+    const refresh = window.api?.projectSync?.refreshTasks
+    if (!currentProject?.jira_issue_key || typeof refresh !== 'function') return
+    let alive = true
+    void refreshOnEnter(currentProject.id, {
+      refresh,
+      fetchTasks,
+      isCurrent: () => alive
+    })
+    return () => {
+      alive = false
+    }
+  }, [currentProject?.id, currentProject?.jira_issue_key])
+
   if (!currentProject) {
     return <div className="text-gray-400">Project not found</div>
   }
@@ -85,6 +146,50 @@ export default function ProjectDetail(): React.ReactNode {
   }
 
   const status = projectStatus[currentProject.status] ?? projectStatus.cancelled
+
+  const handleJiraSync = async (): Promise<void> => {
+    const id = currentProject.id
+    setJiraSyncing(true)
+    setJiraSyncMsg(null)
+    try {
+      const res = await window.api.projectSync.refreshTasks(id, 'manual')
+      if (projectIdRef.current !== id) return
+      if (res.success) {
+        await fetchTasks(id)
+        if (projectIdRef.current !== id) return
+        setJiraSyncMsg({ text: refreshResultLabel(res.result), error: false })
+      } else {
+        setJiraSyncMsg({ text: res.error, error: true })
+      }
+    } catch (e) {
+      if (projectIdRef.current !== id) return
+      setJiraSyncMsg({ text: e instanceof Error ? e.message : String(e), error: true })
+    } finally {
+      if (projectIdRef.current === id) setJiraSyncing(false)
+    }
+  }
+
+  // Jira 와 연결된 프로젝트만 동기화 버튼을 둔다 (R12)
+  const jiraSyncControl = currentProject.jira_issue_key ? (
+    <div className="flex shrink-0 items-center gap-2">
+      {jiraSyncMsg && (
+        <span
+          className={`text-xs ${jiraSyncMsg.error ? 'text-red-600' : 'text-gray-500'}`}
+          role={jiraSyncMsg.error ? 'alert' : 'status'}
+        >
+          {jiraSyncMsg.text}
+        </span>
+      )}
+      <button
+        onClick={handleJiraSync}
+        disabled={jiraSyncing}
+        title={`Jira ${currentProject.jira_issue_key} 의 작업 상태와 새 작업을 가져옵니다`}
+        className={`px-3 py-1.5 text-xs whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${button.subtle}`}
+      >
+        {jiraSyncing ? '동기화 중…' : 'Jira 동기화'}
+      </button>
+    </div>
+  ) : null
 
   // 중단은 날짜로 계산할 수 없는 사정이라 늘 수동 고정이고, 재개는 그 고정을 풀어
   // 날짜 기반 자동 계산으로 되돌리는 것이다. 되돌릴 상태를 따로 기억해 둘 필요가 없다.
@@ -193,7 +298,7 @@ export default function ProjectDetail(): React.ReactNode {
       )}
 
       <Card>
-        <TaskList projectId={currentProject.id} />
+        <TaskList projectId={currentProject.id} headerActions={jiraSyncControl} />
       </Card>
 
       <Card className="mt-6">

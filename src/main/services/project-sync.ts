@@ -14,6 +14,7 @@ import {
 import type { JiraRemoteLink, JiraSyncIssue } from './jira'
 import {
   buildProjectSyncPlan,
+  buildTaskRefreshPlan,
   localToday,
   parseProjectSyncSelection,
   parseSyncCreatedKey,
@@ -21,12 +22,16 @@ import {
   selectAutoSyncSelection,
   selectProjectSyncOps,
   SYNC_LOG_LABELS,
+  TASK_REFRESH_LOG_LABEL,
   type DbSyncState,
+  type DbTaskRow,
   type JiraSyncSnapshot,
   type ProjectSyncPlan,
   type ProjectSyncResult,
   type ProjectSyncSelection,
-  type SelectedProjectSyncOp
+  type SelectedProjectSyncOp,
+  type TaskRefreshPlan,
+  type TaskRefreshSnapshot
 } from './project-sync-plan'
 
 /**
@@ -46,12 +51,20 @@ const MAX_ANCESTOR_DEPTH = 2
 
 let cached: { snapshot: JiraSyncSnapshot; cachedAt: number } | null = null
 
+const JIRA_NOT_CONNECTED_MESSAGE =
+  'Jira에 연결되어 있지 않습니다. 연동 설정에서 API 토큰을 등록해 주세요.'
+
+// R12: 프로젝트별 마지막 작업 새로고침 시각(ms). main 메모리에만 둔다.
+const taskRefreshedAt = new Map<number, number>()
+
 /**
  * 캐시를 버린다. Jira 연결 해제·자격 저장·기본 프로젝트 변경 때 부른다(ipc/release-note.ipc.ts) —
  * 다른 계정·프로젝트의 미리보기가 적용되면 안 된다. 이후 apply는 미리보기를 다시 요구한다.
  */
 export function clearProjectSyncCache(): void {
   cached = null
+  // R12 진입 새로고침 기록도 버린다. 계정이 바뀌면 다음 진입에서 새로 조회해야 한다.
+  taskRefreshedAt.clear()
 }
 
 /**
@@ -66,9 +79,7 @@ export function hasFreshPreview(now: number = Date.now()): boolean {
 /** Jira에서 트리거와 그 조상·자손, 루트의 원격 링크까지 한 번에 모은다 */
 export async function fetchJiraSyncSnapshot(): Promise<JiraSyncSnapshot> {
   const siteUrl = getJiraSiteUrl()
-  if (!siteUrl) {
-    throw new Error('Jira에 연결되어 있지 않습니다. 연동 설정에서 API 토큰을 등록해 주세요.')
-  }
+  if (!siteUrl) throw new Error(JIRA_NOT_CONNECTED_MESSAGE)
   const projectKey = getDefaultJiraProjectKey()
   if (!projectKey) {
     throw new Error('Jira 기본 프로젝트가 설정되지 않았습니다. 연동 설정에서 선택해 주세요.')
@@ -374,6 +385,239 @@ function emptySyncResult(plan: ProjectSyncPlan): ProjectSyncResult {
     skipped: plan.skipped,
     applied: []
   }
+}
+
+// ── R12: Jira 연결 작업 새로고침 ──
+
+/** R12: 진입 새로고침을 건너뛰는 간격. 같은 프로젝트를 이 시간 안에 새로고침했으면 Jira 를 부르지 않는다 */
+export const TASK_REFRESH_ENTER_INTERVAL_MS = 5 * 60 * 1000
+
+export const PROJECT_NOT_FOUND_MESSAGE = '프로젝트를 찾을 수 없습니다.'
+export const PROJECT_NOT_LINKED_MESSAGE = 'Jira 와 연결된 프로젝트가 아닙니다.'
+
+export interface TaskRefreshResult {
+  projectId: number
+  /** 진입 새로고침이 5분 안이라 건너뛰었다 */
+  skipped: boolean
+  statusChanged: number
+  tasksAdded: number
+  /** DB 작업에 있지만 Jira 에서 찾지 못한 키. 그대로 두고 보고만 한다 */
+  missingKeys: string[]
+  /** ISO 시각. skipped 이면 마지막 새로고침 시각이다 */
+  refreshedAt: string
+}
+
+type TaskRefreshReason = 'manual' | 'enter' | 'auto'
+
+/** R12 대상 작업 행. buildTaskRefreshPlan 에 넘기는 그 프로젝트의 작업만 읽는다 */
+function readProjectTasks(projectId: number): DbTaskRow[] {
+  return getDatabase()
+    .prepare(
+      `SELECT id, project_id, parent_task_id, name, status, sort_order, jira_issue_key, end_date
+       FROM tasks WHERE project_id = ? ORDER BY id`
+    )
+    .all(projectId) as unknown as DbTaskRow[]
+}
+
+/**
+ * R12: 루트 이슈·자손·DB 연결 키의 이슈를 GET 으로만 모은다.
+ * 루트가 에픽이면 자식 작업의 하위 작업까지 한 번 더 받는다.
+ */
+async function fetchTaskRefreshSnapshot(
+  rootKey: string,
+  linkedKeys: string[],
+  myAccountId: string | null
+): Promise<TaskRefreshSnapshot> {
+  const byKey = new Map<string, JiraSyncIssue>()
+  const add = (issues: JiraSyncIssue[]): void => {
+    for (const issue of issues) byKey.set(issue.key, issue)
+  }
+
+  add((await listIssuesByKeys([rootKey])).issues)
+  const root = byKey.get(rootKey)
+  // 하위 작업 루트·못 찾은 루트는 새 작업을 추가하지 않는다. 자손 조회도 하지 않는다.
+  if (root && root.level !== 'subtask') {
+    const children = await listChildIssues([rootKey])
+    add(children.issues)
+    if (root.level === 'epic') {
+      const taskKeys = children.issues.filter((i) => i.level === 'standard').map((i) => i.key)
+      if (taskKeys.length > 0) add((await listChildIssues(taskKeys)).issues)
+    }
+  }
+
+  const missing = [...new Set(linkedKeys)].filter((k) => !byKey.has(k))
+  if (missing.length > 0) add((await listIssuesByKeys(missing)).issues)
+
+  return { myAccountId, rootKey, issues: [...byKey.values()] }
+}
+
+/**
+ * R12 계획을 한 트랜잭션으로 쓴다. 삭제는 없다.
+ * 순서: 키 백필 → 상태 맞춤 → 새 작업 추가.
+ * 백필을 먼저 하는 이유: 이름으로 매칭된 작업의 상태 UPDATE 가 jira_issue_key 조건을 통과해야 한다.
+ * 상태 UPDATE 는 WHERE 에 jira_issue_key 를 한 번 더 건다. 계획과 쓰기 사이에 연결이 바뀐 작업을 덮지 않기 위해서다.
+ */
+function writeTaskRefresh(plan: TaskRefreshPlan, projectId: number): { statusChanged: number; tasksAdded: number } {
+  const db = getDatabase()
+  const backfillTaskKey = db.prepare(
+    `UPDATE tasks SET jira_issue_key = ?
+     WHERE id = ? AND (jira_issue_key IS NULL OR jira_issue_key = '')`
+  )
+  const syncTaskStatus = db.prepare('UPDATE tasks SET status = ? WHERE id = ? AND jira_issue_key = ?')
+  const insertTask = db.prepare(
+    `INSERT INTO tasks (project_id, name, start_date, end_date, status, sort_order, parent_task_id, jira_issue_key)
+     VALUES (?, ?, NULL, ?, ?, ?, ?, ?)`
+  )
+
+  for (const b of plan.backfills) backfillTaskKey.run(b.jiraKey, b.taskId)
+
+  let statusChanged = 0
+  for (const c of plan.statusChanges) {
+    const res = syncTaskStatus.run(c.to, c.taskId, c.jiraKey)
+    statusChanged += Number(res.changes)
+  }
+
+  // 계획이 상위 작업을 하위보다 먼저 둔다. 한 번의 순회로 새 상위 id 를 이어 붙인다.
+  const newTaskIds = new Map<string, number>()
+  for (const task of plan.newTasks) {
+    const parentId =
+      task.parentTaskId ??
+      (task.parentJiraKey !== null ? (newTaskIds.get(task.parentJiraKey) ?? null) : null)
+    const res = insertTask.run(
+      projectId,
+      task.name,
+      task.endDate,
+      task.status,
+      task.sortOrder,
+      parentId,
+      task.jiraKey
+    )
+    newTaskIds.set(task.jiraKey, Number(res.lastInsertRowid))
+  }
+  return { statusChanged, tasksAdded: plan.newTasks.length }
+}
+
+async function runTaskRefresh(
+  projectId: number,
+  reason: TaskRefreshReason,
+  myAccountId?: () => Promise<string | null>
+): Promise<TaskRefreshResult> {
+  const project = getDatabase()
+    .prepare('SELECT id, name, jira_issue_key FROM projects WHERE id = ?')
+    .get(projectId) as { id: number; name: string; jira_issue_key: string | null } | undefined
+  if (!project) throw new Error(PROJECT_NOT_FOUND_MESSAGE)
+  const rootKey = project.jira_issue_key?.trim() ?? ''
+  if (!rootKey) throw new Error(PROJECT_NOT_LINKED_MESSAGE)
+
+  const last = taskRefreshedAt.get(projectId)
+  if (reason === 'enter' && last !== undefined && Date.now() - last < TASK_REFRESH_ENTER_INTERVAL_MS) {
+    return {
+      projectId,
+      skipped: true,
+      statusChanged: 0,
+      tasksAdded: 0,
+      missingKeys: [],
+      refreshedAt: new Date(last).toISOString()
+    }
+  }
+
+  if (!getJiraSiteUrl()) throw new Error(JIRA_NOT_CONNECTED_MESSAGE)
+  const me = myAccountId ? await myAccountId() : await getJiraMyAccountId()
+  const linkedKeys = readProjectTasks(projectId)
+    .map((t) => t.jira_issue_key)
+    .filter((k): k is string => k !== null && k !== '')
+  const snapshot = await fetchTaskRefreshSnapshot(rootKey, linkedKeys, me)
+
+  // 조회 사이에 사용자가 작업을 고쳤을 수 있다. 계획은 트랜잭션 안에서 현재 DB 로 다시 세운다.
+  const db = getDatabase()
+  const { plan, counts } = db.transaction(() => {
+    const plan = buildTaskRefreshPlan(snapshot, projectId, readProjectTasks(projectId))
+    return { plan, counts: writeTaskRefresh(plan, projectId) }
+  })()
+
+  const refreshedAtMs = Date.now()
+  taskRefreshedAt.set(projectId, refreshedAtMs)
+
+  // 활동 로그·알림은 커밋이 끝난 뒤에 한다. 롤백된 변경이 로그에 남지 않게 하기 위해서다.
+  if (counts.statusChanged > 0 || counts.tasksAdded > 0) {
+    logActivity(
+      'project',
+      'update',
+      projectId,
+      project.name,
+      `${TASK_REFRESH_LOG_LABEL} (${rootKey}): 상태 ${counts.statusChanged}건, 작업 추가 ${counts.tasksAdded}건`
+    )
+    notifyDataChanged()
+  }
+
+  return {
+    projectId,
+    skipped: false,
+    statusChanged: counts.statusChanged,
+    tasksAdded: counts.tasksAdded,
+    missingKeys: plan.missingKeys,
+    refreshedAt: new Date(refreshedAtMs).toISOString()
+  }
+}
+
+/**
+ * R12: 프로젝트 하나의 Jira 연결 작업 상태를 Jira 값으로 맞추고 새 작업을 추가한다.
+ * reason 'enter' 는 같은 프로젝트를 5분 안에 새로고침했으면 Jira 를 부르지 않고 skipped 를 돌려준다.
+ * Jira 는 GET 만 한다. 미리보기 캐시는 읽지도 쓰지도 않는다.
+ */
+export async function refreshProjectJiraTasks(
+  projectId: number,
+  opts: { reason: 'manual' | 'enter' } = { reason: 'manual' }
+): Promise<TaskRefreshResult> {
+  return runTaskRefresh(projectId, opts.reason)
+}
+
+/**
+ * R12: 아침 자동 동기화에서 부른다. Jira 키가 있고 유효 상태가 끝나지 않은 프로젝트를 차례로 새로고침한다.
+ * 한 프로젝트의 실패는 기록하고 다음 프로젝트로 넘어간다.
+ * 대상이 있는데 전부 실패하면 첫 오류를 throw 한다. 토큰 만료 같은 공통 실패를 호출자가 failed 로 기록하게 하기 위해서다.
+ */
+export async function refreshAllJiraProjects(): Promise<{
+  projects: number
+  statusChanged: number
+  tasksAdded: number
+}> {
+  const rows = getDatabase()
+    .prepare(
+      `SELECT id, name, description, jira_issue_key, status, status_manual,
+              dev_start_date, dev_end_date, qa_start_date, qa_end_date, deploy_date
+       FROM projects
+       WHERE jira_issue_key IS NOT NULL AND TRIM(jira_issue_key) != ''
+       ORDER BY id`
+    )
+    .all() as unknown as Array<{ id: number; jira_issue_key: string | null } & ProjectStatusFields>
+  const targets = rows
+    .map((row) => applyProjectAutoStatus(row))
+    .filter((p) => p.status !== 'completed' && p.status !== 'cancelled')
+    .map((p) => p.id)
+
+  const total = { projects: 0, statusChanged: 0, tasksAdded: 0 }
+  if (targets.length === 0) return total
+  if (!getJiraSiteUrl()) throw new Error(JIRA_NOT_CONNECTED_MESSAGE)
+
+  // 계정 조회는 한 번만 한다. 프로젝트마다 같은 값이다.
+  let me: Promise<string | null> | null = null
+  const getMe = (): Promise<string | null> => (me ??= getJiraMyAccountId())
+
+  let firstError: unknown = null
+  for (const id of targets) {
+    try {
+      const r = await runTaskRefresh(id, 'auto', getMe)
+      total.projects++
+      total.statusChanged += r.statusChanged
+      total.tasksAdded += r.tasksAdded
+    } catch (e) {
+      console.error('[project-sync] R12 refresh', id, e)
+      firstError ??= e
+    }
+  }
+  if (total.projects === 0 && firstError !== null) throw firstError
+  return total
 }
 
 // 선택된 op만 쓴다(R9). 삭제는 어디에도 없다(R4).

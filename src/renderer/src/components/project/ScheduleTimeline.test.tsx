@@ -294,3 +294,21 @@ describe('간트 렌더 기본 동작', () => {
     expect(firstGap).toBeLessThan(left.indexOf('두 번째 그룹 상위 작업'))
   })
 })
+
+describe('R12 Jira 연결 작업 상태 잠금', () => {
+  const JIRA_TASKS: Task[] = [
+    task({ id: 1, name: '[ICA-9047] Jira 연결 작업', status: 'done', jira_issue_key: 'ICA-9047' }),
+    task({ id: 2, name: '수동 작업', status: 'pending', jira_issue_key: null })
+  ]
+  const renderLocked = (): string =>
+    renderToStaticMarkup(
+      <ScheduleTimeline project={PROJECT} tasks={JIRA_TASKS} onCycleStatus={() => {}} variant="full" />
+    )
+
+  it('R12 Jira 연결 작업의 상태 배지는 Jira 툴팁을 보이고 클릭 안내를 붙이지 않는다', () => {
+    const { right } = columns(renderLocked())
+    expect(right).toContain('title="Jira 상태를 따릅니다 (ICA-9047)"')
+    // 클릭 안내는 수동 작업 1건에만 붙는다
+    expect(right.split('title="Click to change status"')).toHaveLength(2)
+  })
+})
