@@ -74,6 +74,18 @@ export async function saveNotionToken(token: string): Promise<{ workspace: strin
   return { workspace }
 }
 
+/**
+ * 설정 화면 [연결 테스트]. 저장된 토큰으로 /users/me 를 GET 한 번 부른다.
+ * 실패하면 status 가 붙은 에러를 던진다(분류는 integration-verify.ts). 토큰은 돌려주지 않는다.
+ */
+export async function verifyStoredNotion(): Promise<{ account: string | null }> {
+  const me = (await notionRequest('/users/me', { method: 'GET' })) as {
+    name?: string
+    bot?: { workspace_name?: string }
+  }
+  return { account: me.bot?.workspace_name ?? me.name ?? null }
+}
+
 async function notionRequest(
   path: string,
   init: { method: 'GET' | 'POST'; body?: unknown },
@@ -94,21 +106,26 @@ async function notionRequest(
   })
 
   if (!res.ok) {
-    if (res.status === 401) {
-      throw new Error('Notion 토큰이 유효하지 않습니다. 연동 설정에서 토큰을 다시 등록해 주세요.')
-    }
-    if (res.status === 404) {
-      throw new Error(
-        '페이지를 찾을 수 없거나 통합(integration)에 공유되지 않았습니다. Notion에서 해당 페이지의 연결(Connections)에 통합을 추가해 주세요.'
-      )
-    }
-    if (res.status === 429) {
-      throw new Error('Notion API 요청 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.')
-    }
-    const body = await res.text().catch(() => '')
-    throw new Error(`Notion API 오류 (${res.status}): ${body.slice(0, 200)}`)
+    // 상태 코드를 붙여 둔다. 연결 테스트가 메시지 대신 코드로 원인을 분류한다
+    throw Object.assign(await notionHttpError(res), { status: res.status })
   }
   return res.json()
+}
+
+async function notionHttpError(res: Response): Promise<Error> {
+  if (res.status === 401) {
+    return new Error('Notion 토큰이 유효하지 않습니다. 연동 설정에서 토큰을 다시 등록해 주세요.')
+  }
+  if (res.status === 404) {
+    return new Error(
+      '페이지를 찾을 수 없거나 통합(integration)에 공유되지 않았습니다. Notion에서 해당 페이지의 연결(Connections)에 통합을 추가해 주세요.'
+    )
+  }
+  if (res.status === 429) {
+    return new Error('Notion API 요청 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.')
+  }
+  const body = await res.text().catch(() => '')
+  return new Error(`Notion API 오류 (${res.status}): ${body.slice(0, 200)}`)
 }
 
 export interface NotionSearchResult {

@@ -181,3 +181,19 @@ export function clearCache(): void {
   lastTodayFetchTime = 0
   weekCache.clear()
 }
+
+/**
+ * 설정 화면 [연결 테스트]. 저장된 OAuth 토큰으로 primary 캘린더를 GET 한 번 조회해 id 를 계정으로 쓴다.
+ * 실패하면 googleapis 에러를 그대로 던진다(분류는 integration-verify.ts). 토큰은 돌려주지 않는다.
+ */
+export async function verifyGoogleCalendar(): Promise<{ account: string | null }> {
+  const auth = getAuthenticatedClient()
+  if (!auth) throw new Error('Google 캘린더가 연결되어 있지 않습니다.')
+  const calendar = google.calendar({ version: 'v3', auth })
+  // 연결 테스트가 멈추지 않도록 타임아웃을 걸고 재시도를 끈다(기본 재시도는 지연을 키운다)
+  const res = await calendar.calendarList.get(
+    { calendarId: 'primary' },
+    { timeout: 15_000, retry: false }
+  )
+  return { account: res.data.id ?? null }
+}

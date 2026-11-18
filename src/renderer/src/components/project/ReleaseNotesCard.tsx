@@ -52,7 +52,7 @@ export default function ReleaseNotesCard({ deployVersion }: ReleaseNotesCardProp
           </button>
         </div>
 
-        <JiraTokenWarning status={jiraStatus} />
+        <JiraTokenWarning status={jiraStatus} onOpenSettings={() => setShowSettings(true)} />
 
         {!connected ? (
           <EmptyState>

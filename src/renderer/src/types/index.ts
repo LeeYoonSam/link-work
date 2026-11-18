@@ -879,6 +879,8 @@ export interface JiraConnectionStatus {
   expired: boolean
   /** 전체 동기화가 배포 버전과 같은 이름의 릴리스를 찾을 Jira 프로젝트. 미설정이면 전체 동기화 불가 */
   defaultProjectKey: string | null
+  /** 저장된 Atlassian 이메일. Bitbucket 팝업에 미리 채운다. 토큰은 돌려주지 않는다 */
+  email: string | null
 }
 
 /**
@@ -936,6 +938,24 @@ export interface JiraAPI {
   /** 전체 동기화가 릴리스를 찾을 기준 프로젝트. null이면 해제 */
   setDefaultProject: (projectKey: string | null) => Promise<{ success: boolean; error?: string }>
   openIssue: (issueKey: string) => Promise<{ success: boolean }>
+}
+
+// ── 설정 화면: 연동 연결 테스트 (main 의 services/integration-verify.ts 와 같은 모양) ──
+export type IntegrationId = 'google' | 'jira' | 'bitbucket' | 'notion'
+export type IntegrationVerifyCode =
+  | 'not_connected'
+  | 'auth_failed'
+  | 'expired'
+  | 'unreachable'
+  | 'unknown'
+/** throw 하지 않는다. 비밀값은 담지 않는다. checkedAt 은 ISO 문자열 */
+export type IntegrationVerifyResult =
+  | { ok: true; account: string | null; checkedAt: string }
+  | { ok: false; code: IntegrationVerifyCode; error: string; checkedAt: string }
+
+export interface SettingsAPI {
+  /** 저장된 자격 증명으로 가장 가벼운 GET 한 번. 연결 안 됐으면 외부 호출 없이 not_connected */
+  verifyIntegration: (id: IntegrationId) => Promise<IntegrationVerifyResult>
 }
 
 // ── Jira 프로젝트 싱크업 (docs/PROJECT_SYNC.md) ──

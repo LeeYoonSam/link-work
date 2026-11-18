@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
-  BitbucketSettingsModal,
   ComposerControls,
   PlanApprovalCard,
   WRITE_MODES,
@@ -11,7 +10,8 @@ import {
 import { FALLBACK_MODEL_OPTIONS, useAiChatStore } from '../../stores/aiChatStore'
 import type { AiChat } from '../../types'
 
-// AI 대화 화면의 모델 선택지 폴백, 입력창 아래 컨트롤, 계획 승인 카드, Bitbucket 연동 모달을 고정한다.
+// AI 대화 화면의 모델 선택지 폴백, 입력창 아래 컨트롤, 계획 승인 카드를 고정한다.
+// Bitbucket 연동 팝업 검증은 settings/ConnectDialogs.test.tsx 로 옮겼다.
 
 describe('AI 대화 모델 선택지', () => {
   beforeEach(() => {
@@ -45,35 +45,6 @@ describe('AI 대화 모델 선택지', () => {
     await useAiChatStore.getState().loadModelOptions()
     expect(useAiChatStore.getState().modelOptions).toBe(FALLBACK_MODEL_OPTIONS)
     vi.unstubAllGlobals()
-  })
-})
-
-describe('BitbucketSettingsModal', () => {
-  const noop = (): void => {}
-
-  it('연결 전에는 이메일·token 입력과 안내를 그리고 해제 버튼은 없다', () => {
-    const html = renderToStaticMarkup(
-      <BitbucketSettingsModal status={{ connected: false, email: null }} onClose={noop} onChanged={noop} />
-    )
-    expect(html).toContain('Bitbucket 저장소의 파일과 폴더를 읽을 수 있습니다. (읽기 전용)')
-    expect(html).toContain('type="email"')
-    expect(html).toContain('type="password"')
-    expect(html).toContain('read:repository')
-    expect(html).toContain('https://id.atlassian.com/manage-profile/security/api-tokens')
-    expect(html).toContain('데이터 백업에 포함되지 않습니다')
-    expect(html).not.toContain('연동 해제')
-  })
-
-  it('연결되면 이메일과 해제 버튼을 그린다', () => {
-    const html = renderToStaticMarkup(
-      <BitbucketSettingsModal
-        status={{ connected: true, email: 'me@example.com' }}
-        onClose={noop}
-        onChanged={noop}
-      />
-    )
-    expect(html).toContain('me@example.com')
-    expect(html).toContain('연동 해제')
   })
 })
 

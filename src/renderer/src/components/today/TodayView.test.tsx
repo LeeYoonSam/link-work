@@ -227,9 +227,10 @@ const { describeMorningSync, morningSyncEvents, morningStatusLine, parseMorningP
 const { sortSuggestions } = await import('./InboxSection')
 const { candidatesNotInPlan } = await import('./CandidatePicker')
 const { originTarget } = await import('../../stores/assistantStore')
+// 비서 설정 순수 헬퍼는 설정 화면(settings/assistantSettingsForm.ts)으로 옮겼다.
+// 설정 폼 렌더 검증은 settings 쪽 테스트가 맡는다
 const { validateSettings, diffSettings, parseNumberInput, numberInputValue, formStartView, START_VIEW_OPTIONS } =
-  await import('./AssistantSettingsModal')
-const AssistantSettingsModal = (await import('./AssistantSettingsModal')).default
+  await import('../settings/assistantSettingsForm')
 const { recoveryButtonLabel } = await import('./RecoveryCard')
 const { localNow } = await import('./TodayView')
 
@@ -1038,20 +1039,6 @@ describe('오늘 화면 순수 헬퍼', () => {
     ).toEqual({ refreshCalendarMin: 10, refreshJiraMin: 30, refreshNotify: false })
   })
 
-  it('설정 모달: MVP2 최신화 설정 3개를 보여 준다', () => {
-    const html = renderToStaticMarkup(
-      <AssistantSettingsModal settings={SETTINGS} busy={false} onClose={() => {}} onSave={async () => true} />
-    )
-    expect(html).toContain('최신화 알림')
-    expect(html).toContain('지금·다음 블록이 바뀌거나 긴급한 일이 들어오면 알립니다')
-    expect(html).toContain('캘린더 확인 주기 (분)')
-    expect(html).toContain('권장 5분')
-    expect(html).toContain('Jira 확인 주기 (분)')
-    expect(html).toContain('기본 15분')
-    expect(html).toContain('value="5"')
-    expect(html).toContain('value="15"')
-  })
-
   it('설정: 빈 숫자 칸은 0 이 아니라 검증 오류다', () => {
     expect(parseNumberInput('')).toBeNaN()
     expect(parseNumberInput('  ')).toBeNaN()
@@ -1073,30 +1060,6 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(
       diffSettings(SETTINGS, { ...SETTINGS, meetingBriefingEnabled: false, meetingLeadMin: 20 })
     ).toEqual({ meetingBriefingEnabled: false, meetingLeadMin: 20 })
-  })
-
-  it('설정 모달: 회의 브리핑 설정 2개를 보여 준다', () => {
-    const html = renderToStaticMarkup(
-      <AssistantSettingsModal settings={SETTINGS} busy={false} onClose={() => {}} onSave={async () => true} />
-    )
-    expect(html).toContain('회의 전 브리핑')
-    expect(html).toContain('회의 시작 전에 관련 프로젝트·지난 회의·액션아이템을 알립니다')
-    expect(html).toContain('회의 전 알림(분)')
-    expect(html).toContain('권장 15분. 기존 10분 전 일정 알림보다 앞서게 두세요')
-  })
-
-  it('설정 모달: 노출 키만 보여 준다', () => {
-    const html = renderToStaticMarkup(
-      <AssistantSettingsModal settings={SETTINGS} busy={false} onClose={() => {}} onSave={async () => true} />
-    )
-    expect(html).toContain('비서 설정')
-    expect(html).toContain('날짜 경계')
-    expect(html).toContain('시작 알림')
-    // MVP5 가 회의 브리핑 설정 2개를 노출한다 (부록 I.10.4)
-    expect(html).toContain('회의 전 브리핑')
-    expect(html).toContain('회의 전 알림(분)')
-    // 3판은 항목 소요 분 설정을 없앴다
-    expect(html).not.toContain('소요 분')
   })
 })
 
@@ -1740,11 +1703,6 @@ describe('아침 동기화 변경 내역 (A54, R11)', () => {
 
 // 메뉴 통합 D5·D9·D10 비서 설정
 describe('비서 설정: 첫 화면·아침 자동 동기화·원본 완료', () => {
-  const modal = (settings: AssistantSettings): string =>
-    renderToStaticMarkup(
-      <AssistantSettingsModal settings={settings} busy={false} onClose={() => {}} onSave={async () => true} />
-    )
-
   it('formStartView: 이전 값 auto·dashboard 와 모르는 값은 today 다 (D5)', () => {
     expect(START_VIEW_OPTIONS.map((o) => o.value)).toEqual(['today', 'projects', 'calendar'])
     expect(formStartView('auto')).toBe('today')
@@ -1752,44 +1710,6 @@ describe('비서 설정: 첫 화면·아침 자동 동기화·원본 완료', ()
     expect(formStartView(undefined)).toBe('today')
     expect(formStartView('projects')).toBe('projects')
     expect(formStartView('calendar')).toBe('calendar')
-  })
-
-  it('설정 모달: 첫 화면 옵션은 오늘·프로젝트·캘린더다. 자동·대시보드가 없다', () => {
-    const html = modal(SETTINGS)
-    expect(html).toContain('<option value="today" selected="">오늘</option>')
-    expect(html).toContain('<option value="projects">프로젝트</option>')
-    expect(html).toContain('<option value="calendar">캘린더</option>')
-    expect(html).not.toContain('value="auto"')
-    expect(html).not.toContain('value="dashboard"')
-    expect(html).not.toContain('대시보드')
-  })
-
-  it('설정 모달: 저장된 dashboard 는 오늘로 선택된다', () => {
-    const legacy = { ...SETTINGS, startView: 'dashboard' } as unknown as AssistantSettings
-    expect(modal(legacy)).toContain('<option value="today" selected="">오늘</option>')
-  })
-
-  it('설정 모달: 아침 자동 동기화 토글·시각과 원본 완료 토글을 보인다', () => {
-    const html = modal(SETTINGS)
-    expect(html).toContain('아침 자동 동기화')
-    expect(html).toContain('아침 동기화 시각')
-    expect(html).toContain('value="08:00"')
-    expect(html).toContain('완료하면 원본도 완료')
-  })
-
-  it('설정 모달: 이전 main 이 새 키를 주지 않으면 켬·08:00·끔이 기본값이다 (D9·D10)', () => {
-    const old = { ...SETTINGS } as Partial<AssistantSettings>
-    delete old.morningSyncEnabled
-    delete old.morningSyncTime
-    delete old.completeOriginOnDone
-    const html = modal(old as AssistantSettings)
-    expect(html).toContain('value="08:00"')
-    // 아침 자동 동기화 토글은 켜짐이고 원본 완료 토글은 꺼짐이다
-    const toggles = [...html.matchAll(/<input type="checkbox"([^>]*)\/><span><span[^>]*>([^<]+)</g)].map(
-      (m) => [m[2], m[1].includes('checked=""')] as const
-    )
-    expect(toggles).toContainEqual(['아침 자동 동기화', true])
-    expect(toggles).toContainEqual(['완료하면 원본도 완료', false])
   })
 
   it('설정: 아침 동기화 시각은 HH:mm 만 받고 새 키도 patch 에 담는다', () => {

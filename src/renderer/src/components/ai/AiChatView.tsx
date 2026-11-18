@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAiChatStore } from '../../stores/aiChatStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { openInternalLink } from '../../utils/openInternalLink'
 import MarkdownContent from '../memo/MarkdownContent'
 import type {
@@ -87,12 +88,13 @@ export default function AiChatView(): React.ReactNode {
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null)
   const [listCollapsed, setListCollapsed] = useState(false)
   const [notionConnected, setNotionConnected] = useState(false)
-  const [showNotionSettings, setShowNotionSettings] = useState(false)
   const [bitbucketStatus, setBitbucketStatus] = useState<AiBitbucketStatus>({
     connected: false,
     email: null
   })
-  const [showBitbucketSettings, setShowBitbucketSettings] = useState(false)
+
+  // 연동 토큰 등록·해제는 설정 > 연동이 맡는다. 여기서는 상태 점만 보인다
+  const openIntegrations = (): void => useSettingsStore.getState().open('integrations')
 
   const checkStatus = (): void => {
     window.api.ai.status().then(setAiStatus)
@@ -193,8 +195,8 @@ export default function AiChatView(): React.ReactNode {
           </div>
           <div className="p-2 border-t border-gray-200">
             <button
-              onClick={() => setShowNotionSettings(true)}
-              title="AI가 Notion 문서를 읽을 수 있게 연동합니다"
+              onClick={() => openIntegrations()}
+              title="설정 > 연동에서 Notion 을 연결합니다. AI가 Notion 문서를 읽을 수 있습니다"
               className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded transition-colors"
             >
               <span
@@ -205,8 +207,8 @@ export default function AiChatView(): React.ReactNode {
               Notion 연동{notionConnected ? ' 중' : ''}
             </button>
             <button
-              onClick={() => setShowBitbucketSettings(true)}
-              title="AI가 Bitbucket 저장소의 파일을 읽을 수 있게 연동합니다"
+              onClick={() => openIntegrations()}
+              title="설정 > 연동에서 Bitbucket 을 연결합니다. AI가 Bitbucket 저장소의 파일을 읽을 수 있습니다"
               className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded transition-colors"
             >
               <span
@@ -225,12 +227,20 @@ export default function AiChatView(): React.ReactNode {
         {aiUnavailable && (
           <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 flex items-center justify-between gap-2">
             <span>{aiStatus?.error}</span>
-            <button
-              onClick={checkStatus}
-              className="shrink-0 px-2 py-1 text-xs border border-red-300 rounded hover:bg-red-100 transition-colors"
-            >
-              다시 확인
-            </button>
+            <span className="shrink-0 flex items-center gap-1.5">
+              <button
+                onClick={() => useSettingsStore.getState().open('ai')}
+                className="px-2 py-1 text-xs text-red-700 underline-offset-2 hover:underline"
+              >
+                설정 &gt; AI에서 확인
+              </button>
+              <button
+                onClick={checkStatus}
+                className="px-2 py-1 text-xs border border-red-300 rounded hover:bg-red-100 transition-colors"
+              >
+                다시 확인
+              </button>
+            </span>
           </div>
         )}
         {!aiUnavailable && aiStatus?.warning && (
@@ -269,20 +279,6 @@ export default function AiChatView(): React.ReactNode {
         )}
       </div>
 
-      {showNotionSettings && (
-        <NotionSettingsModal
-          connected={notionConnected}
-          onClose={() => setShowNotionSettings(false)}
-          onChanged={refreshNotionStatus}
-        />
-      )}
-      {showBitbucketSettings && (
-        <BitbucketSettingsModal
-          status={bitbucketStatus}
-          onClose={() => setShowBitbucketSettings(false)}
-          onChanged={refreshBitbucketStatus}
-        />
-      )}
     </div>
   )
 }
@@ -888,300 +884,6 @@ function MessageBubble({
   return (
     <div className="max-w-[85%] bg-gray-50 border border-gray-200 rounded-lg rounded-tl-none px-4 py-3">
       <MarkdownContent content={message.content} compact onInternalLink={onInternalLink} />
-    </div>
-  )
-}
-
-// Notion internal integration 토큰 등록/해제 모달.
-// 토큰은 main에서 검증(API 호출) 후 safeStorage로 암호화 저장된다 (services/notion.ts).
-function NotionSettingsModal({
-  connected,
-  onClose,
-  onChanged
-}: {
-  connected: boolean
-  onClose: () => void
-  onChanged: () => void
-}): React.ReactNode {
-  const [token, setToken] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [savedWorkspace, setSavedWorkspace] = useState<string | null>(null)
-
-  const handleSave = async (): Promise<void> => {
-    if (!token.trim() || busy) return
-    setBusy(true)
-    setError('')
-    const result = await window.api.ai.notionSaveToken(token.trim())
-    setBusy(false)
-    if (result.success) {
-      setToken('')
-      setSavedWorkspace(result.workspace ?? 'Notion')
-      onChanged()
-    } else {
-      setError(result.error ?? '토큰 저장에 실패했습니다.')
-    }
-  }
-
-  const handleDisconnect = async (): Promise<void> => {
-    if (!window.confirm('Notion 연동을 해제할까요? AI가 더 이상 Notion 문서를 읽을 수 없습니다.')) return
-    await window.api.ai.notionDisconnect()
-    setSavedWorkspace(null)
-    onChanged()
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
-      <div className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-        <Card padding="md" className="bg-white">
-          <div className="flex items-center justify-between mb-1">
-            <h3 className="text-base font-semibold text-gray-900">Notion 연동</h3>
-            <button
-              onClick={onClose}
-              className="p-1 text-gray-400 hover:text-gray-700 transition-colors"
-              title="닫기"
-            >
-              <XIcon size={16} />
-            </button>
-          </div>
-          <p className="text-xs text-gray-500 mb-3">
-            연동하면 AI가 대화에서 Notion 문서를 검색하고 내용을 읽을 수 있습니다. (읽기 전용)
-          </p>
-
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-xs text-blue-900">
-            <p className="font-medium mb-1">가장 간단한 방법: Claude 계정의 Notion 커넥터</p>
-            <p>
-              Claude 계정(claude.ai)에 Notion 커넥터가 연결되어 있으면 <b>여기서 아무 설정 없이</b>{' '}
-              AI가 바로 Notion을 읽을 수 있습니다. 커넥터가 없다면{' '}
-              <a
-                href="https://claude.ai/settings/connectors"
-                target="_blank"
-                rel="noreferrer"
-                className="underline"
-              >
-                claude.ai → 설정 → 커넥터
-              </a>
-              에서 Notion을 연결하세요. 아래 토큰 방식은 커넥터를 쓰지 않을 때의 대안입니다.
-            </p>
-          </div>
-
-          {connected ? (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4 flex items-center justify-between gap-2">
-              <p className="text-sm text-green-800">
-                연동됨{savedWorkspace ? ` — ${savedWorkspace}` : ''}
-              </p>
-              <button
-                onClick={() => void handleDisconnect()}
-                className="shrink-0 px-3 py-1.5 text-xs text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
-              >
-                연동 해제
-              </button>
-            </div>
-          ) : (
-            <ol className="text-xs text-gray-600 space-y-1 mb-4 list-decimal pl-4">
-              <li>
-                <a
-                  href="https://www.notion.so/my-integrations"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-blue-600 hover:underline"
-                >
-                  notion.so/my-integrations
-                </a>
-                에서 내부 통합(Internal Integration)을 생성합니다. (권한은 &quot;콘텐츠 읽기&quot;만)
-              </li>
-              <li>Internal Integration Secret을 복사해 아래에 붙여넣습니다.</li>
-              <li>
-                AI가 읽을 페이지에서 <b>⋯ → 연결(Connections)</b>에 만든 통합을 추가합니다.
-                (하위 페이지에 자동 적용)
-              </li>
-            </ol>
-          )}
-
-          <div className="flex gap-2">
-            <input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleSave()
-              }}
-              placeholder={connected ? '새 토큰으로 교체하려면 입력' : 'ntn_ 으로 시작하는 토큰'}
-              className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500"
-            />
-            <button
-              onClick={() => void handleSave()}
-              disabled={!token.trim() || busy}
-              className={`px-4 py-2 text-sm rounded-lg shrink-0 ${button.dark} disabled:opacity-40 disabled:cursor-not-allowed`}
-            >
-              {busy ? '확인 중…' : '저장'}
-            </button>
-          </div>
-
-          {error && (
-            <p className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2.5">
-              {error}
-            </p>
-          )}
-        </Card>
-      </div>
-    </div>
-  )
-}
-
-// Bitbucket Cloud API token 등록·해제 모달이다.
-// main 이 token 을 검증한 뒤 safeStorage 로 암호화 저장한다. 데이터 백업에는 넣지 않는다.
-export function BitbucketSettingsModal({
-  status,
-  onClose,
-  onChanged
-}: {
-  status: AiBitbucketStatus
-  onClose: () => void
-  onChanged: () => void
-}): React.ReactNode {
-  const [email, setEmail] = useState(status.email ?? '')
-  const [token, setToken] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [savedAccount, setSavedAccount] = useState<string | null>(null)
-
-  const canSave = !!email.trim() && !!token.trim() && !busy
-
-  const handleSave = async (): Promise<void> => {
-    if (!canSave) return
-    setBusy(true)
-    setError('')
-    try {
-      const result = await window.api.ai.bitbucketSaveToken(email.trim(), token.trim())
-      if (result.success) {
-        setToken('')
-        setSavedAccount(result.account)
-        onChanged()
-      } else {
-        setError(result.error || 'token 저장에 실패했습니다.')
-      }
-    } catch {
-      setError('token 저장에 실패했습니다.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const handleDisconnect = async (): Promise<void> => {
-    if (
-      !window.confirm(
-        'Bitbucket 연동을 해제할까요? AI가 더 이상 Bitbucket 저장소를 읽을 수 없습니다.'
-      )
-    )
-      return
-    await window.api.ai.bitbucketDisconnect()
-    setSavedAccount(null)
-    onChanged()
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
-      <div className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-        <Card padding="md" className="bg-white">
-          <div className="flex items-center justify-between mb-1">
-            <h3 className="text-base font-semibold text-gray-900">Bitbucket 연동</h3>
-            <button
-              onClick={onClose}
-              className="p-1 text-gray-400 hover:text-gray-700 transition-colors"
-              title="닫기"
-            >
-              <XIcon size={16} />
-            </button>
-          </div>
-          <p className="text-xs text-gray-500 mb-3">
-            연동하면 AI가 대화에서 Bitbucket 저장소의 파일과 폴더를 읽을 수 있습니다. (읽기 전용)
-          </p>
-
-          {(status.connected || savedAccount) && (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4 flex items-center justify-between gap-2">
-              <p className="text-sm text-green-800 min-w-0 truncate">
-                {savedAccount
-                  ? `연동됨: ${savedAccount}`
-                  : `연동됨${status.email ? ` — ${status.email}` : ''}`}
-              </p>
-              <button
-                onClick={() => void handleDisconnect()}
-                className="shrink-0 px-3 py-1.5 text-xs text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
-              >
-                연동 해제
-              </button>
-            </div>
-          )}
-
-          <ol className="text-xs text-gray-600 space-y-1 mb-4 list-decimal pl-4">
-            <li>
-              Bitbucket → 개인 설정 → Atlassian 계정 → 보안 → API token 만들기 →
-              &apos;Bitbucket 용 범위 지정 API token&apos; 을 고릅니다.{' '}
-              <a
-                href="https://id.atlassian.com/manage-profile/security/api-tokens"
-                target="_blank"
-                rel="noreferrer"
-                className="text-blue-600 hover:underline"
-              >
-                API token 관리 열기
-              </a>
-            </li>
-            <li>
-              범위는 <code className="px-1 bg-gray-100 rounded font-mono">read:repository</code>{' '}
-              가 필요합니다. 권장 추가 범위는{' '}
-              <code className="px-1 bg-gray-100 rounded font-mono">read:pullrequest</code>,{' '}
-              <code className="px-1 bg-gray-100 rounded font-mono">read:user</code> 입니다.
-            </li>
-            <li>Atlassian 계정 이메일과 만든 token 을 아래에 입력합니다.</li>
-          </ol>
-
-          <div className="space-y-2">
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Atlassian 계정 이메일"
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500"
-            />
-            <div className="flex gap-2">
-              <input
-                type="password"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void handleSave()
-                }}
-                placeholder={status.connected ? '새 token 으로 교체하려면 입력' : 'API token'}
-                className="flex-1 min-w-0 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500"
-              />
-              <button
-                onClick={() => void handleSave()}
-                disabled={!canSave}
-                className={`px-4 py-2 text-sm rounded-lg shrink-0 ${button.dark} disabled:opacity-40 disabled:cursor-not-allowed`}
-              >
-                {busy ? '확인 중…' : '저장'}
-              </button>
-            </div>
-          </div>
-
-          <p className="mt-3 text-[11px] text-gray-400">
-            token 은 이 기기에만 암호화 저장되고, 데이터 백업에 포함되지 않습니다.
-          </p>
-
-          {error && (
-            <p className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2.5">
-              {error}
-            </p>
-          )}
-        </Card>
-      </div>
     </div>
   )
 }

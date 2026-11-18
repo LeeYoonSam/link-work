@@ -64,6 +64,8 @@ export interface JiraConnectionStatus {
   expiresAt: string | null
   expiringSoon: boolean
   expired: boolean
+  /** 저장된 Atlassian 이메일. Bitbucket 팝업에 미리 채운다. 토큰은 내보내지 않는다 */
+  email: string | null
 }
 
 export interface JiraProjectSummary {
@@ -190,8 +192,23 @@ export function getJiraStatus(): JiraConnectionStatus {
     // 미연결 상태에서 "만료 임박"을 띄우면 사용자가 할 일이 없어 혼란만 준다.
     expiringSoon:
       creds !== null && remaining !== null && remaining >= 0 && remaining <= EXPIRING_SOON_DAYS,
-    expired: creds !== null && remaining !== null && remaining < 0
+    expired: creds !== null && remaining !== null && remaining < 0,
+    // 토큰 없이 이메일만 남은 경우(백업 복원 뒤)에도 돌려준다. 다시 연결할 때 미리 채운다
+    email: readSetting(EMAIL_KEY)
   }
+}
+
+/**
+ * 설정 화면 [연결 테스트]. 저장된 자격 증명으로 /myself 를 GET 한 번 부른다.
+ * 실패하면 status 가 붙은 에러를 던진다(분류는 integration-verify.ts). 토큰은 돌려주지 않는다.
+ */
+export async function verifyStoredJira(): Promise<{ account: string | null }> {
+  // 연결 테스트는 429 여도 재시도 없이 바로 끝낸다(재시도 누적 시 버튼이 최대 2분 멈춘다)
+  const me = (await jiraRequest('/rest/api/3/myself', undefined, { maxRetries: 0 })) as {
+    displayName?: string
+    emailAddress?: string
+  }
+  return { account: me.displayName ?? me.emailAddress ?? readSetting(EMAIL_KEY) }
 }
 
 export function disconnectJira(): void {
@@ -276,9 +293,14 @@ function sleep(ms: number): Promise<void> {
   return ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function jiraRequest(path: string, credsOverride?: JiraCredentials): Promise<unknown> {
+async function jiraRequest(
+  path: string,
+  credsOverride?: JiraCredentials,
+  options: { maxRetries?: number } = {}
+): Promise<unknown> {
   const creds = credsOverride ?? getCredentials()
   if (!creds) throw new Error(NOT_CONNECTED_MESSAGE)
+  const maxRetries = options.maxRetries ?? MAX_RETRIES
 
   const auth = Buffer.from(`${creds.email}:${creds.apiToken}`).toString('base64')
 
@@ -295,8 +317,11 @@ async function jiraRequest(path: string, credsOverride?: JiraCredentials): Promi
     if (res.ok) return res.json()
 
     if (res.status === 429) {
-      if (attempt >= MAX_RETRIES) {
-        throw new Error('Jira API 요청 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.')
+      if (attempt >= maxRetries) {
+        throw Object.assign(
+          new Error('Jira API 요청 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.'),
+          { status: 429 }
+        )
       }
       await sleep(computeRetryDelayMs(attempt, res.headers.get('Retry-After')))
       continue
@@ -306,7 +331,12 @@ async function jiraRequest(path: string, credsOverride?: JiraCredentials): Promi
   }
 }
 
+// 상태 코드를 에러에 붙여 둔다. 연결 테스트가 메시지 대신 코드로 원인을 분류한다
 function mapErrorStatus(status: number, body: string): Error {
+  return Object.assign(mapErrorMessage(status, body), { status })
+}
+
+function mapErrorMessage(status: number, body: string): Error {
   if (status === 401) {
     return new Error(
       'Jira 토큰이 만료됐거나 유효하지 않습니다. 연동 설정에서 토큰을 다시 등록해 주세요.'

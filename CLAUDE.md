@@ -46,3 +46,4 @@ LinkWork는 WBS(작업 분해 구조)와 회의 일정을 관리하는 macOS 데
 - [docs/MEETING_RECORDING.md](docs/MEETING_RECORDING.md) — 회의 녹음/기록 파이프라인
 - [docs/DATA_BACKUP.md](docs/DATA_BACKUP.md) — 데이터 백업·복원(새 PC 이전) 형식과 절차
 - [docs/PROJECT_SYNC.md](docs/PROJECT_SYNC.md) — Jira 프로젝트 싱크업 규칙(R1~R12)·가드레일·IPC 계약
+- [docs/SETTINGS.md](docs/SETTINGS.md) — 통합 설정 화면 섹션·진입 경로·연동 카드 상태·토큰 팝업·`settings:verifyIntegration` IPC 계약

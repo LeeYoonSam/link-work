@@ -273,6 +273,11 @@ const api = {
       ipcRenderer.invoke('jira:setDefaultProject', projectKey),
     openIssue: (issueKey: string) => ipcRenderer.invoke('jira:openIssue', issueKey)
   },
+  // 설정 화면: 저장된 자격 증명으로 연결 테스트. throw 하지 않고 비밀값을 돌려주지 않는다
+  settings: {
+    verifyIntegration: (id: 'google' | 'jira' | 'bitbucket' | 'notion') =>
+      ipcRenderer.invoke('settings:verifyIntegration', id)
+  },
   // Jira 할 일 이슈 → 프로젝트/작업/문서. Jira는 읽기만 하고 LinkWork DB에만 쓴다
   projectSync: {
     preview: () => ipcRenderer.invoke('projectSync:preview'),

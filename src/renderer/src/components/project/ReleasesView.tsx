@@ -153,7 +153,7 @@ export default function ReleasesView(): React.ReactNode {
         </div>
       </div>
 
-      <JiraTokenWarning status={jiraStatus} />
+      <JiraTokenWarning status={jiraStatus} onOpenSettings={() => setShowSettings(true)} />
 
       {/* 프로젝트를 순차 처리하므로 수십 초가 걸린다. 멈춘 것처럼 보이면 사용자가 다시 누른다. */}
       {syncAllRunning && (

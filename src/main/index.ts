@@ -22,6 +22,7 @@ import { registerReleaseNoteIpc } from './ipc/release-note.ipc'
 import { registerBackupIpc } from './ipc/backup.ipc'
 import { registerProjectSyncIpc } from './ipc/project-sync.ipc'
 import { registerAssistantIpc } from './ipc/assistant.ipc'
+import { registerSettingsIpc } from './ipc/settings.ipc'
 import { cancelAllAiQueries } from './services/ai-agent'
 import { cancelAllHeadless } from './services/ai-headless'
 import { startNotificationService, stopNotificationService } from './services/notification'
@@ -364,6 +365,7 @@ app.whenReady().then(() => {
   registerBackupIpc()
   registerProjectSyncIpc()
   registerAssistantIpc()
+  registerSettingsIpc()
   ipcMain.on('recorder:state', (event, payload) => {
     if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents) {
       recordingGuard.setState(payload)

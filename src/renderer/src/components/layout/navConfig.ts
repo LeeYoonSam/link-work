@@ -15,7 +15,8 @@ export const VIEW_IDS = [
   'notes',
   'documents',
   'memos',
-  'variables'
+  'variables',
+  'settings'
 ] as const
 
 export type ViewId = (typeof VIEW_IDS)[number]
@@ -33,7 +34,8 @@ export const VIEW_LABELS: Record<ViewId, string> = {
   notes: '회의록',
   documents: '문서',
   memos: '메모',
-  variables: '변수'
+  variables: '변수',
+  settings: '설정'
 }
 
 export interface NavItem {
@@ -76,6 +78,9 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [item('documents', 'documents'), item('memos', 'memos'), item('variables', 'variables')]
   }
 ]
+
+// 사이드바 하단 고정 항목. 자주 쓰지 않는 화면이라 그룹 목록과 떼어 둔다
+export const NAV_FOOTER: NavItem[] = [item('settings', 'settings')]
 
 // 없앤 화면 ID 를 새 ID 로 옮긴다. 이유: AI 링크·저장값에 예전 ID 가 남는다
 const VIEW_ALIASES: Record<string, ViewId> = {

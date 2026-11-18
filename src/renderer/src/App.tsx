@@ -16,6 +16,7 @@ import RecordingView from './components/recording/RecordingView'
 import MeetingNotesView from './components/notes/MeetingNotesView'
 import ReleasesView from './components/project/ReleasesView'
 import TodayView from './components/today/TodayView'
+import SettingsView from './components/settings/SettingsView'
 import { useProjectStore } from './stores/projectStore'
 import { useAssistantStore } from './stores/assistantStore'
 import { installRecorderBridge } from './stores/recorderSession'
@@ -129,6 +130,8 @@ function App(): React.ReactNode {
         return <MeetingNotesView />
       case 'releases':
         return <ReleasesView />
+      case 'settings':
+        return <SettingsView />
       default:
         return <TodayView />
     }
