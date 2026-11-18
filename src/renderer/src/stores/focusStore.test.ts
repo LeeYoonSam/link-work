@@ -32,17 +32,17 @@ describe('focusStore', () => {
   })
 
   it('같은 nonce 로 consume 하면 지운다', () => {
-    useFocusStore.getState().requestFocus({ entity: 'task', id: 9 })
+    useFocusStore.getState().requestFocus({ entity: 'memo', id: 9 })
     const nonce = useFocusStore.getState().request!.nonce
     useFocusStore.getState().consume(nonce)
     expect(useFocusStore.getState().request).toBeNull()
   })
 
   it('다른 nonce 로 consume 하면 요청을 유지한다', () => {
-    useFocusStore.getState().requestFocus({ entity: 'task', id: 9 })
+    useFocusStore.getState().requestFocus({ entity: 'memo', id: 9 })
     const nonce = useFocusStore.getState().request!.nonce
     useFocusStore.getState().consume(nonce - 1)
-    expect(useFocusStore.getState().request).toMatchObject({ entity: 'task', id: 9, nonce })
+    expect(useFocusStore.getState().request).toMatchObject({ entity: 'memo', id: 9, nonce })
   })
 
   it('TTL 이 지나면 소비하지 않은 요청을 지운다', () => {

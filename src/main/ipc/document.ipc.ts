@@ -8,7 +8,6 @@ interface DocumentInput {
   url: string
   type?: string
   description?: string
-  project_id?: number | null
   sort_order?: number
 }
 
@@ -17,42 +16,31 @@ export function registerDocumentIpc(): void {
 
   ipcMain.handle('document:create', (_event, input: DocumentInput) => {
     const stmt = db.prepare(`
-      INSERT INTO documents (name, url, type, description, project_id, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO documents (name, url, type, description, sort_order)
+      VALUES (?, ?, ?, ?, ?)
     `)
     const result = stmt.run(
       input.name,
       input.url,
       input.type || 'link',
       input.description || null,
-      input.project_id ?? null,
       input.sort_order ?? 0
     )
     logActivity('document', 'create', result.lastInsertRowid, input.name)
     return { id: result.lastInsertRowid }
   })
 
-  ipcMain.handle('document:list', (_event, projectId?: number | null) => {
-    if (projectId === null) {
-      return db.prepare('SELECT * FROM documents WHERE project_id IS NULL ORDER BY sort_order ASC, created_at DESC').all()
-    }
-    if (projectId !== undefined) {
-      return db.prepare('SELECT * FROM documents WHERE project_id = ? ORDER BY sort_order ASC, created_at DESC').all(projectId)
-    }
+  // 문서는 평면 목록이다. project_id 가 남아 있는 옛 문서도 함께 보인다.
+  ipcMain.handle('document:list', () => {
     return db.prepare('SELECT * FROM documents ORDER BY sort_order ASC, created_at DESC').all()
   })
 
   ipcMain.handle('document:listAll', () => {
-    return db.prepare(`
-      SELECT d.*, p.name AS project_name
-      FROM documents d
-      LEFT JOIN projects p ON d.project_id = p.id
-      ORDER BY d.sort_order ASC, d.created_at DESC
-    `).all()
+    return db.prepare('SELECT * FROM documents ORDER BY sort_order ASC, created_at DESC').all()
   })
 
   const ALLOWED_DOCUMENT_FIELDS = new Set([
-    'name', 'url', 'type', 'description', 'project_id', 'sort_order'
+    'name', 'url', 'type', 'description', 'sort_order'
   ])
 
   ipcMain.handle('document:update', (_event, id: number, input: Partial<DocumentInput>) => {

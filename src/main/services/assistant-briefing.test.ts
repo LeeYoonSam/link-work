@@ -1013,7 +1013,6 @@ describe('neutralizeMarkers', () => {
 describe('회의 전 브리핑 LLM', () => {
   const meetingCtx: MeetingContext = {
     meeting: { id: 'evt-1', title: '결제 개편 주간 회의', startAt: '2026-11-02 14:00:00', endAt: '2026-11-02 15:00:00' },
-    projects: [{ id: 1, name: '결제 개편' }],
     pastMeetings: [
       {
         meetingId: 7,
@@ -1024,7 +1023,6 @@ describe('회의 전 브리핑 LLM', () => {
       }
     ],
     openActionItems: ['정산 API 문서 공유'],
-    relatedItems: [{ id: 2, title: '결제 오류 수정', status: 'in_progress' }],
     errors: []
   }
   const meetingInput: MeetingLlmInput = { ctx: meetingCtx, ruleMarkdown: '# 결제 개편 주간 회의 14:00\n' }
@@ -1047,12 +1045,10 @@ describe('회의 전 브리핑 LLM', () => {
     expect(prompt.match(/\[데이터\]\n/g)).toHaveLength(1)
     expect(dataJsonOf(prompt)).toEqual({
       meeting: { title: '결제 개편 주간 회의', date: '2026-11-02', start: '14:00', end: '15:00' },
-      projects: ['결제 개편'],
       past_meetings: [
         { date: '2026-10-26', title: '결제 개편 주간 회의', tldr: 'PG 교체 일정 합의', open_action_items: ['정산 API 문서 공유'] }
       ],
       open_action_items: ['정산 API 문서 공유'],
-      related_items: [{ title: '결제 오류 수정', status: 'in_progress' }],
       failed_sources: [],
       rule_briefing: '# 결제 개편 주간 회의 14:00\n'
     })
@@ -1079,9 +1075,9 @@ describe('회의 전 브리핑 LLM', () => {
   it('A9: 회의 데이터의 외부 문자열은 한 줄로 만든다', () => {
     const prompt = buildMeetingPrompt({
       ...meetingInput,
-      ctx: { ...meetingCtx, relatedItems: [{ id: 3, title: '줄\n바꿈\n제목', status: 'planned' }] }
+      ctx: { ...meetingCtx, openActionItems: ['줄\n바꿈\n제목'] }
     })
-    expect((dataJsonOf(prompt).related_items as { title: string }[])[0].title).toBe('줄 바꿈 제목')
+    expect((dataJsonOf(prompt).open_action_items as string[])[0]).toBe('줄 바꿈 제목')
   })
 
   it('A52·A9: 회의 시스템 프롬프트에 역할·데이터 규칙·금지 문구·비서 말투 규칙이 있다', () => {

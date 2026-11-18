@@ -2,7 +2,6 @@ import { z } from 'zod'
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk'
 import { getAiReadOnlyDatabase } from '../db/database'
 import { MEMO_WITH_CATEGORY_SELECT } from '../utils/memo-helpers'
-import { applyProjectAutoStatus, type ProjectStatusFields } from '../utils/project-dates'
 import { TODO_TAGS_SUBQUERY } from '../utils/todo-helpers'
 import { getEventsInRange } from './google-calendar'
 import { buildAssistantTools } from './ai-assistant-tools'
@@ -41,8 +40,6 @@ const dateArg = (desc: string): z.ZodString =>
 
 // SDK MCP 도구의 전체 이름: mcp__<serverName>__<toolName>
 export const LINKWORK_TOOL_NAMES = [
-  'list_projects',
-  'get_project',
   'list_todos',
   'get_todo',
   'search_memos',
@@ -125,96 +122,7 @@ async function buildServer(): Promise<McpSdkServerConfigWithInstance> {
   // 동적 import는 rollup이 CJS 출력에서도 import()로 보존하므로 런타임 로드가 가능하다.
   const { tool, createSdkMcpServer } = await import('@anthropic-ai/claude-agent-sdk')
 
-  const listProjects = tool(
-  'list_projects',
-  '프로젝트 목록을 조회한다. 각 프로젝트의 일정(개발/QA/배포), 상태, 태스크 진행 요약을 반환한다. status로 필터링 가능 (scheduled|development|qa_pending|qa|deploy_pending|deploy|on_hold|completed|cancelled). qa_pending은 개발 종료 후 QA 시작 전까지의 QA대기, deploy_pending은 QA 종료 후 배포일 전까지의 배포대기 상태. on_hold는 사람이 직접 중단해 둔 상태로, 날짜가 지나도 자동으로 풀리지 않는다. "진행중인 프로젝트"는 completed/cancelled/on_hold가 아닌 프로젝트를 의미한다.',
-  {
-    status: z
-      .enum([
-        'scheduled',
-        'development',
-        'qa_pending',
-        'qa',
-        'deploy_pending',
-        'deploy',
-        'on_hold',
-        'completed',
-        'cancelled'
-      ])
-      .optional()
-      .describe('프로젝트 상태 필터'),
-    search: searchTerm('프로젝트 이름 부분 검색어')
-  },
-  async (args) => {
-    const db = getAiReadOnlyDatabase()
-    // 상태는 자동 계산값(applyProjectAutoStatus)으로 표시되므로, 저장된 status로 SQL 필터하면
-    // 메뉴와 결과가 달라진다. 검색만 SQL에서 거르고 상태 필터는 계산 후 JS에서 적용한다.
-    const where = args.search ? 'WHERE p.name LIKE ?' : ''
-    const params = args.search ? [`%${args.search}%`] : []
-    // 진행률은 leaf(하위를 가지지 않은 작업)만 집계한다 — 하위가 있는 상위 작업은
-    // 자체 status가 진행률에 잡히지 않도록 NOT EXISTS로 제외한다(1단계 계층 규약).
-    const rows = (
-      db
-        .prepare(
-          `SELECT p.id, p.name, p.description, p.status, p.status_manual,
-                  p.dev_start_date, p.dev_end_date, p.qa_start_date, p.qa_end_date,
-                  p.deploy_date, p.deploy_version,
-                  (SELECT COUNT(*) FROM tasks t
-                     WHERE t.project_id = p.id
-                       AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_task_id = t.id)
-                  ) AS task_count,
-                  (SELECT COUNT(*) FROM tasks t
-                     WHERE t.project_id = p.id AND t.status = 'done'
-                       AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_task_id = t.id)
-                  ) AS done_task_count
-           FROM projects p
-           ${where}
-           ORDER BY p.dev_start_date DESC`
-        )
-        .all(...params) as ProjectStatusFields[]
-    ).map(applyProjectAutoStatus)
-    return jsonResult(args.status ? rows.filter((p) => p.status === args.status) : rows)
-  }
-)
-
-const getProject = tool(
-  'get_project',
-  '프로젝트 하나의 상세 정보를 조회한다. 전체 태스크 목록과 연결된 문서 목록을 포함한다. query에 프로젝트 ID(숫자) 또는 이름(부분 일치)을 전달한다.',
-  {
-    query: z.string().max(200).describe('프로젝트 ID 또는 이름 검색어')
-  },
-  async (args) => {
-    const db = getAiReadOnlyDatabase()
-    const byId = /^\d+$/.test(args.query.trim())
-    const project = byId
-      ? db.prepare('SELECT * FROM projects WHERE id = ?').get(Number(args.query.trim()))
-      : db.prepare('SELECT * FROM projects WHERE name LIKE ? ORDER BY dev_start_date DESC').get(`%${args.query}%`)
-    if (!project) {
-      return jsonResult({ error: `'${args.query}'에 해당하는 프로젝트를 찾지 못했습니다.` })
-    }
-    const p = project as { id: number }
-    // parent_task_id로 1단계 계층을 표현한다(NULL=최상위). 최상위→하위 순으로 이해되도록
-    // 최상위 먼저, 각자의 sort_order 순으로 정렬한다.
-    const tasks = db
-      .prepare(
-        `SELECT id, name, start_date, end_date, status, parent_task_id
-         FROM tasks WHERE project_id = ?
-         ORDER BY COALESCE(parent_task_id, id), parent_task_id IS NOT NULL, sort_order, id`
-      )
-      .all(p.id) as { id: number }[]
-    const documents = db
-      .prepare('SELECT id, name, url, type, description FROM documents WHERE project_id = ? ORDER BY sort_order, id')
-      .all(p.id)
-    return jsonResult({
-      project: applyProjectAutoStatus(project as ProjectStatusFields & Record<string, unknown>),
-      // 작업 행마다 앱 내 링크를 준다. AI 가 작업 위치로 바로 안내할 수 있다.
-      tasks: tasks.map((t) => ({ ...t, link: `linkwork://project/${p.id}/task/${t.id}` })),
-      documents
-    })
-  }
-)
-
-const listTodos = tool(
+  const listTodos = tool(
   'list_todos',
   'TODO 목록을 조회한다. 태그 목록을 포함해 반환한다. completed로 완료/미완료 필터, search로 제목/노트 검색, tag로 태그명 필터가 가능하다.',
   {
@@ -338,10 +246,9 @@ const getMemo = tool(
 
 const listDocuments = tool(
   'list_documents',
-  '문서(링크/파일) 목록을 조회한다. 각 문서의 id, 이름, URL, 연결된 프로젝트명을 반환한다. search로 이름/설명 검색, project로 프로젝트명 필터가 가능하다.',
+  '문서(링크/파일) 목록을 조회한다. 각 문서의 id, 이름, URL, 종류, 설명을 반환한다. search로 이름/설명 검색이 가능하다.',
   {
-    search: searchTerm('문서 이름/설명 부분 검색어'),
-    project: searchTerm('프로젝트 이름 필터')
+    search: searchTerm('문서 이름/설명 부분 검색어')
   },
   async (args) => {
     const db = getAiReadOnlyDatabase()
@@ -351,16 +258,11 @@ const listDocuments = tool(
       conditions.push("(d.name LIKE ? OR IFNULL(d.description, '') LIKE ?)")
       params.push(`%${args.search}%`, `%${args.search}%`)
     }
-    if (args.project) {
-      conditions.push('p.name LIKE ?')
-      params.push(`%${args.project}%`)
-    }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
     const rows = db
       .prepare(
-        `SELECT d.id, d.name, d.url, d.type, d.description, d.project_id, p.name AS project_name
+        `SELECT d.id, d.name, d.url, d.type, d.description
          FROM documents d
-         LEFT JOIN projects p ON p.id = d.project_id
          ${where}
          ORDER BY d.sort_order, d.id
          LIMIT 200`
@@ -394,7 +296,7 @@ const listVariables = tool(
 
 const getActivityLog = tool(
   'get_activity_log',
-  '활동 로그를 조회한다. 프로젝트/태스크/문서/변수/메모의 생성·수정·삭제 이력으로, "이번주에 진행한 작업 정리" 같은 질문에 사용한다. 날짜는 YYYY-MM-DD 형식이며 created_at은 로컬 시간 기준으로 변환되어 반환된다.',
+  '활동 로그를 조회한다. 문서/변수/메모(과거 기록에는 프로젝트/태스크도 있다)의 생성·수정·삭제 이력으로, "이번주에 진행한 작업 정리" 같은 질문에 사용한다. 날짜는 YYYY-MM-DD 형식이며 created_at은 로컬 시간 기준으로 변환되어 반환된다.',
   {
     start_date: dateArg('조회 시작일 (YYYY-MM-DD, 포함)'),
     end_date: dateArg('조회 종료일 (YYYY-MM-DD, 포함)'),
@@ -466,7 +368,7 @@ const getActivityLog = tool(
 
   const listReleaseNotes = tool(
     'list_release_notes',
-    'Jira 릴리스(버전)의 릴리스 노트 목록을 조회한다. 버전 이름, 출시 여부(released), 릴리스일, 포함된 이슈 수(item_count), 마지막 동기화 시각(last_synced_at)을 반환한다. "이번 배포에 뭐가 들어가나", "4.162.0 릴리스 내용" 같은 질문에 사용한다. version으로 버전 이름 부분 검색이 가능하다(예: "4.16"). 릴리스 노트는 Jira 릴리스를 그대로 옮긴 것이라 LinkWork 프로젝트와 연결돼 있지 않다 — 특정 프로젝트의 릴리스를 찾으려면 그 프로젝트의 배포 버전(deploy_version)을 먼저 확인해 version으로 넘긴다. 앱에 동기화된 로컬 데이터를 읽으므로 Jira를 직접 조회하지 않는다 — 내용이 최신인지는 last_synced_at으로 판단하고, 오래됐으면 앱에서 동기화하도록 안내한다.',
+    'Jira 릴리스(버전)의 릴리스 노트 목록을 조회한다. 버전 이름, 출시 여부(released), 릴리스일, 포함된 이슈 수(item_count), 마지막 동기화 시각(last_synced_at)을 반환한다. "이번 배포에 뭐가 들어가나", "4.162.0 릴리스 내용" 같은 질문에 사용한다. version으로 버전 이름 부분 검색이 가능하다(예: "4.16"). 앱에 동기화된 로컬 데이터를 읽으므로 Jira를 직접 조회하지 않는다 — 내용이 최신인지는 last_synced_at으로 판단하고, 오래됐으면 앱에서 동기화하도록 안내한다.',
     {
       version: searchTerm('버전 이름 부분 검색어 (예: 4.16)')
     },
@@ -539,7 +441,7 @@ const getActivityLog = tool(
       }
       if (!note.last_synced_at) {
         hints.push(
-          '아직 한 번도 동기화하지 않은 릴리스입니다. 프로젝트 상세의 릴리스 노트 카드에서 동기화해야 Jira 이슈가 채워집니다.'
+          '아직 한 번도 동기화하지 않은 릴리스입니다. 릴리스 화면에서 동기화해야 Jira 이슈가 채워집니다.'
         )
       }
       return jsonResult({
@@ -675,8 +577,6 @@ const getActivityLog = tool(
     name: 'linkwork',
     version: '1.0.0',
     tools: [
-      listProjects,
-      getProject,
       listTodos,
       getTodo,
       searchMemos,

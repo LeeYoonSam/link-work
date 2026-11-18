@@ -33,17 +33,14 @@ describe('buildInitialPrompt', () => {
     ).toBe('다음은 한국어 채용 면접 녹음입니다.')
   })
 
-  it('제목·프로젝트·참석자를 우선순위 순으로 덧붙인다', () => {
+  it('제목·참석자를 우선순위 순으로 덧붙인다', () => {
     const r = buildInitialPrompt({
       kind: 'meeting',
       language: 'ko',
       title: 'API 연동 설계',
-      projectName: 'LinkWork',
       speakerNames: ['김철수', '이영희']
     })
-    expect(r).toBe(
-      '다음은 한국어 회의 녹음입니다. 주제: API 연동 설계. 프로젝트: LinkWork. 참석자: 김철수, 이영희.'
-    )
+    expect(r).toBe('다음은 한국어 회의 녹음입니다. 주제: API 연동 설계. 참석자: 김철수, 이영희.')
   })
 
   it('일정 제목이 회의 제목과 같으면 중복으로 넣지 않는다', () => {

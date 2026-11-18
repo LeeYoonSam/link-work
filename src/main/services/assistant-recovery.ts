@@ -36,8 +36,6 @@ const SUNDAY = '1970-01-04' // 기준 일요일
 const UNFINISHED_STATUSES: readonly PlanItemStatus[] = ['planned', 'in_progress', 'deferred']
 const STATUS_LABEL: Partial<Record<PlanItemStatus, string>> = { in_progress: '진행 중', deferred: '미룸' }
 const ENTITY_LABEL: Record<RecoveryActivityGroup['entityType'], string> = {
-  project: '프로젝트',
-  task: '작업',
   todo: '할 일'
 }
 const ACTION_LABEL: Record<string, string> = {
@@ -162,7 +160,7 @@ function activityLine(g: RecoveryActivityGroup): string {
 
 function meetingLines(m: RecoveryMeeting): string[] {
   const head = `${m.startedAt.slice(0, 10)} ${oneLine(m.title)}`
-  const out = [m.projectName ? `${head} · ${oneLine(m.projectName)}` : head]
+  const out = [head]
   const tldr = m.tldr !== null ? oneLine(m.tldr, TLDR_MAX) : ''
   if (tldr !== '') out.push(`  요약: ${tldr}`)
   const actions = m.openActionItems

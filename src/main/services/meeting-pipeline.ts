@@ -47,7 +47,6 @@ interface MeetingRow {
   source: string
   status: string
   expected_speakers: number | null
-  project_id: number | null
   calendar_event_title: string | null
   // 무음 컷편집 관련 (녹음 시작 시 선택 / 멱등 가드 / 컷편집 전 길이)
   compact_audio: number
@@ -116,24 +115,6 @@ function resolveSpeakerMeta(
   return {
     label: `화자 ${index + 1}`,
     color: SPEAKER_COLORS[index % SPEAKER_COLORS.length]
-  }
-}
-
-/**
- * project_id로 프로젝트명을 조회한다. 없거나 조회 실패 시 null(프롬프트에서 무해하게 생략).
- */
-function loadProjectName(
-  db: ReturnType<typeof getDatabase>,
-  projectId: number | null
-): string | null {
-  if (!projectId) return null
-  try {
-    const row = db.prepare('SELECT name FROM projects WHERE id = ?').get(projectId) as
-      | { name: string }
-      | undefined
-    return row?.name ?? null
-  } catch {
-    return null
   }
 }
 
@@ -436,14 +417,13 @@ export async function runMeetingPipeline(
       const sttAdapter = await getSttAdapter()
       sttName = sttAdapter.name
 
-      // whisper initial_prompt: 회의 도메인 컨텍스트(주제·프로젝트·참석자 실명·용어집)를 주입해
+      // whisper initial_prompt: 회의 도메인 컨텍스트(주제·참석자 실명·용어집)를 주입해
       // 고유명사 오인식을 줄인다. 재전사가 실제로 실행되는 이 경로에서만 조립하므로
       // 빠른 재적용(skipTranscribe) 경로에는 영향이 없다. 조회 실패는 무해하게 생략된다.
       const prompt = buildInitialPrompt({
         kind: meeting.kind,
         language: meeting.language || 'ko',
         title: meeting.title,
-        projectName: loadProjectName(db, meeting.project_id),
         calendarEventTitle: meeting.calendar_event_title,
         // 이전 처리에서 지정한 화자 실명 + 이 회의에 지정된 참석자(구성원) 이름.
         speakerNames: [...loadSpeakerNames(db, meetingId), ...aids.attendees.map((a) => a.name)],

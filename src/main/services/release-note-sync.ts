@@ -16,7 +16,7 @@ import { compareVersionDesc, matchesDeployVersion } from '../utils/version-match
  */
 
 // DB 행 타입은 main 프로세스에서 쓰는 최소 형태로 로컬 정의한다
-// (project.ipc.ts의 ProjectRow와 동일한 방식). renderer 쪽 타입은 types/index.ts에 따로 있다.
+// renderer 쪽 타입은 types/index.ts에 따로 있다.
 export interface ReleaseNoteRow {
   id: number
   jira_project_key: string

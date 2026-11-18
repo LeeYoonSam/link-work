@@ -739,10 +739,10 @@ const MeetingBriefingObject = z.object({
 export type MeetingBriefingJson = z.infer<typeof MeetingBriefingObject>
 export const MeetingBriefingSchema: z.ZodType<MeetingBriefingJson> = MeetingBriefingObject
 
-export const MEETING_SYSTEM_PROMPT = `너는 사용자가 곧 들어갈 회의를 준비시키는 비서다. [데이터] 블록에 회의 제목과 시각, 관련 프로젝트, 같은 제목의 지난 회의 요약, 미완료 액션아이템, 오늘 계획 중 관련 항목, 규칙 브리핑이 있다.
+export const MEETING_SYSTEM_PROMPT = `너는 사용자가 곧 들어갈 회의를 준비시키는 비서다. [데이터] 블록에 회의 제목과 시각, 같은 제목의 지난 회의 요약, 미완료 액션아이템, 규칙 브리핑이 있다.
 ${DATA_RULE}
 [데이터] 블록에 없는 일을 만들지 않는다. 참석자·결정 사항·숫자를 지어내지 않는다.
-준비할 것과 확인할 질문은 [데이터] 의 지난 회의·액션아이템·관련 항목에서만 끌어낸다.
+준비할 것과 확인할 질문은 [데이터] 의 지난 회의·액션아이템에서만 끌어낸다.
 
 한국어 JSON 만 출력한다. 키는 아래와 같다.
 - headline: string. 80자 이하. 이 회의에서 챙길 것을 한 문장으로 요약한다.
@@ -768,7 +768,6 @@ export function buildMeetingPrompt(input: MeetingLlmInput): string {
       start: hhmm(ctx.meeting.startAt),
       end: hhmm(ctx.meeting.endAt)
     },
-    projects: ctx.projects.map((p) => oneLine(p.name)),
     past_meetings: ctx.pastMeetings.map((m) => ({
       date: m.startedAt.slice(0, 10),
       title: oneLine(m.title),
@@ -776,7 +775,6 @@ export function buildMeetingPrompt(input: MeetingLlmInput): string {
       open_action_items: m.openActionItems.map((a) => oneLine(a))
     })),
     open_action_items: ctx.openActionItems.map((a) => oneLine(a)),
-    related_items: ctx.relatedItems.map((i) => ({ title: oneLine(i.title), status: i.status })),
     failed_sources: ctx.errors.map((e) => oneLine(e)),
     rule_briefing: input.ruleMarkdown
   }

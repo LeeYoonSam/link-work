@@ -29,7 +29,6 @@ const payloadAt = (
   meeting: { id: `cal-${title}`, title, startAt, endAt: startAt },
   title: `${title} 15분 전`,
   body: '',
-  projects: [],
   hasContext: true,
   ruleMarkdown: `# ${title}\n- 본문 ${title}`,
   llmStatus: 'off',

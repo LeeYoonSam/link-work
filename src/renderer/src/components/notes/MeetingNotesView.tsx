@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { useMeetingNotesStore } from '../../stores/meetingNotesStore'
-import { useProjectStore } from '../../stores/projectStore'
 import type { MeetingNoteFilter } from '../../types'
 import MeetingNoteList from './MeetingNoteList'
 import MeetingNoteDoc from './MeetingNoteDoc'
@@ -14,12 +13,10 @@ const KINDS: { id: NonNullable<MeetingNoteFilter['kind']>; label: string }[] = [
 
 export default function MeetingNotesView(): React.ReactNode {
   const { filter, setFilter, fetch, selectedId, select } = useMeetingNotesStore()
-  const projects = useProjectStore((s) => s.projects)
   const [query, setQuery] = useState(filter.q ?? '')
 
   useEffect(() => {
     fetch()
-    if (projects.length === 0) useProjectStore.getState().fetchProjects()
     // 메뉴 재진입 시 선택된 회의록 상세를 다시 불러온다
     if (selectedId !== null) select(selectedId)
   }, [])
@@ -60,22 +57,6 @@ export default function MeetingNotesView(): React.ReactNode {
                 </button>
               ))}
             </div>
-            {projects.length > 0 && (
-              <select
-                value={filter.projectId ?? ''}
-                onChange={(e) =>
-                  setFilter({ projectId: e.target.value ? Number(e.target.value) : null })
-                }
-                className="flex-1 min-w-0 px-1.5 py-1 text-xs border border-gray-200 rounded-md bg-white"
-              >
-                <option value="">모든 프로젝트</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            )}
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">

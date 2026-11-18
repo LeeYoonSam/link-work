@@ -312,8 +312,8 @@ function part(over: Partial<MorningSyncPart> = {}): MorningSyncPart {
   }
 }
 
-function withParts(release: MorningSyncPart | null, project: MorningSyncPart | null): MorningSyncDecisionInput['payload'] {
-  return { date: '2026-11-05', release, project }
+function withParts(release: MorningSyncPart | null): MorningSyncDecisionInput['payload'] {
+  return { date: '2026-11-05', release }
 }
 
 describe('A54: decideMorningSync', () => {
@@ -323,9 +323,9 @@ describe('A54: decideMorningSync', () => {
     expect(MORNING_SYNC_STALE_MIN).toBe(15)
   })
 
-  it('A54: 오늘 행이 없고 설정 시각이 지났으면 두 부분을 release·project 순서로 고른다', () => {
-    expect(decideMorningSync(morning())).toEqual(['release', 'project'])
-    expect(decideMorningSync(morning({ nowHHmm: '08:00', at: '2026-11-05 08:00:00' }))).toEqual(['release', 'project'])
+  it('A54: 오늘 행이 없고 설정 시각이 지났으면 release 부분을 고른다', () => {
+    expect(decideMorningSync(morning())).toEqual(['release'])
+    expect(decideMorningSync(morning({ nowHHmm: '08:00', at: '2026-11-05 08:00:00' }))).toEqual(['release'])
   })
 
   it('A54: 설정 시각 이전이면 실행하지 않는다', () => {
@@ -333,7 +333,7 @@ describe('A54: decideMorningSync', () => {
   })
 
   it('A54: 설정 시각 뒤에 앱을 열어도 그날 1번 실행한다', () => {
-    expect(decideMorningSync(morning({ nowHHmm: '15:20', at: '2026-11-05 15:20:00' }))).toEqual(['release', 'project'])
+    expect(decideMorningSync(morning({ nowHHmm: '15:20', at: '2026-11-05 15:20:00' }))).toEqual(['release'])
   })
 
   it('A54: 새벽 논리 날짜이면 전날 키로 실행하지 않는다', () => {
@@ -356,18 +356,18 @@ describe('A54: decideMorningSync', () => {
   })
 
   it('A54: 이미 ok 인 부분은 다시 실행하지 않는다', () => {
-    expect(decideMorningSync(morning({ payload: withParts(part(), part()) }))).toEqual([])
-    expect(decideMorningSync(morning({ payload: withParts(part(), null) }))).toEqual(['project'])
+    expect(decideMorningSync(morning({ payload: withParts(part()) }))).toEqual([])
+    expect(decideMorningSync(morning({ payload: withParts(null) }))).toEqual(['release'])
   })
 
   it('A54: skipped 는 다시 실행하지 않는다', () => {
     const skipped = part({ status: 'skipped', error: 'Jira 미연결' })
-    expect(decideMorningSync(morning({ nowHHmm: '12:00', at: '2026-11-05 12:00:00', payload: withParts(skipped, skipped) }))).toEqual([])
+    expect(decideMorningSync(morning({ nowHHmm: '12:00', at: '2026-11-05 12:00:00', payload: withParts(skipped) }))).toEqual([])
   })
 
   it('A54: failed 는 마지막 시도 30분 뒤에 다시 한다', () => {
     const failed = part({ status: 'failed', attempts: 1, finishedAt: '2026-11-05 08:01:00', error: '네트워크 오류' })
-    const payload = withParts(failed, part())
+    const payload = withParts(failed)
     expect(decideMorningSync(morning({ nowHHmm: '08:30', at: '2026-11-05 08:30:59', payload }))).toEqual([])
     expect(decideMorningSync(morning({ nowHHmm: '08:31', at: '2026-11-05 08:31:00', payload }))).toEqual(['release'])
   })
@@ -376,38 +376,38 @@ describe('A54: decideMorningSync', () => {
     const twice = part({ status: 'failed', attempts: 2, finishedAt: '2026-11-05 09:00:00' })
     const thrice = part({ status: 'failed', attempts: 3, finishedAt: '2026-11-05 09:00:00' })
     const at = { nowHHmm: '11:00', at: '2026-11-05 11:00:00' }
-    expect(decideMorningSync(morning({ ...at, payload: withParts(twice, part()) }))).toEqual(['release'])
-    expect(decideMorningSync(morning({ ...at, payload: withParts(thrice, part()) }))).toEqual([])
+    expect(decideMorningSync(morning({ ...at, payload: withParts(twice) }))).toEqual(['release'])
+    expect(decideMorningSync(morning({ ...at, payload: withParts(thrice) }))).toEqual([])
   })
 
   it('A54: 15분 안의 running 은 다시 실행하지 않는다', () => {
     const running = part({ status: 'running', startedAt: '2026-11-05 08:00:00', finishedAt: null })
-    const payload = withParts(running, running)
+    const payload = withParts(running)
     expect(decideMorningSync(morning({ nowHHmm: '08:14', at: '2026-11-05 08:14:59', payload }))).toEqual([])
   })
 
   it('A54: 15분 넘은 running 은 failed 로 보고 재시도 간격·상한을 적용한다', () => {
     const running = part({ status: 'running', attempts: 1, startedAt: '2026-11-05 08:00:00', finishedAt: null })
     // 15분은 넘었지만 시작 뒤 30분이 지나지 않았다
-    expect(decideMorningSync(morning({ nowHHmm: '08:20', at: '2026-11-05 08:20:00', payload: withParts(running, part()) }))).toEqual([])
-    expect(decideMorningSync(morning({ nowHHmm: '08:30', at: '2026-11-05 08:30:00', payload: withParts(running, part()) }))).toEqual(['release'])
+    expect(decideMorningSync(morning({ nowHHmm: '08:20', at: '2026-11-05 08:20:00', payload: withParts(running) }))).toEqual([])
+    expect(decideMorningSync(morning({ nowHHmm: '08:30', at: '2026-11-05 08:30:00', payload: withParts(running) }))).toEqual(['release'])
     const capped = part({ status: 'running', attempts: 3, startedAt: '2026-11-05 08:00:00', finishedAt: null })
-    expect(decideMorningSync(morning({ nowHHmm: '09:00', at: '2026-11-05 09:00:00', payload: withParts(capped, part()) }))).toEqual([])
+    expect(decideMorningSync(morning({ nowHHmm: '09:00', at: '2026-11-05 09:00:00', payload: withParts(capped) }))).toEqual([])
   })
 
   it('A54: deferred 는 시도 수와 관계없이 30분 뒤에 다시 본다', () => {
     const deferred = part({ status: 'deferred', attempts: 3, finishedAt: '2026-11-05 08:01:00' })
-    expect(decideMorningSync(morning({ nowHHmm: '08:20', at: '2026-11-05 08:20:00', payload: withParts(part(), deferred) }))).toEqual([])
-    expect(decideMorningSync(morning({ nowHHmm: '08:31', at: '2026-11-05 08:31:00', payload: withParts(part(), deferred) }))).toEqual(['project'])
+    expect(decideMorningSync(morning({ nowHHmm: '08:20', at: '2026-11-05 08:20:00', payload: withParts(deferred) }))).toEqual([])
+    expect(decideMorningSync(morning({ nowHHmm: '08:31', at: '2026-11-05 08:31:00', payload: withParts(deferred) }))).toEqual(['release'])
   })
 
   it('A54: 다른 날짜의 payload 는 오늘 상태로 쓰지 않는다', () => {
-    const old = { date: '2026-11-04', release: part(), project: part() }
-    expect(decideMorningSync(morning({ payload: old }))).toEqual(['release', 'project'])
+    const old = { date: '2026-11-04', release: part() }
+    expect(decideMorningSync(morning({ payload: old }))).toEqual(['release'])
   })
 
   it('A14: 입력을 바꾸지 않는다', () => {
-    const input = morning({ payload: withParts(part({ status: 'failed', attempts: 1 }), null) })
+    const input = morning({ payload: withParts(part({ status: 'failed', attempts: 1 })) })
     const before = JSON.parse(JSON.stringify(input))
     decideMorningSync(input)
     expect(input).toEqual(before)

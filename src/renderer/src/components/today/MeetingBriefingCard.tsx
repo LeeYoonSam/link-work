@@ -3,7 +3,6 @@ import type {
   AssistantEvent,
   MeetingBriefingPayload,
   MeetingLlmStatus,
-  MeetingProjectRef,
   TimelineEntry
 } from '../../types'
 import MarkdownContent from '../memo/MarkdownContent'
@@ -43,20 +42,10 @@ export function parseMeetingPayload(payload: string | null): MeetingBriefingPayl
     const status = LLM_STATUSES.includes(p.llmStatus as MeetingLlmStatus)
       ? (p.llmStatus as MeetingLlmStatus)
       : 'off'
-    const projects: MeetingProjectRef[] = Array.isArray(p.projects)
-      ? (p.projects as unknown[]).filter(
-          (x): x is MeetingProjectRef =>
-            !!x &&
-            typeof x === 'object' &&
-            typeof (x as MeetingProjectRef).id === 'number' &&
-            typeof (x as MeetingProjectRef).name === 'string'
-        )
-      : []
     return {
       meeting: { id, title: str(m.title) ?? '', startAt, endAt: str(m.endAt) ?? '' },
       title: str(p.title) ?? '',
       body: str(p.body) ?? '',
-      projects,
       hasContext: p.hasContext === true,
       ruleMarkdown,
       llmStatus: status,

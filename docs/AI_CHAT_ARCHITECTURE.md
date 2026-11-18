@@ -5,8 +5,8 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 
 ## 1. 개요
 
-- 사용자가 자연어로 질문하면 AI가 LinkWork의 실제 데이터(프로젝트/태스크/TODO/메모/
-  문서/변수/활동로그/Google 캘린더)와 연결된 외부 지식(Notion, Atlassian(Jira),
+- 사용자가 자연어로 질문하면 AI가 LinkWork의 실제 데이터(TODO/메모/문서/변수/
+  활동로그/릴리스 노트/개인 비서/Google 캘린더)와 연결된 외부 지식(Notion, Atlassian(Jira),
   Bitbucket, 웹 페이지)을 도구로 조회해서 답하는 로컬 전용 채팅 기능.
 - 응답은 마크다운으로 렌더링되며, `linkwork://` 링크를 통해 앱 내 화면 이동·문서 열기
   같은 액션을 수행할 수 있다.
@@ -71,7 +71,7 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 |---|---|
 | `src/main/services/ai-agent.ts` | 쿼리 실행 엔진. 시스템 프롬프트, 스트리밍 중계, 취소, 세션 resume, 진행상태 보관, 동시 실행 상한, 도구 게이트(canUseTool) |
 | `src/main/services/ai-tools.ts` | LinkWork 조회 도구 + 외부 지식 도구(Notion/웹) 정의 (zod 스키마 + SQL) |
-| `src/main/services/ai-write-tools.ts` | 쓰기 도구 12종 (생성 6종 `create_project`/`create_task`/`create_todo`/`create_memo`/`create_variable`/`create_document` + 수정 6종, HITL 승인 — 가드레일 문서 7절) |
+| `src/main/services/ai-write-tools.ts` | 쓰기 도구 8종 (생성 4종 `create_todo`/`create_memo`/`create_variable`/`create_document` + 수정 4종, HITL 승인 — 가드레일 문서 7절) |
 | `src/main/services/ai-audit.ts` | 감사 로그 기록 헬퍼 |
 | `src/main/services/ai-model.ts` | 모델 패밀리 레지스트리(`AI_MODEL_FAMILIES`), AI 대화 모델 선택 저장(`ai_model`), 동적 라벨 캐시(`ai_model_labels`). 개인 비서용 고정 ID 매핑(`resolveAiModelId`)도 둔다 |
 | `src/main/services/notion.ts` | Notion 연동 (토큰 safeStorage 저장, 검색/페이지/DB 조회 API) |
@@ -109,9 +109,8 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 )
 ```
 
-> 프로젝트 WBS의 `tasks` 테이블은 `parent_task_id`(NULL=최상위, 깊이 1단계)로 지라식
-> 상위/하위 계층을 표현한다. `get_project`가 이 값을 반환하고, `create_task`/`update_task`가
-> 이를 지정·재배치한다. `list_projects` 진행 요약은 하위가 없는 leaf 작업만 집계한다.
+> 옛 프로젝트 기능의 `projects`·`tasks` 테이블은 백업 그룹과 과거 기록 때문에 남아 있지만,
+> AI 도구는 읽지도 쓰지도 않는다. 프로젝트 메뉴는 Jira 티켓 보드로 바뀌었다([PROJECT_BOARD.md](./PROJECT_BOARD.md)).
 
 ## 6. 메시지 전송 흐름 (시퀀스)
 
@@ -149,7 +148,7 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 |---|---|---|
 | `start` | — | 쿼리 시작 |
 | `text` | `delta` | 응답 텍스트 조각 (renderer에서 누적) |
-| `tool` | `name`, `label` | 도구 사용 중 ("프로젝트 목록 조회 중…" 표시) |
+| `tool` | `name`, `label` | 도구 사용 중 ("TODO 조회 중…" 표시) |
 | `approval` | `request` | 승인 카드 요청. `request` 는 `{ requestId, kind, name, label, input, current }` 다. `kind` 는 `write` · `fetch` · `plan` 중 하나다 |
 | `approval_resolved` | `requestId`, `approved` | 승인 카드 응답 처리 완료 |
 | `mode_changed` | `mode` | 채팅 쓰기 모드가 바뀜. 계획 승인 뒤 auto 또는 ask 로 바뀔 때 보낸다 |
@@ -180,17 +179,15 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 모두 읽기 전용이며 전체 이름은 `mcp__linkwork__<이름>`. LinkWork 데이터 도구는
 읽기 전용 DB 커넥션을 사용한다.
 
-### 8.1 LinkWork 데이터 (13종)
+### 8.1 LinkWork 데이터 (11종)
 
 | 도구 | 용도 |
 |---|---|
-| `list_projects` | 프로젝트 목록 + 태스크 진행 요약 (status/이름 필터) |
-| `get_project` | 프로젝트 상세 + 전체 태스크 + 연결 문서 (ID 또는 이름). 각 태스크의 `parent_task_id`를 반환해 상위/하위 1단계 계층을 표현 |
 | `list_todos` | TODO 목록 + 태그 (완료/검색/태그 필터, notes 300자 truncate) |
 | `get_todo` | TODO 상세 (notes 전문 + 알람 설정 — 수정 전 확인용) |
 | `search_memos` | 메모 검색 (내용/카테고리/중요/보관 필터, 1000자 truncate) |
 | `get_memo` | 메모 전문 조회 (수정 전 확인용) |
-| `list_documents` | 문서 목록 + 프로젝트명 (검색/프로젝트 필터) |
+| `list_documents` | 문서 목록 (이름/설명 검색) |
 | `list_variables` | 변수 목록 (secret 값은 마스킹) |
 | `get_activity_log` | 기간별 활동 이력 — "이번주 작업 정리" 용 |
 | `get_calendar_events` | Google 캘린더 일정 (기간 지정, 미연동 시 안내 반환) |
@@ -269,8 +266,7 @@ AI 채팅과 오늘 화면은 같은 처리기 `utils/openInternalLink.ts` 를 �
 
 | 링크 | 동작 |
 |---|---|
-| `linkwork://project/{id}` | 프로젝트 상세 화면으로 이동 |
-| `linkwork://project/{projectId}/task/{taskId}` | 프로젝트 상세를 열고 작업 행을 강조 |
+| `linkwork://project/…` (옛 프로젝트·작업 링크) | 프로젝트 메뉴(Jira 티켓 보드)를 연다. 옛 대화의 링크가 죽지 않게 남긴 동작이다 |
 | `linkwork://document/{id}` | 해당 문서 URL을 바로 열기 (없으면 Documents 메뉴로) |
 | `linkwork://memo/{id}` | 메모 카드를 강조하고 메모 보기 창을 연다. 보관 메모면 보관함을 연다 |
 | `linkwork://todo/{id}` | 할 일 항목을 강조한다. 태그 필터를 푼다 |
@@ -286,11 +282,10 @@ AI 채팅과 오늘 화면은 같은 처리기 `utils/openInternalLink.ts` 를 �
 링크 규칙은 다음과 같다.
 - AI 는 특정 항목을 안내할 때 항목 링크를 쓴다. 메뉴 링크는 목록 전체를 안내할 때만 쓴다.
 - 쓰기 도구(`ai-write-tools.ts`)는 결과의 `link` 에 항목 링크를 넣는다. AI 는 생성·수정 뒤 그 값을 그대로 쓴다.
-- 단건 조회 도구 `get_memo`, `get_todo`, `get_release_note` 는 결과에 `link` 를 넣는다. `get_project` 는 `tasks` 각 행에 `link` 를 넣는다. 목록 도구에는 넣지 않는다.
+- 단건 조회 도구 `get_memo`, `get_todo`, `get_release_note` 는 결과에 `link` 를 넣는다. 목록 도구에는 넣지 않는다.
 - `get_calendar_events` 는 일정 `id` 를 돌려준다. AI 는 이 값으로 캘린더 링크를 만든다.
 - 오늘 화면 후보의 링크는 다음과 같다.
   - 할 일: `linkwork://todo/{id}`
-  - 작업: `linkwork://project/{projectId}/task/{taskId}`
   - 액션아이템: `linkwork://note/{meetingId}`
 
 ## 10. 빌드/패키징 주의사항

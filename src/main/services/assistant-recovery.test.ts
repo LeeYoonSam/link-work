@@ -54,9 +54,9 @@ const unfinished: PlanItem[] = [
 ]
 
 const activity: RecoveryActivityGroup[] = [
-  { entityType: 'task', entityId: 12, name: 'API 설계', actions: ['create', 'update'], count: 3,
+  { entityType: 'todo', entityId: 12, name: 'API 설계', actions: ['create', 'update'], count: 3,
     firstAt: '2026-10-30 10:00:00', lastAt: '2026-10-31 11:00:00', deleted: false },
-  { entityType: 'project', entityId: 2, name: '옛 프로젝트', actions: ['update', 'delete'], count: 2,
+  { entityType: 'todo', entityId: 2, name: '옛 할 일', actions: ['update', 'delete'], count: 2,
     firstAt: '2026-10-30 09:30:00', lastAt: '2026-11-01 15:00:00', deleted: true }
 ]
 
@@ -65,7 +65,7 @@ const todos: RecoveryTodoDone[] = [
 ]
 
 const meetings: RecoveryMeeting[] = [
-  { meetingId: 9, title: '주간 회의', startedAt: '2026-10-31 14:00:00', projectName: 'LinkWork',
+  { meetingId: 9, title: '주간 회의', startedAt: '2026-10-31 14:00:00',
     tldr: '배포 일정을 확정했다.', openActionItems: ['QA 요청', '문서 갱신'], openActionCount: 3 }
 ]
 
@@ -195,11 +195,11 @@ describe('buildRecovery', () => {
     // 완료 todo 먼저, 그다음 activity 묶음 lastAt 내림차순
     expect(lines.done).toEqual([
       '2026-10-30 17:05 완료 · 견적서 보내기',
-      '2026-11-01 프로젝트 · 옛 프로젝트 · 수정, 삭제 · 삭제됨',
-      '2026-10-31 작업 · API 설계 · 생성, 수정'
+      '2026-11-01 할 일 · 옛 할 일 · 수정, 삭제 · 삭제됨',
+      '2026-10-31 할 일 · API 설계 · 생성, 수정'
     ])
     expect(lines.meetings).toEqual([
-      '2026-10-31 주간 회의 · LinkWork',
+      '2026-10-31 주간 회의',
       '  요약: 배포 일정을 확정했다.',
       '  미완료 액션 3건: QA 요청; 문서 갱신'
     ])
@@ -293,7 +293,7 @@ describe('recoveryToMarkdown', () => {
       '',
       '## 회의',
       '',
-      '- 2026-10-31 주간 회의 · LinkWork',
+      '- 2026-10-31 주간 회의',
       '  - 요약: 배포 일정을 확정했다.',
       '  - 미완료 액션 3건: QA 요청; 문서 갱신',
       ''

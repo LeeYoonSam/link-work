@@ -74,7 +74,6 @@ interface RecordingStore {
   mergeSpeakers: (meetingId: number, fromSpeakerId: number, intoSpeakerId: number) => Promise<void>
   toggleCut: (cutId: number, enabled: boolean) => Promise<void>
   actionItemToTodo: (meetingId: number, index: number) => Promise<void>
-  linkProject: (id: number, projectId: number | null) => Promise<void>
   setExpectedSpeakers: (id: number, n: number | null) => Promise<void>
   // 회의 참석자(구성원 id 목록)를 통째로 교체한다
   setAttendees: (meetingId: number, memberIds: number[]) => Promise<void>
@@ -358,16 +357,6 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
       await get().refreshCurrent()
     } catch (err) {
       console.error('[recordingStore] actionItemToTodo error:', err)
-    }
-  },
-
-  linkProject: async (id, projectId) => {
-    try {
-      await window.api.recording.linkProject(id, projectId)
-      await get().refreshCurrent()
-      await get().fetchMeetings()
-    } catch (err) {
-      console.error('[recordingStore] linkProject error:', err)
     }
   },
 

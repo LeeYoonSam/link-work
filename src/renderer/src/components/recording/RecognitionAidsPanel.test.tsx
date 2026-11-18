@@ -1,16 +1,15 @@
 import { describe, it, expect, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { GlossaryEntry, Member, Project } from '../../types'
+import type { GlossaryEntry, Member } from '../../types'
 
 // 인식 보조 패널(용어집·구성원)이 등록된 항목과 빈 상태·고지 문구를 실제로 그리는지 고정한다.
 //
 // zustand v5는 서버 렌더(renderToStaticMarkup)에서 useSyncExternalStore의
 // getServerSnapshot으로 **초기 상태**를 돌려준다. setState로 주입해도 렌더에 반영되지
 // 않으므로 스토어 훅 자체를 모킹한다 (RecordingList.test.tsx와 같은 방식).
-const state: { glossary: GlossaryEntry[]; members: Member[]; projects: Project[] } = {
+const state: { glossary: GlossaryEntry[]; members: Member[] } = {
   glossary: [],
-  members: [],
-  projects: []
+  members: []
 }
 
 const noop = async (): Promise<boolean> => true
@@ -30,21 +29,13 @@ vi.mock('../../stores/recognitionAidsStore', () => ({
   })
 }))
 
-vi.mock('../../stores/projectStore', () => ({
-  useProjectStore: () => ({
-    projects: state.projects,
-    fetchProjects: async () => {}
-  })
-}))
-
 const RecognitionAidsPanel = (await import('./RecognitionAidsPanel')).default
 
 const glossary = (
   id: number,
   term: string,
   aliases: string[],
-  note: string | null,
-  project_id: number | null = null
+  note: string | null
 ): GlossaryEntry => ({
   id,
   term,
@@ -52,7 +43,7 @@ const glossary = (
   note,
   priority: 0,
   enabled: 1,
-  project_id,
+  project_id: null,
   created_at: '2026-08-25 10:00:00',
   updated_at: '2026-08-25 10:00:00'
 })
@@ -68,39 +59,19 @@ const member = (id: number, name: string, aliases: string[], role: string | null
   updated_at: '2026-08-25 10:00:00'
 })
 
-const project = (id: number, name: string): Project => ({
-  id,
-  name,
-  description: null,
-  dev_start_date: '2026-08-01',
-  dev_end_date: '2026-08-10',
-  qa_start_date: '2026-08-11',
-  qa_end_date: '2026-08-15',
-  deploy_date: '2026-08-20',
-  deploy_version: null,
-  status: 'development',
-  status_manual: 0,
-  created_at: '2026-08-01 10:00:00',
-  updated_at: '2026-08-01 10:00:00'
-})
-
 const render = (
   next: Partial<typeof state>,
   tab: 'glossary' | 'members' = 'glossary'
 ): string => {
   state.glossary = next.glossary ?? []
   state.members = next.members ?? []
-  state.projects = next.projects ?? []
   return renderToStaticMarkup(<RecognitionAidsPanel initialTab={tab} />)
 }
 
 describe('RecognitionAidsPanel', () => {
-  it('용어 행에 정답 표기·오인식 표기·메모·프로젝트 범위를 그린다', () => {
+  it('용어 행에 정답 표기·오인식 표기·메모를 그린다. 용어 범위 선택은 없다', () => {
     const html = render(
-      {
-        glossary: [glossary(1, 'LinkWork', ['링크워크', '링크웍'], '사내 WBS 앱', 7)],
-        projects: [project(7, '검색홈 개편')]
-      },
+      { glossary: [glossary(1, 'LinkWork', ['링크워크', '링크웍'], '사내 WBS 앱')] },
       'glossary'
     )
     // value= 로 확인한다 — 같은 문자열이 가져오기 textarea의 예시 placeholder에도 있어서
@@ -109,9 +80,8 @@ describe('RecognitionAidsPanel', () => {
     // 별칭 배열은 사람이 읽는 쉼표 나열로 되돌아온다
     expect(html).toContain('value="링크워크, 링크웍"')
     expect(html).toContain('value="사내 WBS 앱"')
-    // 프로젝트 범위 select에 전역과 프로젝트 이름이 모두 있다
-    expect(html).toContain('전역')
-    expect(html).toContain('검색홈 개편')
+    // 모든 용어는 전역이라 범위 select를 그리지 않는다
+    expect(html).not.toContain('이 용어를 쓸 범위')
   })
 
   it('구성원 행에 이름·호칭/별칭·역할을 그린다', () => {

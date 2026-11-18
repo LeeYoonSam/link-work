@@ -93,6 +93,11 @@ function seedMeeting(title: string, projectId: number | null = null): number {
   return Number(result.lastInsertRowid)
 }
 
+// 프로젝트 범위 UI 가 있던 시절에 저장된 행을 흉내 낸다
+function setLegacyProject(glossaryId: number, projectId: number): void {
+  db.prepare('UPDATE stt_glossary SET project_id = ? WHERE id = ?').run(projectId, glossaryId)
+}
+
 function seedProject(name: string): number {
   const result = db
     .prepare(
@@ -325,6 +330,13 @@ describe('importGlossaryText', () => {
     expect(row.note).toBe('이슈 트래커')
     expect(row.aliases).toEqual(['지라', '자이라'])
   })
+
+  it('옛 프로젝트 범위 행도 같은 용어로 보고 중복 행을 만들지 않는다', () => {
+    const { id } = upsertGlossary(db, { term: 'Jira', aliases: ['지라'] })
+    setLegacyProject(id, seedProject('LinkWork'))
+    expect(importGlossaryText(db, 'jira | 자이라')).toEqual({ added: 0, updated: 1, skipped: 0 })
+    expect(listGlossary(db)).toHaveLength(1)
+  })
 })
 
 describe('구성원과 참석자', () => {
@@ -374,28 +386,31 @@ describe('구성원과 참석자', () => {
 })
 
 describe('loadPromptContext', () => {
-  it('전역 용어 + 해당 프로젝트 용어만 우선순위 순으로 싣는다', () => {
+  it('켜진 용어를 모두 우선순위 순으로 싣는다. 옛 프로젝트 범위 행도 전역으로 쓴다', () => {
     const p1 = seedProject('LinkWork')
     const p2 = seedProject('다른 프로젝트')
     const meetingId = seedMeeting('주간 회의', p1)
 
     upsertGlossary(db, { term: '전역', aliases: ['글로벌'], priority: 1 })
-    upsertGlossary(db, { term: '프로젝트1', aliases: ['P1'], priority: 9, project_id: p1 })
-    upsertGlossary(db, { term: '프로젝트2', aliases: ['P2'], priority: 9, project_id: p2 })
+    const { id: legacy1 } = upsertGlossary(db, { term: '프로젝트1', aliases: ['P1'], priority: 9 })
+    const { id: legacy2 } = upsertGlossary(db, { term: '프로젝트2', aliases: ['P2'], priority: 8 })
     upsertGlossary(db, { term: '꺼둠', aliases: ['off'], enabled: false })
+    setLegacyProject(legacy1, p1)
+    setLegacyProject(legacy2, p2)
 
     const ctx = loadPromptContext(db, meetingId)
-    expect(ctx.glossary.map((g) => g.term)).toEqual(['프로젝트1', '전역'])
-    expect(ctx.rules.map((r) => r.term)).toEqual(['프로젝트1', '전역'])
+    expect(ctx.glossary.map((g) => g.term)).toEqual(['프로젝트1', '프로젝트2', '전역'])
+    expect(ctx.rules.map((r) => r.term)).toEqual(['프로젝트1', '프로젝트2', '전역'])
     expect(ctx.rules[0].aliases).toEqual(['P1'])
   })
 
-  it('프로젝트가 없는 회의는 전역 용어만 본다', () => {
+  it('프로젝트가 없는 회의도 옛 프로젝트 범위 용어를 본다', () => {
     const p1 = seedProject('LinkWork')
     const meetingId = seedMeeting('프로젝트 없는 회의', null)
     upsertGlossary(db, { term: '전역' })
-    upsertGlossary(db, { term: '프로젝트1', project_id: p1 })
-    expect(loadPromptContext(db, meetingId).glossary.map((g) => g.term)).toEqual(['전역'])
+    const { id } = upsertGlossary(db, { term: '프로젝트1' })
+    setLegacyProject(id, p1)
+    expect(loadPromptContext(db, meetingId).glossary.map((g) => g.term).sort()).toEqual(['전역', '프로젝트1'])
   })
 
   it('별칭이 없는 항목은 힌트로만 쓰고 치환 규칙에서는 뺀다', () => {
@@ -415,9 +430,8 @@ describe('loadPromptContext', () => {
     ])
   })
 
-  it('없는 회의를 물어도 전역 용어만 담긴 컨텍스트를 준다', () => {
+  it('없는 회의를 물어도 용어가 담긴 컨텍스트를 준다', () => {
     upsertGlossary(db, { term: '전역' })
-    upsertGlossary(db, { term: '프로젝트1', project_id: seedProject('LinkWork') })
     const ctx = loadPromptContext(db, 999999)
     expect(ctx.glossary.map((g) => g.term)).toEqual(['전역'])
     expect(ctx.attendees).toEqual([])

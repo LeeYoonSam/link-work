@@ -4,7 +4,7 @@ export type JiraCategory = 'new' | 'indeterminate' | 'done'
 export type AiModelName = 'opus' | 'sonnet' | 'haiku'
 
 export interface Candidate {
-  id: string                       // 'task:12' | 'todo:5' | 'jira:PROJ-1' | 'action_item:7:0'
+  id: string                       // 'todo:5' | 'jira:PROJ-1' | 'action_item:7:0'. 옛 행에 'task:12' 가 남아 있을 수 있다
   source: CandidateSource
   title: string
   jiraKey: string | null
@@ -17,8 +17,8 @@ export interface Candidate {
   jiraPriority: string | null      // Jira 원본 이름. 긴급 판정용
   lastTouchedAt: string | null     // 로컬 'YYYY-MM-DD HH:mm:ss'
   link: string | null
-  parentKey: string | null         // Jira 부모 키. jira·task(머지) 만 (부록 J)
-  groupName: string | null         // Jira 부모 요약 또는 WBS 프로젝트 이름
+  parentKey: string | null         // Jira 부모 키. jira 만 (부록 J)
+  groupName: string | null         // Jira 부모 요약
   workType: WorkType
   workVersion: string | null
   excluded?: boolean               // 계속 제외한 후보. listCandidates 만 채운다 (부록 M)
@@ -33,11 +33,6 @@ export interface PlanExclusion {
   excluded_at: string              // 'YYYY-MM-DD HH:mm:ss'
 }
 
-export interface TaskRow {
-  id: number; project_id: number; project_name: string
-  project_priority: 'now' | 'next' | 'later' | null
-  name: string; status: string; end_date: string | null; jira_issue_key: string | null
-}
 export interface TodoRow { id: number; title: string; priority: string; due_date: string | null; updated_at: string | null }
 export interface ActionItemRow { meeting_id: number; index: number; text: string; due: string | null; meeting_title: string }
 export interface JiraCandidateInput {
@@ -50,11 +45,9 @@ export interface JiraCandidateInput {
   parentSummary: string | null
 }
 export interface CandidateInput {
-  tasks: TaskRow[]                 // 미완료 작업. 활성 프로젝트 소속만
   todos: TodoRow[]                 // is_completed = 0
   jiraIssues: JiraCandidateInput[] | null   // null 이면 이번에 Jira 를 보지 않았다
   actionItems: ActionItemRow[]     // todo_id 없는 항목만. 회의 요약 생성 14일 이내
-  taskTouchedAt: Record<number, string>
 }
 
 export interface ScoredCandidate { candidate: Candidate; score: number }
@@ -248,7 +241,7 @@ export interface RecoveryContext {
   jiraDays: number              // 1~14
 }
 
-export type RecoveryEntityType = 'project' | 'task' | 'todo'
+export type RecoveryEntityType = 'todo'
 export interface RecoveryActivityGroup {
   entityType: RecoveryEntityType
   entityId: number | null
@@ -260,7 +253,7 @@ export interface RecoveryActivityGroup {
   deleted: boolean
 }
 export interface RecoveryMeeting {
-  meetingId: number; title: string; startedAt: string; projectName: string | null
+  meetingId: number; title: string; startedAt: string
   tldr: string | null           // 300자
   openActionItems: string[]     // todo_id 없는 항목 text. 최대 5건
   openActionCount: number
@@ -344,21 +337,17 @@ export type DueMeetingBriefing =
   | { action: 'send'; meeting: MeetingRef; eventKey: string; scheduledAt: string; late: boolean }
   | { action: 'skip'; meeting: MeetingRef; eventKey: string; scheduledAt: string; reason: 'window' | 'cap' }
 
-export interface MeetingProjectRef { id: number; name: string }
 export interface MeetingPastRef { meetingId: number; title: string; startedAt: string; tldr: string | null; openActionItems: string[] }
 export interface MeetingContext {
   meeting: MeetingRef
-  projects: MeetingProjectRef[]            // 최대 3
   pastMeetings: MeetingPastRef[]           // 최대 3. startedAt 내림차순
   openActionItems: string[]                // 최대 10
-  relatedItems: Pick<PlanItem, 'id' | 'title' | 'status'>[]   // 최대 5
   errors: string[]
 }
 export type MeetingLlmStatus = 'off' | 'pending' | 'done' | 'failed'
 export interface MeetingBriefingPayload {
   meeting: MeetingRef
   title: string; body: string              // 알림 문구
-  projects: MeetingProjectRef[]
   hasContext: boolean
   ruleMarkdown: string
   llmStatus: MeetingLlmStatus
@@ -379,8 +368,8 @@ export interface WorkClassifyInput {
 export interface WorkClassification { workType: WorkType; workVersion: string | null }
 
 // ── 아침 자동 동기화 (A54) ──
-export type MorningSyncPartName = 'release' | 'project'
-// deferred 는 사용자가 수동 미리보기를 검토 중이라 미룬 상태다. 시도로 세지 않는다
+export type MorningSyncPartName = 'release'
+// deferred 는 미룬 상태다. 시도로 세지 않는다. 지금 릴리스 파트는 쓰지 않지만 옛 행을 읽으려고 남긴다
 export type MorningSyncPartStatus = 'running' | 'ok' | 'skipped' | 'failed' | 'deferred'
 export interface MorningSyncPart {
   status: MorningSyncPartStatus
@@ -388,15 +377,14 @@ export interface MorningSyncPart {
   startedAt: string | null         // 마지막 시도 시작 'YYYY-MM-DD HH:mm:ss'
   finishedAt: string | null        // 마지막 시도 끝. running 이면 null
   error: string | null             // failed 의 사용자용 문구. skipped 이면 건너뛴 이유
-  newCount: number                 // 새 항목 수. 릴리스는 새 릴리스, 싱크업은 새 프로젝트
+  newCount: number                 // 새 릴리스 수
   updatedCount: number             // 갱신한 항목 수
-  reviewCount: number              // 싱크업만. 자동 적용하지 않고 확인이 필요한 항목 수 (R11)
+  reviewCount: number              // 확인이 필요한 항목 수. 릴리스 파트는 늘 0
   failedCount: number              // 릴리스만. 일부 버전의 실패 수
 }
 export interface MorningSyncPayload {
   date: string                     // 논리 날짜
   release: MorningSyncPart | null  // null 이면 아직 시도하지 않았다
-  project: MorningSyncPart | null
 }
 export interface MorningSyncDecisionInput {
   today: string                    // 논리 날짜
@@ -413,5 +401,4 @@ export interface MorningSyncStatus {
   inFlight: boolean
   date: string | null              // 마지막 행의 논리 날짜. 행이 없으면 null
   release: MorningSyncPart | null
-  project: MorningSyncPart | null
 }

@@ -64,7 +64,6 @@ export interface NoteDetail {
   segments: NoteSegment[]
   summary: NoteSummary | null
   attendees: { name: string }[]
-  projectName?: string | null
 }
 
 export function formatClock(ms: number): string {
@@ -100,7 +99,6 @@ export function buildMeetingNoteMarkdown(detail: NoteDetail): string {
     `종류: ${meeting.kind === 'interview' ? '면접' : '회의'}`
   ]
   if (attendees.length > 0) meta.push(`참석자: ${attendees.map((a) => a.name).join(', ')}`)
-  if (detail.projectName) meta.push(`프로젝트: ${detail.projectName}`)
   out.push(meta.join(' · '), '')
 
   if (summary) {

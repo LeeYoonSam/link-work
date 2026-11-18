@@ -26,7 +26,7 @@ import {
 import { takePendingNavigate } from '../services/assistant-scheduler'
 import type { PlanItemStatus } from '../services/assistant-types'
 
-// project-sync.ipc.ts 처럼 throw 하지 않고 { success, error } 로 감싼다.
+// release-note.ipc.ts 처럼 throw 하지 않고 { success, error } 로 감싼다.
 // 이유: Jira·캘린더 조회가 실패할 수 있고, 실패 사유가 곧 사용자 조치다. getSettings 만 예외다.
 // 인자 형식 검증은 서비스가 한다. 렌더러 값은 신뢰하지 않는다.
 function toMessage(err: unknown): string {

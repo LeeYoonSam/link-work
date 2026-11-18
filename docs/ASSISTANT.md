@@ -7,7 +7,7 @@
 - "지금 남은 작업이 뭐지?"
 - "주말 이후에 어디까지 했더라?"
 
-비서는 LinkWork 안에 들어가는 모듈이다. 사용자가 '하루 시작' 버튼을 누르면, 비서가 오늘 계획을 만든다. 비서는 캘린더·Jira·작업·todo·회의 액션아이템을 읽는다. 하루 중에 회의나 작업이 새로 들어오면, 비서가 계획을 최신화한다. 사용자가 '퇴근' 버튼을 누르거나 날짜 경계가 지나면, 하루가 닫힌다.
+비서는 LinkWork 안에 들어가는 모듈이다. 사용자가 '하루 시작' 버튼을 누르면, 비서가 오늘 계획을 만든다. 비서는 캘린더·Jira·todo·회의 액션아이템을 읽는다. 하루 중에 회의나 작업이 새로 들어오면, 비서가 계획을 최신화한다. 사용자가 '퇴근' 버튼을 누르거나 날짜 경계가 지나면, 하루가 닫힌다.
 
 | MVP | 범위 |
 |-----|------|
@@ -35,6 +35,7 @@
 - 메뉴 통합·아침 자동 동기화 (2026-11-05): Dashboard 를 없애고 '오늘' 을 유일한 홈으로 둔다. 첫 화면 규칙 A24 를 다시 쓴다(부록 C). 아침 자동 동기화 규칙 A54 와 화면 자동 갱신을 부록 K 에 둔다. 부록 K 가 §12.2 의 Sidebar·Dashboard 항목과 §19 결정 14·15 를 대체한다.
 - 체크인 제거·홈 개편 (2026-11-05): 작업 경계 체크인을 지운다. 오늘 화면을 요약 타일과 2열 배치로 바꾼다. 내용은 부록 L 이다. 부록 L 이 J.8 과 A53 을 대체한다.
 - 후보 분리·계속 제외·오늘 카드 통합 (2026-11-09): 하루 시작이 액션아이템을 넣지 않는다. 계속 제외를 저장한다. 시간표와 오늘 할 일을 카드 1개로 합친다. 오늘 화면 정렬·강조 규칙을 정한다. 내용은 부록 M 이다. 부록 M 이 L.2 의 주열 순서와 L.8 3차 조정의 카드 순서를 대체한다. 규칙 A57~A59 는 M.6 에 있다.
+- 프로젝트 메뉴 개편 (2026-11-18): 로컬 프로젝트·WBS 작업·프로젝트 싱크업을 지우고 프로젝트 메뉴를 Jira 티켓 보드로 바꿨다. 비서의 작업 후보, 활성 프로젝트 읽기, 회의 브리핑의 관련 프로젝트·관련 항목, 맥락 복구의 프로젝트·작업 유형, 아침 동기화의 프로젝트 파트, 오늘 화면의 진행 중 프로젝트, 트레이의 Active Projects 를 지웠다. 내용은 부록 N 이다. 본문·부록의 현재 동작 서술은 이 개편에 맞춰 고쳤다. 날짜가 붙은 결정 기록·완료 조건·팀 구성은 당시 기록으로 남겼다.
 
 ---
 
@@ -44,10 +45,10 @@
 - `powerMonitor`·`setLoginItemSettings` 사용처가 없다.
 - 별도 설정 화면이 없다. 기능별 설정은 모달이다. 예: `CalendarSettings.tsx`, `JiraSettingsModal.tsx`. 비서 설정도 오늘 화면 안의 모달로 둔다.
 - `recognition-aids.ts` 는 DDL 을 `RECOGNITION_AIDS_SCHEMA` 상수로 둔다. `initDatabase()` 가 이 상수를 `db.exec` 한다. 비서 테이블도 이 관례를 따른다.
-- DB 테스트는 `vi.mock('better-sqlite3')` 로 `node:sqlite` shim 을 쓴다. 선례는 `project-sync.test.ts`, `project-priority.migration.test.ts` 다.
+- DB 테스트는 `vi.mock('better-sqlite3')` 로 `node:sqlite` shim 을 쓴다. 선례는 `project-priority.migration.test.ts` 다.
 - `meeting-summary.ts` 는 창 없이 `query()` 를 실행하는 헤드리스 선례다. 이 파일은 `ai-agent.ts` 의 `sanitizedEnv`·`findClaudeExecutable`·`toFriendlyError` 를 복제했다. 비서는 3번째 복제를 만들지 않는다. 비서는 공용 파일 `ai-headless.ts` 를 새로 만든다.
 - `meeting_summaries.action_items` 항목은 todo 로 옮기면 `todo_id` 를 가진다. 후보 중복 제거에 이 값을 쓴다.
-- `tasks` 에 `updated_at` 이 없다. `activity_log` 가 작업 변경 시각을 가진다. 그래서 `tasks.updated_at` 을 추가하지 않는다.
+- `tasks` 에 `updated_at` 이 없다. `activity_log` 가 작업 변경 시각을 가진다. 그래서 `tasks.updated_at` 을 추가하지 않는다. 2026-11-18 프로젝트 메뉴 개편 뒤로 비서는 `projects`·`tasks` 를 읽지 않는다 (부록 N).
 - `src/main/utils/activity-logger.ts` 의 `logActivity()` 는 13개 파일이 쓰는 단일 기록 지점이다. 비서는 이 지점에서 앱 내부 변경을 감지한다.
 - `jira.ts` 의 `listIssuesByKeys()` 는 키 목록으로 이슈를 조회한다. 비서는 목록에서 사라진 이슈의 상태 확인에 이 함수를 쓴다.
 - `ai-model.ts` 의 모델 ID 는 opus=`claude-opus-5-5`, sonnet=`claude-sonnet-5-5`, haiku=`claude-haiku-4-5` 다.
@@ -155,7 +156,7 @@
 
 ### 2.8 회의 전 (MVP5)
 1. 14:00 에 회의가 있다. 13:45 에 비서가 `meeting_briefing` 이벤트를 만든다.
-2. 비서가 이름이 같은 프로젝트, 같은 제목의 지난 회의 요약, 미완료 액션아이템을 모은다.
+2. 비서가 같은 제목의 지난 회의 요약과 미완료 액션아이템을 모은다.
 3. 비서가 규칙 기반 브리핑을 저장하고 알림을 보낸다. LLM 브리핑은 백그라운드로 만든다.
 4. 사용자가 알림을 클릭하면, 앱이 회의 카드를 연다.
 
@@ -204,12 +205,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_plans_one_active
 CREATE TABLE IF NOT EXISTS plan_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   plan_id INTEGER NOT NULL,
-  candidate_id TEXT NOT NULL,                  -- 'task:12' | 'todo:5' | 'jira:PROJ-1' | 'action_item:7:0'
-  source TEXT NOT NULL,                        -- 'task' | 'todo' | 'jira' | 'action_item'
+  candidate_id TEXT NOT NULL,                  -- 'todo:5' | 'jira:PROJ-1' | 'action_item:7:0' | 'manual:…'. 옛 행에 'task:12' 가 남아 있을 수 있다
+  source TEXT NOT NULL,                        -- 'todo' | 'jira' | 'action_item' | 'manual'. 옛 행에 'task' 가 남아 있을 수 있다
   title TEXT NOT NULL,
   link TEXT,                                   -- linkwork://… 또는 Jira browse URL
   jira_issue_key TEXT,
-  project_id INTEGER,
+  project_id INTEGER,                          -- 옛 task 행만 값이 있다. 새 행은 NULL
   due_date TEXT,                               -- 'YYYY-MM-DD'
   score INTEGER NOT NULL,
   rank INTEGER,                                -- 1부터. suggested 는 NULL
@@ -268,9 +269,9 @@ CREATE INDEX IF NOT EXISTS idx_assistant_events_date ON assistant_events(plan_da
 | assistant_checkin_min_gap | `45` | 체크인 최소 간격 분. 제거됨 (2026-11-05, 부록 L). 남은 행은 읽지 않는다 | 4 |
 | assistant_checkin_daily_cap | `4` | 하루 체크인 상한. 제거됨 (2026-11-05, 부록 L). 남은 행은 읽지 않는다 | 4 |
 | assistant_meeting_lead_min | `15` | 회의 전 브리핑 선행 분 | 5 |
-| assistant_morning_sync_enabled | `1` | 아침 자동 동기화 사용. 릴리스 전체 동기화와 싱크업 안전 자동 적용을 함께 켠다 | K |
+| assistant_morning_sync_enabled | `1` | 아침 자동 동기화 사용. 릴리스 전체 동기화를 켠다 | K |
 | assistant_morning_sync_time | `08:00` | 아침 자동 동기화 시각 `HH:mm` | K |
-| assistant_complete_origin_on_done | `0` | 계획 항목을 `done` 으로 바꿀 때 원본 todo·작업도 완료할지. 렌더러가 기존 API 로 처리한다 | K |
+| assistant_complete_origin_on_done | `0` | 계획 항목을 `done` 으로 바꿀 때 원본 todo 도 완료할지. 렌더러가 기존 API 로 처리한다 | K |
 
 `assistant-settings.ts` 의 `parseAssistantSettings(rows)` 는 순수 함수다. 이 함수가 기본값 병합과 형식 검증을 한다. 잘못된 값은 기본값으로 바뀐다.
 
@@ -287,14 +288,14 @@ CREATE INDEX IF NOT EXISTS idx_assistant_events_date ON assistant_events(plan_da
 파일은 `src/main/services/assistant-candidates.ts` 다. 이 파일은 순수 함수만 가진다.
 
 ```ts
-export type CandidateSource = 'jira' | 'task' | 'todo' | 'action_item'
+export type CandidateSource = 'jira' | 'task' | 'todo' | 'action_item'   // 'manual' 은 부록 G 에서 더했다. 'task' 는 옛 plan_items 행 때문에 남는다
 export interface Candidate {
   id: string                     // `${source}:${nativeId}`. jira 는 `jira:${key}`
   source: CandidateSource
   title: string
   jiraKey: string | null
-  projectId: number | null
-  projectName: string | null
+  projectId: number | null       // 늘 null (부록 N)
+  projectName: string | null     // 늘 null (부록 N)
   dueDate: string | null         // 'YYYY-MM-DD'
   dueTime: string | null         // 'HH:mm'. todo 만
   inProgress: boolean
@@ -304,18 +305,16 @@ export interface Candidate {
   link: string | null
 }
 export interface CandidateInput {
-  tasks: TaskRow[]               // status != 'done', 프로젝트 유효 상태가 ACTIVE_STATUSES
   todos: TodoRow[]               // is_completed = 0
   jiraIssues: JiraMyIssue[]      // statusCategory != done
   actionItems: ActionItemRow[]   // todo_id 없는 항목만. 회의 생성 14일 이내
-  taskTouchedAt: Record<number, string>  // activity_log 의 MAX(created_at)
 }
 export function buildCandidates(input: CandidateInput): Candidate[]
 export function isUrgent(c: Candidate, today: string): boolean
 ```
 
 정규화 규칙:
-- task: priority 는 프로젝트 priority 를 매핑한다. now→high, next→medium, later→low, null→null 이다. link 는 `linkwork://project/${project_id}` 다. `status = 'in_progress'` 이면 inProgress 다.
+- task: 폐지(2026-11-18, 프로젝트 메뉴 개편). WBS 작업은 후보가 되지 않는다. `CandidateSource` 의 `'task'` 값은 기존 `plan_items` 행(`source = 'task'`)을 읽기 위해 타입에 남긴다.
 - todo: priority 를 그대로 쓴다. due_date 를 날짜와 시각으로 나눈다. link 는 `linkwork://view/todos` 다.
 - jira: Highest·High 는 high, Medium 은 medium, Low·Lowest 는 low 다. `statusCategory = 'indeterminate'` 이면 inProgress 다. link 는 `getJiraIssueUrl(key)` 다.
 - jira lastTouchedAt: Jira `updated` 는 시간대가 붙은 ISO 문자열이다. `assistant-sources.ts` 가 이 값을 로컬 `YYYY-MM-DD HH:mm:ss` 로 바꾼 뒤 넘긴다. 이유: A12 형식 규칙과 activity_log 비교를 맞춘다.
@@ -326,9 +325,9 @@ export function isUrgent(c: Candidate, today: string): boolean
 - jiraPriority 가 `Highest` 다.
 
 중복 제거 규칙:
-1. jiraKey 가 같은 task 와 jira 후보를 하나로 합친다.
-2. 합친 후보의 id·source·link·projectId 는 task 값이다. 이유: task 가 앱 안 이동 경로다.
-3. 합친 후보의 inProgress·priority·dueDate·lastTouchedAt 은 jira 값을 우선한다. 이유: Jira 가 최신 상태의 원본이다.
+1. task·jira 후보 병합: 폐지(2026-11-18, 프로젝트 메뉴 개편). jira 후보는 같은 키의 첫 1건만 쓴다.
+2. 병합 후보의 id·source 규칙: 폐지(2026-11-18, 프로젝트 메뉴 개편).
+3. 병합 후보의 값 우선순위: 폐지(2026-11-18, 프로젝트 메뉴 개편).
 4. `todo_id` 가 있는 액션아이템은 입력에서 빠진다. 그 todo 가 후보를 대표한다.
 5. 결과는 id 오름차순으로 정렬한다. 이유: 결정론을 보장한다.
 
@@ -359,7 +358,7 @@ export function isUrgent(c: Candidate, today: string): boolean
 `compareCandidates(a, b)` 의 비교 순서:
 1. 점수 내림차순.
 2. dueDate 오름차순. null 은 뒤로 간다.
-3. source 순서. jira, task, todo, action_item 순이다.
+3. source 순서. jira, task, todo, action_item, manual 순이다. task 는 옛 행에만 있다.
 4. id 오름차순.
 
 `rankCandidates(list, today)` 는 이 순서로 정렬한 새 배열을 돌려준다. 이 함수는 입력을 바꾸지 않는다.
@@ -469,7 +468,7 @@ export function shouldSendStartNudge(input: NudgeInput): boolean
 | 2 | 60초 틱 추가. 캘린더·Jira 주기 확인, 잠자기 복귀 시 즉시 확인, 최신화 알림 |
 | 4 | 체크인 판정 추가. 순수 함수 `assistant-schedule.ts` 의 `computeDueEvents` 를 쓴다. 제거됨 (2026-11-05, 부록 L) |
 | 5 | 회의 전 브리핑 판정 추가 |
-| K | `runTick` 끝에서 주입받은 `SchedulerDeps.onTick(wake, now)` 를 await 없이 부른다. `index.ts` 가 `runMorningSyncIfDue` 를 주입한다. 스케줄러는 싱크업·릴리스·아침 동기화 모듈을 import 하지 않는다 (A54) |
+| K | `runTick` 끝에서 주입받은 `SchedulerDeps.onTick(wake, now)` 를 await 없이 부른다. `index.ts` 가 `runMorningSyncIfDue` 를 주입한다. 스케줄러는 릴리스·아침 동기화 모듈을 import 하지 않는다 (A54) |
 
 ### 7.3 시각 기반 이벤트 (MVP4·5)
 
@@ -504,7 +503,7 @@ export function shouldSendStartNudge(input: NudgeInput): boolean
 
 | 트리거 | 감지 대상 | 최신화 범위 | MVP |
 |--------|-----------|-------------|-----|
-| `logActivity()` 호출 | task·todo·project·meeting 변경 | 로컬 출처만 | 1 |
+| `logActivity()` 호출 | todo·meeting 변경 | 로컬 출처만 | 1 |
 | 회의 요약 생성 | 새 액션아이템. `runMeetingSummary` 가 저장 후 `logActivity('meeting','update')` 를 호출한다 | 로컬 출처만 | 1 |
 | '새로고침' 버튼 | 전체 | 로컬·캘린더·Jira | 1 |
 | 캘린더 주기 | 일정 추가·변경·취소 | 캘린더 | 2 |
@@ -557,7 +556,7 @@ export function shouldNotifyPlanUpdate(plan: RefreshPlan, ctx: NotifyContext): b
 | 일정 추가·변경·취소 | §5.3 재배치를 실행한다 |
 | 새 후보 | `status = 'suggested'` 항목으로 넣는다. `urgent` 는 `isUrgent` 결과다. 계획에 자동으로 넣지 않는다 (A19) |
 | 계획 항목의 출처 갱신 | 제목·마감·우선순위를 갱신한다. 점수를 다시 계산한다. rank 는 바꾸지 않는다 |
-| 사라진 로컬 후보 | 원본이 완료되었으면 `done` 으로 바꾼다. 원본이 삭제되었으면 `dropped` 로 바꾼다 |
+| 사라진 로컬 후보 | 원본이 완료되었으면 `done` 으로 바꾼다. 원본이 삭제되었으면 `dropped` 로 바꾼다. 대상은 todo·action_item 이다. 옛 `task` 행은 해석하지 않는다. 그래서 `suggested` 면 `dropped`, 그 밖의 상태면 그대로 둔다 (부록 N) |
 | 사라진 Jira 후보 | `listIssuesByKeys` 로 상태를 확인한다. statusCategory 가 done 이면 `done` 이다. 담당자가 다른 사람이면 `dropped` 이고 `status_note` 는 `담당 변경` 이다. 담당자가 아직 나이거나 내 accountId 를 모르면 바꾸지 않는다. 이유: 200건 상한으로 잘린 이슈를 잘못 제외하지 않는다. local 최신화는 Jira 를 호출하지 않으므로 이 해석을 하지 않는다 |
 | 액션아이템이 todo 로 옮겨짐 | 같은 행의 `candidate_id`·`source`·`link` 를 todo 값으로 바꾼다. 상태와 rank 는 유지한다 |
 
@@ -658,7 +657,7 @@ LLM 이 실패해도 규칙 브리핑이 이미 저장되어 있다. 오늘 화�
 |------|------|------|
 | 퇴근 메모 | 마지막 `closed` 계획의 `wrapup_note` | 7일 이내만 |
 | 미완료 계획 항목 | 마지막 계획의 `planned`·`in_progress`·`deferred` 항목 | 오늘 후보에 자동 포함된다 |
-| activity_log | `created_at >= 마지막 계획의 started_at` 인 project·task·todo 행 | entity 별로 묶는다 |
+| activity_log | `created_at >= 마지막 계획의 started_at` 인 todo 행 | entity 별로 묶는다. project·task 행은 2026-11-18 부터 읽지 않는다 (부록 N) |
 | Jira 최근 변경 | `listMyRecentlyUpdatedIssues(days)` | days = 공백 일수 + 1. 최대 14 |
 | 회의 요약 | `meeting_summaries.generated_at >= 마지막 계획의 started_at` | tldr 와 미완료 action_items |
 | 완료 todo | `completed_at >= 마지막 계획의 started_at` | |
@@ -679,7 +678,7 @@ git 연동은 넣지 않는다. 이유는 3가지다.
 
 ## 11. Jira 확장
 
-`src/main/services/jira.ts` 에 조회 함수 2개를 추가한다. 두 함수는 `method: 'GET'` 만 쓰는 `jiraRequest` 를 재사용한다. 싱크업 함수는 수정하지 않는다.
+`src/main/services/jira.ts` 에 조회 함수 2개를 추가한다. 두 함수는 `method: 'GET'` 만 쓰는 `jiraRequest` 를 재사용한다.
 
 ```ts
 export interface JiraMyIssue {
@@ -701,7 +700,7 @@ JQL:
 - 상한은 200건이다. 엔드포인트는 `/rest/api/3/search/jql` 커서 페이지네이션이다.
 - 사라진 이슈의 상태 확인은 기존 `listIssuesByKeys()` 를 쓴다.
 
-원칙: 비서는 Jira 를 읽기만 한다. 비서는 프로젝트·작업을 만들거나 바꾸지 않는다. 그 일은 `project-sync` 가 한다.
+원칙: 비서는 Jira 를 읽기만 한다. 비서는 프로젝트·작업을 만들거나 바꾸지 않는다.
 
 ---
 
@@ -714,7 +713,7 @@ JQL:
 | start_nudge | `오늘 시작할까요?` | `후보 N건 · 오늘 일정 M건` | 아니오 | 오늘 화면 | 1 |
 | plan_update | `계획 변경` 또는 `새로 들어온 일` | §8.5 | 아니오 | 오늘 화면의 해당 영역 | 2 |
 | checkin | 제거됨 (2026-11-05, 부록 L) | – | – | – | 4 |
-| meeting_briefing | `<회의 제목> 15분 전` | `<관련 프로젝트> · 미완료 액션 N건` | 아니오 | 회의 카드 | 5 |
+| meeting_briefing | `<회의 제목> 15분 전` | `미완료 액션 N건` | 아니오 | 회의 카드 | 5 |
 
 - 알림은 `actions` 를 쓰지 않는다. 이유: `hasReply` 와 함께 쓰면 macOS 가 첫 action 외에는 무시한다.
 - 체크인 답장 해석. 제거됨 (2026-11-05, 부록 L). `완료`·`done` 은 `done` 이다. `미룸`·`나중에` 는 `deferred` 다. 나머지는 `in_progress` 와 `status_note` 다.
@@ -722,7 +721,7 @@ JQL:
 - 창이 없거나 창이 로딩 중이면, 스케줄러가 navigate 를 '보관 신호'로 저장한다. 창이 없으면, 스케줄러가 `createWindow()` 를 호출한다. 렌더러는 마운트할 때 `assistant:takePendingNavigate` 로 보관 신호를 가져간다. 보관 신호는 60초 뒤 만료된다. 이유: `did-finish-load` 시점에 렌더러의 구독이 아직 없을 수 있다 (부록 D.4).
 
 ### 12.2 오늘 화면 (MVP1)
-- `projectStore.view` 유니온에 `'today'` 를 추가한다.
+- 뷰 유니온에 `'today'` 를 추가한다. 지금 뷰 상태는 `stores/navigationStore.ts` 의 `view` 다(2026-11-18 전에는 `projectStore.view`).
 - Sidebar 에 `오늘` 항목을 Dashboard 바로 아래에 둔다. 메뉴 통합 뒤에는 부록 K.1 이 이 항목을 대체한다. '오늘' 이 맨 위 홈이고 Dashboard 는 없다.
 - `App.tsx` 에 `case 'today'` 를 추가한다.
 
@@ -746,7 +745,7 @@ JQL:
 계획 항목 행:
 - 순위, 슬롯 시간, 제목, 출처 배지, 마감, 상태 버튼 4개, 링크 열기를 보여 준다.
 - 사용자가 슬롯 시간을 직접 바꾸면, 항목이 고정 항목이 된다. 행은 고정 표시를 보여 준다.
-- 사용자가 항목을 `done` 으로 바꾸면, 화면이 `원본도 완료 처리` 체크박스를 보여 준다. 사용자가 체크하면, 렌더러가 기존 `window.api.todo.complete` 또는 `window.api.task.update` 를 부른다. 비서 main 코드는 todos·tasks 를 쓰지 않는다.
+- 사용자가 항목을 `done` 으로 바꾸면, 화면이 `원본도 완료 처리` 체크박스를 보여 준다. 사용자가 체크하면, 렌더러가 기존 `window.api.todo.complete` 를 부른다. 원본 완료는 todo 출처만 한다. jira·action_item 과 옛 task 행은 계획 항목만 완료한다. 비서 main 코드는 todos·tasks 를 쓰지 않는다.
 - 설정 `assistant_complete_origin_on_done` 이 `1` 이면, 체크박스 없이 렌더러가 같은 API 로 원본을 완료한다. 원본 완료가 성공하면 렌더러가 `refreshEntity` 로 해당 스토어를 다시 읽는다 (부록 K.4).
 
 기타:
@@ -763,7 +762,7 @@ JQL:
 
 ## 13. IPC 계약
 
-preload 네임스페이스는 `assistant` 다. 채널은 `assistant:<동작>` 이다. 응답은 `project-sync.ipc.ts` 처럼 `{ success, error }` 로 감싼다. 이유: Jira 호출이 실패할 수 있다.
+preload 네임스페이스는 `assistant` 다. 채널은 `assistant:<동작>` 이다. 응답은 `{ success, error }` 로 감싼다. 이유: Jira 호출이 실패할 수 있다.
 
 ```ts
 export type PlanItemStatus = 'suggested' | 'planned' | 'in_progress' | 'done' | 'deferred' | 'dropped' | 'dismissed'
@@ -843,8 +842,8 @@ push 채널은 `assistant:navigate` 와 `assistant:changed` 다. `preload/index.
 
 | ID | 규칙 | 이유 | 판정 |
 |----|------|------|------|
-| A1 | Jira 는 GET 만 쓴다. 비서 조회 함수는 `jira.ts` 의 `jiraRequest` 만 쓴다 | 싱크업과 같은 읽기 전용 원칙이다 | MVP1 조건 11 |
-| A2 | 비서 main 코드는 비서 테이블 3개와 `assistant_*` 설정 키만 쓴다. projects·tasks·todos·meetings 를 INSERT·UPDATE·DELETE 하지 않는다 | 비서가 원본을 바꾸면 싱크업·사용자 편집과 충돌한다 | MVP1 조건 12 |
+| A1 | Jira 는 GET 만 쓴다. 비서 조회 함수는 `jira.ts` 의 `jiraRequest` 만 쓴다 | 앱 전체의 Jira 읽기 전용 원칙이다 | MVP1 조건 11 |
+| A2 | 비서 main 코드는 비서 테이블 3개와 `assistant_*` 설정 키만 쓴다. projects·tasks·todos·meetings 를 INSERT·UPDATE·DELETE 하지 않는다 | 비서가 원본을 바꾸면 사용자 편집과 충돌한다 | MVP1 조건 12 |
 | A3 | 순수 모듈은 electron·better-sqlite3·`../db`·`./jira`·`./google-calendar` 를 import 하지 않는다. 대상은 candidates·score·slots·settings·day·refresh·recovery·schedule·meeting 이다 | 픽스처로 규칙을 검증한다 | MVP 별 조건 |
 | A4 | 같은 `jiraKey` 의 후보는 1개다. `todo_id` 가 있는 액션아이템은 후보가 아니다 | 같은 일이 계획에 두 번 들어가지 않는다 | 테스트 `A4` |
 | A5 | 같은 `event_key` 는 1회만 기록·발송한다. INSERT 가 `show()` 보다 먼저다 | 재시작·보충에서 중복 알림을 막는다 | UNIQUE 제약, 테스트 `A5` |
@@ -930,7 +929,7 @@ push 채널은 `assistant:navigate` 와 `assistant:changed` 다. `preload/index.
 - `assistant-service.ts`: `startDay`, `closeDay`, `reopenDay`, `runRefresh` 같은 흐름 조정 함수를 가진다. IPC 와 스케줄러가 이 파일만 부른다.
 - `assistant-scheduler.ts`: powerMonitor·창 포커스 이벤트, 틱, Notification, 답장 처리, navigate 전송, `onActivity` 구독을 담당한다.
 - `assistant-schedule.ts`: 체크인·회의 전 브리핑의 시각 판정. 순수 함수다.
-- `assistant-meeting.ts`: 회의 제목과 프로젝트 이름 매칭, 같은 제목의 지난 회의 요약, 미완료 액션아이템 조회를 담당한다. 순수 함수다.
+- `assistant-meeting.ts`: 같은 제목의 지난 회의 요약, 미완료 액션아이템 조회를 담당한다. 순수 함수다.
 
 ---
 
@@ -1049,18 +1048,19 @@ push 채널은 `assistant:navigate` 와 `assistant:changed` 다. `preload/index.
 타입만 둔다. 런타임 코드와 import 가 없다.
 
 ```ts
+// 'task' 는 기존 plan_items 행(source = 'task')을 읽기 위해 남긴다. 새 후보는 만들지 않는다 (부록 N)
 export type CandidateSource = 'jira' | 'task' | 'todo' | 'action_item'
 export type CandidatePriority = 'high' | 'medium' | 'low'
 export type JiraCategory = 'new' | 'indeterminate' | 'done'
 export type AiModelName = 'opus' | 'sonnet' | 'haiku'
 
 export interface Candidate {
-  id: string                       // 'task:12' | 'todo:5' | 'jira:PROJ-1' | 'action_item:7:0'
+  id: string                       // 'todo:5' | 'jira:PROJ-1' | 'action_item:7:0'. 옛 행에 'task:12' 가 남아 있을 수 있다
   source: CandidateSource
   title: string
   jiraKey: string | null
-  projectId: number | null
-  projectName: string | null
+  projectId: number | null         // 늘 null
+  projectName: string | null       // 늘 null
   dueDate: string | null           // 'YYYY-MM-DD'
   dueTime: string | null           // 'HH:mm'. todo 만
   inProgress: boolean
@@ -1070,11 +1070,6 @@ export interface Candidate {
   link: string | null
 }
 
-export interface TaskRow {
-  id: number; project_id: number; project_name: string
-  project_priority: 'now' | 'next' | 'later' | null
-  name: string; status: string; end_date: string | null; jira_issue_key: string | null
-}
 export interface TodoRow { id: number; title: string; priority: string; due_date: string | null; updated_at: string | null }
 export interface ActionItemRow { meeting_id: number; index: number; text: string; due: string | null; meeting_title: string }
 export interface JiraCandidateInput {
@@ -1084,11 +1079,9 @@ export interface JiraCandidateInput {
   url: string | null               // getJiraIssueUrl 결과
 }
 export interface CandidateInput {
-  tasks: TaskRow[]                 // 미완료 작업. 활성 프로젝트 소속만
   todos: TodoRow[]                 // is_completed = 0
   jiraIssues: JiraCandidateInput[] | null   // null 이면 이번에 Jira 를 보지 않았다
   actionItems: ActionItemRow[]     // todo_id 없는 항목만. 회의 요약 생성 14일 이내
-  taskTouchedAt: Record<number, string>
 }
 
 export interface ScoredCandidate { candidate: Candidate; score: number }
@@ -1545,7 +1538,7 @@ IPC·preload: `assistant:setItemSlot` → `assistant:focusItem` (인자 `itemId`
 - 렌더러의 `resolveStartView` 도 모르는 값을 `today` 로 바꾼다. 이유: main 과 렌더러가 같은 결론을 낸다.
 
 판정 흐름:
-- `projectStore.view` 의 초기값은 `today` 다. 그래서 `getToday` 가 실패하면 첫 화면은 today 다.
+- `navigationStore.view` 의 초기값은 `today` 다(2026-11-18 전에는 `projectStore.view`). 그래서 `getToday` 가 실패하면 첫 화면은 today 다.
 - 판정 결과가 현재 화면과 같으면 아무것도 하지 않는다.
 - 판정이 끝나기 전에 사용자가 다른 화면으로 이동했으면, 판정 결과를 적용하지 않는다.
 - 판정이 끝나기 전에 `assistant:navigate` 가 오면, navigate 가 우선한다.
@@ -1921,7 +1914,7 @@ A27 규칙:
 
 #### E.6.8 `tray-widget.ts` (팀원 3) 변경분
 ```ts
-interface TrayData { projects: TrayProject[]; events: TrayEvent[]; assistant: TrayAssistant | null }
+interface TrayData { events: TrayEvent[]; assistant: TrayAssistant | null }   // projects 는 2026-11-18 에 지웠다 (부록 N)
 // getTrayData: try { assistant = toTraySummary(await getToday()) } catch { assistant = null }. settings.enabled 가 false 면 null
 // ipcMain.handle('tray:openToday', () => { navigateToToday(); panelWindow?.hide() })
 // destroyTrayWidget: ipcMain.removeHandler('tray:openToday')
@@ -1935,7 +1928,7 @@ export function TrayAssistantSection(props: {
 }): React.ReactNode
 export function trayStatusLine(a: TrayAssistant): string   // 'HH:mm 시작 · 집중 가능 N분' | '오늘 계획이 없습니다' | '오늘 마감'
 ```
-- `TrayAssistant` 는 파일 안에 로컬 인터페이스로 둔다. 기존 `TrayProject`·`TrayEvent` 와 같은 관례다.
+- `TrayAssistant` 는 파일 안에 로컬 인터페이스로 둔다. 기존 `TrayEvent` 와 같은 관례다.
 - 테스트는 `renderToStaticMarkup` 으로 `TrayAssistantSection` 을 그린다. `window.api` 를 쓰지 않는다.
 
 #### E.6.10 `preload/index.ts` (팀원 2) 변경분
@@ -2112,14 +2105,14 @@ MVP3 에서 빠지는 것:
 |------|------|------|------|
 | 퇴근 메모 | `lastPlan.wrapup_note`. `gapDays <= 7` 일 때만 쓴다. 아니면 null | 2000자 | — |
 | 미완료 계획 항목 | `listPlanItems(db, lastPlan.id)` 중 status 가 `planned`·`in_progress`·`deferred` | 20건 | rank 오름차순. null 은 뒤 |
-| activity_log | `entity_type IN ('project','task','todo') AND datetime(created_at,'localtime') >= since` | 행 500건 → 묶음 50건 | 묶음의 `lastAt` 내림차순 |
+| activity_log | `entity_type IN ('todo') AND datetime(created_at,'localtime') >= since`. project·task 는 2026-11-18 에 뺐다 (`RECOVERY_ENTITY_TYPES = ['todo']`) | 행 500건 → 묶음 50건 | 묶음의 `lastAt` 내림차순 |
 | 회의 요약 | `meeting_summaries ms JOIN meetings m` 에서 `ms.generated_at >= since` | 10건 | `m.started_at` 내림차순 |
 | 완료 todo | `todos` 에서 `is_completed = 1 AND completed_at >= since` | 50건 | `completed_at` 내림차순 |
 | Jira 최근 변경 | `listMyRecentlyUpdatedIssues(jiraDays, scopeKey)` | 50건 표시. 조회 자체는 200건 | `updated` 내림차순 |
 
 activity_log 묶기 규칙:
 1. 같은 `(entity_type, entity_id)` 를 한 묶음으로 한다. `entity_id` 가 null 인 행은 `entity_name` 으로 묶는다.
-2. `name` 은 묶음 안에서 가장 늦은 행의 `entity_name` 이다. 모든 행이 null 이면 원본 테이블에서 이름을 읽는다. 대상은 `projects.name`·`tasks.name`·`todos.title` 이다. 그래도 없으면 `(이름 없음)` 이다.
+2. `name` 은 묶음 안에서 가장 늦은 행의 `entity_name` 이다. 모든 행이 null 이면 원본 테이블에서 이름을 읽는다. 대상은 `todos.title` 이다. 그래도 없으면 `(이름 없음)` 이다.
 3. `actions` 는 시각순으로 중복을 뺀 action 목록이다.
 4. `deleted` 는 `actions` 에 `delete` 가 있으면 true 다. 삭제된 엔티티도 묶음에 남긴다. 화면 문구는 `삭제됨` 을 붙인다.
 5. `firstAt`·`lastAt` 은 로컬 시각이다. `datetime(created_at,'localtime')` 결과를 쓴다.
@@ -2128,7 +2121,7 @@ activity_log 묶기 규칙:
 회의 요약 규칙:
 - `tldr` 는 300자에서 자른다.
 - `openActionItems` 는 `action_items` JSON 중 `todo_id` 가 null 인 항목의 `text` 다. 최대 5건이다. `openActionCount` 는 전체 수다.
-- `projectName` 은 `m.project_id` 로 `projects.name` 을 읽는다. 없으면 null 이다.
+- `projectName`: 폐지(2026-11-18, 프로젝트 메뉴 개편). `RecoveryMeeting` 에 없다.
 
 Jira 규칙:
 - `isJiraConnected()` 가 false 면 `jira` 는 null 이다. `errors` 에는 넣지 않는다. 섹션 문구는 `Jira 가 연결되어 있지 않다` 다.
@@ -2147,8 +2140,8 @@ Jira 규칙:
 |------|-----|-------|----------------|
 | 1 | `last_day` | `마지막 근무` | 1줄: `<plan_date> (<N>일 전)`. 메모가 있으면 2줄: `메모: <wrapup_note 한 줄 200자>`. 메모가 없으면 `메모 없음`. 마지막 계획이 없으면 `이전 계획이 없다. 최근 <N>일을 본다` |
 | 2 | `unfinished` | `남은 작업` | 항목마다 `<제목> · <상태>` . 상태 문구는 `진행 중`·`미룸`·없음. 마감이 있으면 ` · 마감 <due_date>`. Jira 키가 있으면 제목 앞에 `<key> ` |
-| 3 | `done` | `그동안 한 일` | 완료 todo 먼저: `<completedAt HH:mm 포함 날짜> 완료 · <title>`. 그다음 activity 묶음: `<lastAt 날짜> <엔티티 종류 한글> · <name> · <actions 한글 나열>`. `deleted` 면 끝에 ` · 삭제됨`. 종류 한글: 프로젝트·작업·할 일. action 한글: 생성·수정·삭제·보관·복원·완료 |
-| 4 | `meetings` | `회의` | 회의마다 1줄: `<startedAt 날짜> <title>`. projectName 이 있으면 ` · <projectName>`. tldr 가 있으면 다음 줄 `  요약: <tldr>`. 미완료 액션이 있으면 다음 줄 `  미완료 액션 <openActionCount>건: <text1>; <text2>` |
+| 3 | `done` | `그동안 한 일` | 완료 todo 먼저: `<completedAt HH:mm 포함 날짜> 완료 · <title>`. 그다음 activity 묶음: `<lastAt 날짜> <엔티티 종류 한글> · <name> · <actions 한글 나열>`. `deleted` 면 끝에 ` · 삭제됨`. 종류 한글: 할 일. action 한글: 생성·수정·삭제·보관·복원·완료 |
+| 4 | `meetings` | `회의` | 회의마다 1줄: `<startedAt 날짜> <title>`. tldr 가 있으면 다음 줄 `  요약: <tldr>`. 미완료 액션이 있으면 다음 줄 `  미완료 액션 <openActionCount>건: <text1>; <text2>` |
 | 5 | `jira` | `Jira 변경` | 이슈마다 `<key> <summary> · <status>`. 마감이 있으면 ` · 마감 <duedate>`. `jira` 가 null 이고 미연결이면 1줄 `Jira 가 연결되어 있지 않다`. null 이고 실패면 1줄 `Jira 변경을 확인하지 못했다`. `jiraTruncated` 면 마지막 줄 `이슈가 많아 일부만 가져왔다` |
 | 6 | `errors` | `확인하지 못한 출처` | `errors` 각 1줄 |
 
@@ -2354,7 +2347,7 @@ export interface RecoveryContext {
   jiraDays: number              // 1~14
 }
 
-export type RecoveryEntityType = 'project' | 'task' | 'todo'
+export type RecoveryEntityType = 'todo'   // 'project'·'task' 는 2026-11-18 에 뺐다 (부록 N)
 export interface RecoveryActivityGroup {
   entityType: RecoveryEntityType
   entityId: number | null
@@ -2366,7 +2359,7 @@ export interface RecoveryActivityGroup {
   deleted: boolean
 }
 export interface RecoveryMeeting {
-  meetingId: number; title: string; startedAt: string; projectName: string | null
+  meetingId: number; title: string; startedAt: string
   tldr: string | null           // 300자
   openActionItems: string[]     // todo_id 없는 항목 text. 최대 5건
   openActionCount: number
@@ -2624,7 +2617,7 @@ export function recoveryButtonLabel(hasText: boolean): string   // '만들기' |
 | # | 위험 | 대응 |
 |---|------|------|
 | 1 | 하루 시작 때 브리핑 LLM 과 복구 LLM 이 겹친다. `ai-headless` A11 잠금이 두 번째를 BUSY 로 실패시킨다 | 서비스 `llmSerialized` 줄 (A32). 수동 버튼도 같은 줄을 거친다 |
-| 2 | `activity_log.created_at` 은 UTC 다. `since` 는 로컬이다. 그대로 비교하면 9시간 어긋난다 | `datetime(created_at,'localtime') >= ?` 로 비교한다. `readTaskTouchedAt` 선례와 같다. 테스트가 UTC 행을 넣어 확인한다 |
+| 2 | `activity_log.created_at` 은 UTC 다. `since` 는 로컬이다. 그대로 비교하면 9시간 어긋난다 | `datetime(created_at,'localtime') >= ?` 로 비교한다. `readTaskTouchedAt`(2026-11-18 에 지웠다) 선례와 같다. 테스트가 UTC 행을 넣어 확인한다 |
 | 3 | `TodayPayload.recovery` 추가로 기존 픽스처 3개가 타입체크에 실패한다 | 소유자를 정했다. 팀원 3 이 `assistant-service.test.ts`·`assistant-tray.test.ts`, 팀원 4 가 `TodayView.test.tsx` 를 고친다 |
 | 4 | `ai-assistant-tools.ts` 가 `assistant-sources.ts` 를 import 하면 `jira.ts`·`google-calendar.ts`·`google-auth.ts` 가 딸려온다. 테스트가 electron 에 걸린다 | 테스트는 그 3개 모듈을 `vi.mock` 한다. 선례는 `assistant-sources.test.ts` 다. 런타임은 문제가 없다. `ai-tools.ts` 도 이미 `google-calendar` 를 import 한다 |
 | 5 | 읽기 전용 커넥션은 별도 파일 핸들이다. 메인 커넥션이 WAL 로 쓴 직후 읽으면 최신 값이 보이지 않을 수 있다 | SQLite WAL 은 커밋 뒤 다른 커넥션에서 즉시 보인다. 기존 10개 도구와 같은 조건이다. 추가 대응 없음 |
@@ -2925,7 +2918,7 @@ scope 모드:
 | 원본 완료 처리 | `originTarget` 이 null 을 돌려준다. 체크박스가 보이지 않는다 | 없음 |
 | 여러 날 표시 (B.5) | `first_planned_date` 는 같은 `candidate_id` 로 계산한다. 임시 항목의 id 는 계획마다 다르다. 'n일째' 가 보이지 않는다 | 없음. 알려진 한계 |
 
-비서 main 코드는 임시 항목을 `todos`·`tasks` 에 쓰지 않는다 (A2). 이유: 비서가 원본을 만들면 싱크업·사용자 편집과 충돌한다.
+비서 main 코드는 임시 항목을 `todos`·`tasks` 에 쓰지 않는다 (A2). 이유: 비서가 원본을 만들면 사용자 편집과 충돌한다.
 
 ### G.7 브리핑 지시 (A38)
 
@@ -3848,17 +3841,15 @@ MVP5 에서 빠지는 것:
 
 ### I.5 수집
 
-`assistant-sources.ts` 의 `collectMeetingContext(db, meeting, items)` 가 수집한다. 부수 효과가 있는 유일한 지점이다. 규칙 A46 를 지킨다.
+`assistant-sources.ts` 의 `collectMeetingContext(db, meeting)` 가 수집한다(2026-11-18 전에는 `items` 인자로 관련 항목을 골랐다). 부수 효과가 있는 유일한 지점이다. 규칙 A46 를 지킨다.
 
 | 출처 | 읽기 | 상한 |
 |------|------|------|
-| 프로젝트 | `projects` 의 id·name·status. 활성 상태만 | 전부. 매칭은 순수 함수 |
 | 지난 회의 | `meetings` JOIN `meeting_summaries`. `started_at` 이 90일 안. `kind = 'meeting'` | 후보 200건. 매칭 뒤 3건 |
 | 미완료 액션아이템 | 매칭된 지난 회의의 `action_items` 중 `todo_id` 가 null | 10건 |
-| 오늘 계획 항목 | 인자 `items` 중 `project_id` 가 매칭 프로젝트에 속하는 활성 항목 | 5건 |
 
-- 프로젝트 매칭은 `matchProjects(title, projects)` 다. 정규화는 소문자화와 공백·구두점 제거다. 프로젝트 이름이 2자 이상이고 정규화한 제목에 포함되면 매칭이다. 최대 3건이다. 이름 길이 내림차순이다.
-- 지난 회의 매칭은 `sameTitle(a, b)` 다. 정규화한 두 제목이 같으면 참이다. `meetings.title` 또는 `meetings.calendar_event_title` 중 하나가 같으면 매칭이다.
+- 프로젝트 매칭(`matchProjects`)과 오늘 계획 중 관련 항목: 폐지(2026-11-18, 프로젝트 메뉴 개편). `projects` 를 읽지 않는다.
+- 지난 회의 매칭은 `sameTitle(a, b)` 다. 정규화는 소문자화와 공백·구두점 제거다. 정규화한 두 제목이 같으면 참이다. `meetings.title` 또는 `meetings.calendar_event_title` 중 하나가 같으면 매칭이다.
 - 출처별 실패는 그 출처를 비우고 `errors` 에 문구를 넣는다. throw 하지 않는다. `collectRecovery` 와 같은 관례다.
 - Jira 를 부르지 않는다. 캘린더도 다시 부르지 않는다.
 
@@ -3868,18 +3859,17 @@ MVP5 에서 빠지는 것:
 
 ```
 # <회의 제목> <HH:mm>
-- 관련 프로젝트: A, B            ← 없으면 '관련 프로젝트 없음'
 ## 지난 회의
 - <MM-DD> <제목> — <tldr 200자>  ← 없으면 '같은 제목의 지난 회의 없음'
 ## 미완료 액션아이템 (N)
 - <text>                          ← 없으면 절을 뺀다
-## 오늘 계획 중 관련 항목
-- <title>                         ← 없으면 절을 뺀다
 ```
 
+'관련 프로젝트' 줄과 '오늘 계획 중 관련 항목' 절은 2026-11-18 에 뺐다.
+
 - 각 줄은 200자에서 자른다. `tldr` 는 200자다.
-- 알림 제목은 `<회의 제목 30자> <lead>분 전` 이다. 본문은 `<프로젝트 이름 또는 '관련 프로젝트 없음'> · 미완료 액션 N건` 이다. §12.1 그대로다.
-- `hasContext` 는 프로젝트·지난 회의·액션아이템·관련 항목 중 하나라도 있으면 true 다. false 면 LLM 을 부르지 않는다. 이유: 요약할 자료가 없다.
+- 알림 제목은 `<회의 제목 30자> <lead>분 전` 이다. 본문은 `미완료 액션 N건` 이다. §12.1 그대로다.
+- `hasContext` 는 지난 회의·액션아이템 중 하나라도 있으면 true 다. false 면 LLM 을 부르지 않는다. 이유: 요약할 자료가 없다.
 
 ### I.7 LLM 본문
 
@@ -3937,7 +3927,7 @@ MVP5 에서 빠지는 것:
 - `subscribe` 는 바꾸지 않는다. `reason === 'meeting'` 도 `load()` 를 부른다.
 
 #### I.10.4 `AssistantSettingsModal.tsx`
-- `meetingBriefingEnabled` 토글을 추가한다. 문구는 `회의 전 브리핑` 이다. 힌트는 `회의 시작 전에 관련 프로젝트·지난 회의·액션아이템을 알립니다` 다.
+- `meetingBriefingEnabled` 토글을 추가한다. 문구는 `회의 전 브리핑` 이다. 힌트는 `회의 시작 전에 지난 회의·액션아이템을 알립니다` 다.
 - `meetingLeadMin` 숫자 입력을 추가한다. 범위는 1~120 이다. 문구는 `회의 전 알림(분)` 이다. 힌트는 `권장 15분. 기존 10분 전 일정 알림보다 앞서게 두세요` 다.
 
 ### I.11 모듈 계약
@@ -3958,21 +3948,18 @@ export type DueMeetingBriefing =
   | { action: 'send'; meeting: MeetingRef; eventKey: string; scheduledAt: string; late: boolean }
   | { action: 'skip'; meeting: MeetingRef; eventKey: string; scheduledAt: string; reason: 'window' | 'cap' }
 
-export interface MeetingProjectRef { id: number; name: string }
 export interface MeetingPastRef { meetingId: number; title: string; startedAt: string; tldr: string | null; openActionItems: string[] }
 export interface MeetingContext {
   meeting: MeetingRef
-  projects: MeetingProjectRef[]            // 최대 3
   pastMeetings: MeetingPastRef[]           // 최대 3. startedAt 내림차순
   openActionItems: string[]                // 최대 10
-  relatedItems: Pick<PlanItem, 'id' | 'title' | 'status'>[]   // 최대 5
   errors: string[]
+  // projects·relatedItems 는 2026-11-18 에 뺐다 (부록 N)
 }
 export type MeetingLlmStatus = 'off' | 'pending' | 'done' | 'failed'
 export interface MeetingBriefingPayload {
   meeting: MeetingRef
   title: string; body: string              // 알림 문구
-  projects: MeetingProjectRef[]
   hasContext: boolean
   ruleMarkdown: string
   llmStatus: MeetingLlmStatus
@@ -4001,7 +3988,6 @@ export const MEETING_TITLE_MAX = 30
 export const MEETING_LINE_MAX = 200
 export function normalizeTitle(s: string): string
 export function sameTitle(a: string, b: string): boolean
-export function matchProjects(title: string, projects: { id: number; name: string }[]): MeetingProjectRef[]   // 최대 3
 export function hasMeetingContext(ctx: MeetingContext): boolean
 export function buildMeetingBriefing(ctx: MeetingContext): string                     // 규칙 Markdown. I.6
 export function meetingNoticeText(ctx: MeetingContext, leadMin: number): { title: string; body: string }
@@ -4018,7 +4004,7 @@ export function meetingNoticeText(ctx: MeetingContext, leadMin: number): { title
 export function toMeetingRef(e: CalendarEvent): MeetingRef | null                   // 종일·변환 실패는 null
 export function collectMeetingContext(db, meeting: MeetingRef, items: PlanItem[]): MeetingContext   // I.5. throw 하지 않는다
 ```
-- `MEETING_LIMITS = { pastDays: 90, pastCandidates: 200, pastMeetings: 3, actionItems: 10, relatedItems: 5 }` 를 export 한다.
+- `MEETING_LIMITS = { pastDays: 90, pastCandidates: 200, pastMeetings: 3, actionItems: 10 }` 를 export 한다. `relatedItems: 5` 는 2026-11-18 에 뺐다.
 
 #### I.11.6 `assistant-briefing.ts` (팀원 I2) 추가분
 ```ts
@@ -4063,7 +4049,7 @@ export function regenerateMeetingBriefing(eventId: number, now?: Date): Promise<
 #### I.11.11 렌더러 (팀원 I4)
 
 `types/index.ts`:
-- `MeetingRef`·`MeetingProjectRef`·`MeetingLlmStatus`·`MeetingBriefingPayload` 를 I.11.1 과 같은 모양으로 추가한다.
+- `MeetingRef`·`MeetingLlmStatus`·`MeetingBriefingPayload` 를 I.11.1 과 같은 모양으로 추가한다(`MeetingProjectRef` 는 2026-11-18 에 지웠다).
 - `AssistantSettings.meetingBriefingEnabled: boolean` 추가.
 - `AssistantChangedEvent.reason` 에 `'meeting'` 추가. `AssistantNavigateEvent.focus.kind` 에 `'meeting'` 추가.
 - `AssistantAPI.regenerateMeetingBriefing: (eventId: number) => Promise<TodayResult>` 추가.
@@ -4091,7 +4077,7 @@ export default function MeetingBriefingCard(props: {
 
 기존 규칙 적용:
 - A1: Jira 를 부르지 않는다. `jira.ts` 는 바꾸지 않는다.
-- A2: `meetings`·`meeting_summaries`·`projects` 는 읽기만 한다.
+- A2: `meetings`·`meeting_summaries` 는 읽기만 한다.
 - A3: `assistant-meeting.ts` 는 순수다. 대상 목록에 `meeting` 을 추가한다.
 - A5: INSERT 가 `show()` 보다 먼저다.
 - A6: 창 밖은 `skipped` 행이다.
@@ -4105,7 +4091,7 @@ export default function MeetingBriefingCard(props: {
 | ID | 규칙 | 이유 | 판정 |
 |----|------|------|------|
 | A45 | 회의 브리핑은 규칙 본문을 INSERT 한 뒤 알림을 보내고, LLM 은 그 뒤 `llmSerialized` 로 돈다. LLM 실패는 payload 의 `llmStatus`·`llmError` 로만 남는다 | 규칙 A8 을 회의 브리핑에 적용한다 | 테스트 `A45` |
-| A46 | 회의 브리핑 수집은 DB 읽기와 `getTodayEvents` 캐시만 쓴다. Jira 를 부르지 않는다. 지난 회의 90일·3건, 액션아이템 10건, 관련 항목 5건 상한이다 | 회의 직전에 네트워크 지연이 없다. 프롬프트 크기를 제한한다 | 테스트 `A46` |
+| A46 | 회의 브리핑 수집은 DB 읽기와 `getTodayEvents` 캐시만 쓴다. Jira 를 부르지 않는다. 지난 회의 90일·3건, 액션아이템 10건 상한이다. 관련 항목 5건 상한은 2026-11-18 에 관련 항목과 함께 뺐다 | 회의 직전에 네트워크 지연이 없다. 프롬프트 크기를 제한한다 | 테스트 `A46` |
 | A47 | 회의 브리핑 창은 `[시작 − lead, 시작)` 이다. 하루 6건 상한이다. 창 밖·상한 초과는 `skipped` 행이다. 회의 중 여부를 보지 않는다 | 지난 회의를 매 틱 다시 보지 않는다. 알림 피로를 막는다 | 테스트 `A47` |
 
 ### I.13 팀 구성과 소유 파일
@@ -4192,8 +4178,8 @@ export default function MeetingBriefingCard(props: {
 | 3 | 캘린더 조회 실패를 `getTodayEvents` 가 삼킨다. 브리핑이 조용히 빠진다 | 받아들인다. 로그만 남는다. 오늘 화면의 `calendarConnected` 안내 문구가 미연결을 알린다 |
 | 4 | 회의 직전에 LLM 이 늦게 끝난다 | 규칙 본문과 알림이 먼저다. LLM 은 완료 시점에 카드만 바꾼다 |
 | 5 | 앱이 LLM 중간에 꺼져 `llmStatus 'pending'` 이 남는다 | 카드가 '다시 만들기' 를 허용한다. 열린 결정 I-7 과 무관하다 |
-| 6 | 같은 제목의 지난 회의가 없는 첫 회의는 브리핑이 빈약하다 | 규칙 본문이 '지난 회의 없음' 을 적는다. 프로젝트 매칭과 관련 항목이 남는다 |
-| 7 | 프로젝트 이름이 짧거나 흔해 오매칭한다 | 2자 이상만 매칭한다. 최대 3건이다. 카드가 프로젝트를 보여 주므로 사용자가 확인한다 |
+| 6 | 같은 제목의 지난 회의가 없는 첫 회의는 브리핑이 빈약하다 | 규칙 본문이 '지난 회의 없음' 을 적는다. 프로젝트 매칭과 관련 항목은 2026-11-18 에 뺐으므로 보완 수단이 없다 |
+| 7 | 프로젝트 이름이 짧거나 흔해 오매칭한다 | 폐지(2026-11-18, 프로젝트 메뉴 개편). 프로젝트 매칭이 없다 |
 | 8 | `AssistantSettings` 키 추가로 픽스처 3개가 깨진다 | I.13 에 소유자를 정했다 |
 | 9 | 틱 7단계가 `getTodayEvents` 네트워크를 기다리는 동안 `dueInFlight` 가 길어진다 | 5분 캐시가 대부분 적중한다. 캐시 미스는 1회 호출이다. 다음 틱이 건너뛰어도 창은 lead 분이다 |
 | 10 | `TodayPayload.events` 에 LLM 본문이 들어가 payload 가 커진다 | 하루 6건 × 약 2KB 다. 받아들인다 |
@@ -4212,7 +4198,7 @@ export default function MeetingBriefingCard(props: {
 - `regenerateMeetingBriefing` 은 LLM 호출 전에 `llmStatus` 를 `pending` 으로 쓰고 `emitChanged` 를 보낸다. 맥락은 지금 DB 로 다시 수집한다. `hasContext` 가 false 여도 LLM 을 부른다. 이유: 사용자가 버튼을 직접 눌렀다.
 - 렌더러의 '다시 만들기' 는 전역 `busy` 를 쓰지 않는다. 스토어의 `meetingRegeneratingIds` 가 행 단위로 버튼을 막는다.
 - 카드의 시작 지남 판정은 `startAt` 과 현재 로컬 날짜·시각을 함께 비교한다.
-- `buildMeetingBriefing` 은 회의 제목·프로젝트 이름·지난 회의 제목·tldr·액션아이템·관련 항목 제목의 Markdown 링크 문법 문자를 이스케이프한다. 이유: 외부 초대 제목이 클릭 가능한 링크로 바뀌지 않는다. 주소를 그대로 쓴 URL 의 자동 링크는 남는다. 주소가 그대로 보이므로 받아들인다.
+- `buildMeetingBriefing` 은 회의 제목·지난 회의 제목·tldr·액션아이템의 Markdown 링크 문법 문자를 이스케이프한다. 이유: 외부 초대 제목이 클릭 가능한 링크로 바뀌지 않는다. 주소를 그대로 쓴 URL 의 자동 링크는 남는다. 주소가 그대로 보이므로 받아들인다.
 - `normalizeTitle` 은 NFC 정규화 뒤 공백·구두점·기호를 지운다. 정규화 결과가 빈 제목끼리는 같은 제목이 아니다.
 - 지난 회의 90일은 회의 `startAt` 기준이다. 이번 회의보다 앞선 회의만 읽는다. 후보 200건을 먼저 자른 뒤 제목으로 매칭한다.
 - `TodayView` 의 화면 순서는 체크인 패널, 회의 브리핑 카드, 나머지 계획 영역이다. 회의 브리핑 카드는 계획이 없어도 보인다.
@@ -4256,9 +4242,9 @@ export default function MeetingBriefingCard(props: {
 | 용어 | 뜻 |
 |------|----|
 | 업무 유형 | `WorkType = 'qa' \| 'sus' \| 'trd' \| 'prd' \| 'etc'`. 계획 항목 1건의 분류다 |
-| 버전 | 작업 제목·부모 요약·프로젝트 이름에서 뽑은 `N.N.N` 문자열. 예: `4.174.0` |
+| 버전 | 작업 제목·부모 요약에서 뽑은 `N.N.N` 문자열. 예: `4.174.0`. 프로젝트 이름 입력은 늘 null 이다 (부록 N) |
 | 부모 | Jira 이슈의 `parent`. 에픽 또는 상위 작업이다 |
-| 묶음 이름 | 항목이 속한 상위 이름. Jira 항목은 부모 요약, WBS 작업은 프로젝트 이름이다 |
+| 묶음 이름 | 항목이 속한 상위 이름. Jira 항목의 부모 요약이다. 옛 task 행에는 프로젝트 이름이 남아 있을 수 있다 |
 | 묶음 항목 | 자기 `jira_issue_key` 를 `parent_key` 로 가진 다른 계획 항목이 같은 계획에 있는 항목. 보통 에픽이다 |
 | 사실(facts) | 코드가 계획·타임라인·일정에서 결정적으로 계산한 브리핑 재료 |
 | 비서 말투 | 해요체 문장 규칙. `ASSISTANT_SPEECH_RULES` 가 유일 정의처다 |
@@ -4272,7 +4258,7 @@ export default function MeetingBriefingCard(props: {
 - `jiraKey`: `string | null`
 - `title`: 작업 제목
 - `parentSummary`: Jira 부모 요약. 없으면 null
-- `projectName`: WBS 프로젝트 이름. 없으면 null
+- `projectName`: 옛 WBS 프로젝트 이름. 2026-11-18 부터 호출부가 늘 null 을 넘긴다 (부록 N)
 - `issueType`: Jira 이슈 유형 이름. 없으면 null
 
 판정 순서. 먼저 맞는 규칙이 이긴다. '텍스트 3개' 는 `title`·`parentSummary`·`projectName` 이다.
@@ -4282,13 +4268,13 @@ export default function MeetingBriefingCard(props: {
 3. `issueType` 이 `/qa/i` 에 맞으면 `qa` 다.
 4. `title` 이 `/QA/` 에 맞고 `title` 에 버전이 있으면 `qa` 다. 예: `안드로이드 구매자 앱 v4.174.0 QA`.
 5. `title` 이 `/QA/` 에 맞고 `issueType` 이 `/epic|에픽/i` 에 맞으면 `qa` 다. 예: 에픽 `안드로이드QA-2026` 자체.
-6. `projectName` 이 `/릴리스|release|QA/i` 에 맞으면 `qa` 다. 예: WBS `4.165.0 릴리스`.
+6. `projectName` 이 `/릴리스|release|QA/i` 에 맞으면 `qa` 다. 예: WBS `4.165.0 릴리스`. 지금은 `projectName` 이 늘 null 이라 이 규칙에 걸리는 입력이 없다. 함수에는 남아 있다.
 7. 텍스트 3개 중 하나가 `SUSTAIN_PATTERN = /\bsus(tain(ing)?)?\b/i` 에 맞으면 `sus` 다. 예: `[Android/Sus] Sprint 26-11`, `[SUS] …`, `Sus 개선 작업 (4.162.0)`.
 8. 텍스트 3개 중 하나가 `/\bTRD\b/i` 에 맞으면 `trd` 다. 예: `[TRD] RxJava to Coroutine Phase2`, `[Android/TRD] …`.
 9. 텍스트 3개 중 하나가 `/\bPRD\b/i` 에 맞으면 `prd` 다.
 10. `jiraKey` 가 있고 `issueType` 이 `/epic|에픽/i` 에 맞으면 `prd` 다. 이유: 접두 없는 에픽은 기능 PRD 다.
 11. `jiraKey` 가 있고 `parentSummary` 가 null 이 아니면 `prd` 다. 이유: 접두 없는 에픽의 하위 작업은 PRD 구현이다.
-12. 나머지는 `etc` 다. WBS 작업 중 Jira 키가 없고 패턴이 없는 작업이 여기에 든다.
+12. 나머지는 `etc` 다.
 
 "셀프 QA" 같은 개발 작업은 4·5 에 걸리지 않는다. 이유: 버전이 없고 에픽이 아니다.
 
@@ -4297,7 +4283,7 @@ export default function MeetingBriefingCard(props: {
 - `title` → `parentSummary` → `projectName` 순서로 첫 일치를 돌려준다.
 - 유형과 무관하게 뽑는다. 예: `Sus 개선 작업 (4.162.0)` 은 `sus` + `4.162.0` 이다.
 
-패턴 2개는 `project-sync-plan.ts` 의 `SUSTAIN_EPIC_PATTERN`·`QA_EPIC_PATTERN` 과 같은 문자열이다. import 하지 않고 복사한다. 이유: `project-sync-plan.ts` 는 ADF·날짜 유틸을 끌고 온다. 테스트가 두 패턴의 `.source` 가 같은지 확인한다.
+패턴 2개는 옛 싱크업 계획 모듈의 에픽 패턴을 복사해 온 문자열이다. 그 모듈은 프로젝트 싱크업과 함께 지웠고(부록 N), 이 패턴이 이제 유일한 정의다.
 
 2026-11-03 데이터의 분류 결과. 리더가 Jira 에서 부모를 확인했다.
 
@@ -4348,7 +4334,7 @@ export default function MeetingBriefingCard(props: {
 백업·복원 영향: `docs/DATA_BACKUP.md` 의 zip 은 DB 파일 전체를 복사한다. 새 컬럼은 자동으로 포함된다. 구 버전 zip 을 복원하면 `closeDb → 교체 → initDatabase` 순서로 `migrateAssistantSchema(db)` 가 다시 돈다(`database.ts:439`). 그래서 컬럼이 없는 DB 도 복원 뒤 바로 쓴다. 매니페스트 형식은 바꾸지 않는다.
 
 **최신화 보강** `enrichItems(items, candidates, jiraSeen): PlanItemUpdate[]` (순수, `assistant-refresh.ts`):
-- 대상: `source` 가 `jira`·`task` 이고 `candidate_id` 가 현재 후보 집합에 있는 항목.
+- 대상: `source` 가 `jira`·`task` 이고 `candidate_id` 가 현재 후보 집합에 있는 항목. task 후보는 더 이상 없으므로 실제 대상은 jira 다(`ENRICH_SOURCES` 에 `task` 가 남아 있다).
 - 후보의 `workType`·`workVersion`·`parentKey`·`groupName` 과 항목의 4개 컬럼이 다르면 그 필드만 패치한다.
 - 상태·제목·마감·점수는 건드리지 않는다. `manual`·`todo`·`action_item` 항목은 건드리지 않는다.
 - `planRefresh` 가 4단계 뒤에 호출해 `updates` 에 합친다. 그 뒤 J.4-6 의 묶음 `rank: null` 과 번호 재부여를 적용한다.
@@ -4538,7 +4524,7 @@ export const ASSISTANT_SPEECH_JSON_NOTE =
 7. 시간표 카드: 제목 `오늘 계획` → `시간표`. 집중 가능 시간 표시 유지. id `today-timeline` 유지. 일정 불변식: 계획이 있으면 `Timeline` 을, 없으면 `HomeSchedule` 을 그린다. 화면에 일정 카드는 항상 1개다 (2026-11-05, 부록 K.2).
 8. `오늘 할 일`: `PlanItemRow` 에 유형 배지·묶음 이름·묶음 배지를 더한다.
 9. `InboxSection` (새로 들어온 일): 5건까지 보이고 `나머지 n건 보기` 버튼. 머리글에 출처별 수.
-10. `HomeOverview` (2026-11-05 추가): 중요 메모, 진행 중 프로젝트, 우선순위 미지정 배지. Dashboard 에서 옮겨 왔다 (부록 K.2).
+10. `HomeOverview` (2026-11-05 추가): 중요 메모, 진행 중 프로젝트, 우선순위 미지정 배지. Dashboard 에서 옮겨 왔다 (부록 K.2). 지금은 중요 메모(`HomeMemos`)만 남았다. 진행 중 프로젝트와 우선순위 미지정 배지는 2026-11-18 에 지웠다 (부록 N).
 11. `MoreSection` (`더 보기`, 기본 접힘): 명령 입력 카드(근무 중), 후보 더 보기(근무 중), 변경 내역, 연결 안내 문구 목록, 본문 없는 맥락 복구 1줄, 비서 설정 버튼. 변경 내역 맨 위에 아침 자동 동기화 1줄이 있다 (부록 K.3).
 
 계획 없음·닫힘 상태: 계획 없음은 1·2·5·7·10·11 만 보인다. 이때 7 은 `HomeSchedule` 이다. 11 에는 변경 내역·연결 안내·비서 설정만 있다. 닫힘 상태에서는 7·8 도 읽기 전용으로 보인다. 현재와 같다.
@@ -4581,8 +4567,8 @@ export const ASSISTANT_SPEECH_JSON_NOTE =
 export type WorkType = 'qa' | 'sus' | 'trd' | 'prd' | 'etc'
 
 // 변경: Candidate 에 추가
-//   parentKey: string | null      // Jira 부모 키. jira·task(머지) 만
-//   groupName: string | null      // Jira 부모 요약 또는 WBS 프로젝트 이름
+//   parentKey: string | null      // Jira 부모 키. jira 만
+//   groupName: string | null      // Jira 부모 요약
 //   workType: WorkType
 //   workVersion: string | null
 // 변경: JiraCandidateInput 에 추가
@@ -4605,8 +4591,8 @@ export interface WorkClassification { workType: WorkType; workVersion: string | 
 
 #### J.9.2 `assistant-worktype.ts` (I1, 새 파일, 순수)
 ```ts
-export const SUSTAIN_PATTERN = /\bsus(tain(ing)?)?\b/i      // project-sync-plan.SUSTAIN_EPIC_PATTERN 과 같다
-export const QA_PATTERN = /QA/                               // project-sync-plan.QA_EPIC_PATTERN 과 같다
+export const SUSTAIN_PATTERN = /\bsus(tain(ing)?)?\b/i
+export const QA_PATTERN = /QA/
 export const TRD_PATTERN = /\bTRD\b/i
 export const PRD_PATTERN = /\bPRD\b/i
 export const EPIC_TYPE_PATTERN = /epic|에픽/i
@@ -4636,8 +4622,7 @@ export interface JiraMyIssue {
 
 #### J.9.4 `assistant-candidates.ts` (I1) 변경분
 - `fromJira`: `parentKey`·`groupName = parentSummary`·`classifyWork({ source: 'jira', jiraKey, title: summary, parentSummary, projectName: null, issueType })`.
-- `fromTask`: `parentKey: null`, `groupName: project_name`, `classifyWork({ source: 'task', jiraKey, title: name, parentSummary: null, projectName: project_name, issueType: null })`.
-- `mergeTaskJira`: `parentKey` 는 jira, `groupName` 은 `jira.groupName ?? task.groupName`, 분류는 jira 부모 요약·jira 이슈 유형·task 프로젝트 이름으로 다시 계산한다. 그래서 `fromJira` 의 `JiraCandidateInput` 을 `jiraByKey` 와 나란히 보관한다.
+- `fromTask`·`mergeTaskJira`: 폐지(2026-11-18, 프로젝트 메뉴 개편).
 - `fromTodo`·`fromActionItem`: `parentKey: null, groupName: null, workType: 'etc', workVersion: null`.
 
 #### J.9.5 `assistant-sources.ts` (I1) 변경분
@@ -4733,7 +4718,7 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 ```
 
 #### J.9.14 변경하지 않는 파일
-`assistant-schedule.ts`, `assistant-day.ts`, `assistant-settings.ts`, `assistant-command.ts`, `assistant-command-llm.ts`, `assistant-scheduler.ts`, `assistant-tray.ts`, `ai-headless.ts`, `ai-assistant-tools.ts`, `project-sync-plan.ts`, `google-calendar.ts`, `src/main/ipc/assistant.ipc.ts`, `src/preload/index.ts`, `src/preload/index.d.ts`, `src/renderer/src/env.d.ts`, `stores/assistantStore.ts`, `App.tsx`, `AssistantSettingsModal.tsx`, `TrayPanel.tsx`, `MarkdownContent.tsx`, `backup-service.ts`.
+`assistant-schedule.ts`, `assistant-day.ts`, `assistant-settings.ts`, `assistant-command.ts`, `assistant-command-llm.ts`, `assistant-scheduler.ts`, `assistant-tray.ts`, `ai-headless.ts`, `ai-assistant-tools.ts`, `google-calendar.ts`, `src/main/ipc/assistant.ipc.ts`, `src/preload/index.ts`, `src/preload/index.d.ts`, `src/renderer/src/env.d.ts`, `stores/assistantStore.ts`, `App.tsx`, `AssistantSettingsModal.tsx`, `TrayPanel.tsx`, `MarkdownContent.tsx`, `backup-service.ts`.
 
 ### J.10 가드레일
 
@@ -4799,7 +4784,7 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 23. `grep -c "isGroupItem"` 결과가 `assistant-slots.ts`, `assistant-refresh.ts`, `assistant-briefing.ts`, `PlanItemRow.tsx` 각각 ≥ 1.
 24. A1: `grep -n "method:" src/main/services/jira.ts | grep -vc "'GET'"` 결과 0.
 25. A2: `grep -nE "INSERT INTO (projects|tasks|todos|meetings)|UPDATE (projects|tasks|todos|meetings)|DELETE FROM (projects|tasks|todos|meetings)" src/main/services/assistant-*.ts` 결과 0건.
-26. A3: `grep -lE "from '(electron|better-sqlite3|\.\./db|\./jira|\./google-calendar|\./project-sync-plan)" src/main/services/assistant-{candidates,score,slots,settings,day,refresh,schedule,tray,recovery,command,meeting,worktype}.ts` 결과 0건.
+26. A3: `grep -lE "from '(electron|better-sqlite3|\.\./db|\./jira|\./google-calendar)" src/main/services/assistant-{candidates,score,slots,settings,day,refresh,schedule,tray,recovery,command,meeting,worktype}.ts` 결과 0건.
 27. IPC 불변: `git diff --stat -- src/preload src/main/ipc/assistant.ipc.ts src/renderer/src/env.d.ts` 출력이 비어 있다.
 
 ### J.13 열린 결정 (권장 기본값을 쓴다)
@@ -4815,7 +4800,7 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 | J-7 | 체크인·최신화·회의 알림 문구 | 그대로 | 알림은 요약 1줄이다 |
 | J-8 | 명령 입력 위치 | 더 보기 안 | 사용자가 조작을 거의 쓰지 않는다 |
 | J-9 | 새로 들어온 일 기본 표시 수 | 5건 | 액션아이템 15건이 화면을 밀어내지 않는다 |
-| J-10 | `project-sync-plan.ts` 패턴 재사용 방법 | 복사 + 동일성 테스트 | import 가 ADF·날짜 유틸을 끌고 온다 |
+| J-10 | 싱크업 계획 모듈 패턴 재사용 방법 | 복사 (원본은 부록 N 에서 지웠다) | import 가 ADF·날짜 유틸을 끌고 왔다 |
 | J-11 | 기존 계획의 보강 시점 | 다음 Jira 최신화 | 하루 시작 직후 수동 새로고침 1번이면 반영된다 |
 | J-12 | 시간표 카드 제목 | `시간표` | `오늘 계획` 이 `오늘 할 일` 과 혼동된다 |
 
@@ -4833,7 +4818,7 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 | 8 | 순서 변경으로 알림 클릭 스크롤 대상 id 가 사라진다 | id 5개(`today-briefing`, `today-inbox`, `today-timeline`, `today-checkin`, `meeting-briefing-*`) 를 유지한다 |
 | 9 | 버전 정규식이 `26-11` 같은 스프린트 번호를 버전으로 오인한다 | `N.N.N` 3단만 받는다. 테스트가 `Sprint 26-11` 을 null 로 확인한다 |
 | 10 | 구 버전 백업 zip 복원 뒤 컬럼이 없다 | 복원 경로가 `initDatabase` 를 다시 타서 마이그레이션이 돈다 |
-| 11 | WBS 작업과 Jira 이슈 머지 시 분류 입력이 어긋난다 | `mergeTaskJira` 가 분류를 다시 계산한다. 테스트가 머지 결과의 `workType` 을 확인한다 |
+| 11 | WBS 작업과 Jira 이슈 머지 시 분류 입력이 어긋난다 | 폐지(2026-11-18, 프로젝트 메뉴 개편). 머지가 없다 |
 
 ### J.15 사용자 결정 (2026-11-03)
 - 사용자가 브리핑 말투로 해요체를 골랐다.
@@ -4863,7 +4848,7 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 ## 부록 K. 메뉴 통합·화면 자동 갱신·아침 자동 동기화 (2026-11-05)
 
 ### K.1 메뉴 통합
-- Dashboard 를 지운다. `today` 가 유일한 홈이다. `projectStore.view` 의 초기값은 `today` 다.
+- Dashboard 를 지운다. `today` 가 유일한 홈이다. 뷰 상태(지금은 `navigationStore.view`, 2026-11-18 전에는 `projectStore.view`)의 초기값은 `today` 다.
 - 렌더러 `components/layout/navConfig.ts` 가 화면 ID·레이블·사이드바 그룹의 유일 정의처다. 이 파일은 순수 모듈이다.
   - `VIEW_IDS`·`ViewId`: 화면 ID 12개다. `dashboard` 는 없다.
   - `VIEW_LABELS`: 화면 제목이다. 사이드바와 Header 가 같은 레이블을 쓴다. Header 의 빈 제목 3개(today·notes·releases)가 이 표로 채워진다.
@@ -4875,27 +4860,27 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 | 그룹 제목 | 메뉴 (화면 ID) |
 |-----------|----------------|
 | 제목 없음 | 오늘 (`today`), AI 대화 (`ai`) |
-| 업무 | 프로젝트 (`projects`), 할 일 (`todos`), 캘린더 (`calendar`), 릴리스 (`releases`), 주간 보고 (`reports`) |
+| 업무 | 프로젝트 (`projects`, 2026-11-18 부터 Jira 티켓 보드), 할 일 (`todos`), 캘린더 (`calendar`), 릴리스 (`releases`), 주간 보고 (`reports`) |
 | 회의 | 녹음 (`recordings`), 회의록 (`notes`) |
 | 자료 | 문서 (`documents`), 메모 (`memos`), 변수 (`variables`) |
 
 ### K.2 홈(오늘) 화면
 - 일정 불변식: 계획이 있으면 `Timeline` 을 그린다. 계획이 없으면 `HomeSchedule` 을 그린다. 일정 카드는 화면에 항상 1개다.
 - `HomeSchedule` 은 캘린더의 오늘 일정을 읽기 전용으로 보여 준다. 기준 날짜는 논리 날짜다. 논리 날짜가 없으면 로컬 날짜다.
-- `HomeOverview` 는 Dashboard 에서 옮긴 3가지를 담는다. 대상은 중요 메모, 진행 중 프로젝트, 우선순위 미지정 배지다.
-- Dashboard 의 FocusCard 와 TODO 패널은 없앤다. 집중 대상은 오늘 계획의 `focusItemId` 1개다. `selectFocus` 는 우선순위 미지정 배지에만 쓴다.
+- `HomeOverview` 는 Dashboard 에서 옮긴 3가지를 담았다. 대상은 중요 메모, 진행 중 프로젝트, 우선순위 미지정 배지다. 지금은 중요 메모만 남았다(진행 중 프로젝트와 우선순위 미지정 배지는 2026-11-18 에 지웠다).
+- Dashboard 의 FocusCard 와 TODO 패널은 없앤다. 집중 대상은 오늘 계획의 `focusItemId` 1개다. `selectFocus` 는 우선순위 미지정 배지에만 썼다. 둘 다 2026-11-18 에 지웠다.
 - 오늘 데이터가 없는 분기에도 `HomeSchedule` 과 `HomeOverview` 를 그린다. 대상은 `getToday` 실패와 비서 꺼짐이다.
 - 배치 순서는 J.8 과 A53 이다.
 
 ### K.3 아침 자동 동기화 (A54)
-매일 아침 1회, main 이 릴리스 노트 전체 동기화와 Jira 프로젝트 싱크업 안전 자동 적용을 실행한다. 수동 버튼은 그대로 있다. 릴리스 쪽 규칙은 RELEASE_NOTES.md §4.6, 싱크업 쪽 규칙은 PROJECT_SYNC.md R11 이다.
+매일 아침 1회, main 이 릴리스 노트 전체 동기화를 실행한다. 수동 버튼은 그대로 있다. 릴리스 쪽 규칙은 RELEASE_NOTES.md §4.6 이다. 프로젝트 싱크업 파트는 부록 N 에서 지웠다.
 
 구조:
 - `assistant-scheduler.ts` 는 `runTick` 끝에서 `SchedulerDeps.onTick(wake, now)` 를 await 없이 부른다. 앞 단계가 실패해도 부른다. 동기 throw 와 reject 를 모두 삼킨다.
-- `index.ts` 가 `onTick: runMorningSyncIfDue` 를 주입한다. 스케줄러는 `project-sync`·`release-note-sync`·`morning-sync` 를 import 하지 않는다.
-- 판정은 `assistant-schedule.ts` 의 순수 함수 `decideMorningSync(input)` 다. 반환값은 이번 틱에 실행할 부분 목록이다. 부분은 `release`·`project` 이고, 실행 순서도 이 순서다.
-- 실행기는 `src/main/services/morning-sync.ts` 의 `runMorningSyncIfDue` 다. 이름에 `assistant-` 를 붙이지 않는다. 이유: 이 모듈은 싱크업을 거쳐 projects 를 쓴다. A2 grep 대상에 들어가면 안 된다.
-- 상태는 `assistant_events` 행 1개다. event_key 는 `morning_sync:<논리 날짜>`, kind 는 `morning_sync`, status 는 `logged` 다. 부분 상태는 payload JSON 이다. 타입은 PROJECT_SYNC.md §10 의 `MorningSyncPayload` 다.
+- `index.ts` 가 `onTick: runMorningSyncIfDue` 를 주입한다. 스케줄러는 `release-note-sync`·`morning-sync` 를 import 하지 않는다.
+- 판정은 `assistant-schedule.ts` 의 순수 함수 `decideMorningSync(input)` 다. 반환값은 이번 틱에 실행할 부분 목록이다. 부분은 `release` 하나다(`MORNING_SYNC_PARTS = ['release']`). 옛 행 payload 의 `project` 키는 무시한다.
+- 실행기는 `src/main/services/morning-sync.ts` 의 `runMorningSyncIfDue` 다. 이름에 `assistant-` 를 붙이지 않는다. 이유: 비서 기능이 아니다.
+- 상태는 `assistant_events` 행 1개다. event_key 는 `morning_sync:<논리 날짜>`, kind 는 `morning_sync`, status 는 `logged` 다. 부분 상태는 payload JSON 이다. 타입은 `assistant-types.ts` 의 `MorningSyncPayload` 다.
 - 이 행은 같은 키를 다시 쓰는 예외다. §7.4 의 '같은 키는 다시 시도하지 않는다' 는 알림 행에만 적용한다. 아침 동기화는 같은 행의 payload 를 UPDATE 해서 재시도를 기록한다.
 
 `decideMorningSync` 판정 규칙. 위에서부터 처음 맞는 줄을 쓴다.
@@ -4913,7 +4898,7 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 | 부분이 `deferred` 이고 마지막 시도 뒤 30분이 지났다 | 다시 실행한다 |
 
 - 상수는 `MORNING_SYNC_RETRY_MIN = 30`, `MORNING_SYNC_MAX_ATTEMPTS = 3`, `MORNING_SYNC_STALE_MIN = 15` 다.
-- 비서 전체 설정 `assistant_enabled` 는 아침 동기화에 영향을 주지 않는다. 이유: 릴리스 동기화와 싱크업은 비서 기능이 아니다. 끄는 설정은 `assistant_morning_sync_enabled` 1개다.
+- 비서 전체 설정 `assistant_enabled` 는 아침 동기화에 영향을 주지 않는다. 이유: 릴리스 동기화는 비서 기능이 아니다. 끄는 설정은 `assistant_morning_sync_enabled` 1개다.
 - 앱이 아침 시각에 꺼져 있거나 잠들어 있으면, 실행기는 그날 처음 오는 틱이나 wake 에서 따라잡는다.
 
 실행기 순서:
@@ -4928,15 +4913,14 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 
 부분 결과:
 - 토큰 만료와 네트워크 오류는 `failed` 다. `error` 에 사용자용 문구를 둔다.
-- R11 이 `deferred` 를 돌려주면 부분은 `deferred` 다. 시도 수는 실행 전 값으로 되돌린다.
+- `deferred` 는 옛 싱크업 파트만 쓰던 상태다. 타입에는 옛 행 호환용으로 남아 있다.
 - 릴리스 부분은 받은 릴리스가 0건이고 실패만 있으면 `failed` 다.
-- `projectSync:morningStatus` 는 실행 중이 아닌 `running` 을 `failed` 로 보여 준다. 이유: 앱이 동기화 중에 꺼졌다.
+- `morningSync:status` 는 실행 중이 아닌 `running` 을 `failed` 로 보여 준다. 이유: 앱이 동기화 중에 꺼졌다.
 
 결과 표시:
-- 사이드바 프로젝트·릴리스 메뉴에 새 항목 수 배지를 단다. 사용자가 그 메뉴를 열면 배지가 사라진다.
-- `ProjectList`·`ReleasesView` 상단 상태 줄이 마지막 동기화 시각, 실패 표시, 새 항목 수를 보여 준다.
+- 사이드바 릴리스 메뉴에 새 항목 수 배지를 단다. 사용자가 그 메뉴를 열면 배지가 사라진다.
+- `ReleasesView` 상단 상태 줄이 마지막 동기화 시각, 실패 표시, 새 항목 수를 보여 준다.
 - 오늘 화면 변경 내역(`ChangeLog`) 맨 위에 아침 동기화 1줄이 있다.
-- 활동 로그에 `아침 자동 싱크업 (KEY): …` 행이 남는다.
 
 ### K.4 화면 자동 갱신
 - 렌더러 `stores/dataSync.ts` 의 `refreshEntity(entity)` 가 엔티티별로 스토어를 다시 읽는다. 본문은 예전 `AiChatView` 처리기를 옮긴 것이다. `fetchTags`·`fetchCategories` 도 포함한다.
@@ -4946,16 +4930,16 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 - focus 재로드는 30초에 1번만 한다.
 - 배경 갱신은 `silent` 옵션을 쓴다. 이유: 스피너가 뜨면 목록 화면이 편집 상태를 잃는다.
 - 원본 완료(`completeOrigin`)가 성공하면 렌더러가 `refreshEntity` 를 부른다.
-- 설정 `completeOriginOnDone` 이 켜져 있으면, 계획 항목을 `done` 으로 바꿀 때 렌더러가 기존 `window.api.todo.complete` 또는 `window.api.task.update` 로 원본을 완료한다. 비서 main 코드는 원본을 쓰지 않는다 (A2).
+- 설정 `completeOriginOnDone` 이 켜져 있으면, 계획 항목을 `done` 으로 바꿀 때 렌더러가 기존 `window.api.todo.complete` 로 원본을 완료한다. 비서 main 코드는 원본을 쓰지 않는다 (A2).
 
 ### K.5 규칙
 
 | ID | 규칙 | 이유 | 판정 |
 |----|------|------|------|
-| A54 | 아침 자동 동기화는 논리 날짜당 `morning_sync:<날짜>` 행 1개로 상태를 둔다. 판정은 순수 함수 `decideMorningSync` 만 한다. ok·skipped 는 다시 하지 않는다. failed 는 30분 간격으로 하루 3회까지다. 15분 넘은 running 은 failed 다. 오프라인과 deferred 는 시도로 세지 않는다. 스케줄러는 주입받은 `onTick` 만 부르고 싱크업·릴리스·아침 동기화 모듈을 import 하지 않는다. 실행기는 throw 하지 않고 새 타이머를 만들지 않는다 | 새 타이머 없이 하루 1회를 지킨다. 재시작·잠자기 복귀에도 같은 결과가 나온다. 스케줄러가 projects 를 쓰는 모듈에 묶이지 않는다 | 테스트 `A54`, K.7 |
+| A54 | 아침 자동 동기화는 논리 날짜당 `morning_sync:<날짜>` 행 1개로 상태를 둔다. 판정은 순수 함수 `decideMorningSync` 만 한다. ok·skipped 는 다시 하지 않는다. failed 는 30분 간격으로 하루 3회까지다. 15분 넘은 running 은 failed 다. 오프라인과 deferred 는 시도로 세지 않는다. 스케줄러는 주입받은 `onTick` 만 부르고 릴리스·아침 동기화 모듈을 import 하지 않는다. 실행기는 throw 하지 않고 새 타이머를 만들지 않는다 | 새 타이머 없이 하루 1회를 지킨다. 재시작·잠자기 복귀에도 같은 결과가 나온다. 스케줄러가 projects 를 쓰는 모듈에 묶이지 않는다 | 테스트 `A54`, K.7 |
 
 기존 규칙 적용:
-- A2: `morning-sync.ts` 는 A2 grep 대상이 아니다. 이 파일의 projects 쓰기는 싱크업 함수 호출뿐이다.
+- A2: `morning-sync.ts` 는 A2 grep 대상이 아니다. 이 파일은 projects·tasks 를 쓰지 않는다.
 - A3: `decideMorningSync` 는 `assistant-schedule.ts` 에 있다. 이 파일은 electron·DB 를 import 하지 않는다.
 - A5: 행 선점은 INSERT 가 먼저다. UNIQUE 충돌이면 실행하지 않는다.
 - A13: 틱 끝의 `onTick` 호출과 실행기 전체를 try/catch 로 감싼다.
@@ -4972,7 +4956,7 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 | D4 | 녹음·회의록·문서·변수·메모는 합치지 않는다 | 중복 근거가 없다. 이 판단은 unverified 다 |
 | D5 | startView 는 허용값 축소로 이전한다 | 읽을 때 정규화하면 백업 복원도 처리된다 |
 | D6 | 아침 동기화 상태는 `assistant_events` 에 둔다. 재시도는 payload `attempts` 로 표현한다 | UNIQUE event_key 로 하루 1회를 보장한다. 마이그레이션이 없다 |
-| D7 | R11 범위는 사용자 답(안전 자동 적용)을 따른다. 지운 키 부활 금지와 첫 매칭 확인을 더한다 | 사용자 결정 (2026-11-05) |
+| D7 | R11 범위는 사용자 답(안전 자동 적용)을 따른다. 지운 키 부활 금지와 첫 매칭 확인을 더한다. 싱크업과 함께 폐기했다(부록 N) | 사용자 결정 (2026-11-05) |
 | D8 | 오프라인은 시도가 아니다. 토큰 만료·네트워크 오류는 failed 다 | 노트북이 깨어난 직후의 오프라인이 하루 시도를 소진하지 않는다 |
 | D9 | 비서 설정 모달에 아침 동기화 토글과 시각을 둔다. 기본은 켜짐, 08:00 이다 | 별도 설정 화면이 없다 (§0) |
 | D10 | `completeOriginOnDone` 기본값은 false 다 | A2 원칙을 지킨다 |
@@ -4989,19 +4973,19 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 4. `grep -c "A54" src/main/services/assistant-schedule.test.ts` ≥ 8. K.3 판정 표의 경우를 각각 검증한다.
 5. `test -f src/main/services/morning-sync.ts` 종료 코드 0. `grep -c "A54" src/main/services/morning-sync.test.ts` ≥ 3. 하루 1회, 오프라인 비계수, throw 없음을 검증한다.
 6. `grep -c "A54" src/main/services/assistant-scheduler.test.ts` ≥ 1. `onTick` 이 throw·reject 해도 틱이 끝나는지 검증한다.
-7. `grep -nE "project-sync|release-note-sync|morning-sync" src/main/services/assistant-scheduler.ts` 결과 0건.
+7. `grep -nE "release-note-sync|morning-sync" src/main/services/assistant-scheduler.ts` 결과 0건.
 8. `grep -c "runMorningSyncIfDue" src/main/index.ts` ≥ 1.
 9. `grep -cE "setInterval|setTimeout" src/main/services/morning-sync.ts` 결과 0.
 10. `ls src/main/services/assistant-morning*` 결과 0건.
 11. A2: `grep -nE "INSERT INTO (projects|tasks|todos|meetings)|UPDATE (projects|tasks|todos|meetings)|DELETE FROM (projects|tasks|todos|meetings)" src/main/services/assistant-*.ts` 결과 0건.
 12. A3: `grep -lE "from '(electron|better-sqlite3|\.\./db|\./jira|\./google-calendar)" src/main/services/assistant-schedule.ts` 결과 0건.
-13. `grep -c "R11" src/main/services/project-sync-plan.test.ts` ≥ 1. `grep -c "R11" src/main/services/project-sync.test.ts` ≥ 1.
+13. (부록 N 에서 싱크업과 함께 지웠다.)
 14. `test ! -e src/renderer/src/components/dashboard/Dashboard.tsx` 종료 코드 0.
 15. `grep -c "normalizeView" src/renderer/src/components/layout/navConfig.ts` ≥ 1. `grep -c "VIEW_LABELS" src/renderer/src/components/layout/Header.tsx` ≥ 1.
 16. `grep -c "installDataSync" src/renderer/src/App.tsx` ≥ 1. `grep -cE "onDataChanged|assistant\.onChanged" src/renderer/src/components/ai/AiChatView.tsx src/renderer/src/components/today/TodayView.tsx` 합계 0.
 17. `grep -c "linked" src/main/services/release-note-sync.ts` ≥ 1.
 
-공유 파일 변경: `src/preload/index.ts` 에 `projectSync.morningStatus()` 를 더한다. `src/renderer/src/types/index.ts` 에 startView 3값, 설정 필드 3개, `ProjectSyncResult.applied`, 아침 동기화 상태 타입을 더한다.
+공유 파일 변경: `src/preload/index.ts` 에 아침 동기화 상태 조회를 더한다(지금은 `morningSync.status()`, 부록 N). `src/renderer/src/types/index.ts` 에 startView 3값, 설정 필드 3개, 아침 동기화 상태 타입을 더한다.
 
 ---
 
@@ -5391,9 +5375,11 @@ CREATE TABLE IF NOT EXISTS assistant_exclusions (
 | Q4 | 오늘 데이터 없음 순서: 오류 또는 빈 카드 → `HomeProjects` → `HomeSchedule` → `HomeMemos` | 같은 이유 |
 | Q5 | 각 부분은 자기 데이터만 읽는다. `HomeProjects` 는 프로젝트·작업, `HomeMemos` 는 중요 메모다 | 한 화면에 두 번 그려도 중복 조회가 없다 |
 
+> 2026-11-18 (부록 N): `HomeProjects` 와 기본 export `HomeOverview` 를 지웠다. `HomeOverview.tsx` 에는 `HomeMemos` 만 남는다. 현재 순서는 Q2~Q4 에서 `HomeProjects` 를 뺀 것이다.
+
 | ID | 규칙 | 판정 |
 |----|------|------|
-| A60 | 근무 중 홈 순서는 Q2 다. 계획 없음은 Q3 다 | 테스트 `A60` (TodayView.test.tsx). A59 순서 테스트는 A60 으로 바꾼다 |
+| A60 | 근무 중 홈 순서는 Q2 다. 계획 없음은 Q3 다. 2026-11-18 부터 두 순서에서 `HomeProjects` 를 뺀다 | 테스트 `A60` (TodayView.test.tsx). A59 순서 테스트는 A60 으로 바꾼다 |
 
 소유: 팀원 C `TodayView.tsx`·`TodayView.test.tsx`·`dashboard/HomeOverview.tsx`·`dashboard/HomeOverview.test.tsx`·`today/homeTypography.test.ts`. 리더 이 문서.
 
@@ -5403,6 +5389,8 @@ CREATE TABLE IF NOT EXISTS assistant_exclusions (
 24. 조건 1·2·3 통과.
 
 ### M.12 5차 피드백: 진행 중 프로젝트 색 (2026-11-09)
+> 이 절의 규칙 R1~R5 는 폐지(2026-11-18, 프로젝트 메뉴 개편). 대상 카드 `ProjectProgress` 를 지웠다.
+
 사용자 피드백: 진행 중 프로젝트 카드의 포인트 색이 요약 타일 색과 겹친다. 다른 색으로 바꾼다.
 
 | # | 결정 | 근거 |
@@ -5422,6 +5410,8 @@ CREATE TABLE IF NOT EXISTS assistant_exclusions (
 28. 조건 1·2·3 통과.
 
 ### M.13 6차 피드백: 진행률 기준 (2026-11-11)
+> 이 절의 규칙 R1~R7 은 폐지(2026-11-18, 프로젝트 메뉴 개편). 대상 카드 `ProjectProgress` 와 `utils/projectPhase.ts` 를 지웠다.
+
 사용자 피드백: 진행 중 프로젝트 카드의 큰 숫자 `8%` 가 작업 진행률처럼 읽힌다. 실제 값은 개발 기간의 달력일 경과율이다. 같은 카드의 작업 % 와 `N/M일차` 와 기준이 서로 다르다.
 
 이 절이 M.12 의 R3·R4 를 대체한다. M.12 의 R1·R2·R5 는 그대로 유효하다.
@@ -5446,3 +5436,34 @@ CREATE TABLE IF NOT EXISTS assistant_exclusions (
 31. `grep -c "toISOString" src/renderer/src/components/dashboard/ProjectProgress.tsx src/renderer/src/utils/projectPhase.ts` 결과 각각 0.
 32. 조건 25·26·27 통과.
 33. `grep -c "67%" src/renderer/src/components/dashboard/ProjectProgress.test.tsx` 결과 1 이상. `grep -c "20%" src/renderer/src/components/dashboard/ProjectProgress.test.tsx` 결과 1 이상.
+
+---
+
+## 부록 N. 프로젝트 메뉴 개편 — 작업·프로젝트 의존 제거 (2026-11-18)
+
+로컬 프로젝트·WBS 작업(`tasks`)·Jira 프로젝트 싱크업을 앱에서 지웠다. 프로젝트 메뉴(ViewId `projects`)는
+Jira 티켓 계층 보드다([PROJECT_BOARD.md](PROJECT_BOARD.md)). 비서는 대체 구현 없이 작업·프로젝트 의존 부분만 지웠다.
+본문과 앞 부록의 현재 동작 서술(§2.8, §3, §4, §5.1, §8, §12, A.1, C, E.6.8, F, I, J, K, M.11~M.13)은 이 개편에 맞춰 고쳤다. 이 부록은 바뀐 범위를 한곳에 모은 요약이다.
+앞 부록의 완료 조건·팀 구성·날짜가 붙은 결정 기록은 당시 기록으로 남긴다. 그 안의 `projectStore`·`matchProjects`·`ProjectProgress` 같은 이름은 지금 코드에 없다.
+
+`projects`·`tasks` 테이블과 `project_id` 컬럼은 남아 있다. 백업 그룹과 과거 기록 때문이다. 비서는 두 테이블을 읽지 않는다.
+
+### N.1 지운 것
+
+| 영역 | 지운 것 | 남긴 것 |
+|---|---|---|
+| 후보 | `readTasks`, `fromTask`, `mergeTaskJira`, 활성 프로젝트 읽기. 작업은 더 이상 후보가 되지 않는다 | `CandidateSource` 의 `'task'`: 기존 `plan_items` 행(`source = 'task'`, `candidate_id = 'task:N'`)을 읽고 계속 제외·보강·정렬에서 다루기 위해 남긴다. `Candidate.projectId`·`projectName`(늘 null), `plan_items.project_id`(새 행은 NULL) |
+| 원본 완료 | `task` 출처 항목의 `window.api.task.update` 호출. `task` 항목을 `done` 으로 바꾸면 계획 항목만 완료한다 | `todo` 원본 완료 |
+| 회의 전 브리핑 | `matchProjects`, `MeetingProjectRef`, 페이로드의 `projects`·`relatedItems`, 본문의 "관련 프로젝트" 줄. 알림 본문은 `미완료 액션 N건` 이다 | 지난 회의 요약, 미완료 액션아이템 |
+| 맥락 복구 | `RecoveryEntityType` 의 `'project'`·`'task'`. 활동 묶음은 `todo` 만 센다 | 활동 로그 행 자체(과거 기록) |
+| 아침 자동 동기화 | 프로젝트 파트. `MORNING_SYNC_PARTS = ['release']`, `MorningSyncPartName = 'release'`. 상태 조회는 `projectSync:morningStatus` 에서 `morningSync:status`(`window.api.morningSync.status()`)로 옮겼다. 옛 행 payload 의 `project` 키는 무시한다 | 설정 키 2개(`assistant_morning_sync_enabled`·`_time`), `deferred` 상태와 `reviewCount`(옛 행 호환, 늘 0) |
+| 오늘 화면 | `HomeOverview` 의 진행 중 프로젝트(`HomeProjects`)와 우선순위 미지정 배지, `ProjectProgress` 카드(M.12·M.13 규칙 폐지) | 중요 메모(`HomeMemos`). A60 순서에서 `HomeProjects` 만 빠진다 |
+| 트레이 | Active Projects 구역, 툴팁의 프로젝트 개수·긴급도. `TrayData` 는 `{ events, assistant }` 다 | 일정·비서 구역 |
+| 첫 화면 | 없음 | `startView = 'projects'` 는 프로젝트 보드를 연다 |
+| 내부 링크 | 없음 | `linkwork://project/…` 는 프로젝트 보드(`view: projects`)로 보낸다 |
+
+### N.2 규칙 적용
+
+- A2 는 그대로다. 비서 main 코드는 projects·tasks·todos·meetings 를 쓰지 않는다. 이제 projects·tasks 를 읽지도 않는다.
+- A54 는 파트가 `release` 하나인 상태로 그대로 적용한다.
+

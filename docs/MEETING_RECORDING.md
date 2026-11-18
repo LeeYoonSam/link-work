@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS meetings (
   audio_compacted INTEGER NOT NULL DEFAULT 0, -- 컷편집이 실제 적용됐는지(멱등 가드)
   original_duration_ms INTEGER,               -- 컷편집 전 길이(NULL=미적용)
   pipeline_version INTEGER NOT NULL DEFAULT 0,-- 처리 파이프라인 버전(0=구/미처리, 2=컷편집·용어집·참석자). 전체 처리 시 기록(§13)
-  project_id INTEGER,                         -- (선택) 프로젝트 귀속
+  project_id INTEGER,                         -- 옛 프로젝트 귀속. 컬럼만 남고 쓰지 않는다
   calendar_event_id TEXT,                     -- (선택) 매칭된 캘린더 이벤트
   calendar_event_title TEXT,
   error TEXT,                                 -- 처리 실패 사유
@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS stt_glossary (
   note TEXT,                                  -- 설명(요약 프롬프트 힌트, 선택)
   priority INTEGER NOT NULL DEFAULT 0,        -- 높을수록 initial_prompt에 먼저
   enabled INTEGER NOT NULL DEFAULT 1,
-  project_id INTEGER,                         -- NULL=전역, 지정 시 그 프로젝트 회의에만
+  project_id INTEGER,                         -- 옛 프로젝트 범위. 컬럼만 남고 모든 용어는 전역이다
   created_at TEXT DEFAULT (datetime('now','localtime')),
   updated_at TEXT DEFAULT (datetime('now','localtime')),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
@@ -233,7 +233,7 @@ export interface Attendee {
 }
 export interface RecognitionAidsAPI {
   listGlossary: () => Promise<GlossaryEntry[]>
-  upsertGlossary: (input: { id?: number; term: string; aliases?: string[]; note?: string | null; priority?: number; enabled?: boolean; project_id?: number | null }) => Promise<{ id: number }>
+  upsertGlossary: (input: { id?: number; term: string; aliases?: string[]; note?: string | null; priority?: number; enabled?: boolean }) => Promise<{ id: number }>
   removeGlossary: (id: number) => Promise<{ success: boolean }>
   /** 줄 형식 `정답 | 별칭1, 별칭2 | 메모` (`#` 주석, 파이프 없이 정답만도 허용) */
   importGlossaryText: (text: string) => Promise<{ added: number; updated: number; skipped: number }>
@@ -565,12 +565,12 @@ components/recording/
 
 | 보조 장치 | 저장 | 사용처 |
 |---|---|---|
-| 용어집 `stt_glossary` (정답 표기 · 오인식 표기 aliases · 메모 · 우선순위 · 프로젝트 범위) | 로컬 DB | ① `buildInitialPrompt({glossaryTerms})` — 프롬프트 **끝**에 ` 용어: A, B, C.`(최대 15개·120자, 전체 360자; whisper는 마지막 224토큰만 반영하므로 끝이 가장 중요, alias는 넣지 않는다) ② `applyGlossary(segments, rules)` 결정론적 후보정 ③ 요약 `[참고 정보]` 블록 |
+| 용어집 `stt_glossary` (정답 표기 · 오인식 표기 aliases · 메모 · 우선순위) | 로컬 DB | ① `buildInitialPrompt({glossaryTerms})` — 프롬프트 **끝**에 ` 용어: A, B, C.`(최대 15개·120자, 전체 360자; whisper는 마지막 224토큰만 반영하므로 끝이 가장 중요, alias는 넣지 않는다) ② `applyGlossary(segments, rules)` 결정론적 후보정 ③ 요약 `[참고 정보]` 블록 |
 | 구성원 `meeting_members` (이름 · 호칭/별칭 · 역할) + 회의별 참석자 `meeting_attendees` | 로컬 DB | ① 프롬프트 참석자 힌트(`speakerNames`에 합류) ② 녹음 시작 시 참석 인원 자동 제안 ③ `SpeakerEditor` 이름 프리셋 ④ 요약 `[참고 정보]`의 담당자 매칭 |
 
 **후보정 규칙(`stt/glossary-correct.ts`)** — 오치환 방지가 우선: alias 2자 이상, term과 동일한 alias 제외, 긴 alias 우선. 라틴/숫자 alias는 대소문자 무시 + 양쪽 영숫자 경계. 한글 포함 alias는 경계 없음(조사 결합 허용: "링크워크를"→"LinkWork를"), 3자 이상이면 문자 사이 공백 0~1개 허용("링크 워크"). 이미 정답 표기인 부분은 재치환하지 않는다. 사용자 수정 플래그 `text_corrected`는 건드리지 않는다.
 
-**서비스(`recognition-aids.ts`)**: `listGlossary/upsertGlossary/removeGlossary/importGlossaryText(parseGlossaryText)/listMembers/upsertMember/removeMember/setAttendees/listAttendees/loadPromptContext/buildSummaryContextBlock`. `loadPromptContext(db, meetingId)`는 `meetings.project_id`로 범위 필터(전역 + 해당 프로젝트), `priority DESC, updated_at DESC`, 실패 시 빈 컨텍스트(throw 금지).
+**서비스(`recognition-aids.ts`)**: `listGlossary/upsertGlossary/removeGlossary/importGlossaryText(parseGlossaryText)/listMembers/upsertMember/removeMember/setAttendees/listAttendees/loadPromptContext/buildSummaryContextBlock`. `loadPromptContext(db, meetingId)`는 켜진 용어 전체(전역)를 `priority DESC, updated_at DESC`로 읽고, 실패 시 빈 컨텍스트(throw 금지).
 
 **UI**: 녹음 목록 헤더 "인식 보조" → `RecognitionAidsPanel`(용어집/구성원 탭, 텍스트 가져오기 `정답 | 별칭1, 별칭2 | 메모`). 녹음 시작 화면 참석자 칩, 상세 화면 참석자 칩 편집.
 

@@ -2,14 +2,8 @@ import { Tray, BrowserWindow, nativeImage, screen, ipcMain, app } from 'electron
 import { join } from 'path'
 import { getDatabase } from '../db/database'
 import { getTodayEvents, CalendarEvent } from './google-calendar'
-import { differenceInCalendarDays, format } from 'date-fns'
+import { format } from 'date-fns'
 import { is } from '@electron-toolkit/utils'
-import {
-  ACTIVE_STATUSES,
-  compareProjects,
-  type OrderableProject
-} from '../../renderer/src/utils/projectOrder'
-import { applyProjectAutoStatus } from '../utils/project-dates'
 import { getToday } from './assistant-service'
 import { navigateToToday } from './assistant-scheduler'
 import { toTraySummary } from './assistant-tray'
@@ -18,18 +12,6 @@ import type { TrayAssistant } from './assistant-types'
 let tray: Tray | null = null
 let panelWindow: BrowserWindow | null = null
 let panelReady = false
-let updateInterval: ReturnType<typeof setInterval> | null = null
-
-interface TrayProject extends OrderableProject {
-  name: string
-  status: string
-  dev_start_date: string
-  dev_end_date: string
-  qa_start_date: string
-  qa_end_date: string
-  deploy_date: string
-  daysLeft: number // 상태별 마감 D-day(툴팁 긴급도 판정용)
-}
 
 interface TrayEvent {
   summary: string
@@ -40,70 +22,8 @@ interface TrayEvent {
 }
 
 interface TrayData {
-  projects: TrayProject[]
   events: TrayEvent[]
   assistant: TrayAssistant | null
-}
-
-/**
- * 위젯 필터 정책: 대시보드와 동일하게 적용
- * - ACTIVE_STATUSES(진행 중) 상태만 표시하고 on_hold, completed, cancelled는 제외
- * - 상태는 날짜 기반 자동 계산 (status_manual=0) 또는 수동 설정값 사용
- *
- * 필터 목록과 정렬 규칙은 renderer/src/utils/projectOrder.ts 한 곳에서 온다 —
- * 대시보드·프로젝트 목록과 같은 순서를 보장하기 위함이다.
- */
-const VISIBLE_STATUSES = new Set<string>(ACTIVE_STATUSES)
-
-function getActiveProjects(): TrayProject[] {
-  const db = getDatabase()
-  const projects = db
-    .prepare(
-      'SELECT id, name, dev_start_date, dev_end_date, qa_start_date, qa_end_date, deploy_date, status, status_manual, priority, sort_order, created_at FROM projects ORDER BY deploy_date ASC'
-    )
-    .all() as { id: number; name: string; dev_start_date: string; dev_end_date: string; qa_start_date: string; qa_end_date: string; deploy_date: string; status: string; status_manual: number; priority: TrayProject['priority']; sort_order: number; created_at: string }[]
-
-  const today = new Date()
-  return projects
-    .map(applyProjectAutoStatus)
-    .filter((p) => VISIBLE_STATUSES.has(p.status))
-    .map((p) => {
-      // 상태별 마감일 기준 D-day. 위젯 표시는 renderer의 getPhaseHint가 담당하고,
-      // 이 값은 툴팁 긴급도(daysLeft <= 3) 판정에 쓰인다.
-      let daysLeft: number
-      switch (p.status) {
-        case 'scheduled':
-          daysLeft = differenceInCalendarDays(new Date(p.dev_start_date), today)
-          break
-        case 'development':
-          daysLeft = differenceInCalendarDays(new Date(p.dev_end_date), today)
-          break
-        case 'qa_pending':
-          daysLeft = differenceInCalendarDays(new Date(p.qa_start_date), today)
-          break
-        case 'qa':
-          daysLeft = differenceInCalendarDays(new Date(p.qa_end_date), today)
-          break
-        default: // deploy_pending, deploy
-          daysLeft = differenceInCalendarDays(new Date(p.deploy_date), today)
-          break
-      }
-
-      return {
-        name: p.name,
-        status: p.status,
-        dev_start_date: p.dev_start_date,
-        dev_end_date: p.dev_end_date,
-        qa_start_date: p.qa_start_date,
-        qa_end_date: p.qa_end_date,
-        deploy_date: p.deploy_date,
-        priority: p.priority,
-        sort_order: p.sort_order,
-        created_at: p.created_at,
-        daysLeft
-      }
-    })
-    .sort(compareProjects)
 }
 
 function hasTime(dueDate: string): boolean {
@@ -176,7 +96,6 @@ async function getTrayAssistant(): Promise<TrayAssistant | null> {
 
 async function getTrayData(): Promise<TrayData> {
   const assistant = await getTrayAssistant()
-  const projects = getActiveProjects()
   const calEvents = await getTodayEvents()
   const calItems: TrayEvent[] = calEvents.map((e: CalendarEvent) => ({
     summary: e.summary,
@@ -195,7 +114,7 @@ async function getTrayData(): Promise<TrayData> {
     return a.time.localeCompare(b.time)
   })
 
-  return { projects, events, assistant }
+  return { events, assistant }
 }
 
 function createPanelWindow(): BrowserWindow {
@@ -323,35 +242,9 @@ export function createTrayWidget(onOpenApp: () => void): void {
     navigateToToday()
     panelWindow?.hide()
   })
-
-  // Auto-refresh tooltip
-  //
-  // 반드시 try/catch로 감싼다. 이 콜백은 async라 안에서 throw하면 아무도 받지 않는
-  // rejected promise가 되고, unhandledRejection으로 **메인 프로세스가 통째로 죽는다.**
-  // 실제로 그럴 수 있는 창이 있다: 데이터 복원(services/backup-service.ts)은 DB 핸들을
-  // 닫고 파일을 갈아치우는데, 그 사이에 5분 타이머가 돌면 getActiveProjects()가
-  // "Database not initialized"로 throw한다. 하필 DB를 교체한 뒤 녹음을 복사하는 중에
-  // 죽으면 반만 복원된 상태로 남는다.
-  // 툴팁 갱신은 다음 주기에 다시 하면 그만이라 조용히 넘긴다.
-  updateInterval = setInterval(async () => {
-    try {
-      const projects = getActiveProjects()
-      const urgent = projects.filter((p) => p.daysLeft <= 3)
-      const tooltip = urgent.length > 0
-        ? `LinkWork - ${urgent.length} urgent`
-        : `LinkWork - ${projects.length} active`
-      tray?.setToolTip(tooltip)
-    } catch {
-      // DB가 닫혀 있거나 트레이가 이미 정리된 상태 — 다음 주기에 다시 시도한다
-    }
-  }, 5 * 60 * 1000)
 }
 
 export function destroyTrayWidget(): void {
-  if (updateInterval) {
-    clearInterval(updateInterval)
-    updateInterval = null
-  }
   // 앱 종료/재생성 시 이중 등록 방지
   ipcMain.removeHandler('tray:getData')
   ipcMain.removeHandler('tray:openApp')

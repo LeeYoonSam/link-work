@@ -3,8 +3,6 @@ import type {
   Candidate, PlanItem, PlanItemStatus, WorkClassification, WorkClassifyInput, WorkType
 } from './assistant-types'
 
-// project-sync-plan.ts 의 SUSTAIN_EPIC_PATTERN·QA_EPIC_PATTERN 과 같은 문자열이다.
-// import 하면 ADF·날짜 유틸을 끌고 와서 복사한다. 테스트가 두 패턴의 source 가 같은지 확인한다.
 export const SUSTAIN_PATTERN = /\bsus(tain(ing)?)?\b/i
 export const QA_PATTERN = /QA/
 export const TRD_PATTERN = /\bTRD\b/i

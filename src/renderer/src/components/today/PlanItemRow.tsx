@@ -11,7 +11,6 @@ import type {
 import { Badge, LinkIcon, button } from '../ui'
 import { openInternalLink } from '../../utils/openInternalLink'
 import { isInternalLink } from '../../utils/internalLink'
-import { isJiraLinkedTaskItem } from '../../stores/assistantStore'
 import {
   EMPHASIS,
   META_TEXT,
@@ -274,7 +273,7 @@ interface PlanItemRowProps {
   busy?: boolean
   onStatus: (itemId: number, status: PlanItemStatus) => void
   onFocus: (itemId: number) => void
-  // 원본 todo·task 를 완료 처리한다. 성공하면 true
+  // 원본 todo 를 완료 처리한다. 성공하면 true
   onCompleteOrigin: (item: PlanItem) => Promise<boolean>
   // 같은 계획의 항목 전체. 묶음 판정에 쓴다 (부록 J.4)
   items: Pick<PlanItem, 'id' | 'parent_key' | 'status'>[]
@@ -323,11 +322,8 @@ export default function PlanItemRow({
   const group = isGroupItem(item, items)
   const focused = !group && focusItemId !== null && item.id === focusItemId
   const focusEmphasis = focused && !finished
-  // Jira 연결 작업은 상태를 Jira 가 정하므로 원본 완료를 내놓지 않는다 (PROJECT_SYNC R12)
-  const canCompleteOrigin =
-    (item.source === 'todo' || item.source === 'task') &&
-    /^(todo|task):\d+$/.test(item.candidate_id) &&
-    !isJiraLinkedTaskItem(item)
+  // 원본 완료는 할 일만 한다. 기존 행에 남은 task 출처는 원본 API 가 없다
+  const canCompleteOrigin = item.source === 'todo' && /^todo:\d+$/.test(item.candidate_id)
   const dayCount = dayCountLabel(item.first_planned_date, logicalDate)
   const due = dueLabel(item.due_date, logicalDate)
   const dueUrgent = !finished && isDueAlert(item, logicalDate)

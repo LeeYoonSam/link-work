@@ -8,7 +8,7 @@ import type {
   IntegrationVerifyResult,
   JiraConnectionStatus
 } from '../types'
-import { useProjectStore } from './projectStore'
+import { useNavigationStore } from './navigationStore'
 import {
   DEFAULT_SETTINGS_SECTION,
   normalizeSettingsSection,
@@ -70,7 +70,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   open: (section) => {
     if (section !== undefined) set({ section: normalizeSettingsSection(section) })
-    useProjectStore.getState().setView('settings')
+    useNavigationStore.getState().setView('settings')
   },
 
   setSection: (section) => set({ section: normalizeSettingsSection(section) }),

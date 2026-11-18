@@ -1,8 +1,8 @@
-import { useProjectStore } from '../../stores/projectStore'
+import { useNavigationStore } from '../../stores/navigationStore'
 import { VIEW_LABELS } from './navConfig'
 
 export default function Header(): React.ReactNode {
-  const { view } = useProjectStore()
+  const view = useNavigationStore((s) => s.view)
 
   return (
     <header className="h-14 bg-white border-b border-gray-200 flex items-center px-6">

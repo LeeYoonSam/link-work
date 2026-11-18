@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// better-sqlite3 네이티브 모듈 대신 node:sqlite 로 인메모리 DB 를 쓴다 (project-sync.test.ts 관례).
+// better-sqlite3 네이티브 모듈 대신 node:sqlite 로 인메모리 DB 를 쓴다.
 vi.mock('better-sqlite3', async () => {
   const { DatabaseSync } = await import('node:sqlite')
   class BetterSqlite3Shim {
@@ -206,16 +206,9 @@ beforeEach(() => {
 })
 
 describe('collectSources 로컬 출처', () => {
-  it('미완료 작업 중 활성 프로젝트 소속만 후보로 넣는다', async () => {
+  it('WBS 작업(tasks)은 후보로 넣지 않는다. 옛 행이 남아 있어도 읽지 않는다', async () => {
     const r = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'local', NOW)
-    const list = ids(r.candidates)
-    expect(list).toContain('task:10')
-    expect(list).not.toContain('task:11')
-    expect(list).not.toContain('task:12')
-    expect(list).not.toContain('task:13')
-    const task = r.candidates.find((c) => c.id === 'task:10')
-    expect(task?.projectName).toBe('활성')
-    expect(task?.priority).toBe('high')
+    expect(ids(r.candidates).filter((id) => id.startsWith('task:'))).toEqual([])
   })
 
   it('미완료 todo 만 후보로 넣는다', async () => {
@@ -231,13 +224,6 @@ describe('collectSources 로컬 출처', () => {
     expect(list).not.toContain('action_item:7:1')
     expect(list).not.toContain('action_item:7:2')
     expect(list).not.toContain('action_item:8:0')
-  })
-
-  it('A12: 작업 최근 변경 시각은 activity_log 의 UTC 값을 로컬 datetime 으로 바꾼 값이다', async () => {
-    const r = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'local', NOW)
-    const expected = toLocalDateTime(new Date(Date.UTC(2026, 10, 1, 2, 0, 0)))
-    expect(r.candidates.find((c) => c.id === 'task:10')?.lastTouchedAt).toBe(expected)
-    expect(expected).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
   })
 
   it('A2: 수집은 원본 테이블을 바꾸지 않는다', async () => {
@@ -457,7 +443,7 @@ describe('collectSources Jira', () => {
     const r = await collectSources(makeDb(), DEFAULT_ASSISTANT_SETTINGS, 'full', NOW)
     expect(r.jira).toBeNull()
     expect(r.errors).toEqual(['Jira 조회에 실패했습니다. 네트워크 오류'])
-    expect(ids(r.candidates)).toContain('task:10')
+    expect(ids(r.candidates)).toContain('todo:5')
   })
 })
 
@@ -589,11 +575,9 @@ describe('resolveVanished', () => {
   const todoCandidate = { id: 'todo:5', jiraKey: null } as Candidate
   const mergedTask = { id: 'task:99', jiraKey: 'PROJ-9' } as Candidate
 
-  it('작업·todo: 완료면 done, 삭제면 dropped, 남아 있으면 해석하지 않는다', async () => {
+  it('todo: 완료면 done, 삭제면 dropped, 남아 있으면 해석하지 않는다. 옛 task 항목은 해석하지 않는다', async () => {
     const r = await resolveVanished(makeDb(), ['task:11', 'task:10', 'task:404', 'todo:6', 'todo:5', 'todo:404'], [])
     expect(r).toEqual({
-      'task:11': { kind: 'done' },
-      'task:404': { kind: 'dropped', note: '원본 삭제' },
       'todo:6': { kind: 'done' },
       'todo:404': { kind: 'dropped', note: '원본 삭제' }
     })
@@ -618,7 +602,7 @@ describe('resolveVanished', () => {
     expect(await resolveVanished(db, ['action_item:7:0'], [])).toEqual({ 'action_item:7:0': { kind: 'done' } })
   })
 
-  it('Jira: 완료면 done, 그 외는 담당 변경, 같은 키의 작업이 있으면 교체, 조회 못 한 키는 뺀다', async () => {
+  it('Jira: 완료면 done, 그 외는 담당 변경, 같은 키의 다른 후보가 있으면 교체, 조회 못 한 키는 뺀다', async () => {
     const r = await resolveVanished(
       makeDb(),
       ['jira:PROJ-2', 'jira:PROJ-3', 'jira:PROJ-404', 'jira:PROJ-9', 'jira:bad key'],
@@ -670,7 +654,7 @@ describe('resolveVanished', () => {
   })
 
   it('형식이 틀린 ID 는 무시한다', async () => {
-    expect(await resolveVanished(makeDb(), ['weird', 'task:abc', 'action_item:7'], [])).toEqual({})
+    expect(await resolveVanished(makeDb(), ['weird', 'todo:abc', 'action_item:7'], [])).toEqual({})
   })
 })
 
@@ -781,7 +765,7 @@ describe('readRecoveryLocal', () => {
     seed(db, 'meeting_summaries', Array.from({ length: 15 }, (_, i) =>
       `(${i + 1}, ${i + 1}, '${'가'.repeat(500)}', '${manyActions}', '2026-10-31 20:00:00')`))
     seed(db, 'activity_log', Array.from({ length: 60 }, (_, i) =>
-      logRow('task', i + 1, `작업 ${i + 1}`, 'update', `2026-10-31 ${String(10 + (i % 10)).padStart(2, '0')}:${String(i).padStart(2, '0')}:00`)))
+      logRow('todo', i + 1, `할 일 ${i + 1}`, 'update', `2026-10-31 ${String(10 + (i % 10)).padStart(2, '0')}:${String(i).padStart(2, '0')}:00`)))
     const items = Array.from({ length: 25 }, (_, i) => planItem(i + 1))
     const ctx = recoveryCtx({ lastPlan: { ...LAST_PLAN, wrapup_note: '메'.repeat(3000) } })
 
@@ -805,7 +789,7 @@ describe('readRecoveryLocal', () => {
     seed(db, 'activity_log', Array.from({ length: 600 }, (_, i) => {
       const at = new Date(2026, 9, 31, 0, 0, i)
       const local = `2026-10-31 ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}:${String(at.getSeconds()).padStart(2, '0')}`
-      return logRow('task', 1, '큰 작업', 'update', local)
+      return logRow('todo', 1, '큰 할 일', 'update', local)
     }))
     const [g] = readRecoveryLocal(db, recoveryCtx({ since: '2026-10-30 00:00:00' }), []).activity
     expect(g.count).toBe(RECOVERY_LIMITS.activityRows)
@@ -817,8 +801,8 @@ describe('readRecoveryLocal', () => {
   it('activity_log 의 UTC created_at 을 로컬로 바꿔 since 와 비교한다', () => {
     const db = makeRecoveryDb()
     seed(db, 'activity_log', [
-      logRow('task', 1, '기준 전', 'update', '2026-10-30 08:59:59'),
-      logRow('task', 2, '기준 직후', 'update', '2026-10-30 09:00:00'),
+      logRow('todo', 1, '기준 전', 'update', '2026-10-30 08:59:59'),
+      logRow('todo', 2, '기준 직후', 'update', '2026-10-30 09:00:00'),
       logRow('todo', 3, '오전', 'create', '2026-10-30 10:00:00')
     ])
     const r = readRecoveryLocal(db, recoveryCtx(), [])
@@ -828,37 +812,33 @@ describe('readRecoveryLocal', () => {
     expect(r.activity[1].lastAt).toBe('2026-10-30 09:00:00')
   })
 
-  it('activity_log 를 엔티티별로 묶고 삭제된 엔티티도 남긴다', () => {
+  it('activity_log 를 할 일별로 묶고 삭제된 할 일도 남긴다. 프로젝트·작업 기록은 읽지 않는다', () => {
     const db = makeRecoveryDb()
-    seed(db, 'projects', [`(1, '원본 프로젝트')`])
     seed(db, 'todos', [`(9, '원본 할 일', 1, NULL)`])
     seed(db, 'activity_log', [
-      // 작업 5: 이름이 바뀐 뒤 삭제됐다. 마지막 행은 이름이 없다
-      logRow('task', 5, '옛 이름', 'create', '2026-10-31 09:00:00'),
-      logRow('task', 5, '새 이름', 'update', '2026-10-31 10:00:00'),
-      logRow('task', 5, null, 'update', '2026-10-31 10:30:00'),
-      logRow('task', 5, null, 'delete', '2026-10-31 11:00:00'),
+      // 할 일 5: 이름이 바뀐 뒤 삭제됐다. 마지막 행은 이름이 없다
+      logRow('todo', 5, '옛 이름', 'create', '2026-10-31 09:00:00'),
+      logRow('todo', 5, '새 이름', 'update', '2026-10-31 10:00:00'),
+      logRow('todo', 5, null, 'update', '2026-10-31 10:30:00'),
+      logRow('todo', 5, null, 'delete', '2026-10-31 11:00:00'),
       // 할 일 9: 이름이 없다. 원본 테이블에서 읽는다
       logRow('todo', 9, null, 'complete', '2026-10-31 12:00:00'),
-      // 프로젝트 1: 원본 이름
-      logRow('project', 1, null, 'update', '2026-10-31 08:00:00'),
-      // 작업 77: 이름도 원본도 없다
-      logRow('task', 77, null, 'delete', '2026-10-31 07:00:00'),
+      // 할 일 77: 이름도 원본도 없다
+      logRow('todo', 77, null, 'delete', '2026-10-31 07:00:00'),
       // entity_id 가 없으면 이름으로 묶는다
       logRow('todo', null, '아이디 없음', 'create', '2026-10-31 06:00:00'),
       logRow('todo', null, '아이디 없음', 'update', '2026-10-31 06:30:00'),
-      // 대상이 아닌 종류는 뺀다
-      logRow('meeting', 3, '회의', 'create', '2026-10-31 13:00:00')
+      // 대상이 아닌 종류는 뺀다. 옛 프로젝트·작업 기록도 마찬가지다
+      logRow('meeting', 3, '회의', 'create', '2026-10-31 13:00:00'),
+      logRow('project', 1, '옛 프로젝트', 'update', '2026-10-31 08:00:00'),
+      logRow('task', 4, '옛 작업', 'update', '2026-10-31 08:30:00')
     ])
 
     const groups = readRecoveryLocal(db, recoveryCtx(), []).activity
 
-    expect(groups.map((g) => g.name)).toEqual([
-      '원본 할 일', '새 이름', '원본 프로젝트', '(이름 없음)', '아이디 없음'
-    ])
-    const task = groups[1]
-    expect(task).toEqual({
-      entityType: 'task',
+    expect(groups.map((g) => g.name)).toEqual(['원본 할 일', '새 이름', '(이름 없음)', '아이디 없음'])
+    expect(groups[1]).toEqual({
+      entityType: 'todo',
       entityId: 5,
       name: '새 이름',
       actions: ['create', 'update', 'delete'],
@@ -868,8 +848,8 @@ describe('readRecoveryLocal', () => {
       deleted: true
     })
     expect(groups[0].deleted).toBe(false)
-    expect(groups[3]).toMatchObject({ entityId: 77, deleted: true })
-    expect(groups[4]).toMatchObject({ entityType: 'todo', entityId: null, count: 2, actions: ['create', 'update'] })
+    expect(groups[2]).toMatchObject({ entityId: 77, deleted: true })
+    expect(groups[3]).toMatchObject({ entityType: 'todo', entityId: null, count: 2, actions: ['create', 'update'] })
   })
 
   it('남은 작업은 planned·in_progress·deferred 만 rank 순으로 둔다. null 은 뒤다', () => {
@@ -894,9 +874,8 @@ describe('readRecoveryLocal', () => {
     expect(none.unfinishedItems).toEqual([])
   })
 
-  it('회의 요약은 since 이후 생성분만 읽고 프로젝트 이름과 미완료 액션을 붙인다', () => {
+  it('회의 요약은 since 이후 생성분만 읽고 미완료 액션을 붙인다', () => {
     const db = makeRecoveryDb()
-    seed(db, 'projects', [`(1, '결제 개편')`])
     seed(db, 'meetings', [
       `(1, '주간 회의', '2026-10-31 10:00:00', 1)`,
       `(2, '지난 회의', '2026-10-29 10:00:00', NULL)`,
@@ -909,8 +888,8 @@ describe('readRecoveryLocal', () => {
     ])
     const r = readRecoveryLocal(db, recoveryCtx(), [])
     expect(r.meetings).toEqual([
-      { meetingId: 3, title: '요약 없음', startedAt: '2026-10-31 11:00:00', projectName: null, tldr: '요약', openActionItems: [], openActionCount: 0 },
-      { meetingId: 1, title: '주간 회의', startedAt: '2026-10-31 10:00:00', projectName: '결제 개편', tldr: null, openActionItems: ['남은 액션'], openActionCount: 1 }
+      { meetingId: 3, title: '요약 없음', startedAt: '2026-10-31 11:00:00', tldr: '요약', openActionItems: [], openActionCount: 0 },
+      { meetingId: 1, title: '주간 회의', startedAt: '2026-10-31 10:00:00', tldr: null, openActionItems: ['남은 액션'], openActionCount: 1 }
     ])
   })
 
@@ -1021,19 +1000,11 @@ describe('toMeetingRef', () => {
 function makeMeetingDb(): Database.Database {
   const db = new Database(':memory:')
   db.exec(`
-    CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT, dev_start_date TEXT, dev_end_date TEXT,
-      qa_start_date TEXT, qa_end_date TEXT, deploy_date TEXT, status TEXT, status_manual INTEGER, priority TEXT);
     CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT, kind TEXT, started_at TEXT,
       calendar_event_title TEXT);
     CREATE TABLE meeting_summaries (id INTEGER PRIMARY KEY, meeting_id INTEGER UNIQUE, tldr TEXT,
       action_items TEXT, generated_at TEXT);
   `)
-  seed(db, 'projects', [
-    `(1, '결제 개편', '2026-10-01', '2026-12-01', '2026-12-02', '2026-12-04', '2026-12-05', 'development', 1, 'now')`,
-    `(2, '정산', '2026-10-01', '2026-12-01', '2026-12-02', '2026-12-04', '2026-12-05', 'development', 1, NULL)`,
-    `(3, '주간', '2026-10-01', '2026-12-01', '2026-12-02', '2026-12-04', '2026-12-05', 'on_hold', 1, NULL)`,
-    `(4, 'A', '2026-10-01', '2026-12-01', '2026-12-02', '2026-12-04', '2026-12-05', 'development', 1, NULL)`
-  ])
   return db
 }
 
@@ -1055,14 +1026,10 @@ function summaryRow(meetingId: number, tldr: string | null, actions: unknown[]):
 }
 
 describe('collectMeetingContext', () => {
-  it('활성 프로젝트만 매칭한다. 중단 프로젝트와 1자 이름은 빠진다', () => {
-    const ctx = collectMeetingContext(makeMeetingDb(), MEETING, [])
-    expect(ctx.projects).toEqual([
-      { id: 1, name: '결제 개편' },
-      { id: 2, name: '정산' }
-    ])
+  it('회의와 지난 회의·액션아이템만 싣는다. 프로젝트를 읽지 않는다', () => {
+    const ctx = collectMeetingContext(makeMeetingDb(), MEETING)
+    expect(ctx).toEqual({ meeting: MEETING, pastMeetings: [], openActionItems: [], errors: [] })
     expect(ctx.meeting).toBe(MEETING)
-    expect(ctx.errors).toEqual([])
   })
 
   it('지난 회의는 같은 제목만 고르고 calendar_event_title 도 본다. 면접·회의 시작 이후는 뺀다', () => {
@@ -1082,7 +1049,7 @@ describe('collectMeetingContext', () => {
       summaryRow(4, '면접', [{ text: '면접 액션' }]),
       summaryRow(5, '지금', [{ text: '지금 액션' }])
     ])
-    const ctx = collectMeetingContext(db, MEETING, [])
+    const ctx = collectMeetingContext(db, MEETING)
     expect(ctx.pastMeetings).toEqual([
       { meetingId: 1, title: '결제 개편 · 정산 주간회의', startedAt: '2026-10-26 14:00:00', tldr: '일정 합의', openActionItems: ['문서 공유'] },
       { meetingId: 2, title: '녹음 1', startedAt: '2026-10-19 14:00:00', tldr: null, openActionItems: ['견적 확인'] }
@@ -1099,7 +1066,7 @@ describe('collectMeetingContext', () => {
     ])
     seed(db, 'meeting_summaries', [summaryRow(1, '90일째', []), summaryRow(2, '90일 넘음', [])])
     expect(MEETING_LIMITS.pastDays).toBe(90)
-    const ctx = collectMeetingContext(db, MEETING, [])
+    const ctx = collectMeetingContext(db, MEETING)
     expect(ctx.pastMeetings.map((m) => m.meetingId)).toEqual([1])
   })
 
@@ -1107,7 +1074,7 @@ describe('collectMeetingContext', () => {
     const db = makeMeetingDb()
     seed(db, 'meetings', [1, 2, 3, 4, 5].map((n) => meetingRow(n, MEETING.title, `2026-10-0${n} 14:00:00`)))
     seed(db, 'meeting_summaries', [1, 2, 3, 4, 5].map((n) => summaryRow(n, `요약 ${n}`, [])))
-    const ctx = collectMeetingContext(db, MEETING, [])
+    const ctx = collectMeetingContext(db, MEETING)
     expect(MEETING_LIMITS.pastMeetings).toBe(3)
     expect(ctx.pastMeetings.map((m) => m.meetingId)).toEqual([5, 4, 3])
   })
@@ -1126,7 +1093,7 @@ describe('collectMeetingContext', () => {
     seed(db, 'meetings', rows)
     seed(db, 'meeting_summaries', sums)
     expect(MEETING_LIMITS.pastCandidates).toBe(200)
-    expect(collectMeetingContext(db, MEETING, []).pastMeetings).toEqual([])
+    expect(collectMeetingContext(db, MEETING).pastMeetings).toEqual([])
   })
 
   it('A46: 미완료 액션아이템은 10건까지만 둔다', () => {
@@ -1138,7 +1105,7 @@ describe('collectMeetingContext', () => {
     const actions = (prefix: string, n: number): { text: string }[] =>
       Array.from({ length: n }, (_, i) => ({ text: `${prefix} ${i + 1}` }))
     seed(db, 'meeting_summaries', [summaryRow(1, null, actions('최근', 12)), summaryRow(2, null, actions('이전', 4))])
-    const ctx = collectMeetingContext(db, MEETING, [])
+    const ctx = collectMeetingContext(db, MEETING)
     expect(MEETING_LIMITS.actionItems).toBe(10)
     expect(ctx.openActionItems).toHaveLength(10)
     expect(ctx.openActionItems[0]).toBe('최근 1')
@@ -1150,54 +1117,19 @@ describe('collectMeetingContext', () => {
     const db = makeMeetingDb()
     seed(db, 'meetings', [meetingRow(1, MEETING.title, '2026-10-26 14:00:00')])
     seed(db, 'meeting_summaries', [summaryRow(1, '가'.repeat(300), [])])
-    expect(collectMeetingContext(db, MEETING, []).pastMeetings[0].tldr).toBe('가'.repeat(200))
-  })
-
-  it('A46: 관련 항목은 매칭 프로젝트의 planned·in_progress 항목을 순위 순으로 5건까지 둔다', () => {
-    const items: PlanItem[] = [
-      planItem(1, { project_id: 1, rank: 3 }),
-      planItem(2, { project_id: 2, rank: 1, status: 'in_progress' }),
-      planItem(3, { project_id: 1, rank: null }),
-      planItem(4, { project_id: 1, rank: 2, status: 'done' }),
-      planItem(5, { project_id: 1, rank: 4, status: 'suggested' }),
-      planItem(6, { project_id: 3, rank: 1 }),
-      planItem(7, { project_id: null, rank: 1 }),
-      planItem(8, { project_id: 2, rank: 5 }),
-      planItem(9, { project_id: 2, rank: 6 }),
-      planItem(10, { project_id: 1, rank: 7, status: 'deferred' }),
-      planItem(11, { project_id: 1, rank: 8 })
-    ]
-    const ctx = collectMeetingContext(makeMeetingDb(), MEETING, items)
-    expect(MEETING_LIMITS.relatedItems).toBe(5)
-    expect(ctx.relatedItems).toEqual([
-      { id: 2, title: '항목 2', status: 'in_progress' },
-      { id: 1, title: '항목 1', status: 'planned' },
-      { id: 8, title: '항목 8', status: 'planned' },
-      { id: 9, title: '항목 9', status: 'planned' },
-      { id: 11, title: '항목 11', status: 'planned' }
-    ])
-  })
-
-  it('매칭 프로젝트가 없으면 관련 항목도 없다', () => {
-    const ctx = collectMeetingContext(makeMeetingDb(), { ...MEETING, title: '1:1' }, [planItem(1, { project_id: 1 })])
-    expect(ctx.projects).toEqual([])
-    expect(ctx.relatedItems).toEqual([])
+    expect(collectMeetingContext(db, MEETING).pastMeetings[0].tldr).toBe('가'.repeat(200))
   })
 
   it('출처 조회가 실패하면 throw 하지 않고 그 출처만 비운다', () => {
     const db = makeMeetingDb()
     db.exec('DROP TABLE meeting_summaries')
-    const ctx = collectMeetingContext(db, MEETING, [planItem(1, { project_id: 1 })])
+    const ctx = collectMeetingContext(db, MEETING)
     expect(ctx.pastMeetings).toEqual([])
     expect(ctx.openActionItems).toEqual([])
-    expect(ctx.projects).toHaveLength(2)
-    expect(ctx.relatedItems).toHaveLength(1)
     expect(ctx.errors).toEqual(['지난 회의 조회에 실패했습니다.'])
 
-    const empty = collectMeetingContext(new Database(':memory:'), MEETING, [planItem(1, { project_id: 1 })])
-    expect(empty.projects).toEqual([])
-    expect(empty.relatedItems).toEqual([])
-    expect(empty.errors).toEqual(['프로젝트 조회에 실패했습니다.', '지난 회의 조회에 실패했습니다.'])
+    const empty = collectMeetingContext(new Database(':memory:'), MEETING)
+    expect(empty.errors).toEqual(['지난 회의 조회에 실패했습니다.'])
   })
 
   it('A2·A46: 수집은 원본 테이블을 바꾸지 않고 Jira·캘린더를 부르지 않는다', () => {
@@ -1205,9 +1137,9 @@ describe('collectMeetingContext', () => {
     seed(db, 'meetings', [meetingRow(1, MEETING.title, '2026-10-26 14:00:00')])
     seed(db, 'meeting_summaries', [summaryRow(1, '요약', [{ text: '액션' }])])
     const dump = (): string =>
-      JSON.stringify(['projects', 'meetings', 'meeting_summaries'].map((t) => db.prepare(`SELECT * FROM ${t} ORDER BY id`).all()))
+      JSON.stringify(['meetings', 'meeting_summaries'].map((t) => db.prepare(`SELECT * FROM ${t} ORDER BY id`).all()))
     const before = dump()
-    collectMeetingContext(db, MEETING, [])
+    collectMeetingContext(db, MEETING)
     expect(dump()).toBe(before)
     expect(state.openCalls).toEqual([])
     expect(state.keysCalls).toEqual([])

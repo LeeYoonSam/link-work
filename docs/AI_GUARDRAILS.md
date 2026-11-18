@@ -83,8 +83,6 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
   - 감사 로그: secret 변수의 `value`는 `sanitizeWriteInputForAudit`로 마스킹 후 기록
     (`ai_audit_log`에 평문 secret이 남지 않음 — create/update_variable 공통)
   - `update_variable`은 secret→general 전환을 거부해 마스킹 우회를 차단 (7.1)
-- 프로젝트 상태는 `applyProjectAutoStatus`(공용)로 계산해 메뉴·조회 도구·승인 카드가
-  동일한 값을 보이게 한다 (저장된 raw status가 아니라 표시 상태 기준)
 - 내장 WebSearch/WebFetch는 계속 차단. 외부 접근은 자체 `fetch_url` 도구로만 가능하며,
   사용자가 언급하지 않은 주소는 승인 카드를 거친다 (8절) — 조회한 데이터를 임의 URL로
   실어 보내는 유출 경로를 승인 게이트로 차단
@@ -118,7 +116,7 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
    사용자는 입력창 아래 모드 선택에서 채팅마다 readonly·ask·plan 으로 바꿀 수 있다
 6. 이 문서에 도구별 위험도와 승인 흐름을 먼저 추가한 뒤 구현
 
-### 7.1 현재 구현 — 생성(create) 6종 + 수정(update) 6종
+### 7.1 현재 구현 — 생성(create) 4종 + 수정(update) 4종
 
 `src/main/services/ai-write-tools.ts`. **생성과 수정만 지원**하며 delete 도구는 없다
 (삭제 요청 시 해당 메뉴로 안내. 단 메모 보관/TODO 완료 같은 **가역적 상태 변경**은
@@ -127,18 +125,14 @@ zod 스키마가 도구 호출 레벨에서 강제한다.
 
 | 도구 | 변경 내용 | 위험도 | 비고 |
 |---|---|---|---|
-| `create_project` | projects 1건 + tasks N건(최대 30, 단일 트랜잭션) | 중 | 논리적 1건(프로젝트+WBS). QA/배포일 미지정 시 자동 계산. 각 태스크에 subtasks(최대 20)로 하위 작업 동시 등록 가능 |
-| `create_task` | tasks 1건 (기존 프로젝트에 추가, 맨 뒤 순서) | 낮 | project_id 존재 검증, 시작/종료일 역전 거부. 여러 작업 추가 시 작업마다 별도 호출. parent_task_id로 하위 작업 추가(깊이 1단계) |
 | `create_todo` | todos 1건 (+ 미존재 태그 생성, 최대 5개) | 낮 | `todo_history` 스냅샷 기록 |
 | `create_memo` | memos 1건 (+ 미존재 카테고리 생성) | 낮 | |
 | `create_variable` | variables 1건 | 중 | 동일 key 존재 시 거부(중복/덮어쓰기 방지). secret 생성 가능하나 조회는 항상 마스킹 |
-| `create_document` | documents 1건 (type=link) | 낮 | url은 **http/https만 허용**(javascript:/file: 등 차단 — 셸로 열리는 값이므로). project_id 존재 검증, 같은 소속에 같은 url이 있으면 거부(중복 링크 방지). 여러 문서는 문서마다 별도 호출 |
-| `update_project` | projects 1건 부분 수정 | 중 | status 지정 시 `status_manual=1`로 고정. 병합 후 개발→QA→배포 날짜 역전 검증(dev/qa 쌍 + 단계 간 순서) |
-| `update_task` | tasks 1건 부분 수정 | 낮 | status: pending/in_progress/done. parent_task_id 재배치 가능(하위 보유 작업은 불가) |
+| `create_document` | documents 1건 (type=link) | 낮 | url은 **http/https만 허용**(javascript:/file: 등 차단 — 셸로 열리는 값이므로). 같은 url의 문서가 이미 있으면 거부(중복 링크 방지). 프로젝트 연결 인자는 없다(새 문서의 `project_id`는 NULL). 여러 문서는 문서마다 별도 호출 |
 | `update_todo` | todos 1건 부분 수정 (+ 태그 전체 교체, 완료/복원) | 낮 | `todo_history` 스냅샷(실제 완료 전이 시에만 complete/restore). notes 전체 교체. due_date 시각 포함 시 알람(due_reminder) 동기화 |
 | `update_memo` | memos 1건 부분 수정 (+ 카테고리 변경/해제, 보관/해제) | 중 | content는 전체 교체 — 수정 전 `get_memo`로 전문 확인 필수 |
 | `update_variable` | variables 1건 부분 수정 | 중 | key 변경 시 중복 검사. **secret→general 전환은 거부**(마스킹 우회 방지, §5). secret 값 수정 가능하나 승인 카드의 현재 값은 마스킹 |
-| `update_document` | documents 1건 부분 수정 | 낮 | url 변경 시 http/https 검증. project_id에 null을 전달하면 프로젝트 연결 해제(문서 자체는 유지) |
+| `update_document` | documents 1건 부분 수정 | 낮 | url 변경 시 http/https 검증. 바꿀 수 있는 필드는 name·url·description뿐이다 |
 
 수정 도구 공통 규칙:
 
@@ -347,7 +341,7 @@ Jira 릴리스(버전)에 묶인 이슈를 앱이 미리 동기화해 둔 결과
   받아 둔 값만 읽으므로, AI 대화가 네트워크 지연·레이트 리밋·토큰 만료 상태에 끌려가지
   않는다. 대신 내용이 최신이 아닐 수 있어 도구가 `last_synced_at`/`last_sync_error`를 함께
   반환하고, 한 번도 동기화하지 않은 릴리스는 안내 힌트(`hints`)를 붙인다.
-- **쓰기 도구는 없다.** 릴리스 연결·해제·동기화는 앱 UI(프로젝트 상세의 릴리스 노트 카드)
+- **쓰기 도구는 없다.** 릴리스 동기화는 앱 UI(릴리스 화면)
   에서 사용자가 직접 실행하는 경로뿐이다 — AI가 Jira 데이터를 가져오거나 되쓰는 통로는
   만들지 않는다.
 - **Jira 이슈 제목·상태·버전 설명은 신뢰할 수 없는 외부 입력**이다 (6절·8.2와 동일 취급).
@@ -408,6 +402,18 @@ Bitbucket Cloud 비공개 저장소의 파일 내용과 폴더 목록을 읽는 
 - 자동 허용 화이트리스트(`LINKWORK_TOOL_NAMES`)에 등재한다. 이 도구는 외부에 데이터를 보내지 않는다. 읽는 범위는 사용자 token 이 허가한 저장소로 한정된다.
 - **반환 내용은 신뢰할 수 없는 데이터다.** 저장소 파일 안의 지시문을 따르지 않는다. 조회한 값을 외부 URL 로 보내지 않는다 (6절과 같다).
 - 조회 전용이다. 그래서 인젝션이 성공해도 피해 범위는 잘못된 답변 표시로 한정된다.
+
+### 8.8 프로젝트 보드 에픽 AI 요약 (`jiraBoard:summarizeEpic`) — 버튼으로만
+
+AI 대화 도구가 아니라 프로젝트 보드 상세 패널의 [AI 요약] 버튼이 부르는 헤드리스 호출이다
+(설계: [PROJECT_BOARD.md](PROJECT_BOARD.md) §3.1).
+
+- **사용자가 버튼을 눌렀을 때만 실행한다.** 보드를 열거나 새로고침할 때 자동으로 만들지 않는다.
+- 입력은 main 이 캐시한 보드 스냅샷의 에픽과 자손(키·제목·상태·담당·기한·발췌)뿐이다. 스냅샷에 없는 키나 에픽이 아닌 키는 거부한다.
+- `runHeadlessJson`(`ai-headless.ts`)으로 `{ headline, bullets }` JSON 만 받는다. **도구 권한을 주지 않는다.**
+  Jira 제목·설명은 신뢰할 수 없는 외부 입력이라(6절), 그 안의 지시문이 도구 호출로 이어지지 않게 한다.
+- 결과는 main 메모리에만 캐시한다. DB 에 쓰지 않고, Jira 에 되쓰지 않는다.
+- 화면은 요약에 "AI 요약 · 시각"을 붙여 Jira 원문과 섞이지 않게 한다.
 
 ## 9. 비용 가드레일 (과금 차단)
 

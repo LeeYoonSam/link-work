@@ -1,6 +1,11 @@
 import { create } from 'zustand'
 import type { Todo, TodoTag, TodoInput, TodoTagInput, TodoHistory } from '../types'
-import type { FetchOptions } from './projectStore'
+
+// 배경 갱신 옵션. silent 이면 loading 을 켜지 않는다.
+// 이유: 스피너가 뜨면 목록 화면이 편집 상태를 잃는다
+export interface FetchOptions {
+  silent?: boolean
+}
 
 interface TodoStore {
   todos: Todo[]

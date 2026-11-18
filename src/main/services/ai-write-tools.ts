@@ -5,7 +5,6 @@ import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk'
 import { getAiReadOnlyDatabase, getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
 import { MEMO_WITH_CATEGORY_SELECT, setMemoArchived } from '../utils/memo-helpers'
-import { applyProjectAutoStatus, calculateQaDates, type ProjectStatusFields } from '../utils/project-dates'
 import {
   saveTodoHistory,
   saveTodoTags,
@@ -26,14 +25,10 @@ import { logAiAudit } from './ai-audit'
 // 4. 실행 결과는 ai_audit_log에 write_executed로 기록한다.
 
 export const LINKWORK_WRITE_TOOL_NAMES = [
-  'create_project',
-  'create_task',
   'create_todo',
   'create_memo',
   'create_variable',
   'create_document',
-  'update_project',
-  'update_task',
   'update_todo',
   'update_memo',
   'update_variable',
@@ -107,7 +102,7 @@ function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] 
 }
 
 // AI가 데이터를 생성하면 열려 있는 화면(store)이 갱신되도록 renderer에 알린다.
-function notifyDataChanged(entity: 'project' | 'todo' | 'memo' | 'variable' | 'document'): void {
+function notifyDataChanged(entity: 'todo' | 'memo' | 'variable' | 'document'): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send('ai:dataChanged', { entity })
@@ -149,38 +144,6 @@ function validateDocumentUrl(url: string): string | null {
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return `url은 http 또는 https 주소만 허용됩니다 (전달된 스킴: ${parsed.protocol}).`
-  }
-  return null
-}
-
-// 문서를 연결할 프로젝트가 존재하는지 확인 (create_document/update_document 공용).
-function validateDocumentProject(db: Database.Database, projectId: number): string | null {
-  const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId) as
-    | { id: number }
-    | undefined
-  return project
-    ? null
-    : `프로젝트 id=${projectId}를 찾지 못했습니다. list_projects로 프로젝트 id를 확인하세요.`
-}
-
-// 1단계 태스크 계층 규약 검증 — 부모 후보가 (a) 존재하고 (b) 같은 프로젝트이며 (c) 최상위(parent_task_id IS NULL)인지 확인한다.
-// 위반이면 한국어 오류 문자열을, 통과면 null을 반환한다 (create_task/update_task 공용).
-function validateTaskParent(
-  db: Database.Database,
-  parentId: number,
-  projectId: number
-): string | null {
-  const parent = db
-    .prepare('SELECT id, project_id, parent_task_id FROM tasks WHERE id = ?')
-    .get(parentId) as { id: number; project_id: number; parent_task_id: number | null } | undefined
-  if (!parent) {
-    return `상위 작업 id=${parentId}를 찾지 못했습니다. get_project로 태스크 id를 확인하세요.`
-  }
-  if (parent.project_id !== projectId) {
-    return '상위 작업은 같은 프로젝트의 작업이어야 합니다.'
-  }
-  if (parent.parent_task_id !== null) {
-    return '상위 작업으로는 최상위 작업만 지정할 수 있습니다 (하위 작업 아래에 다시 하위를 둘 수 없습니다).'
   }
   return null
 }
@@ -240,24 +203,6 @@ export function getUpdatePreview(
   try {
     const db = getAiReadOnlyDatabase()
     switch (shortName) {
-      case 'update_project': {
-        const row = db
-          .prepare(
-            `SELECT id, name, description, dev_start_date, dev_end_date,
-                    qa_start_date, qa_end_date, deploy_date, deploy_version, status, status_manual
-             FROM projects WHERE id = ?`
-          )
-          .get(args.project_id) as Record<string, unknown> | undefined
-        if (!row) return null
-        // 메뉴/조회 도구와 동일하게 자동 상태를 적용해 카드의 '변경 전' 값이 앱 표시와 일치하게 한다
-        return applyProjectAutoStatus(row as Record<string, unknown> & ProjectStatusFields)
-      }
-      case 'update_task': {
-        const row = db
-          .prepare('SELECT id, project_id, name, start_date, end_date, status FROM tasks WHERE id = ?')
-          .get(args.task_id) as Record<string, unknown> | undefined
-        return row ?? null
-      }
       case 'update_todo': {
         const row = db
           .prepare(
@@ -293,7 +238,7 @@ export function getUpdatePreview(
       }
       case 'update_document': {
         const row = db
-          .prepare('SELECT id, name, url, type, description, project_id FROM documents WHERE id = ?')
+          .prepare('SELECT id, name, url, type, description FROM documents WHERE id = ?')
           .get(args.document_id) as Record<string, unknown> | undefined
         return row ?? null
       }
@@ -308,179 +253,6 @@ export function getUpdatePreview(
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
   const { tool } = await import('@anthropic-ai/claude-agent-sdk')
-
-  const createProject = tool(
-    'create_project',
-    '새 프로젝트를 생성한다. tasks로 세부 작업(WBS)을 함께 등록할 수 있다. QA/배포 일정을 생략하면 개발 종료일 기준으로 자동 계산된다(QA: 개발종료 다음날부터 영업일 2일, 배포: QA 종료 다음날). 실행 전 사용자 승인이 필요하다.',
-    {
-      name: z.string().min(1).max(200).describe('프로젝트 이름'),
-      description: z
-        .string()
-        .max(2000)
-        .optional()
-        .describe('프로젝트 설명 — 참고 문서 URL은 여기에 넣지 말고 create_document로 등록'),
-      dev_start_date: dateField('개발 시작일'),
-      dev_end_date: dateField('개발 종료일'),
-      qa_start_date: dateField('QA 시작일 (생략 시 자동 계산)').optional(),
-      qa_end_date: dateField('QA 종료일 (생략 시 자동 계산)').optional(),
-      deploy_date: dateField('배포일 (생략 시 자동 계산)').optional(),
-      deploy_version: z.string().max(50).optional().describe('배포 버전 (예: 1.2.0)'),
-      tasks: z
-        .array(
-          z.object({
-            name: z.string().min(1).max(200).describe('세부 작업 이름'),
-            start_date: dateField('작업 시작일').optional(),
-            end_date: dateField('작업 종료일').optional(),
-            subtasks: z
-              .array(
-                z.object({
-                  name: z.string().min(1).max(200).describe('하위 작업 이름'),
-                  start_date: dateField('하위 작업 시작일').optional(),
-                  end_date: dateField('하위 작업 종료일').optional()
-                })
-              )
-              .max(20)
-              .optional()
-              .describe('이 작업의 하위 작업 목록 (1단계) — 표시 순서대로 전달')
-          })
-        )
-        .max(30)
-        .optional()
-        .describe('세부 작업(WBS) 목록 — 표시 순서대로 전달')
-    },
-    async (args) => {
-      if (args.dev_start_date > args.dev_end_date) {
-        return jsonResult({ error: '개발 시작일이 종료일보다 늦습니다.' })
-      }
-      const db = getDatabase()
-      const defaults = calculateQaDates(args.dev_end_date)
-      const tasks = args.tasks ?? []
-      const insertProject = db.transaction(() => {
-        const result = db
-          .prepare(
-            `INSERT INTO projects (name, description, dev_start_date, dev_end_date, qa_start_date, qa_end_date, deploy_date, deploy_version, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled')`
-          )
-          .run(
-            args.name,
-            args.description ?? null,
-            args.dev_start_date,
-            args.dev_end_date,
-            args.qa_start_date ?? defaults.qaStart,
-            args.qa_end_date ?? defaults.qaEnd,
-            args.deploy_date ?? defaults.deployDate,
-            args.deploy_version ?? null
-          )
-        const projectId = result.lastInsertRowid
-        logActivity('project', 'create', projectId, args.name, 'AI 생성')
-        tasks.forEach((t, index) => {
-          const taskResult = db
-            .prepare(
-              `INSERT INTO tasks (project_id, name, start_date, end_date, status, sort_order)
-               VALUES (?, ?, ?, ?, 'pending', ?)`
-            )
-            .run(projectId, t.name, t.start_date ?? null, t.end_date ?? null, index)
-          logActivity('task', 'create', taskResult.lastInsertRowid, t.name, 'AI 생성')
-          // 하위 작업(1단계)은 방금 만든 최상위 작업을 부모로, 부모 내 index를 sort_order로 삽입
-          const parentTaskId = taskResult.lastInsertRowid
-          const subtasks = t.subtasks ?? []
-          subtasks.forEach((s, subIndex) => {
-            const subResult = db
-              .prepare(
-                `INSERT INTO tasks (project_id, name, start_date, end_date, status, sort_order, parent_task_id)
-                 VALUES (?, ?, ?, ?, 'pending', ?, ?)`
-              )
-              .run(projectId, s.name, s.start_date ?? null, s.end_date ?? null, subIndex, parentTaskId)
-            logActivity('task', 'create', subResult.lastInsertRowid, s.name, 'AI 생성')
-          })
-        })
-        return projectId
-      })
-      const projectId = insertProject()
-      logWriteExecuted('create_project', `id=${projectId}, name=${args.name}, tasks=${tasks.length}`)
-      notifyDataChanged('project')
-      return jsonResult({
-        created: true,
-        project_id: Number(projectId),
-        name: args.name,
-        task_count: tasks.length,
-        link: `linkwork://project/${projectId}`
-      })
-    }
-  )
-
-  const createTask = tool(
-    'create_task',
-    '기존 프로젝트에 세부 작업(태스크)을 1건 추가한다. parent_task_id를 지정하면 해당 최상위 작업의 하위 작업(1단계)으로 추가된다. project_id는 list_projects/get_project로 확인한다. 새 태스크는 목록 맨 뒤에 추가된다. 여러 작업을 추가할 때는 작업마다 한 번씩 호출한다. 실행 전 사용자 승인이 필요하다.',
-    {
-      project_id: z
-        .number()
-        .int()
-        .positive()
-        .describe('태스크를 추가할 프로젝트 id (조회 도구로 먼저 확인)'),
-      name: z.string().min(1).max(200).describe('세부 작업 이름'),
-      start_date: dateField('작업 시작일').optional(),
-      end_date: dateField('작업 종료일').optional(),
-      status: z.enum(['pending', 'in_progress', 'done']).optional().describe('작업 상태 (기본 pending)'),
-      parent_task_id: z
-        .number()
-        .int()
-        .positive()
-        .optional()
-        .describe('상위 작업 id — 지정하면 해당 작업의 하위 작업으로 추가 (상위 작업은 최상위여야 함)')
-    },
-    async (args) => {
-      if (args.start_date && args.end_date && args.start_date > args.end_date) {
-        return jsonResult({ error: '작업 시작일이 종료일보다 늦습니다.' })
-      }
-      const db = getDatabase()
-      const project = db
-        .prepare('SELECT id, name FROM projects WHERE id = ?')
-        .get(args.project_id) as { id: number; name: string } | undefined
-      if (!project) {
-        return jsonResult({
-          error: `프로젝트 id=${args.project_id}를 찾지 못했습니다. list_projects로 프로젝트 id를 확인하세요.`
-        })
-      }
-      if (args.parent_task_id !== undefined) {
-        const parentError = validateTaskParent(db, args.parent_task_id, args.project_id)
-        if (parentError) return jsonResult({ error: parentError })
-      }
-      // sort_order는 형제 그룹(같은 부모, 하위면 부모의 자식 / 최상위면 프로젝트의 최상위) 안에서 append 채번
-      const sortRow = db
-        .prepare(
-          args.parent_task_id !== undefined
-            ? 'SELECT COALESCE(MAX(sort_order) + 1, 0) AS next FROM tasks WHERE parent_task_id = ?'
-            : 'SELECT COALESCE(MAX(sort_order) + 1, 0) AS next FROM tasks WHERE project_id = ? AND parent_task_id IS NULL'
-        )
-        .get(args.parent_task_id ?? args.project_id) as { next: number }
-      const result = db
-        .prepare(
-          `INSERT INTO tasks (project_id, name, start_date, end_date, status, sort_order, parent_task_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          args.project_id,
-          args.name,
-          args.start_date ?? null,
-          args.end_date ?? null,
-          args.status ?? 'pending',
-          sortRow.next,
-          args.parent_task_id ?? null
-        )
-      const taskId = result.lastInsertRowid
-      logActivity('task', 'create', taskId, args.name, 'AI 생성')
-      logWriteExecuted('create_task', `id=${taskId}, project_id=${args.project_id}, name=${args.name}`)
-      notifyDataChanged('project')
-      return jsonResult({
-        created: true,
-        task_id: Number(taskId),
-        project_id: args.project_id,
-        name: args.name,
-        link: `linkwork://project/${args.project_id}/task/${taskId}`
-      })
-    }
-  )
 
   const createTodo = tool(
     'create_todo',
@@ -616,32 +388,20 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
 
   const createDocument = tool(
     'create_document',
-    '새 문서 링크를 1건 생성한다. 지라 티켓·컨플루언스 페이지 같은 참고 문서를 프로젝트에 연결할 때 사용한다. project_id를 지정하면 해당 프로젝트의 문서로 등록되고, 생략하면 프로젝트에 속하지 않는 문서가 된다. 같은 프로젝트에 같은 url이 이미 있으면 생성하지 않고 오류를 반환한다. 여러 문서를 등록할 때는 문서마다 한 번씩 호출한다. 실행 전 사용자 승인이 필요하다.',
+    '새 문서 링크를 1건 생성한다. 지라 티켓·컨플루언스 페이지 같은 참고 문서를 등록할 때 사용한다. 같은 url의 문서가 이미 있으면 생성하지 않고 오류를 반환한다. 여러 문서를 등록할 때는 문서마다 한 번씩 호출한다. 실행 전 사용자 승인이 필요하다.',
     {
       name: z.string().min(1).max(200).describe('문서 이름 (예: 티켓 제목, 페이지 제목)'),
       url: z.string().min(1).max(2000).describe('문서 주소 — http:// 또는 https:// 전체 주소만 허용'),
-      description: z.string().max(500).optional().describe('문서 설명'),
-      project_id: z
-        .number()
-        .int()
-        .positive()
-        .optional()
-        .describe('문서를 연결할 프로젝트 id (조회 도구로 먼저 확인). 생략하면 프로젝트에 연결하지 않음')
+      description: z.string().max(500).optional().describe('문서 설명')
     },
     async (args) => {
       const urlError = validateDocumentUrl(args.url)
       if (urlError) return jsonResult({ error: urlError })
       const db = getDatabase()
-      const projectId = args.project_id ?? null
-      if (projectId !== null) {
-        const projectError = validateDocumentProject(db, projectId)
-        if (projectError) return jsonResult({ error: projectError })
-      }
-      // 같은 소속(프로젝트 또는 미지정) 안에서 url이 겹치면 중복 등록하지 않는다.
-      // project_id가 NULL일 수 있으므로 = 대신 IS로 비교한다.
+      // url이 겹치면 중복 등록하지 않는다
       const existing = db
-        .prepare('SELECT id, name FROM documents WHERE url = ? AND project_id IS ?')
-        .get(args.url, projectId) as { id: number; name: string } | undefined
+        .prepare('SELECT id, name FROM documents WHERE url = ?')
+        .get(args.url) as { id: number; name: string } | undefined
       if (existing) {
         return jsonResult({
           error: `같은 url의 문서가 이미 있습니다(id=${existing.id}, name=${existing.name}). 내용을 바꾸려면 update_document 도구로 수정하세요.`
@@ -649,186 +409,24 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
       }
       const result = db
         .prepare(
-          `INSERT INTO documents (name, url, type, description, project_id, sort_order)
-           VALUES (?, ?, 'link', ?, ?, 0)`
+          `INSERT INTO documents (name, url, type, description, sort_order)
+           VALUES (?, ?, 'link', ?, 0)`
         )
-        .run(args.name, args.url, args.description ?? null, projectId)
+        .run(args.name, args.url, args.description ?? null)
       const documentId = result.lastInsertRowid
       logActivity('document', 'create', documentId, args.name, 'AI 생성')
-      logWriteExecuted('create_document', `id=${documentId}, project_id=${projectId}, name=${args.name}`)
+      logWriteExecuted('create_document', `id=${documentId}, name=${args.name}`)
       notifyDataChanged('document')
       return jsonResult({
         created: true,
         document_id: Number(documentId),
         name: args.name,
-        project_id: projectId,
         link: `linkwork://document/${documentId}`
       })
     }
   )
 
   // ── 수정(update) 도구 — 전달된 필드만 부분 업데이트, 대상 미존재 시 오류 ──
-
-  const updateProject = tool(
-    'update_project',
-    '기존 프로젝트의 필드를 수정한다. project_id로 대상을 지정하고 변경할 필드만 전달한다 (전달하지 않은 필드는 유지). status를 지정하면 자동 상태 계산 대신 해당 상태로 고정된다. 실행 전 사용자 승인이 필요하다.',
-    {
-      project_id: z.number().int().positive().describe('수정할 프로젝트 id (조회 도구로 먼저 확인)'),
-      name: z.string().min(1).max(200).optional().describe('프로젝트 이름'),
-      description: z.string().max(2000).nullable().optional().describe('프로젝트 설명 (null이면 비움)'),
-      dev_start_date: dateField('개발 시작일').optional(),
-      dev_end_date: dateField('개발 종료일').optional(),
-      qa_start_date: dateField('QA 시작일').optional(),
-      qa_end_date: dateField('QA 종료일').optional(),
-      deploy_date: dateField('배포일').optional(),
-      deploy_version: z.string().max(50).nullable().optional().describe('배포 버전 (null이면 비움)'),
-      status: z
-        .enum([
-          'scheduled',
-          'development',
-          'qa_pending',
-          'qa',
-          'deploy_pending',
-          'deploy',
-          'on_hold',
-          'completed',
-          'cancelled'
-        ])
-        .optional()
-        .describe(
-          '프로젝트 상태 — 지정 시 수동 상태로 고정됨(status_manual=1). on_hold는 진행을 중단해 두는 상태로 대시보드·트레이의 진행 중 목록에서 빠진다.'
-        )
-    },
-    async (args) => {
-      const db = getDatabase()
-      const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(args.project_id) as
-        | {
-            name: string
-            dev_start_date: string
-            dev_end_date: string
-            qa_start_date: string | null
-            qa_end_date: string | null
-            deploy_date: string | null
-          }
-        | undefined
-      if (!row) {
-        return jsonResult({
-          error: `프로젝트 id=${args.project_id}를 찾지 못했습니다. 조회 도구로 id를 확인하세요.`
-        })
-      }
-      // 전달값과 기존값을 병합한 뒤 전체 일정의 역전 여부를 검증한다(개발→QA→배포 순서).
-      // 둘 다 값이 있을 때만 비교하므로 null(미설정) QA/배포일은 통과시킨다.
-      const merged = {
-        devStart: args.dev_start_date ?? row.dev_start_date,
-        devEnd: args.dev_end_date ?? row.dev_end_date,
-        qaStart: args.qa_start_date ?? row.qa_start_date,
-        qaEnd: args.qa_end_date ?? row.qa_end_date,
-        deploy: args.deploy_date ?? row.deploy_date
-      }
-      const dateChecks: [string | null, string | null, string][] = [
-        [merged.devStart, merged.devEnd, '개발 시작일이 개발 종료일보다 늦습니다.'],
-        [merged.qaStart, merged.qaEnd, 'QA 시작일이 QA 종료일보다 늦습니다.'],
-        [merged.devEnd, merged.qaStart, '개발 종료일이 QA 시작일보다 늦습니다.'],
-        [merged.qaEnd, merged.deploy, 'QA 종료일이 배포일보다 늦습니다.']
-      ]
-      for (const [a, b, message] of dateChecks) {
-        if (a && b && a > b) return jsonResult({ error: message })
-      }
-      const { set, values, keys } = buildSetClause(args, [
-        'name',
-        'description',
-        'dev_start_date',
-        'dev_end_date',
-        'qa_start_date',
-        'qa_end_date',
-        'deploy_date',
-        'deploy_version',
-        'status'
-      ])
-      if (set.length === 0) return jsonResult({ error: '변경할 필드가 없습니다.' })
-      if (args.status !== undefined) set.push('status_manual = 1')
-      set.push("updated_at = datetime('now')")
-      db.prepare(`UPDATE projects SET ${set.join(', ')} WHERE id = ?`).run(...values, args.project_id)
-      logActivity('project', 'update', args.project_id, args.name ?? row.name, `AI 수정: ${keys.join(', ')}`)
-      logWriteExecuted('update_project', `id=${args.project_id}, fields=${keys.join(',')}`)
-      notifyDataChanged('project')
-      return jsonResult({
-        updated: true,
-        project_id: args.project_id,
-        updated_fields: keys,
-        link: `linkwork://project/${args.project_id}`
-      })
-    }
-  )
-
-  const updateTask = tool(
-    'update_task',
-    '프로젝트의 세부 작업(태스크)을 수정한다. task_id로 대상을 지정한다 (get_project가 태스크 id를 반환). 변경할 필드만 전달한다. parent_task_id로 상위 작업(최상위여야 함) 아래로 옮기거나 null로 최상위로 이동할 수 있다. Jira 연결 작업(jira_issue_key 있음)의 status는 Jira를 따르므로 바뀌지 않는다. 실행 전 사용자 승인이 필요하다.',
-    {
-      task_id: z.number().int().positive().describe('수정할 태스크 id'),
-      name: z.string().min(1).max(200).optional().describe('작업 이름'),
-      start_date: dateField('작업 시작일 (null이면 비움)').nullable().optional(),
-      end_date: dateField('작업 종료일 (null이면 비움)').nullable().optional(),
-      status: z.enum(['pending', 'in_progress', 'done']).optional().describe('작업 상태'),
-      parent_task_id: z
-        .number()
-        .int()
-        .positive()
-        .nullable()
-        .optional()
-        .describe('상위 작업 변경 (null이면 최상위로 이동)')
-    },
-    async (args) => {
-      const db = getDatabase()
-      const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(args.task_id) as
-        | { name: string; project_id: number; jira_issue_key: string | null }
-        | undefined
-      if (!row) {
-        return jsonResult({
-          error: `태스크 id=${args.task_id}를 찾지 못했습니다. get_project로 태스크 id를 확인하세요.`
-        })
-      }
-      // R12: Jira 연결 작업의 상태는 Jira 가 원본이다. status 는 바꾸지 않고 안내만 한다.
-      const statusNotice =
-        row.jira_issue_key && args.status !== undefined
-          ? `Jira 연결 작업(${row.jira_issue_key})의 상태는 Jira 를 따릅니다. Jira 에서 바꿔 주세요.`
-          : null
-      const columns = statusNotice
-        ? ['name', 'start_date', 'end_date', 'parent_task_id']
-        : ['name', 'start_date', 'end_date', 'status', 'parent_task_id']
-      // parent_task_id 변경 검증 (null=최상위 이동은 항상 허용). 1단계 계층 규약:
-      // 자기 참조 금지 / 하위를 가진 작업은 남의 하위가 될 수 없음 / 부모는 같은 프로젝트의 최상위여야 함.
-      if (args.parent_task_id != null) {
-        if (args.parent_task_id === args.task_id) {
-          return jsonResult({ error: '작업을 자기 자신의 하위로 지정할 수 없습니다.' })
-        }
-        const hasChildren = db
-          .prepare('SELECT 1 FROM tasks WHERE parent_task_id = ? LIMIT 1')
-          .get(args.task_id)
-        if (hasChildren) {
-          return jsonResult({
-            error: '하위 작업을 가진 작업은 다른 작업의 하위로 옮길 수 없습니다. 먼저 하위 작업을 정리하세요.'
-          })
-        }
-        const parentError = validateTaskParent(db, args.parent_task_id, row.project_id)
-        if (parentError) return jsonResult({ error: parentError })
-      }
-      const { set, values, keys } = buildSetClause(args, columns)
-      if (set.length === 0) return jsonResult({ error: statusNotice ?? '변경할 필드가 없습니다.' })
-      db.prepare(`UPDATE tasks SET ${set.join(', ')} WHERE id = ?`).run(...values, args.task_id)
-      logActivity('task', 'update', args.task_id, args.name ?? row.name, `AI 수정: ${keys.join(', ')}`)
-      logWriteExecuted('update_task', `id=${args.task_id}, fields=${keys.join(',')}`)
-      notifyDataChanged('project')
-      return jsonResult({
-        updated: true,
-        task_id: args.task_id,
-        project_id: row.project_id,
-        updated_fields: keys,
-        ...(statusNotice ? { notice: statusNotice } : {}),
-        link: `linkwork://project/${row.project_id}/task/${args.task_id}`
-      })
-    }
-  )
 
   const updateTodo = tool(
     'update_todo',
@@ -1081,7 +679,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
 
   const updateDocument = tool(
     'update_document',
-    '기존 문서 링크를 수정한다. document_id로 대상을 지정하고 변경할 필드만 전달한다 (전달하지 않은 필드는 유지). project_id를 null로 전달하면 프로젝트 연결이 해제된다. 실행 전 사용자 승인이 필요하다.',
+    '기존 문서 링크를 수정한다. document_id로 대상을 지정하고 변경할 필드만 전달한다 (전달하지 않은 필드는 유지). 실행 전 사용자 승인이 필요하다.',
     {
       document_id: z.number().int().positive().describe('수정할 문서 id (조회 도구로 먼저 확인)'),
       name: z.string().min(1).max(200).optional().describe('문서 이름'),
@@ -1091,14 +689,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         .max(2000)
         .optional()
         .describe('문서 주소 — http:// 또는 https:// 전체 주소만 허용'),
-      description: z.string().max(500).nullable().optional().describe('문서 설명 (null이면 비움)'),
-      project_id: z
-        .number()
-        .int()
-        .positive()
-        .nullable()
-        .optional()
-        .describe('연결할 프로젝트 id (null이면 프로젝트 연결 해제)')
+      description: z.string().max(500).nullable().optional().describe('문서 설명 (null이면 비움)')
     },
     async (args) => {
       if (args.url !== undefined) {
@@ -1114,11 +705,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
           error: `문서 id=${args.document_id}를 찾지 못했습니다. 조회 도구로 id를 확인하세요.`
         })
       }
-      if (args.project_id != null) {
-        const projectError = validateDocumentProject(db, args.project_id)
-        if (projectError) return jsonResult({ error: projectError })
-      }
-      const { set, values, keys } = buildSetClause(args, ['name', 'url', 'description', 'project_id'])
+      const { set, values, keys } = buildSetClause(args, ['name', 'url', 'description'])
       if (set.length === 0) return jsonResult({ error: '변경할 필드가 없습니다.' })
       set.push("updated_at = datetime('now')")
       db.prepare(`UPDATE documents SET ${set.join(', ')} WHERE id = ?`).run(...values, args.document_id)
@@ -1135,14 +722,10 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
   )
 
   return [
-    createProject,
-    createTask,
     createTodo,
     createMemo,
     createVariable,
     createDocument,
-    updateProject,
-    updateTask,
     updateTodo,
     updateMemo,
     updateVariable,

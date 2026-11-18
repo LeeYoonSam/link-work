@@ -3,25 +3,6 @@ import { electronAPI } from '@electron-toolkit/preload'
 import type { CommandOp } from '../main/services/assistant-types'
 
 const api = {
-  project: {
-    create: (input: Record<string, unknown>) => ipcRenderer.invoke('project:create', input),
-    list: (status?: string) => ipcRenderer.invoke('project:list', status),
-    get: (id: number) => ipcRenderer.invoke('project:get', id),
-    update: (id: number, input: Record<string, unknown>) => ipcRenderer.invoke('project:update', id, input),
-    delete: (id: number) => ipcRenderer.invoke('project:delete', id),
-    calculateDates: (devEndDate: string) => ipcRenderer.invoke('project:calculateDates', devEndDate),
-    lastDates: () => ipcRenderer.invoke('project:lastDates'),
-    reorder: (items: { id: number; sort_order: number }[]) =>
-      ipcRenderer.invoke('project:reorder', items)
-  },
-  task: {
-    create: (input: Record<string, unknown>) => ipcRenderer.invoke('task:create', input),
-    list: (projectId: number) => ipcRenderer.invoke('task:list', projectId),
-    listByProjectIds: (projectIds: number[]) =>
-      ipcRenderer.invoke('task:listByProjectIds', projectIds),
-    update: (id: number, input: Record<string, unknown>) => ipcRenderer.invoke('task:update', id, input),
-    delete: (id: number) => ipcRenderer.invoke('task:delete', id)
-  },
   tray: {
     getData: () => ipcRenderer.invoke('tray:getData'),
     openApp: () => ipcRenderer.invoke('tray:openApp'),
@@ -43,7 +24,7 @@ const api = {
   },
   document: {
     create: (input: Record<string, unknown>) => ipcRenderer.invoke('document:create', input),
-    list: (projectId?: number | null) => ipcRenderer.invoke('document:list', projectId),
+    list: () => ipcRenderer.invoke('document:list'),
     listAll: () => ipcRenderer.invoke('document:listAll'),
     update: (id: number, input: Record<string, unknown>) =>
       ipcRenderer.invoke('document:update', id, input),
@@ -191,8 +172,6 @@ const api = {
       ipcRenderer.invoke('recording:toggleCut', cutId, enabled),
     actionItemToTodo: (meetingId: number, index: number) =>
       ipcRenderer.invoke('recording:actionItemToTodo', meetingId, index),
-    linkProject: (id: number, projectId: number | null) =>
-      ipcRenderer.invoke('recording:linkProject', id, projectId),
     setExpectedSpeakers: (id: number, n: number | null) =>
       ipcRenderer.invoke('recording:setExpectedSpeakers', id, n),
     setAttendees: (meetingId: number, memberIds: number[]) =>
@@ -206,7 +185,7 @@ const api = {
   },
   // 회의록 — 요약 완료된 회의 목록·검색·Markdown (docs/MEETING_NOTES.md)
   meetingNotes: {
-    list: (filter?: { q?: string; kind?: string; projectId?: number | null }) =>
+    list: (filter?: { q?: string; kind?: string }) =>
       ipcRenderer.invoke('meetingNotes:list', filter),
     markdown: (id: number) => ipcRenderer.invoke('meetingNotes:markdown', id)
   },
@@ -237,7 +216,6 @@ const api = {
       note?: string | null
       priority?: number
       enabled?: boolean
-      project_id?: number | null
     }) => ipcRenderer.invoke('recognitionAids:upsertGlossary', input),
     removeGlossary: (id: number) => ipcRenderer.invoke('recognitionAids:removeGlossary', id),
     importGlossaryText: (text: string) =>
@@ -258,7 +236,7 @@ const api = {
       ipcRenderer.invoke('export:saveMarkdown', content, defaultFileName)
   },
   releaseNote: {
-    // deployVersion을 주면 그 배포 버전과 이름이 같은 릴리스만 (프로젝트 상세용)
+    // deployVersion을 주면 그 배포 버전과 이름이 같은 릴리스만
     list: (deployVersion?: string) => ipcRenderer.invoke('releaseNote:list', deployVersion),
     get: (id: number) => ipcRenderer.invoke('releaseNote:get', id),
     sync: (id: number) => ipcRenderer.invoke('releaseNote:sync', id),
@@ -278,16 +256,16 @@ const api = {
     verifyIntegration: (id: 'google' | 'jira' | 'bitbucket' | 'notion') =>
       ipcRenderer.invoke('settings:verifyIntegration', id)
   },
-  // Jira 할 일 이슈 → 프로젝트/작업/문서. Jira는 읽기만 하고 LinkWork DB에만 쓴다
-  projectSync: {
-    preview: () => ipcRenderer.invoke('projectSync:preview'),
-    apply: (selection: { jiraKey: string; force: boolean; projectId: number | null }[]) =>
-      ipcRenderer.invoke('projectSync:apply', selection),
-    // 아침 자동 동기화(R11·A54) 상태. 읽기 전용이다
-    morningStatus: () => ipcRenderer.invoke('projectSync:morningStatus'),
-    // R12: Jira 연결 작업 상태 맞춤·새 작업 추가. 'enter' 는 5분 안 재호출이면 건너뛴다
-    refreshTasks: (projectId: number, reason?: 'manual' | 'enter') =>
-      ipcRenderer.invoke('projectSync:refreshTasks', projectId, reason)
+  // Jira 티켓 계층 보드 (docs/PROJECT_BOARD.md). Jira는 GET만 하고 DB에 쓰지 않는다
+  jiraBoard: {
+    // force=true 면 main 캐시를 무시하고 다시 가져온다
+    fetch: (force?: boolean) => ipcRenderer.invoke('jiraBoard:fetch', force),
+    // 에픽 AI 요약. 사용자가 버튼을 눌렀을 때만 부른다
+    summarizeEpic: (epicKey: string) => ipcRenderer.invoke('jiraBoard:summarizeEpic', epicKey)
+  },
+  // 아침 자동 동기화(A54) 상태. 읽기 전용이다
+  morningSync: {
+    status: () => ipcRenderer.invoke('morningSync:status')
   },
   backup: {
     // 그룹별 현재 건수·파일 용량 (백업 화면 표시용)

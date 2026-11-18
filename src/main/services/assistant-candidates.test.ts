@@ -1,20 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildCandidates, isExcludedCandidate, isUrgent } from './assistant-candidates'
-import type { CandidateInput, JiraCandidateInput, TaskRow, TodoRow } from './assistant-types'
+import type { CandidateInput, JiraCandidateInput, TodoRow } from './assistant-types'
 import { cand, deepFreeze, TODAY } from './__fixtures__/assistant/factories'
-
-function task(over: Partial<TaskRow> & Pick<TaskRow, 'id'>): TaskRow {
-  return {
-    project_id: 10,
-    project_name: '프로젝트A',
-    project_priority: null,
-    name: `작업${over.id}`,
-    status: 'todo',
-    end_date: null,
-    jira_issue_key: null,
-    ...over
-  }
-}
 
 function todo(over: Partial<TodoRow> & Pick<TodoRow, 'id'>): TodoRow {
   return { title: `할일${over.id}`, priority: 'medium', due_date: null, updated_at: null, ...over }
@@ -37,34 +24,10 @@ function jira(over: Partial<JiraCandidateInput> & Pick<JiraCandidateInput, 'key'
 }
 
 function input(over: Partial<CandidateInput> = {}): CandidateInput {
-  return { tasks: [], todos: [], jiraIssues: [], actionItems: [], taskTouchedAt: {}, ...over }
+  return { todos: [], jiraIssues: [], actionItems: [], ...over }
 }
 
 describe('buildCandidates 정규화', () => {
-  it('task: 프로젝트 우선순위 매핑·링크·진행 여부·최근 변경 시각', () => {
-    const [c] = buildCandidates(
-      input({
-        tasks: [task({ id: 3, project_priority: 'now', status: 'in_progress', end_date: '2026-11-05' })],
-        taskTouchedAt: { 3: '2026-11-01 10:00:00' }
-      })
-    )
-    expect(c).toMatchObject({
-      id: 'task:3',
-      source: 'task',
-      priority: 'high',
-      inProgress: true,
-      dueDate: '2026-11-05',
-      link: 'linkwork://project/10/task/3',
-      projectName: '프로젝트A',
-      lastTouchedAt: '2026-11-01 10:00:00'
-    })
-    const prio = (p: TaskRow['project_priority']): unknown =>
-      buildCandidates(input({ tasks: [task({ id: 1, project_priority: p })] }))[0].priority
-    expect(prio('next')).toBe('medium')
-    expect(prio('later')).toBe('low')
-    expect(prio(null)).toBeNull()
-  })
-
   it('todo: due_date 를 날짜와 시각으로 나눈다', () => {
     const list = buildCandidates(
       input({
@@ -115,59 +78,27 @@ describe('buildCandidates 정규화', () => {
 
   it('결과는 id 오름차순이다', () => {
     const list = buildCandidates(
-      input({ todos: [todo({ id: 2 })], tasks: [task({ id: 5 })], jiraIssues: [jira({ key: 'Z-1' })] })
+      input({
+        todos: [todo({ id: 2 })],
+        jiraIssues: [jira({ key: 'Z-1' })],
+        actionItems: [{ meeting_id: 1, index: 0, text: '공유', due: null, meeting_title: '회의' }]
+      })
     )
-    expect(list.map((c) => c.id)).toEqual(['jira:Z-1', 'task:5', 'todo:2'])
+    expect(list.map((c) => c.id)).toEqual(['action_item:1:0', 'jira:Z-1', 'todo:2'])
   })
 })
 
 describe('A4 중복 제거', () => {
-  it('A4: 같은 jiraKey 의 task 와 jira 는 후보 1개로 합친다', () => {
+  it('A4: 같은 jiraKey 의 jira 는 첫 1건만 쓴다 (대소문자 무시)', () => {
     const list = buildCandidates(
-      input({
-        tasks: [task({ id: 12, jira_issue_key: 'PROJ-1', project_priority: 'later', end_date: '2026-11-20' })],
-        jiraIssues: [
-          jira({ key: 'PROJ-1', priority: 'High', statusCategory: 'indeterminate', duedate: '2026-11-03', updatedLocal: '2026-11-02 08:00:00' })
-        ]
-      })
+      input({ jiraIssues: [jira({ key: 'P-7', summary: '처음' }), jira({ key: 'p-7', summary: '두 번째' })] })
     )
-    expect(list).toHaveLength(1)
-    expect(list[0]).toMatchObject({
-      id: 'task:12',
-      source: 'task',
-      link: 'linkwork://project/10/task/12',
-      projectId: 10,
-      jiraKey: 'PROJ-1',
-      inProgress: true,
-      priority: 'high',
-      dueDate: '2026-11-03',
-      lastTouchedAt: '2026-11-02 08:00:00'
-    })
-  })
-
-  it('A4: 같은 jiraKey 를 가진 task 가 여럿이면 id 가 가장 작은 task 1개만 남는다', () => {
-    const list = buildCandidates(
-      input({
-        tasks: [task({ id: 9, jira_issue_key: 'P-7' }), task({ id: 4, jira_issue_key: 'p-7' })],
-        jiraIssues: [jira({ key: 'P-7' }), jira({ key: 'P-7' })]
-      })
-    )
-    expect(list.map((c) => c.id)).toEqual(['task:4'])
-  })
-
-  it('A4: jira 값이 null 이면 task 값을 쓴다', () => {
-    const [c] = buildCandidates(
-      input({
-        tasks: [task({ id: 1, jira_issue_key: 'P-1', project_priority: 'now', end_date: '2026-11-09' })],
-        jiraIssues: [jira({ key: 'P-1', priority: null, duedate: null })]
-      })
-    )
-    expect(c).toMatchObject({ priority: 'high', dueDate: '2026-11-09' })
+    expect(list.map((c) => [c.id, c.title])).toEqual([['jira:P-7', '처음']])
   })
 
   it('A14: 입력을 바꾸지 않고 같은 입력에 같은 결과를 낸다', () => {
     const inp = deepFreeze(
-      input({ tasks: [task({ id: 2 }), task({ id: 1, jira_issue_key: 'A-1' })], jiraIssues: [jira({ key: 'A-1' })], todos: [todo({ id: 1 })] })
+      input({ jiraIssues: [jira({ key: 'A-1' })], todos: [todo({ id: 1 })] })
     )
     expect(buildCandidates(inp)).toEqual(buildCandidates(inp))
   })
@@ -192,11 +123,6 @@ describe('A48: 후보 업무 유형·묶음 필드', () => {
     expect(byId.get('jira:ICA-8571')).toMatchObject({ workType: 'trd', groupName: '[TRD] RxJava to Coroutine Phase2' })
   })
 
-  it('A48: task 후보는 프로젝트 이름을 묶음 이름으로 쓰고 부모 키는 null 이다', () => {
-    const [c] = buildCandidates(input({ tasks: [task({ id: 1, name: '배포 노트', project_name: '4.165.0 릴리스' })] }))
-    expect(c).toMatchObject({ parentKey: null, groupName: '4.165.0 릴리스', workType: 'qa', workVersion: '4.165.0' })
-  })
-
   it('A48: todo·action_item 은 etc 이고 묶음 필드가 비어 있다', () => {
     const list = buildCandidates(
       input({
@@ -207,28 +133,6 @@ describe('A48: 후보 업무 유형·묶음 필드', () => {
     for (const c of list) {
       expect(c).toMatchObject({ parentKey: null, groupName: null, workType: 'etc', workVersion: null })
     }
-  })
-
-  it('A48: task·jira 머지는 jira 부모·이슈 유형과 task 프로젝트 이름으로 다시 분류한다', () => {
-    const [c] = buildCandidates(
-      input({
-        tasks: [task({ id: 7, name: '넓은 화면 공통 기반', project_name: '폴더블', jira_issue_key: 'ICA-8984' })],
-        jiraIssues: [
-          jira({ key: 'ICA-8984', summary: 'Jira 제목', parentKey: 'ICA-8929', parentSummary: '[폴더블] 넓은 화면 공통 기준 적용 - Android' })
-        ]
-      })
-    )
-    expect(c).toMatchObject({
-      id: 'task:7', parentKey: 'ICA-8929', groupName: '[폴더블] 넓은 화면 공통 기준 적용 - Android', workType: 'prd'
-    })
-    // jira 부모 요약이 없으면 task 프로젝트 이름을 묶음 이름으로 쓴다
-    const [d] = buildCandidates(
-      input({
-        tasks: [task({ id: 8, name: '정리', project_name: 'Sus 개선 작업 (4.162.0)', jira_issue_key: 'ICA-1' })],
-        jiraIssues: [jira({ key: 'ICA-1' })]
-      })
-    )
-    expect(d).toMatchObject({ parentKey: null, groupName: 'Sus 개선 작업 (4.162.0)', workType: 'sus', workVersion: '4.162.0' })
   })
 })
 

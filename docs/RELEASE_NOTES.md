@@ -174,9 +174,12 @@ CREATE INDEX IF NOT EXISTS idx_release_note_items_note
 
 ### 3.1 프로젝트와 이어 보는 법 — 배포 버전 이름 대조
 
-저장된 연결이 없으므로, 프로젝트 상세의 Release Notes 카드는 그 프로젝트의
-`projects.deploy_version`과 **이름이 같은** 릴리스를 조회 시점에 찾아 읽기만 한다
-(`listReleaseNotes(deployVersion)`). 배포 버전을 바꾸면 짝지어 보이는 릴리스도 따라 바뀐다.
+> 로컬 프로젝트 기능과 함께 프로젝트 상세의 Release Notes 카드도 없앴다(프로젝트 메뉴는 Jira 티켓 보드다,
+> [PROJECT_BOARD.md](PROJECT_BOARD.md)). 아래 대조 규칙은 `listReleaseNotes(deployVersion)` 에 남아 있다.
+
+저장된 연결이 없으므로, 옛 Release Notes 카드는 그 프로젝트의
+`projects.deploy_version`과 **이름이 같은** 릴리스를 조회 시점에 찾아 읽기만 했다
+(`listReleaseNotes(deployVersion)`). 배포 버전을 바꾸면 짝지어 보이는 릴리스도 따라 바뀌었다.
 
 `deploy_version`은 한 칸에 여러 버전이 적힐 수 있다 — 실제 데이터에 `2.8.1 , 4.155.0`
 (두 앱 동시 배포)이 있다. `splitDeployVersions`가 쉼표·슬래시·줄바꿈으로 나눠
@@ -251,9 +254,9 @@ Jira가 0건을 반환하는 것은 **정상 상태일 수 있다**(아직 이�
 - `net.isOnline()` 이 false 면 실행하지 않고 시도로 세지 않는다. 다음 틱에서 다시 판정한다.
 - 토큰 만료(401)와 네트워크 오류는 `failed` 다. 30분 간격으로 하루 3회까지 다시 한다.
 - 받은 릴리스가 0건이고 실패만 있으면 그 시도는 `failed` 다. 일부만 실패하면 `ok` 이고, 실패 수는 `failedCount` 로 남는다.
-- 결과는 `assistant_events` 의 `morning_sync` 행 payload 에 둔다. 필드는 PROJECT_SYNC.md §10 의 `MorningSyncPart` 다. `newCount` 는 `linked`, `updatedCount` 는 `synced` 수다.
+- 결과는 `assistant_events` 의 `morning_sync` 행 payload 에 둔다. 필드는 `assistant-types.ts` 의 `MorningSyncPart` 다. `newCount` 는 `linked`, `updatedCount` 는 `synced` 수다.
 - 아침 릴리스 동기화는 비서 최신화를 일으키지 않는다. `release_note` 활동은 스케줄러가 무시한다.
-- 같은 실행기가 Jira 프로젝트 싱크업 자동 적용(PROJECT_SYNC.md R11)도 돈다. 두 부분은 서로의 실패에 영향받지 않는다.
+- 실행기의 파트는 릴리스 하나다(`MORNING_SYNC_PARTS = ['release']`). 옛 행 payload 에 남은 `project` 파트는 무시한다.
 
 ### 4.5 목록 정렬 — 릴리스일이 아니라 버전 번호
 
@@ -324,9 +327,7 @@ API 토큰이 1년 안에 반드시 만료되므로:
 
 - **Jira를 직접 호출하지 않는다.** 이미 동기화된 로컬 DB만 읽으므로 AI 대화가 느려지거나
   토큰 상태에 영향받지 않는다
-- 릴리스는 프로젝트에 묶여 있지 않으므로(§3) 프로젝트로 거르는 인자가 없다. 특정 프로젝트의
-  릴리스를 찾으려면 그 프로젝트의 `deploy_version`을 먼저 확인해 `version`으로 넘긴다 —
-  도구 설명에 이 경로를 적어 두었다
+- 릴리스는 프로젝트에 묶여 있지 않으므로(§3) 프로젝트로 거르는 인자가 없다
 - 도구가 반환하는 이슈 제목은 **신뢰할 수 없는 외부 입력**이다 (가드레일 6절).
   기존 도구와 같이 결과는 표시용 데이터로만 취급되며, 조회 전용이라 인젝션이 성공해도
   피해 범위는 "잘못된 답변 표시"로 한정된다
@@ -336,37 +337,32 @@ API 토큰이 1년 안에 반드시 만료되므로:
 
 ## 8. UI
 
-### 8.1 화면 둘 — Releases와 프로젝트 상세 카드
+### 8.1 화면 — Releases
 
 사이드바 **릴리스**(이전 레이블 `Releases`)가 전체 목록이다. 프로젝트로 묶지 않고 버전 내림차순으로 한 줄씩
 늘어놓으며(§4.5), 상단에 버전 검색과 전체 동기화 버튼을 둔다. 연결된 릴리스가 0건이어도 전체
 동기화 버튼은 보여야 한다 — 버튼이 행 안에만 있으면 막다른 상태가 된다.
 
 **상태 줄.** Releases 상단에 아침 자동 동기화 결과 1줄을 둔다. 마지막 동기화 시각, 실패 표시와 오류 메시지, 새 항목 수(`linked`)를 보여 준다.
-사이드바 릴리스 메뉴의 배지는 새 항목 수다. 데이터는 `projectSync:morningStatus` 다 (PROJECT_SYNC.md §10).
+사이드바 릴리스 메뉴의 배지는 새 항목 수다. 데이터는 `morningSync:status`(`window.api.morningSync.status()`) 다.
 자동 실행이 꺼져 있거나 오늘 실행 전이면 상태 줄은 그 사실을 보여 준다.
 
-**프로젝트 상세의 Release Notes 카드**는 배포 버전과 이름이 같은 릴리스를 찾아 읽기만 한다
-(§3.1). 연결·해제 조작은 없다. 배포 버전이 비어 있으면 그 사실과 채워야 할 곳을 알려준다 —
-짝을 찾는 유일한 단서이기 때문이다.
-
-행(`ReleaseNoteRow`)은 두 화면이 함께 쓴다. 같은 규칙(0건 명시·실패 표시·상한 안내·계층
-들여쓰기)이 두 곳에 복제되면 한쪽만 고쳐져 어긋난다.
+프로젝트 상세의 Release Notes 카드는 로컬 프로젝트 기능과 함께 없앴다(§3.1).
+행은 `components/release/ReleaseNoteRow` 다.
 
 - 행 어디를 눌러도 이슈가 펼쳐진다. 화살표 버튼도 남긴다 — 키보드로 여닫는 통로이자
   펼침/접힘 상태 표시다. 동기화·내보내기 버튼은 클릭이 위로 새지 않도록 막는다
 - 항목은 이슈 유형별로 묶어 표시하고, `parent_key`가 있으면 상위 아래로 들여쓴다
-  (`TaskList`의 1단계 계층 표시와 같은 방식)
 - 이슈 상태 뱃지는 중요도 순으로 색을 달리한다: 완료(연한 초록) < 진행(파랑) < 미착수(앰버)
   < 중단(빨강). 릴리스에 묶인 이슈는 거의 다 끝난 것이라(실측 160건 중 148건이 '닫힘')
   완료를 진하게 칠하면 정작 손봐야 할 항목이 묻힌다. 워크플로를 모르는 상태는 회색으로 둔다
-- 이슈 키 칩은 `tokens.ts`의 `taskTag.issue` 스타일을 재사용해 기존 작업 목록과 톤을 맞춘다
+- 이슈 키 칩은 `tokens.ts`의 `taskTag.issue` 스타일을 재사용한다
 - 이슈 키 클릭 시 Jira 티켓 URL을 외부 브라우저로 연다
 
 ### 8.2 내보내기
 
 릴리스 노트 마크다운 생성 → 기존 `export:saveMarkdown` IPC 재사용.
-`notionExport.ts`와 같이 **순수 함수 + 단위 테스트** 패턴으로 만든다.
+`utils/releaseNoteExport.ts` 가 **순수 함수 + 단위 테스트** 패턴으로 만든다.
 
 ### 8.3 Jira 연동 설정
 

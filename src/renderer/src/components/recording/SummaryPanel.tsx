@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
 import { useMeetingNotesStore } from '../../stores/meetingNotesStore'
-import { useProjectStore } from '../../stores/projectStore'
+import { useNavigationStore } from '../../stores/navigationStore'
 import type { ActionItem, MeetingSummary } from '../../types'
 import { EmptyState, ProgressBar } from '../ui'
 
@@ -190,7 +190,7 @@ export default function SummaryPanel({ summary, meetingId }: Props): React.React
             type="button"
             onClick={() => {
               useMeetingNotesStore.getState().select(meetingId)
-              useProjectStore.getState().setView('notes')
+              useNavigationStore.getState().setView('notes')
             }}
             className="text-[11px] font-medium text-blue-600 hover:text-blue-700"
           >

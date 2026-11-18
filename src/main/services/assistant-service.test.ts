@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// better-sqlite3 → node:sqlite 교체. 선례는 project-sync.test.ts 다.
+// better-sqlite3 → node:sqlite 교체.
 // initDatabase() 의 실제 스키마(ASSISTANT_SCHEMA 포함)와 실제 저장소·순수 모듈로 흐름을 검증한다.
 vi.mock('better-sqlite3', async () => {
   const { DatabaseSync } = await import('node:sqlite')
@@ -1730,10 +1730,8 @@ describe('회의 전 브리핑 (부록 I)', () => {
   function ctxOf(meeting: MeetingRef, over: Partial<MeetingContext> = {}): MeetingContext {
     return {
       meeting,
-      projects: [{ id: 1, name: '링크워크' }],
       pastMeetings: [],
       openActionItems: ['API 문서 정리'],
-      relatedItems: [],
       errors: [],
       ...over
     }
@@ -1780,7 +1778,7 @@ describe('회의 전 브리핑 (부록 I)', () => {
       const n = notices[0]
       expect(n.focus).toEqual({ kind: 'meeting', id: String(n.eventId) })
       expect(n.title).toBe('회의 m1 15분 전')
-      expect(n.body).toBe('링크워크 · 미완료 액션 1건')
+      expect(n.body).toBe('미완료 액션 1건')
 
       const row = getEventById(getDatabase(), n.eventId)
       expect(row).toMatchObject({
@@ -1795,7 +1793,7 @@ describe('회의 전 브리핑 (부록 I)', () => {
       const before = payloadOf(n.eventId)
       expect(before.ruleMarkdown).toContain('회의 m1')
       expect(before).toMatchObject({ hasContext: true, llmStatus: 'pending', llmMarkdown: null, title: n.title, body: n.body })
-      expect(before.projects).toEqual([{ id: 1, name: '링크워크' }])
+      expect(before).not.toHaveProperty('projects')
       expect(changed).toContainEqual({ date: '2026-11-02', reason: 'meeting' })
 
       gate.resolve()
@@ -1833,11 +1831,11 @@ describe('회의 전 브리핑 (부록 I)', () => {
 
     it('A45: hasContext 가 false 면 LLM 을 부르지 않고 llmStatus 는 off 다', async () => {
       sources.collectMeetingContext.mockImplementation((_db: unknown, meeting: MeetingRef) =>
-        ctxOf(meeting, { projects: [], openActionItems: [] })
+        ctxOf(meeting, { openActionItems: [] })
       )
       const notices = await runDueMeetingBriefings(MON_1001)
       await waitForAssistantBackground()
-      expect(notices[0].body).toBe('관련 프로젝트 없음 · 미완료 액션 0건')
+      expect(notices[0].body).toBe('미완료 액션 0건')
       expect(payloadOf(notices[0].eventId)).toMatchObject({ hasContext: false, llmStatus: 'off' })
       expect(briefing.requestLlmMeetingBriefing).not.toHaveBeenCalled()
     })
@@ -1855,17 +1853,10 @@ describe('회의 전 브리핑 (부록 I)', () => {
       expect(briefing.requestLlmMeetingBriefing).not.toHaveBeenCalled()
     })
 
-    it('계획이 없어도 보낸다. 관련 항목 수집에 빈 목록을 넘긴다', async () => {
+    it('계획이 없어도 보낸다. 수집에는 회의만 넘긴다', async () => {
       const notices = await runDueMeetingBriefings(MON_1001)
       expect(notices).toHaveLength(1)
-      expect(sources.collectMeetingContext.mock.calls[0][2]).toEqual([])
-    })
-
-    it('계획이 있으면 오늘 계획 항목을 수집에 넘긴다', async () => {
-      headless.isHeadlessAvailable.mockReturnValue(false)
-      const started = await startDay(MON_0940)
-      await runDueMeetingBriefings(MON_1001)
-      expect((sources.collectMeetingContext.mock.calls[0][2] as PlanItem[]).map((i) => i.id)).toEqual(started.items.map((i) => i.id))
+      expect(sources.collectMeetingContext.mock.calls[0]).toHaveLength(2)
     })
 
     it('예정 시각보다 2분 이상 늦으면 status 는 late 다', async () => {

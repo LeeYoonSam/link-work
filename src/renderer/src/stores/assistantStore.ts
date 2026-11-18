@@ -7,7 +7,6 @@ import type {
   CommandInterpretation,
   PlanItem,
   PlanItemStatus,
-  Task,
   TodayPayload,
   TodayResult
 } from '../types'
@@ -79,38 +78,14 @@ interface AssistantStore {
 const errorText = (e: unknown, fallback: string): string =>
   e instanceof Error && e.message ? e.message : fallback
 
-// 원본 완료 처리가 가능한 출처인지 판정한다. jira·action_item 은 원본 API 가 없다
+// 원본 완료 처리가 가능한 출처인지 판정한다. 할 일만 원본 API 가 있다.
+// jira·action_item 과 기존 행에 남은 task 출처는 계획 항목만 완료한다
 export function originTarget(
   item: Pick<PlanItem, 'source' | 'candidate_id'>
-): { kind: 'todo' | 'task'; id: number } | null {
-  const m = item.candidate_id.match(/^(todo|task):(\d+)$/)
-  if (!m || (item.source !== 'todo' && item.source !== 'task')) return null
-  return { kind: m[1] as 'todo' | 'task', id: Number(m[2]) }
-}
-
-// Jira 연결 작업은 상태를 Jira 가 정한다(PROJECT_SYNC R12). 원본 완료로 바꾸지 않는다.
-// 이유: 바꿔도 다음 동기화가 Jira 값으로 되돌린다.
-// 계획 항목에 키가 있으면 바로 판정한다. 화면이 원본 완료 체크박스를 숨길 때 쓴다.
-export function isJiraLinkedTaskItem(item: Pick<PlanItem, 'source' | 'jira_issue_key'>): boolean {
-  return item.source === 'task' && !!item.jira_issue_key
-}
-
-// 계획 항목에 키가 없으면 작업 목록을 조회해 판정한다.
-// 계획 항목은 만든 시점의 스냅샷이라, 그 뒤 R12 가 키를 백필한 작업은 키가 비어 있을 수 있다.
-// 조회할 수 없으면 false 를 돌려준다. 그러면 기존처럼 호출하고 main 의 task:update 가 막는다.
-export async function isJiraLinkedTask(
-  item: Pick<PlanItem, 'source' | 'jira_issue_key' | 'project_id'>,
-  taskId: number,
-  listTasks: (projectId: number) => Promise<Task[]>
-): Promise<boolean> {
-  if (isJiraLinkedTaskItem(item)) return true
-  if (item.source !== 'task' || item.project_id == null) return false
-  try {
-    const tasks = await listTasks(item.project_id)
-    return !!tasks.find((t) => t.id === taskId)?.jira_issue_key
-  } catch {
-    return false
-  }
+): { kind: 'todo'; id: number } | null {
+  const m = item.candidate_id.match(/^todo:(\d+)$/)
+  if (!m || item.source !== 'todo') return null
+  return { kind: 'todo', id: Number(m[1]) }
 }
 
 // 명령 미리보기를 버려야 하는지 판정한다.
@@ -311,14 +286,9 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
       const target = originTarget(item)
       if (!target) return false
       try {
-        if (target.kind === 'todo') await window.api.todo.complete(target.id)
-        else {
-          // Jira 연결 작업은 원본을 바꾸지 않는다 (R12)
-          if (await isJiraLinkedTask(item, target.id, (id) => window.api.task.list(id))) return false
-          await window.api.task.update(target.id, { status: 'done' })
-        }
-        // 열린 할 일·프로젝트 화면이 원본 완료를 반영하게 한다. 기다리지 않는다
-        void refreshEntity(target.kind === 'todo' ? 'todo' : 'project')
+        await window.api.todo.complete(target.id)
+        // 열린 할 일 화면이 원본 완료를 반영하게 한다. 기다리지 않는다
+        void refreshEntity('todo')
         return true
       } catch (e) {
         set({ error: errorText(e, '원본 완료 처리에 실패했습니다') })
