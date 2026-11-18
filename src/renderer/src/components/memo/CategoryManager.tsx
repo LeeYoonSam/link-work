@@ -27,7 +27,7 @@ export default function CategoryManager({ onClose }: CategoryManagerProps): Reac
       setNewName('')
       setNewColor('#3B82F6')
     } catch (err) {
-      alert('카테고리 생성에 실패했습니다. 이름이 중복되었을 수 있습니다.')
+      alert('분류 생성에 실패했습니다. 이름이 중복되었을 수 있습니다.')
       console.error(err)
     }
   }
@@ -44,7 +44,7 @@ export default function CategoryManager({ onClose }: CategoryManagerProps): Reac
       await updateCategory(editingCategory.id, { name: editName.trim(), color: editColor })
       setEditingCategory(null)
     } catch (err) {
-      alert('카테고리 수정에 실패했습니다. 이름이 중복되었을 수 있습니다.')
+      alert('분류 수정에 실패했습니다. 이름이 중복되었을 수 있습니다.')
       console.error(err)
     }
   }
@@ -52,7 +52,7 @@ export default function CategoryManager({ onClose }: CategoryManagerProps): Reac
   const handleDelete = async (category: MemoCategory): Promise<void> => {
     if (
       confirm(
-        `"${category.name}" 카테고리를 삭제하시겠습니까?\n해당 카테고리에 속한 메모는 "미분류"로 이동됩니다.`
+        `"${category.name}" 분류를 삭제하시겠습니까?\n해당 분류에 속한 메모는 "미분류"로 이동됩니다.`
       )
     ) {
       await deleteCategory(category.id)
@@ -69,7 +69,7 @@ export default function CategoryManager({ onClose }: CategoryManagerProps): Reac
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-6">
-          <SectionTitle variant="page" className="mb-4">카테고리 관리</SectionTitle>
+          <SectionTitle variant="page" className="mb-4">분류 관리</SectionTitle>
 
           <div className="mb-4">
             <div className="flex gap-2 mb-2">
@@ -77,7 +77,7 @@ export default function CategoryManager({ onClose }: CategoryManagerProps): Reac
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="새 카테고리 이름"
+                placeholder="새 분류 이름"
                 className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
               />
@@ -105,7 +105,7 @@ export default function CategoryManager({ onClose }: CategoryManagerProps): Reac
 
           <div className="space-y-2 max-h-64 overflow-auto">
             {categories.length === 0 ? (
-              <EmptyState compact>카테고리가 없습니다</EmptyState>
+              <EmptyState compact>분류가 없습니다</EmptyState>
             ) : (
               categories.map((category) => (
                 <div
