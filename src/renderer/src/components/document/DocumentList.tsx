@@ -1,24 +1,19 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useDocumentStore } from '../../stores/documentStore'
-import { useProjectStore } from '../../stores/projectStore'
 import DocumentForm from './DocumentForm'
 import type { Document } from '../../types'
-import { Card, EmptyState, FolderIcon, IconButton, LinkIcon, PencilIcon, SectionTitle, TrashIcon, button } from '../ui'
+import { Card, EmptyState, FolderIcon, IconButton, LinkIcon, PencilIcon, TrashIcon, button } from '../ui'
 
 export default function DocumentList(): React.ReactNode {
   const { documents, fetchAllDocuments, deleteDocument, openDocument, reorderDocuments } =
     useDocumentStore()
-  const { projects, fetchProjects } = useProjectStore()
   const [showForm, setShowForm] = useState(false)
   const [editingDoc, setEditingDoc] = useState<Document | null>(null)
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
-  const dragGroupRef = useRef<string | null>(null)
 
   useEffect(() => {
     fetchAllDocuments()
-    fetchProjects()
   }, [])
 
   const handleDelete = async (id: number): Promise<void> => {
@@ -37,30 +32,17 @@ export default function DocumentList(): React.ReactNode {
     setEditingDoc(null)
   }
 
-  const toggleGroup = (key: string): void => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) {
-        next.delete(key)
-      } else {
-        next.add(key)
-      }
-      return next
-    })
-  }
-
-  const handleDragStart = (e: React.DragEvent, index: number, groupKey: string): void => {
+  const handleDragStart = (e: React.DragEvent, index: number): void => {
     setDragIndex(index)
-    dragGroupRef.current = groupKey
     e.dataTransfer.effectAllowed = 'move'
     if (e.currentTarget instanceof HTMLElement) {
       e.currentTarget.style.opacity = '0.5'
     }
   }
 
-  const handleDragOver = (e: React.DragEvent, index: number, groupKey: string): void => {
+  const handleDragOver = (e: React.DragEvent, index: number): void => {
     e.preventDefault()
-    if (dragGroupRef.current !== groupKey) return
+    if (dragIndex === null) return
     e.dataTransfer.dropEffect = 'move'
     setOverIndex(index)
   }
@@ -78,41 +60,19 @@ export default function DocumentList(): React.ReactNode {
     }
     setDragIndex(null)
     setOverIndex(null)
-    dragGroupRef.current = null
   }
 
-  // Group documents by project
-  const generalDocs = documents.filter((d) => !d.project_id)
-  const projectGroups = new Map<number, { name: string; docs: Document[] }>()
-
-  for (const doc of documents) {
-    if (doc.project_id) {
-      if (!projectGroups.has(doc.project_id)) {
-        const project = projects.find((p) => p.id === doc.project_id)
-        projectGroups.set(doc.project_id, {
-          name: doc.project_name || project?.name || `Project #${doc.project_id}`,
-          docs: []
-        })
-      }
-      projectGroups.get(doc.project_id)!.docs.push(doc)
-    }
-  }
-
-  const renderDocItem = (
-    doc: Document,
-    index: number,
-    groupKey: string,
-    docs: Document[]
-  ): React.ReactNode => (
+  // 프로젝트 연결 문서도 함께 보이는 평면 목록이다
+  const renderDocItem = (doc: Document, index: number, docs: Document[]): React.ReactNode => (
     <div
       key={doc.id}
       draggable
-      onDragStart={(e) => handleDragStart(e, index, groupKey)}
-      onDragOver={(e) => handleDragOver(e, index, groupKey)}
+      onDragStart={(e) => handleDragStart(e, index)}
+      onDragOver={(e) => handleDragOver(e, index)}
       onDragEnd={(e) => handleDragEnd(e, docs)}
       onDragLeave={() => setOverIndex(null)}
       className={`flex items-center justify-between py-2 px-3 hover:bg-gray-50 rounded-md group cursor-grab active:cursor-grabbing ${
-        dragGroupRef.current === groupKey && overIndex === index
+        dragIndex !== null && overIndex === index
           ? 'border-t-2 border-blue-400'
           : ''
       }`}
@@ -154,29 +114,6 @@ export default function DocumentList(): React.ReactNode {
     </div>
   )
 
-  const renderGroup = (key: string, title: string, docs: Document[]): React.ReactNode => {
-    const isCollapsed = collapsedGroups.has(key)
-    return (
-      <Card key={key} padding="none">
-        <button
-          onClick={() => toggleGroup(key)}
-          className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
-        >
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400">{isCollapsed ? '▶' : '▼'}</span>
-            <SectionTitle>{title}</SectionTitle>
-            <span className="text-xs text-gray-400">({docs.length})</span>
-          </div>
-        </button>
-        {!isCollapsed && (
-          <div className="border-t border-gray-100 px-2 py-1">
-            {docs.map((doc, i) => renderDocItem(doc, i, key, docs))}
-          </div>
-        )}
-      </Card>
-    )
-  }
-
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -195,12 +132,11 @@ export default function DocumentList(): React.ReactNode {
           <p className="text-sm">No documents yet. Add your first document or link.</p>
         </EmptyState>
       ) : (
-        <div className="space-y-4">
-          {Array.from(projectGroups.entries()).map(([projectId, group]) =>
-            renderGroup(`project-${projectId}`, group.name, group.docs)
-          )}
-          {generalDocs.length > 0 && renderGroup('general', 'General', generalDocs)}
-        </div>
+        <Card padding="none">
+          <div className="px-2 py-1">
+            {documents.map((doc, i) => renderDocItem(doc, i, documents))}
+          </div>
+        </Card>
       )}
 
       {showForm && <DocumentForm onClose={handleCloseForm} editingDocument={editingDoc} />}

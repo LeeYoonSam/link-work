@@ -13,10 +13,11 @@
 | 캘린더 미연결 빈 상태 카드 | [연결] 은 `GoogleCalendarConnectDialog` 를 그 자리에서 띄운다. [설정에서 관리] 는 `open('integrations')` |
 | AI 대화 채팅 목록 하단 "Notion 연동", "Bitbucket 연동" | 상태 점과 라벨만 보이고, 누르면 `open('integrations')` |
 | AI 대화 Claude 사용 불가 배너 | [설정 > AI에서 확인] 은 `open('ai')`. [다시 확인] 은 그대로 |
-| Jira 토큰 만료·만료 임박 배너(`JiraTokenWarning`) | 문구 끝 [설정 열기]. 호출부가 `onOpenSettings` 를 주면 그 자리의 Jira 팝업을 열고(프로젝트 싱크 모달, 릴리스 화면, 릴리스 노트 카드), 없을 때만 `open('integrations')` |
-| 프로젝트 싱크 모달, 릴리스 화면, 릴리스 노트 카드의 Jira 설정 | 화면을 옮기지 않는다. `JiraSettingsModal`(래퍼)이 `JiraConnectDialog` 와 기본 프로젝트 select 를 그 자리에서 띄운다. 이유: 설정 화면으로 이동하면 진행 중인 싱크 미리보기가 닫힌다 |
+| Jira 토큰 만료·만료 임박 배너(`JiraTokenWarning`) | 문구 끝 [설정 열기]. 호출부가 `onOpenSettings` 를 주면 그 자리의 Jira 팝업을 열고(릴리스 화면), 없을 때만 `open('integrations')` |
+| 릴리스 화면의 Jira 설정 | 화면을 옮기지 않는다. `JiraSettingsModal`(래퍼)이 `JiraConnectDialog` 와 기본 프로젝트 select 를 그 자리에서 띄운다 |
+| 프로젝트 보드의 Jira 미연결·기본 프로젝트 미설정 안내 | [설정에서 연결] 은 설정 화면으로 이동한다(`setView('settings')`). 보드는 [PROJECT_BOARD.md](PROJECT_BOARD.md) |
 
-`useSettingsStore.open(section?)` 는 섹션을 고르고 `useProjectStore.setView('settings')` 를 호출한다.
+`useSettingsStore.open(section?)` 는 섹션을 고르고 `useNavigationStore.setView('settings')` 를 호출한다.
 `normalizeView('settings')` 가 `settings` 를 돌려주므로 AI 내부 링크도 설정 화면을 가리킬 수 있다.
 
 사이드바는 `navConfig.ts` 의 `NAV_FOOTER`(현재 `settings` 1개)를 하단 고정 영역에 그린다.
@@ -44,7 +45,7 @@
 | Google OAuth Client ID / Secret | 연동 > Google 캘린더 팝업 | `app_settings.google_client_id`(평문), `google_client_secret`(safeStorage) | `calendar:saveSettings`, `calendar:status` |
 | Google 계정 연결(OAuth 토큰) | 연동 > Google 캘린더 | `auth_tokens`(provider='google', safeStorage). 범위 `calendar.readonly`, 콜백 `http://localhost:8945/callback` | `calendar:auth`, `calendar:disconnect` |
 | Jira 사이트 URL, 이메일, API 토큰, 만료일 | 연동 > Jira 팝업 | `jira_site_url`, `jira_email`, `jira_api_token`(safeStorage), `jira_token_expires_at`, `jira_account_name` | `jira:status`, `jira:saveCredentials`(저장 전 `/myself` 검증), `jira:disconnect` |
-| Jira 기본 프로젝트 | 연동 > Jira 카드 | `jira_default_project_key` | `jira:listProjects`, `jira:setDefaultProject` |
+| Jira 기본 프로젝트(릴리스 동기화·프로젝트 보드·비서 Jira 범위가 쓴다) | 연동 > Jira 카드 | `jira_default_project_key` | `jira:listProjects`, `jira:setDefaultProject` |
 | Bitbucket 이메일, API token | 연동 > Bitbucket 팝업 | `bitbucket_email`(평문), `bitbucket_api_token`(safeStorage) | `ai:bitbucketStatus`, `ai:bitbucketSaveToken`(`/user` 검증), `ai:bitbucketDisconnect` |
 | Notion 토큰 | 연동 > Notion 팝업 | `notion_token`(safeStorage) | `ai:notionStatus`, `ai:notionSaveToken`(`/users/me` 검증), `ai:notionDisconnect` |
 | Claude Code 사용 가능 여부 | AI | 저장값 없음(`~/.claude.json` 읽기) | `ai:status` |

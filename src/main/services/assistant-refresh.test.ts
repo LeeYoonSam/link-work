@@ -12,7 +12,6 @@ import {
   shouldNotifyPlanUpdate
 } from './assistant-refresh'
 import { buildTimeline } from './assistant-slots'
-import { buildCandidates } from './assistant-candidates'
 import { scoreCandidate } from './assistant-score'
 import type {
   CalendarRef,
@@ -23,8 +22,7 @@ import type {
   RefreshContext,
   RefreshDiff,
   RefreshSummary,
-  SourceSnapshot,
-  TaskRow
+  SourceSnapshot
 } from './assistant-types'
 import { cand, deepFreeze, item, snapshot, TODAY } from './__fixtures__/assistant/factories'
 
@@ -385,42 +383,6 @@ describe('planRefresh §8.4', () => {
     const c = cand({ id: 'todo:1', title: '새', dueDate: TODAY })
     const plan = run(snapshot({ seenCandidateIds: ['todo:1'] }), { candidates: [c], calendar: [], jira: [] }, items)
     expect(plan.updates).toEqual([{ id: 1, patch: { title: '새', due_date: TODAY, score: scoreCandidate(c, TODAY) } }])
-  })
-
-  it('A14: jira 가 null 이면 Jira 와 병합된 task 항목의 값을 task 값으로 덮지 않는다', () => {
-    const task: TaskRow = {
-      id: 12, project_id: 1, project_name: 'P', project_priority: 'later', name: '작업',
-      status: 'pending', end_date: '2026-11-30', jira_issue_key: 'PROJ-1'
-    }
-    const jiraIssue = {
-      key: 'PROJ-1', summary: 'Jira 제목', status: '진행 중', statusCategory: 'indeterminate' as const,
-      priority: 'Highest', duedate: '2026-11-03', updatedLocal: null, url: null,
-      issueType: '작업', parentKey: null, parentSummary: null
-    }
-    const jiraRef = { key: 'PROJ-1', status: '진행 중', priority: 'Highest', duedate: '2026-11-03', updated: 'x' }
-    const base = { tasks: [task], todos: [], actionItems: [], taskTouchedAt: {} }
-    const [merged] = buildCandidates({ ...base, jiraIssues: [jiraIssue] })
-    const [localOnly] = buildCandidates({ ...base, jiraIssues: null })
-    const items = [
-      item({
-        id: 1, candidate_id: merged.id, source: 'task', title: '옛 제목', jira_issue_key: 'PROJ-1',
-        due_date: merged.dueDate, score: scoreCandidate(merged, TODAY)
-      }),
-      item({ id: 2, candidate_id: 'todo:2', title: '옛' })
-    ]
-    const prev = snapshot({ jira: [jiraRef], seenCandidateIds: [merged.id, 'todo:2'] })
-
-    // local 최신화: jira null. 병합 항목은 제목·마감·점수 모두 그대로, Jira 무관 항목은 갱신한다
-    const local: CurrentSources = { candidates: [localOnly, cand({ id: 'todo:2', title: '새' })], calendar: null, jira: null }
-    const localDiff = diffSources(prev, local, items)
-    expect(localDiff.updatedCandidates.map((c) => c.id)).toEqual(['todo:2'])
-    expect(planRefresh(localDiff, local, prev, items, ctx()).updates).toEqual([{ id: 2, patch: { title: '새' } }])
-
-    // full 최신화: jira 값이 같으면 바뀌는 값이 없다. 제목은 task 값으로 갱신된다. 묶음 이름은 보강된다 (A50)
-    const full: CurrentSources = { candidates: [merged, cand({ id: 'todo:2', title: '옛' })], calendar: [], jira: [jiraRef] }
-    expect(planRefresh(diffSources(prev, full, items), full, prev, items, ctx()).updates).toEqual([
-      { id: 1, patch: { title: '작업', group_name: 'P' } }
-    ])
   })
 
   it('seenCandidateIds 는 이전 값과 현재 후보 ID 의 합집합이다', () => {

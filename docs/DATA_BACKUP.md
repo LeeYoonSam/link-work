@@ -9,7 +9,7 @@
 
 | 항목 | 백업 포함 | 그룹 | 비고 |
 |---|---|---|---|
-| `linkwork.db` (SQLite, WAL) — 프로젝트·작업·TODO·메모·문서·변수·회의(전사/화자/컷/요약/참석자)·용어집/구성원·릴리스 노트·AI 대화·활동 로그·설정 | **포함** | 테이블마다 아래 그룹 표 | 기기 종속 시크릿만 제거(아래) |
+| `linkwork.db` (SQLite, WAL) — 프로젝트·작업(옛 데이터)·TODO·메모·문서·변수·회의(전사/화자/컷/요약/참석자)·용어집/구성원·릴리스 노트·AI 대화·활동 로그·설정 | **포함** | 테이블마다 아래 그룹 표 | 기기 종속 시크릿만 제거(아래) |
 | `recordings/` (`<id>.wav`, `<id>.channels.json`, `<id>.compaction.json`) | **포함** | `meetings` | DB는 파일명만 저장하므로 경로 독립 |
 | `ai-attachments/` (AI 대화 이미지) | **포함** | `ai` | |
 | `models/` (whisper·silero·sherpa, 1.4GB) | 제외 | — | 첫 실행 시 자동 다운로드 |
@@ -30,7 +30,7 @@
 | `settings` | 설정·연동 | (없음 — `app_settings` 를 키 단위로) | `assistant_*`, `ai_model`, `ai_model_labels`, `google_client_id`, `jira_site_url`, `jira_email`, `jira_token_expires_at`, `jira_account_name`, `jira_default_project_key`, `bitbucket_email`, 그리고 분류되지 않은 모든 키(기본값) | 없음 |
 | (백업 제외) | — | auth_tokens | 시크릿 4개(위 표) | models/, Electron 캐시 |
 
-- **오늘(비서)이 업무와 같은 그룹인 이유**: 계획 항목(`plan_items.candidate_id`)이 `task:<id>`·`todo:<id>` 로 작업·할 일을 가리키고, 화면의 "원본 완료"가 그 id 로 할 일 완료·작업 수정을 직접 호출한다. 따로 복원하면 엉뚱한 할 일이 완료될 수 있다.
+- **오늘(비서)이 업무와 같은 그룹인 이유**: 계획 항목(`plan_items.candidate_id`)이 `todo:<id>` 로 할 일을 가리키고(옛 행은 `task:<id>` 로 작업을 가리킨다), 화면의 "원본 완료"가 그 id 로 할 일 완료를 직접 호출한다. 따로 복원하면 엉뚱한 할 일이 완료될 수 있다.
 - `meeting_members`·`stt_glossary` 는 회의 그룹이다. `meeting_attendees` 가 `meeting_members` 를 FK 로 가리키고, 둘 다 회의 인식 보조다.
 - **새 테이블을 만들면 반드시 한 그룹(또는 백업 제외)에 넣는다.** 빠지면 테스트 G1 이 실패한다. 그룹을 추가·변경하면 `formatVersion` 을 올린다.
 

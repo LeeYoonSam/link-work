@@ -1,114 +1,3 @@
-// 프로젝트 우선순위. null(미지정)이면 우선순위 그룹 밖으로 밀려 상태 순으로만 정렬된다.
-export type ProjectPriority = 'now' | 'next' | 'later'
-
-/**
- * 프로젝트 진행 상태.
- *
- * 'on_hold'(중단)만 수동 전용이다 — 날짜 기반 자동 계산(utils/projectStatus.ts)은 이 값을
- * 절대 반환하지 않고, status_manual=1로 고정할 때만 들어간다. 재개는 status_manual=0으로
- * 되돌려 자동 계산에 다시 맡긴다. 진행 중 목록에서는 빠진다(utils/projectOrder.ts의
- * ACTIVE_STATUSES 미포함).
- */
-export type ProjectStatus =
-  | 'scheduled'
-  | 'development'
-  | 'qa_pending'
-  | 'qa'
-  | 'deploy_pending'
-  | 'deploy'
-  | 'on_hold'
-  | 'completed'
-  | 'cancelled'
-
-export interface Project {
-  id: number
-  name: string
-  description: string | null
-  dev_start_date: string
-  dev_end_date: string
-  qa_start_date: string
-  qa_end_date: string
-  deploy_date: string
-  deploy_version: string | null
-  status: ProjectStatus
-  status_manual: number
-  // 우선순위와 같은 레벨 안에서의 수동 순서. 구버전 DB·테스트 픽스처가 값을 갖지
-  // 않을 수 있어 옵셔널이다 — 정렬은 utils/projectOrder.ts가 미지정을 흡수한다.
-  priority?: ProjectPriority | null
-  sort_order?: number
-  /** 싱크업이 연결한 Jira 루트 이슈 키(에픽 또는 작업). 수동 프로젝트는 null 이다.
-   * 구버전 테스트 픽스처가 값을 갖지 않을 수 있어 옵셔널이다 */
-  jira_issue_key?: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface Task {
-  id: number
-  project_id: number
-  // 상위 작업 id. null이면 최상위 작업. 깊이는 1단계만(상위는 항상 최상위).
-  parent_task_id: number | null
-  name: string
-  start_date: string | null
-  end_date: string | null
-  status: 'pending' | 'in_progress' | 'done'
-  sort_order: number
-  /** 연결된 Jira 이슈 키. 값이 있으면 상태는 Jira 값을 따르고 UI 에서 잠긴다 (PROJECT_SYNC R12).
-   * DB 는 항상 내려준다. 구버전 테스트 픽스처가 값을 갖지 않을 수 있어 옵셔널이다 */
-  jira_issue_key?: string | null
-  created_at: string
-}
-
-export interface ProjectInput {
-  name: string
-  description?: string
-  dev_start_date: string
-  dev_end_date: string
-  qa_start_date?: string
-  qa_end_date?: string
-  deploy_date?: string
-  deploy_version?: string
-  status?: string
-  status_manual?: number
-  priority?: ProjectPriority | null
-  sort_order?: number
-}
-
-export interface TaskInput {
-  project_id: number
-  parent_task_id?: number | null
-  name: string
-  start_date?: string
-  end_date?: string
-  status?: string
-  sort_order?: number
-}
-
-export interface CalculatedDates {
-  qaStart: string
-  qaEnd: string
-  deployDate: string
-}
-
-export interface ProjectAPI {
-  create: (input: ProjectInput) => Promise<{ id: number }>
-  list: (status?: string) => Promise<Project[]>
-  get: (id: number) => Promise<Project>
-  update: (id: number, input: Partial<ProjectInput>) => Promise<Project>
-  delete: (id: number) => Promise<{ success: boolean }>
-  calculateDates: (devEndDate: string) => Promise<CalculatedDates>
-  lastDates: () => Promise<{ devStartDate: string; devEndDate: string } | null>
-  reorder: (items: { id: number; sort_order: number }[]) => Promise<{ success: boolean }>
-}
-
-export interface TaskAPI {
-  create: (input: TaskInput) => Promise<{ id: number }>
-  list: (projectId: number) => Promise<Task[]>
-  listByProjectIds: (projectIds: number[]) => Promise<Record<number, Task[]>>
-  update: (id: number, input: Partial<TaskInput>) => Promise<Task>
-  delete: (id: number) => Promise<{ success: boolean }>
-}
-
 export interface TrayAPI {
   getData: () => Promise<unknown>
   openApp: () => Promise<void>
@@ -149,7 +38,6 @@ export interface Document {
   type: 'link' | 'file'
   description: string | null
   project_id: number | null
-  project_name?: string
   sort_order: number
   created_at: string
   updated_at: string
@@ -160,13 +48,12 @@ export interface DocumentInput {
   url: string
   type: 'link' | 'file'
   description?: string
-  project_id?: number | null
   sort_order?: number
 }
 
 export interface DocumentAPI {
   create: (input: DocumentInput) => Promise<{ id: number }>
-  list: (projectId?: number | null) => Promise<Document[]>
+  list: () => Promise<Document[]>
   listAll: () => Promise<Document[]>
   update: (id: number, input: Partial<DocumentInput>) => Promise<Document>
   delete: (id: number) => Promise<{ success: boolean }>
@@ -546,7 +433,6 @@ export interface RecognitionAidsAPI {
     note?: string | null
     priority?: number
     enabled?: boolean
-    project_id?: number | null
   }) => Promise<{ id: number }>
   removeGlossary: (id: number) => Promise<{ success: boolean }>
   // "정답 | 별칭1, 별칭2 | 메모" 줄 형식 일괄 가져오기
@@ -724,7 +610,6 @@ export interface ChannelEnergy {
 export interface MeetingNoteFilter {
   q?: string                      // 검색어(공백 trim, 빈 문자열은 무시)
   kind?: 'all' | MeetingKind      // 기본 'all'
-  projectId?: number | null       // undefined·null=전체, 숫자=해당 프로젝트
 }
 
 export interface MeetingNoteItem {
@@ -733,8 +618,6 @@ export interface MeetingNoteItem {
   kind: MeetingKind
   started_at: string
   duration_ms: number
-  project_id: number | null
-  project_name: string | null
   tldr: string | null
   key_point_count: number
   decision_count: number
@@ -795,7 +678,6 @@ export interface RecordingAPI {
   ) => Promise<{ success: boolean }>
   toggleCut: (cutId: number, enabled: boolean) => Promise<{ success: boolean }>
   actionItemToTodo: (meetingId: number, index: number) => Promise<{ todo_id: number }>
-  linkProject: (id: number, projectId: number | null) => Promise<{ success: boolean }>
   setExpectedSpeakers: (id: number, n: number | null) => Promise<{ success: boolean }>
   setAttendees: (meetingId: number, memberIds: number[]) => Promise<{ success: boolean }>
   // 녹음 시작 실패·취소 시 draft 행 삭제. status='recording'이고 오디오가 없는 행만 지운다.
@@ -958,86 +840,82 @@ export interface SettingsAPI {
   verifyIntegration: (id: IntegrationId) => Promise<IntegrationVerifyResult>
 }
 
-// ── Jira 프로젝트 싱크업 (docs/PROJECT_SYNC.md) ──
-// main의 project-sync 서비스가 돌려주는 모양과 같아야 한다 — 한쪽만 바꾸면 미리보기가 조용히 빈 값을 그린다.
+// ── Jira 티켓 계층 보드 (docs/PROJECT_BOARD.md) ──
+// main 의 services/jira-board.ts 와 같은 모양이다. 한쪽만 바꾸면 보드가 조용히 빈 값을 그린다.
 
-export type ProjectSyncSkipReason = 'qa' | 'no_epic' | 'tracked_in_project'
+export type JiraIssueLevel = 'epic' | 'standard' | 'subtask'
+export type JiraStatusCategory = 'new' | 'indeterminate' | 'done'
 
-export interface ProjectSyncPlanItem {
-  jiraKey: string
+export interface JiraBoardIssue {
+  key: string
   summary: string
-  kind: 'epic' | 'sustain'
-  action: 'create' | 'update' | 'unchanged'
-  /** create면 null */
-  projectId: number | null
-  /** 기존 프로젝트 이름 또는 생성될 이름 */
-  projectName: string
-  matchedBy: 'jira_key' | 'document_url' | 'name' | null
-  newTasks: number
-  /** status 전진 또는 키 백필이 일어나는 기존 작업 수 */
-  updatedTasks: number
-  newDocuments: number
-  /** 기존 프로젝트 항목을 강제 적용할 때 덮어써질 필드/작업 수(이름 1 + 설명 1 + forceTasks.length). create 항목은 0 */
-  forceChanges: number
-  /** 강제 적용 시 이름·상태·마감일이 바뀌는 기존 작업. 이름이 같으면 before === after. create 항목은 [] */
-  forceTasks: { before: string; after: string }[]
+  /** Jira 표시 이름 (에픽, 작업, 버그, 하위 작업 …) */
+  issueType: string
+  level: JiraIssueLevel
+  /** 세부 상태 이름 (표시용) */
+  status: string
+  statusCategory: JiraStatusCategory
+  /** '할 일' 이상인가. false = 백로그 상태. 화면은 inScope 이슈와 그 조상만 그린다 */
+  inScope: boolean
+  priority: string | null
+  parentKey: string | null
+  parentSummary: string | null
+  assigneeAccountId: string | null
+  assigneeName: string | null
+  /** YYYY-MM-DD */
+  duedate: string | null
+  /** ISO */
+  updated: string
+  /** 완료 시각(resolutiondate). 없으면 null */
+  resolvedAt: string | null
+  labels: string[]
+  /** 설명 본문 평문 발췌. 최대 600자, 없으면 null */
+  excerpt: string | null
 }
 
-/** 적용할 항목. 기존 프로젝트(projectId !== null)는 force=true로만 넘긴다 — 사용자가 덮어쓰기를 확인한 것 */
-export interface ProjectSyncSelection {
-  jiraKey: string
-  force: boolean
-  /** 미리보기 때의 대상 프로젝트. 적용 시 재계획 결과와 다르면 main이 거부한다 */
-  projectId: number | null
-}
-
-export interface ProjectSyncSkipped {
-  jiraKey: string
-  summary: string
-  reason: ProjectSyncSkipReason
-  detail: string | null
-}
-
-export interface ProjectSyncPlan {
-  items: ProjectSyncPlanItem[]
-  skipped: ProjectSyncSkipped[]
-  /** Jira 조회 상한에 걸림 */
+export interface JiraBoardSnapshot {
+  projectKey: string
+  myAccountId: string | null
+  /** 키 중복 없음 */
+  issues: JiraBoardIssue[]
+  /** 조회 상한에 걸려 일부만 가져왔다 */
   truncated: boolean
-  /** Jira에서 찾은 트리거(내게 할당된 "할 일") 이슈 수 — 0건이면 조회 자체가 비었다는 뜻 */
-  triggerCount: number
+  /** 최근 완료로 포함한 기간(일) */
+  recentDoneDays: number
   /** ISO */
   fetchedAt: string
 }
 
-export interface ProjectSyncResult {
-  created: number
-  updated: number
-  unchanged: number
-  tasksAdded: number
-  tasksUpdated: number
-  documentsAdded: number
-  skipped: ProjectSyncSkipped[]
-  /**
-   * 실제로 적용한 항목. main 은 늘 채운다.
-   * 렌더러 쪽은 선택 필드다. 이유: 이 필드가 없는 기존 테스트 리터럴이 타입체크를 통과해야 한다.
-   */
-  applied?: ProjectSyncAppliedItem[]
+export interface JiraEpicAiSummary {
+  epicKey: string
+  /** 한 문장 */
+  headline: string
+  /** 2~4개: 진행 상황·남은 일·위험 */
+  bullets: string[]
+  /** ISO */
+  generatedAt: string
 }
 
-/** 적용한 항목 1건. main 의 project-sync-plan.ts 와 같은 모양이다 */
-export interface ProjectSyncAppliedItem {
-  jiraKey: string
-  action: ProjectSyncPlanItem['action']
-  projectId: number | null
-  projectName: string
-  force: boolean
+export interface JiraBoardAPI {
+  // 네트워크가 얽혀 있어 throw 대신 결과 객체로 감싼다 — 오류 문구를 그대로 표시해야 한다
+  /** force=true 면 main 캐시를 무시하고 다시 가져온다 */
+  fetch: (
+    force?: boolean
+  ) => Promise<
+    | { success: true; snapshot: JiraBoardSnapshot }
+    | { success: false; error: string; code?: 'not_connected' | 'no_default_project' }
+  >
+  /** 사용자가 버튼을 눌렀을 때만 부른다. 캐시된 스냅샷의 에픽 키만 받는다 */
+  summarizeEpic: (
+    epicKey: string
+  ) => Promise<{ success: true; summary: JiraEpicAiSummary } | { success: false; error: string }>
 }
 
-// ── 아침 자동 동기화 (docs/ASSISTANT.md A54, docs/PROJECT_SYNC.md R11) ──
+// ── 아침 자동 동기화 (docs/ASSISTANT.md A54) ──
 // main 의 assistant-types.ts 와 같은 모양이다. 한쪽만 바꾸면 배지와 상태 줄이 빈 값을 그린다.
 
-export type MorningSyncPartName = 'release' | 'project'
-/** deferred 는 사용자가 수동 미리보기를 검토 중이라 미룬 상태다. 시도로 세지 않는다 */
+export type MorningSyncPartName = 'release'
+/** deferred 는 옛 행 호환용으로 남긴 상태다. 시도로 세지 않는다 */
 export type MorningSyncPartStatus = 'running' | 'ok' | 'skipped' | 'failed' | 'deferred'
 
 export interface MorningSyncPart {
@@ -1050,13 +928,13 @@ export interface MorningSyncPart {
   finishedAt: string | null
   /** failed 의 사용자용 문구. skipped 이면 건너뛴 이유 */
   error: string | null
-  /** 새 항목 수. 릴리스는 새 릴리스, 싱크업은 새 프로젝트 */
+  /** 새 릴리스 수 */
   newCount: number
   /** 갱신한 항목 수 */
   updatedCount: number
-  /** 싱크업만 쓴다. 자동 적용하지 않고 확인이 필요한 항목 수 (R11) */
+  /** 옛 행 호환용. 지금은 늘 0 이다 */
   reviewCount: number
-  /** 릴리스만 쓴다. 일부 버전의 실패 수 */
+  /** 일부 버전의 실패 수 */
   failedCount: number
 }
 
@@ -1068,40 +946,13 @@ export interface MorningSyncStatus {
   /** 마지막 행의 논리 날짜. 행이 없으면 null */
   date: string | null
   release: MorningSyncPart | null
-  project: MorningSyncPart | null
 }
 
-export interface ProjectSyncAPI {
-  // 네트워크가 얽혀 있어 throw 대신 결과 객체로 감싼다 — 오류 문구를 그대로 표시해야 한다
-  preview: () => Promise<{ success: true; plan: ProjectSyncPlan } | { success: false; error: string }>
-  /** preview가 캐시한 Jira 스냅샷으로 현재 DB 기준 재계획 후, 고른 항목만 적용한다 */
-  apply: (
-    selection: ProjectSyncSelection[]
-  ) => Promise<
-    { success: true; result: ProjectSyncResult } | { success: false; error: string }
-  >
+export interface MorningSyncAPI {
   /** 아침 자동 동기화 상태. 읽기 전용이다 */
-  morningStatus: () => Promise<
+  status: () => Promise<
     { success: true; status: MorningSyncStatus } | { success: false; error: string }
   >
-  /** 한 프로젝트의 Jira 연결 작업 상태를 Jira 값으로 맞추고 새 작업을 추가한다 (R12).
-   * reason 'enter' 는 5분 안 재호출을 건너뛴다. 기본은 'manual' 이다 */
-  refreshTasks: (
-    projectId: number,
-    reason?: 'manual' | 'enter'
-  ) => Promise<{ success: true; result: TaskRefreshResult } | { success: false; error: string }>
-}
-
-/** R12 새로고침 결과. main 의 project-sync.ts 와 같은 모양이다 */
-export interface TaskRefreshResult {
-  projectId: number
-  /** 진입 새로고침이 5분 안이라 건너뜀 */
-  skipped: boolean
-  statusChanged: number
-  tasksAdded: number
-  missingKeys: string[]
-  /** ISO */
-  refreshedAt: string
 }
 
 // ── 앱 데이터 백업 · 복원 (docs/DATA_BACKUP.md) ──
@@ -1513,17 +1364,12 @@ export interface MeetingRef {
   startAt: string
   endAt: string
 }
-export interface MeetingProjectRef {
-  id: number
-  name: string
-}
 export type MeetingLlmStatus = 'off' | 'pending' | 'done' | 'failed'
 export interface MeetingBriefingPayload {
   meeting: MeetingRef
   // 알림 문구
   title: string
   body: string
-  projects: MeetingProjectRef[]
   hasContext: boolean
   ruleMarkdown: string
   llmStatus: MeetingLlmStatus

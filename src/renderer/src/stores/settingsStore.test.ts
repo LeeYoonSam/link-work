@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { IntegrationVerifyResult } from '../types'
 import { useSettingsStore } from './settingsStore'
-import { useProjectStore } from './projectStore'
+import { useNavigationStore } from './navigationStore'
 
 const api = {
   calendar: { status: vi.fn(async () => ({ connected: true, hasCredentials: true })) },
@@ -43,19 +43,19 @@ beforeEach(() => {
     verifyResults: {},
     verifying: {}
   })
-  useProjectStore.setState({ view: 'today' })
+  useNavigationStore.setState({ view: 'today' })
 })
 
 describe('settingsStore', () => {
   it('open(section) 은 화면을 settings 로 바꾸고 섹션을 고른다', () => {
     useSettingsStore.getState().open('assistant')
-    expect(useProjectStore.getState().view).toBe('settings')
+    expect(useNavigationStore.getState().view).toBe('settings')
     expect(useSettingsStore.getState().section).toBe('assistant')
 
     // 섹션 없이 열면 고른 섹션을 그대로 둔다
-    useProjectStore.setState({ view: 'today' })
+    useNavigationStore.setState({ view: 'today' })
     useSettingsStore.getState().open()
-    expect(useProjectStore.getState().view).toBe('settings')
+    expect(useNavigationStore.getState().view).toBe('settings')
     expect(useSettingsStore.getState().section).toBe('assistant')
   })
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMeetingNotesStore } from '../../stores/meetingNotesStore'
-import { useProjectStore } from '../../stores/projectStore'
+import { useNavigationStore } from '../../stores/navigationStore'
 import { useRecordingStore } from '../../stores/recordingStore'
 import { EmptyState, button } from '../ui'
 import { formatDuration } from './MeetingNoteList'
@@ -14,8 +14,7 @@ function formatClock(ms: number): string {
 
 // 요약 완료 회의를 읽기 전용 문서로 보여준다. 편집은 녹음 뷰에서 한다.
 export default function MeetingNoteDoc(): React.ReactNode {
-  const { detail, selectedId, items } = useMeetingNotesStore()
-  const projects = useProjectStore((s) => s.projects)
+  const { detail, selectedId } = useMeetingNotesStore()
   const [copied, setCopied] = useState(false)
   const [showTranscript, setShowTranscript] = useState(false)
 
@@ -30,10 +29,6 @@ export default function MeetingNoteDoc(): React.ReactNode {
 
   const { meeting, summary, speakers, segments, attendees } = detail
   const isInterview = meeting.kind === 'interview'
-  const projectName =
-    items.find((n) => n.id === meeting.id)?.project_name ??
-    projects.find((p) => p.id === meeting.project_id)?.name ??
-    null
   const speakerName = (id: number | null): string => {
     const sp = speakers.find((s) => s.id === id)
     return sp ? (sp.display_name ?? sp.label) : '알 수 없음'
@@ -53,14 +48,13 @@ export default function MeetingNoteDoc(): React.ReactNode {
 
   const openInRecordings = (): void => {
     useRecordingStore.getState().openMeeting(meeting.id)
-    useProjectStore.getState().setView('recordings')
+    useNavigationStore.getState().setView('recordings')
   }
 
   const meta = [
     meeting.started_at.slice(0, 16),
     formatDuration(meeting.duration_ms),
-    attendees.length > 0 ? `참석: ${attendees.map((a) => a.name).join(', ')}` : null,
-    projectName
+    attendees.length > 0 ? `참석: ${attendees.map((a) => a.name).join(', ')}` : null
   ].filter(Boolean)
 
   return (

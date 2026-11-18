@@ -1,8 +1,8 @@
-// 아침 자동 동기화 실행기 (docs/ASSISTANT.md A54, docs/PROJECT_SYNC.md R11, docs/RELEASE_NOTES.md §1).
+// 아침 자동 동기화 실행기 (docs/ASSISTANT.md A54, docs/RELEASE_NOTES.md §1). 지금은 릴리스 파트만 돈다.
 // 스케줄러 틱의 onTick 으로 돈다. 새 타이머를 만들지 않는다.
 // 하루 1회는 assistant_events 의 morning_sync:<날짜> 행 1개로 보장한다. 부분 상태는 payload 에 둔다.
 // A13: 이 모듈의 실행기는 throw 하지 않는다. 부분마다 try/catch 로 실패를 격리한다.
-// 이름에 assistant- 를 붙이지 않는다. 이유: A2 grep 대상은 원본 테이블을 쓰면 안 되는데, 싱크업은 projects 를 쓴다.
+// 이름에 assistant- 를 붙이지 않는다. 이유: A2 grep 대상은 원본 테이블을 쓰면 안 되는데, 릴리스 동기화는 release_* 를 쓴다.
 import { BrowserWindow, net } from 'electron'
 import { getDatabase } from '../db/database'
 import { logicalDate, toLocalDateTime } from './assistant-day'
@@ -23,7 +23,6 @@ import type {
   MorningSyncStatus
 } from './assistant-types'
 import { getDefaultJiraProjectKey, isJiraConnected } from './jira'
-import { refreshAllJiraProjects, runAutoProjectSync } from './project-sync'
 import { syncAllReleases } from './release-note-sync'
 
 const PART_STATUSES: readonly MorningSyncPartStatus[] = ['running', 'ok', 'skipped', 'failed', 'deferred']
@@ -98,8 +97,8 @@ export function parseMorningSyncPayload(raw: string | null | undefined, date: st
     if (!isRecord(v)) return null
     return {
       date: typeof v.date === 'string' ? v.date : date,
-      release: parsePart(v.release),
-      project: parsePart(v.project)
+      // 옛 행에 남은 project 키는 읽지 않는다
+      release: parsePart(v.release)
     }
   } catch {
     return null
@@ -184,12 +183,10 @@ function claim(db: Db, ctx: DayContext): Claimed | null {
 
     const payload: MorningSyncPayload = {
       date: ctx.today,
-      release: current?.release ?? null,
-      project: current?.project ?? null
+      release: current?.release ?? null
     }
     const prevAttempts: Record<MorningSyncPartName, number> = {
-      release: payload.release?.attempts ?? 0,
-      project: payload.project?.attempts ?? 0
+      release: payload.release?.attempts ?? 0
     }
     for (const name of parts) payload[name] = runningPart(payload[name], ctx.at)
 
@@ -240,48 +237,6 @@ async function runReleasePart(): Promise<PartOutcome> {
   }
 }
 
-/**
- * R11 자동 싱크업 결과(AutoProjectSyncOutcome)를 부분 결과로 바꾼다.
- * deferred 이면 deferred 다. applied 이면 result 의 created·updated 와 needsReview 를 센다.
- * 다른 모듈의 결과라 형식을 믿지 않는다. 틀린 값은 0 으로 센다.
- */
-export function toProjectOutcome(r: unknown): PartOutcome {
-  if (!isRecord(r)) return emptyOutcome('ok')
-  if (r.status === 'deferred' || r.deferred === true) return emptyOutcome('deferred')
-  const nested = r.result
-  const result = isRecord(nested) ? nested : r
-  const needsReview = r.needsReview
-  const review = Array.isArray(needsReview) ? needsReview.length : intOf(needsReview)
-  return {
-    status: 'ok',
-    error: null,
-    newCount: intOf(result.created),
-    updatedCount: intOf(result.updated),
-    reviewCount: review,
-    failedCount: 0
-  }
-}
-
-/**
- * R11 자동 싱크업 뒤에 R12 Jira 연결 작업 새로고침을 한다.
- * R11 이 deferred 여도 R12 는 돈다. R12 는 미리보기 캐시를 건드리지 않는다.
- * 부분 결과의 수는 R11 결과로만 센다.
- * R12 가 throw 하면 이 부분은 failed 다. 이때도 R11 의 수는 남긴다. R11 은 이미 적용되었기 때문이다.
- * R11 이 throw 하면 R12 를 부르지 않는다. 호출자가 failed 로 기록한다.
- */
-async function runProjectPart(): Promise<PartOutcome> {
-  const skip = skipReason()
-  if (skip) return emptyOutcome('skipped', skip)
-  const r11 = toProjectOutcome(await runAutoProjectSync())
-  try {
-    await refreshAllJiraProjects()
-  } catch (err) {
-    logError('project R12', err)
-    return { ...r11, status: 'failed', error: messageOf(err) }
-  }
-  return r11
-}
-
 function writePayload(eventId: number, payload: MorningSyncPayload): void {
   try {
     // 동기화를 기다리는 사이 DB 가 바뀌었을 수 있다. 다시 연결해 기록한다
@@ -296,7 +251,7 @@ async function runClaimed(claimed: Claimed, clock: () => Date): Promise<void> {
   for (const name of claimed.parts) {
     let outcome: PartOutcome
     try {
-      outcome = name === 'release' ? await runReleasePart() : await runProjectPart()
+      outcome = await runReleasePart()
     } catch (err) {
       // 토큰 만료·네트워크 오류는 failed 다 (D8)
       logError(name, err)
@@ -362,7 +317,6 @@ export function getMorningSyncStatus(): MorningSyncStatus {
     at: settings.morningSyncTime,
     inFlight,
     date: ev ? ev.plan_date : null,
-    release: view(payload?.release ?? null),
-    project: view(payload?.project ?? null)
+    release: view(payload?.release ?? null)
   }
 }

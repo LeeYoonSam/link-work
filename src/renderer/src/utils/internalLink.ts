@@ -4,7 +4,6 @@ import { normalizeView, type ViewId } from '../components/layout/navConfig'
 
 export type InternalLinkTarget =
   | { kind: 'view'; view: ViewId }
-  | { kind: 'project'; id: number; taskId: number | null }
   | { kind: 'document'; id: number }
   | { kind: 'memo' | 'todo' | 'variable' | 'release' | 'recording' | 'note'; id: number }
   | { kind: 'calendar'; date: string; eventId: string | null }
@@ -66,13 +65,13 @@ export function parseInternalLink(href: string): InternalLinkTarget | null {
     return view ? { kind: 'view', view } : null
   }
 
+  // 옛 프로젝트·작업 링크는 프로젝트 보드로 보낸다. 이유: 대화 기록의 링크가 죽지 않게 한다
   if (kind === 'project') {
     const id = parseId(rest[0])
     if (id === null) return null
-    if (rest.length === 1) return { kind: 'project', id, taskId: null }
-    if (rest.length === 3 && rest[1] === 'task') {
-      const taskId = parseId(rest[2])
-      return taskId === null ? null : { kind: 'project', id, taskId }
+    if (rest.length === 1) return { kind: 'view', view: 'projects' }
+    if (rest.length === 3 && rest[1] === 'task' && parseId(rest[2]) !== null) {
+      return { kind: 'view', view: 'projects' }
     }
     return null
   }

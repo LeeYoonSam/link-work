@@ -182,7 +182,6 @@ export interface GlossaryInput {
   note?: string | null
   priority?: number
   enabled?: boolean
-  project_id?: number | null
 }
 
 export function upsertGlossary(db: Db, input: GlossaryInput): { id: number } {
@@ -192,26 +191,22 @@ export function upsertGlossary(db: Db, input: GlossaryInput): { id: number } {
   const note = trimOrNull(input?.note)
   const priority = toIntOr(input?.priority, 0)
   const enabled = input?.enabled === false ? 0 : 1
-  const projectId =
-    typeof input?.project_id === 'number' && Number.isFinite(input.project_id)
-      ? Math.round(input.project_id)
-      : null
 
   if (typeof input.id === 'number' && Number.isFinite(input.id)) {
     db.prepare(
       `UPDATE stt_glossary
-          SET term = ?, aliases = ?, note = ?, priority = ?, enabled = ?, project_id = ?,
+          SET term = ?, aliases = ?, note = ?, priority = ?, enabled = ?,
               updated_at = datetime('now','localtime')
         WHERE id = ?`
-    ).run(term, aliases, note, priority, enabled, projectId, input.id)
+    ).run(term, aliases, note, priority, enabled, input.id)
     return { id: input.id }
   }
 
   const result = db
     .prepare(
-      'INSERT INTO stt_glossary (term, aliases, note, priority, enabled, project_id) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO stt_glossary (term, aliases, note, priority, enabled) VALUES (?, ?, ?, ?, ?)'
     )
-    .run(term, aliases, note, priority, enabled, projectId)
+    .run(term, aliases, note, priority, enabled)
   return { id: Number(result.lastInsertRowid) }
 }
 
@@ -270,7 +265,7 @@ export function parseGlossaryText(text: string): ParsedGlossaryLine[] {
   return scanGlossaryText(text).entries
 }
 
-// 텍스트 일괄 가져오기. 같은 term이 이미 있으면(전역 범위 기준) aliases 합집합으로 갱신한다.
+// 텍스트 일괄 가져오기. 같은 term이 이미 있으면 aliases 합집합으로 갱신한다.
 // 사용자가 여러 번 붙여넣어도 중복 행이 쌓이지 않게 하는 것이 목적이다.
 export function importGlossaryText(
   db: Db,
@@ -284,7 +279,7 @@ export function importGlossaryText(
     for (const entry of entries) {
       const existing = db
         .prepare(
-          'SELECT id, aliases, note FROM stt_glossary WHERE project_id IS NULL AND term = ? COLLATE NOCASE LIMIT 1'
+          'SELECT id, aliases, note FROM stt_glossary WHERE term = ? COLLATE NOCASE LIMIT 1'
         )
         .get(entry.term) as { id: number; aliases: string; note: string | null } | undefined
 
@@ -405,20 +400,15 @@ export function listAttendees(db: Db, meetingId: number): Attendee[] {
 // 번지면 안 되므로 어떤 예외도 밖으로 던지지 않고 빈 컨텍스트로 흡수한다.
 export function loadPromptContext(db: Db, meetingId: number): PromptContext {
   try {
-    const meeting = db.prepare('SELECT project_id FROM meetings WHERE id = ?').get(meetingId) as
-      | { project_id: number | null }
-      | undefined
-    const projectId = meeting?.project_id ?? null
-
-    // project_id = NULL 비교는 항상 거짓이라, 프로젝트가 없는 회의는 전역 용어만 남는다.
+    // 용어집은 전역이다. 옛 행에 project_id 가 남아 있어도 모든 회의에 쓴다.
     const rows = db
       .prepare(
         `SELECT term, aliases, note
            FROM stt_glossary
-          WHERE enabled = 1 AND (project_id IS NULL OR project_id = ?)
+          WHERE enabled = 1
           ORDER BY priority DESC, updated_at DESC, id DESC`
       )
-      .all(projectId) as Array<{ term: string; aliases: string; note: string | null }>
+      .all() as Array<{ term: string; aliases: string; note: string | null }>
 
     const glossary: PromptContext['glossary'] = []
     const rules: PromptContext['rules'] = []

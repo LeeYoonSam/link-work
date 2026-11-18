@@ -1,5 +1,5 @@
 // whisper initial_prompt(native 옵션명 `prompt`) 조립 — 한국어 회의/면접 전사에서
-// 고유명사(참석자·프로젝트·주제) 오인식을 줄이기 위한 도메인 컨텍스트 힌트를 만든다.
+// 고유명사(참석자·주제) 오인식을 줄이기 위한 도메인 컨텍스트 힌트를 만든다.
 //
 // 제약(중요): whisper는 프롬프트의 마지막 224토큰만 반영하고, 장황하거나 단정적인
 // 프롬프트는 과교정 환각(프롬프트 문구를 전사에 그대로 지어냄)을 유발한다. 그래서 여기서는
@@ -13,7 +13,6 @@ export interface InitialPromptInput {
   kind: string // 'meeting' | 'interview'
   language: string // meetings.language, 기본 'ko'
   title?: string | null
-  projectName?: string | null
   calendarEventTitle?: string | null
   speakerNames?: string[] // meeting_speakers.display_name (사용자 지정 실명만)
   // 사용자 등록 용어집의 정답 표기(term)만. 오인식 표기(alias)는 넣지 않는다 —
@@ -114,11 +113,6 @@ export function buildInitialPrompt(input: InitialPromptInput): string | undefine
   const title = input.title?.trim()
   if (title && !DEFAULT_TITLES.has(title)) {
     tryAppend(` 주제: ${title}.`)
-  }
-
-  const projectName = input.projectName?.trim()
-  if (projectName) {
-    tryAppend(` 프로젝트: ${projectName}.`)
   }
 
   // 일정 제목이 회의 제목과 같으면 중복이므로 생략한다.

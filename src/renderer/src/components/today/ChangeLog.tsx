@@ -108,8 +108,9 @@ export function describeCommand(ev: Pick<AssistantEvent, 'scheduled_at' | 'fired
   return `${time} 명령 '${shown}' · ${n(obj.applied)}건 적용${tail}`.trim()
 }
 
-// ── 아침 자동 동기화 (ASSISTANT A54, PROJECT_SYNC R11) ──
-// kind 는 morning_sync 다. 하루 1행이고, 부분 상태는 payload 의 release·project 에 있다.
+// ── 아침 자동 동기화 (ASSISTANT A54) ──
+// kind 는 morning_sync 다. 하루 1행이고, 부분 상태는 payload 의 release 에 있다.
+// 옛 행에 남은 다른 파트 키는 무시한다.
 // kind 비교에 문자열을 쓴다. 이유: 이전 타입 정의에도 컴파일된다
 export const MORNING_SYNC_KIND = 'morning_sync'
 
@@ -151,7 +152,7 @@ export function parseMorningSync(
     const raw = JSON.parse(payload) as unknown
     if (!raw || typeof raw !== 'object') return null
     const o = raw as Record<string, unknown>
-    return { release: parseMorningPart(o.release), project: parseMorningPart(o.project) }
+    return { release: parseMorningPart(o.release) }
   } catch {
     return null
   }
@@ -183,30 +184,25 @@ export function morningSyncTime(
   ev: Pick<AssistantEvent, 'scheduled_at' | 'fired_at' | 'payload'>
 ): string {
   const p = parseMorningSync(ev.payload)
-  const ends = [p?.release?.finishedAt, p?.project?.finishedAt].filter((v): v is string => !!v)
+  const ends = [p?.release?.finishedAt].filter((v): v is string => !!v)
   if (ends.length === 0) return ev.fired_at ?? ev.scheduled_at
   return ends.reduce((a, b) => (b > a ? b : a))
 }
 
-// 성공한 부분의 건수 문구. 예: '새 1건 · 갱신 2건 · 확인 필요 1건'.
+// 성공한 부분의 건수 문구. 예: '새 1건 · 일부 실패 1건'.
 // 릴리스의 갱신 수는 보이지 않는다. 이유: 매일 거의 모든 릴리스가 갱신으로 세어진다
-export function morningCounts(key: MorningPartKey, part: MorningPartView): string {
+export function morningCounts(part: MorningPartView): string {
   const parts: string[] = []
   if (part.newCount > 0) parts.push(`새 ${part.newCount}건`)
-  if (key === 'project') {
-    if (part.updatedCount > 0) parts.push(`갱신 ${part.updatedCount}건`)
-    if (part.reviewCount > 0) parts.push(`확인 필요 ${part.reviewCount}건`)
-  } else if (part.failedCount > 0) {
-    parts.push(`일부 실패 ${part.failedCount}건`)
-  }
+  if (part.failedCount > 0) parts.push(`일부 실패 ${part.failedCount}건`)
   return parts.length > 0 ? parts.join(' · ') : '변경 없음'
 }
 
 // 부분 상태를 상태어와 본문으로 나눈다. 상태 줄과 변경 내역이 같은 규칙을 쓴다
-function morningPartBody(key: MorningPartKey, part: MorningPartView): { word: string; body: string } {
+function morningPartBody(part: MorningPartView): { word: string; body: string } {
   switch (part.status) {
     case 'ok':
-      return { word: '', body: morningCounts(key, part) }
+      return { word: '', body: morningCounts(part) }
     case 'failed':
       return { word: '실패', body: part.error ?? '' }
     case 'skipped':
@@ -220,17 +216,17 @@ function morningPartBody(key: MorningPartKey, part: MorningPartView): { word: st
   }
 }
 
-const PART_LABEL: Record<MorningPartKey, string> = { release: '릴리스', project: '프로젝트' }
+const PART_LABEL: Record<MorningPartKey, string> = { release: '릴리스' }
 
-// 변경 내역의 부분 1개. 예: '프로젝트 새 1건 · 갱신 2건', '릴리스 실패 (토큰 만료)'
+// 변경 내역의 부분 1개. 예: '릴리스 새 2건', '릴리스 실패 (토큰 만료)'
 export function describeMorningPart(key: MorningPartKey, part: MorningPartView): string {
-  const { word, body } = morningPartBody(key, part)
+  const { word, body } = morningPartBody(part)
   const head = word ? `${PART_LABEL[key]} ${word}` : PART_LABEL[key]
   if (!body) return head
   return word ? `${head} (${body})` : `${head} ${body}`
 }
 
-// morning_sync 이벤트 1건을 문장으로 바꾼다. 예: '08:01 아침 동기화 · 릴리스 새 2건 · 프로젝트 변경 없음'.
+// morning_sync 이벤트 1건을 문장으로 바꾼다. 예: '08:01 아침 동기화 · 릴리스 새 2건'.
 // status 는 스토어의 상태다. 중단된 running 을 실패로 보이는 데 쓴다
 export function describeMorningSync(
   ev: Pick<AssistantEvent, 'scheduled_at' | 'fired_at' | 'payload'>,
@@ -240,7 +236,6 @@ export function describeMorningSync(
   const p = parseMorningSync(ev.payload)
   const parts: string[] = []
   if (p?.release) parts.push(describeMorningPart('release', resolveMorningPart('release', p.release, status)))
-  if (p?.project) parts.push(describeMorningPart('project', resolveMorningPart('project', p.project, status)))
   const body = parts.length > 0 ? ` · ${parts.join(' · ')}` : ''
   return `${time} 아침 동기화${body}`.trim()
 }
@@ -262,7 +257,7 @@ export function morningStamp(ts: string | null, today: string): string {
 // 상태 줄이 읽는 실행 설정이다. enabled 는 자동 실행 켜짐, at 은 예정 시각 'HH:mm', date 는 마지막 실행 날짜다
 export type MorningRunInfo = Pick<MorningSyncStatus, 'enabled' | 'at' | 'date'>
 
-// 화면 상단 상태 줄. 예: '아침 싱크업 08:01 · 새 1건 · 갱신 2건', '아침 동기화 실패 08:01 · 토큰 만료'.
+// 화면 상단 상태 줄. 예: '아침 동기화 08:01 · 새 1건', '아침 동기화 실패 08:01 · 토큰 만료'.
 // today 는 로컬 날짜 'YYYY-MM-DD' 다. run 을 생략하면 스토어의 현재 상태를 읽는다.
 // run 이 null 이면 실행 설정을 모른다. 그때 part 가 없으면 null 이다.
 // 자동 실행이 꺼져 있거나 오늘 실행 전이면 그 사실을 보여 준다 (RELEASE_NOTES §8.1)
@@ -282,7 +277,7 @@ export function morningStatusLine(
     return last ? `${head} · 마지막 ${last}` : head
   }
   if (!part) return null
-  const { word, body } = morningPartBody(key, part)
+  const { word, body } = morningPartBody(part)
   const head = [label, word, last].filter(Boolean).join(' ')
   return body ? `${head} · ${body}` : head
 }

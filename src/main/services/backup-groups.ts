@@ -97,7 +97,7 @@ export const SECRET_SETTING_KEYS: readonly string[] = [
   'bitbucket_api_token'
 ]
 
-/** work 그룹에 속하는 app_settings 키 (services/project-sync.ts SYNC_CREATED_KEYS_SETTING) */
+/** work 그룹에 속하는 app_settings 키. 옛 Jira 싱크업이 남긴 값이라 백업·복원 대상으로 유지한다 */
 export const WORK_SETTING_KEYS: readonly string[] = ['project_sync_created_keys']
 
 export type SettingKeyClass = 'work' | 'settings' | 'secret'

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { AssistantEvent, MorningSyncPart, MorningSyncStatus } from '../../types'
 
-// 아침 동기화 줄의 위치·시각·중단 표시를 검증한다 (ASSISTANT A54 K.3, PROJECT_SYNC R11).
+// 아침 동기화 줄의 위치·시각·중단 표시를 검증한다 (ASSISTANT A54 K.3).
 // zustand v5 는 서버 렌더에서 초기 상태만 돌려준다. 그래서 스토어 훅을 모킹한다
 const store: { status: MorningSyncStatus | null } = { status: null }
 vi.mock('../../stores/morningSyncStore', () => {
@@ -48,7 +48,8 @@ const part = (over: Partial<MorningSyncPart> = {}): MorningSyncPart => ({
   ...over
 })
 
-const morning = (body: Partial<Record<'release' | 'project', MorningSyncPart>>): AssistantEvent =>
+// 옛 행의 project 파트를 흉내 내려고 키를 문자열로 받는다
+const morning = (body: Partial<Record<string, MorningSyncPart>>): AssistantEvent =>
   event({
     id: 50,
     event_key: 'morning_sync:2026-11-02',
@@ -64,7 +65,6 @@ const status = (over: Partial<MorningSyncStatus> = {}): MorningSyncStatus => ({
   inFlight: false,
   date: '2026-11-02',
   release: null,
-  project: null,
   ...over
 })
 
@@ -95,17 +95,27 @@ describe('아침 동기화 줄 위치와 시각 (A54 K.3)', () => {
   it('morningSyncTime: 부분 finishedAt 중 가장 늦은 값을 쓴다. 없으면 fired_at 이다', () => {
     // 재시도가 09:01 에 성공했다. fired_at 은 첫 선점 시각 08:01 이다
     const retried = morning({
-      release: part({ finishedAt: '2026-11-02 08:01:40' }),
-      project: part({ attempts: 2, startedAt: '2026-11-02 09:00:30', finishedAt: '2026-11-02 09:01:05' })
+      release: part({ attempts: 2, startedAt: '2026-11-02 09:00:30', finishedAt: '2026-11-02 09:01:05' })
     })
     expect(morningSyncTime(retried)).toBe('2026-11-02 09:01:05')
-    expect(describeMorningSync(retried)).toBe('09:01 아침 동기화 · 릴리스 변경 없음 · 프로젝트 변경 없음')
+    expect(describeMorningSync(retried)).toBe('09:01 아침 동기화 · 릴리스 변경 없음')
     expect(morningSyncTime(morning({ release: RUNNING }))).toBe('2026-11-02 08:01:10')
     expect(morningSyncTime({ ...morning({}), payload: '{깨짐' })).toBe('2026-11-02 08:01:10')
   })
 })
 
-describe('중단된 아침 동기화 표시 (A54, R11)', () => {
+describe('옛 행의 project 파트', () => {
+  it('payload 에 남은 project 파트는 시각과 문장에 쓰지 않는다', () => {
+    const legacy = morning({
+      release: part({ newCount: 1 }),
+      project: part({ finishedAt: '2026-11-02 09:30:00', newCount: 3 })
+    })
+    expect(morningSyncTime(legacy)).toBe('2026-11-02 08:01:40')
+    expect(describeMorningSync(legacy)).toBe('08:01 아침 동기화 · 릴리스 새 1건')
+  })
+})
+
+describe('중단된 아침 동기화 표시 (A54)', () => {
   it('ChangeLog: inFlight 가 false 인데 running 이면 실패(중단)로 보인다', () => {
     store.status = status({ release: { ...RUNNING, status: 'failed', error: MORNING_INTERRUPTED_TEXT } })
     const html = renderToStaticMarkup(<ChangeLog events={[morning({ release: RUNNING })]} />)

@@ -460,14 +460,6 @@ export function registerRecordingIpc(): void {
     return { todo_id: todoId }
   })
 
-  // ── 프로젝트 연결 (projectId=null이면 해제) ──
-  ipcMain.handle('recording:linkProject', (_e, id: number, projectId: number | null) => {
-    db.prepare(
-      "UPDATE meetings SET project_id = ?, updated_at = datetime('now','localtime') WHERE id = ?"
-    ).run(projectId, id)
-    return { success: true }
-  })
-
   // ── 참석자(구성원) 지정 — 전사 힌트/화자 이름 프리셋/요약 담당자 매칭에 쓰인다 ──
   // 참석 '인원 수'(expected_speakers)와는 별개다: 이쪽은 누가 들어왔는지의 명단이다.
   ipcMain.handle('recording:setAttendees', (_e, meetingId: number, memberIds: number[]) => {

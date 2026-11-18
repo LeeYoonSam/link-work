@@ -3,7 +3,7 @@
 // 이유: 화면이 열리는 첫 렌더에 이미 요청이 있어야 대상 항목을 바로 찾는다
 import { parseInternalLink } from './internalLink'
 import { normalizeView } from '../components/layout/navConfig'
-import { useProjectStore } from '../stores/projectStore'
+import { useNavigationStore } from '../stores/navigationStore'
 import { useTodoStore } from '../stores/todoStore'
 import { useRecordingStore } from '../stores/recordingStore'
 import { useMeetingNotesStore } from '../stores/meetingNotesStore'
@@ -13,16 +13,10 @@ import { useFocusStore } from '../stores/focusStore'
 export async function openInternalLink(href: string): Promise<void> {
   const target = parseInternalLink(href)
   if (!target) return
-  const { fetchProject, setProjectView, setView } = useProjectStore.getState()
+  const { setView } = useNavigationStore.getState()
   const { requestFocus } = useFocusStore.getState()
 
   switch (target.kind) {
-    case 'project':
-      await fetchProject(target.id)
-      if (target.taskId !== null) requestFocus({ entity: 'task', id: target.taskId })
-      setProjectView('detail')
-      setView('projects')
-      return
     case 'document': {
       const docs = await window.api.document.listAll()
       const doc = docs.find((d) => d.id === target.id)
@@ -64,7 +58,7 @@ export async function openInternalLink(href: string): Promise<void> {
     }
     case 'note': {
       const notes = useMeetingNotesStore.getState()
-      notes.setFilter({ q: '', kind: 'all', projectId: null })
+      notes.setFilter({ q: '', kind: 'all' })
       void notes.select(target.id)
       requestFocus({ entity: 'note', id: target.id })
       setView('notes')

@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { useCalendarStore, useWeekEvents, weekKey } from '../../stores/calendarStore'
 import { useTodoStore } from '../../stores/todoStore'
-import { useProjectStore } from '../../stores/projectStore'
+import { useNavigationStore } from '../../stores/navigationStore'
 import type { Todo } from '../../types'
 import { SectionTitle } from '../ui'
 import TodaySchedule from './TodaySchedule'
@@ -25,7 +25,7 @@ export default function HomeSchedule({
 }): React.ReactNode {
   const { status, fetchEvents, fetchStatus } = useCalendarStore()
   const { activeTodos, fetchActiveTodos, setSelectedTodoId, setFilterTagId } = useTodoStore()
-  const { setView } = useProjectStore()
+  const setView = useNavigationStore((s) => s.setView)
   const base = useMemo(() => homeBaseDate(logicalDate), [logicalDate])
   const baseWeek = weekKey(base)
   const events = useWeekEvents(base)

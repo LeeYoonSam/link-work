@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { useRecognitionAidsStore } from '../../stores/recognitionAidsStore'
-import { useProjectStore } from '../../stores/projectStore'
 import type { GlossaryEntry, Member } from '../../types'
 import { Badge, IconButton, TrashIcon } from '../ui'
 
@@ -51,13 +50,11 @@ export default function RecognitionAidsPanel({
     upsertMember,
     removeMember
   } = useRecognitionAidsStore()
-  const { projects, fetchProjects } = useProjectStore()
 
   const [tab, setTab] = useState<AidsTab>(initialTab)
 
   useEffect(() => {
     void fetchAll()
-    void fetchProjects()
   }, [])
 
   return (
@@ -107,7 +104,6 @@ export default function RecognitionAidsPanel({
       {tab === 'glossary' ? (
         <GlossaryTab
           entries={glossary}
-          projects={projects.map((p) => ({ id: p.id, name: p.name }))}
           onUpsert={upsertGlossary}
           onRemove={removeGlossary}
           onImport={importGlossaryText}
@@ -128,18 +124,15 @@ type UpsertGlossary = (input: {
   note?: string | null
   priority?: number
   enabled?: boolean
-  project_id?: number | null
 }) => Promise<boolean>
 
 function GlossaryTab({
   entries,
-  projects,
   onUpsert,
   onRemove,
   onImport
 }: {
   entries: GlossaryEntry[]
-  projects: { id: number; name: string }[]
   onUpsert: UpsertGlossary
   onRemove: (id: number) => Promise<boolean>
   onImport: (text: string) => Promise<{ added: number; updated: number; skipped: number } | null>
@@ -194,7 +187,6 @@ function GlossaryTab({
             <GlossaryRow
               key={e.id}
               entry={e}
-              projects={projects}
               onUpsert={onUpsert}
               onRemove={onRemove}
             />
@@ -271,12 +263,10 @@ function GlossaryTab({
 
 function GlossaryRow({
   entry,
-  projects,
   onUpsert,
   onRemove
 }: {
   entry: GlossaryEntry
-  projects: { id: number; name: string }[]
   onUpsert: UpsertGlossary
   onRemove: (id: number) => Promise<boolean>
 }): React.ReactNode {
@@ -313,7 +303,6 @@ function GlossaryRow({
         note: note.trim() === '' ? null : note.trim(),
         priority: Number.isNaN(parsedPriority) ? 0 : parsedPriority,
         enabled: entry.enabled === 1,
-        project_id: entry.project_id,
         ...patch
       })
     } finally {
@@ -393,21 +382,6 @@ function GlossaryRow({
           title="우선순위 — 높을수록 전사 힌트에 먼저 들어갑니다"
           className={`w-14 shrink-0 text-center ${input}`}
         />
-        <select
-          value={entry.project_id ?? ''}
-          onChange={(ev) =>
-            void save({ project_id: ev.target.value ? Number(ev.target.value) : null })
-          }
-          title="이 용어를 쓸 범위"
-          className={`w-32 shrink-0 bg-white ${input}`}
-        >
-          <option value="">전역</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
       </div>
     </li>
   )

@@ -25,7 +25,6 @@ const basePayload = (over: Partial<MeetingBriefingPayload> = {}): MeetingBriefin
   },
   title: '결제 주간 회의 15분 전',
   body: '결제 · 미완료 액션 2건',
-  projects: [{ id: 3, name: '결제' }],
   hasContext: true,
   ruleMarkdown: '# 결제 주간 회의 11:00\n- 관련 프로젝트: 결제\n## 지난 회의\n- 10-26 결제 주간 회의 — 환불 정책 확정',
   llmStatus: 'off',
@@ -216,6 +215,9 @@ describe('MeetingBriefingCard 순수 헬퍼', () => {
     expect(p?.llmStatus).toBe('off')
     expect(p?.meeting.id).toBe('cal-1')
     expect(parseMeetingPayload(JSON.stringify(basePayload()))).toEqual(basePayload())
+    // 옛 행에 남은 projects 키는 무시한다
+    const legacy = { ...basePayload(), projects: [{ id: 3, name: '결제' }] }
+    expect(parseMeetingPayload(JSON.stringify(legacy))).toEqual(basePayload())
   })
 
   it('briefingBadge: done 이면 AI 브리핑, 아니면 규칙 브리핑', () => {

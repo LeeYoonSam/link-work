@@ -1,9 +1,7 @@
 import { useEffect, useRef } from 'react'
 import Sidebar from './components/layout/Sidebar'
 import Header from './components/layout/Header'
-import ProjectList from './components/project/ProjectList'
-import ProjectForm from './components/project/ProjectForm'
-import ProjectDetail from './components/project/ProjectDetail'
+import ProjectBoardView from './components/project/ProjectBoardView'
 import CalendarView from './components/calendar/CalendarView'
 import DocumentList from './components/document/DocumentList'
 import VariableList from './components/variable/VariableList'
@@ -14,10 +12,10 @@ import TrayPanel from './components/tray/TrayPanel'
 import AiChatView from './components/ai/AiChatView'
 import RecordingView from './components/recording/RecordingView'
 import MeetingNotesView from './components/notes/MeetingNotesView'
-import ReleasesView from './components/project/ReleasesView'
+import ReleasesView from './components/release/ReleasesView'
 import TodayView from './components/today/TodayView'
 import SettingsView from './components/settings/SettingsView'
-import { useProjectStore } from './stores/projectStore'
+import { useNavigationStore } from './stores/navigationStore'
 import { useAssistantStore } from './stores/assistantStore'
 import { installRecorderBridge } from './stores/recorderSession'
 import { installDataSync } from './stores/dataSync'
@@ -34,7 +32,7 @@ function App(): React.ReactNode {
     )
   }
 
-  const { view, projectView } = useProjectStore()
+  const view = useNavigationStore((s) => s.view)
   // 첫 화면 판정을 창마다 1번만 적용한다 (StrictMode 이중 마운트 방지)
   const startViewDecided = useRef(false)
 
@@ -49,7 +47,7 @@ function App(): React.ReactNode {
     const api = window.api?.assistant
     if (!api) return
     const goToday = (p: AssistantNavigateEvent): void => {
-      useProjectStore.getState().setView('today')
+      useNavigationStore.getState().setView('today')
       useAssistantStore.getState().setFocus(p.focus ?? null)
     }
     const unsubscribe = api.onNavigate(goToday)
@@ -75,10 +73,10 @@ function App(): React.ReactNode {
     startViewDecided.current = true
     const api = window.api?.assistant
     if (!api || typeof api.getSettings !== 'function') return
-    const viewAtStart = useProjectStore.getState().view
+    const viewAtStart = useNavigationStore.getState().view
     let moved = false
     // A→B→A 이동도 '이동함'으로 본다. StrictMode cleanup 에 묶지 않고 판정 끝에 해제한다
-    const unsubscribe = useProjectStore.subscribe((s, prev) => {
+    const unsubscribe = useNavigationStore.subscribe((s, prev) => {
       if (s.view !== prev.view) moved = true
     })
     api
@@ -86,9 +84,8 @@ function App(): React.ReactNode {
       .then((settings) => {
         const target = resolveStartView(settings?.startView)
         if (target === 'today') return
-        const store = useProjectStore.getState()
+        const store = useNavigationStore.getState()
         if (moved || store.view !== viewAtStart) return
-        if (target === 'projects') store.setProjectView('list')
         store.setView(target)
       })
       .catch(() => undefined)
@@ -100,16 +97,7 @@ function App(): React.ReactNode {
       case 'today':
         return <TodayView />
       case 'projects':
-        switch (projectView) {
-          case 'list':
-            return <ProjectList />
-          case 'form':
-            return <ProjectForm />
-          case 'detail':
-            return <ProjectDetail />
-          default:
-            return <ProjectList />
-        }
+        return <ProjectBoardView />
       case 'todos':
         return <TodoView />
       case 'documents':

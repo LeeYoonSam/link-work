@@ -6,7 +6,6 @@ import type {
   CandidatePriority,
   JiraCandidateInput,
   PlanExclusion,
-  TaskRow,
   TodoRow
 } from './assistant-types'
 import { classifyWork } from './assistant-worktype'
@@ -25,12 +24,6 @@ function toPriority(value: string | null | undefined): CandidatePriority | null 
   return value === 'high' || value === 'medium' || value === 'low' ? value : null
 }
 
-const PROJECT_PRIORITY: Record<string, CandidatePriority> = {
-  now: 'high',
-  next: 'medium',
-  later: 'low'
-}
-
 const JIRA_PRIORITY: Record<string, CandidatePriority> = {
   Highest: 'high',
   High: 'high',
@@ -42,32 +35,6 @@ const JIRA_PRIORITY: Record<string, CandidatePriority> = {
 function normalizeKey(key: string | null | undefined): string | null {
   const k = key?.trim()
   return k ? k.toUpperCase() : null
-}
-
-function fromTask(t: TaskRow, touched: Record<number, string>): Candidate {
-  const jiraKey = normalizeKey(t.jira_issue_key)
-  const { workType, workVersion } = classifyWork({
-    source: 'task', jiraKey, title: t.name, parentSummary: null, projectName: t.project_name, issueType: null
-  })
-  return {
-    id: `task:${t.id}`,
-    source: 'task',
-    title: t.name,
-    jiraKey,
-    projectId: t.project_id,
-    projectName: t.project_name,
-    dueDate: toDate(t.end_date),
-    dueTime: null,
-    inProgress: t.status === 'in_progress',
-    priority: t.project_priority ? (PROJECT_PRIORITY[t.project_priority] ?? null) : null,
-    jiraPriority: null,
-    lastTouchedAt: touched[t.id] ?? null,
-    link: `linkwork://project/${t.project_id}/task/${t.id}`,
-    parentKey: null,
-    groupName: t.project_name,
-    workType,
-    workVersion
-  }
 }
 
 function fromTodo(t: TodoRow): Candidate {
@@ -144,66 +111,20 @@ function fromActionItem(a: ActionItemRow): Candidate {
   }
 }
 
-/** task 와 jira 를 합친다. 식별·이동 경로는 task, 상태는 jira 가 우선이다.
- *  분류는 task 제목·jira 부모 요약·jira 이슈 유형·task 프로젝트 이름으로 다시 계산한다 (J.9.4). */
-function mergeTaskJira(task: Candidate, jira: Candidate, raw: JiraCandidateInput): Candidate {
-  const { workType, workVersion } = classifyWork({
-    source: 'task', jiraKey: jira.jiraKey, title: task.title, parentSummary: raw.parentSummary,
-    projectName: task.projectName, issueType: raw.issueType
-  })
-  return {
-    ...task,
-    jiraKey: jira.jiraKey,
-    inProgress: jira.inProgress,
-    priority: jira.priority ?? task.priority,
-    jiraPriority: jira.jiraPriority,
-    dueDate: jira.dueDate ?? task.dueDate,
-    lastTouchedAt: jira.lastTouchedAt ?? task.lastTouchedAt,
-    parentKey: jira.parentKey,
-    groupName: jira.groupName ?? task.groupName,
-    workType,
-    workVersion
-  }
-}
-
 function byId(a: Candidate, b: Candidate): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
 /** §4 정규화·중복 제거 (A4). 결과는 id 오름차순이다. */
 export function buildCandidates(input: CandidateInput): Candidate[] {
-  const touched = input.taskTouchedAt ?? {}
-
   // jira: 완료 이슈는 후보가 아니다. 같은 키는 첫 1건만 쓴다.
   const jiraByKey = new Map<string, Candidate>()
-  const jiraInputByKey = new Map<string, JiraCandidateInput>()
   for (const j of input.jiraIssues ?? []) {
     if (j.statusCategory === 'done') continue
     const c = fromJira(j)
-    if (c.jiraKey && !jiraByKey.has(c.jiraKey)) {
-      jiraByKey.set(c.jiraKey, c)
-      jiraInputByKey.set(c.jiraKey, j)
-    }
+    if (c.jiraKey && !jiraByKey.has(c.jiraKey)) jiraByKey.set(c.jiraKey, c)
   }
-
-  // task: id 오름차순으로 보고, 같은 jiraKey 는 가장 작은 id 1건만 남긴다.
-  const tasks = [...input.tasks].sort((a, b) => a.id - b.id)
-  const usedKeys = new Set<string>()
-  const result: Candidate[] = []
-  for (const t of tasks) {
-    let c = fromTask(t, touched)
-    if (c.jiraKey) {
-      if (usedKeys.has(c.jiraKey)) continue
-      usedKeys.add(c.jiraKey)
-      const jira = jiraByKey.get(c.jiraKey)
-      const raw = jiraInputByKey.get(c.jiraKey)
-      if (jira && raw) c = mergeTaskJira(c, jira, raw)
-    }
-    result.push(c)
-  }
-  for (const [key, c] of jiraByKey) {
-    if (!usedKeys.has(key)) result.push(c)
-  }
+  const result: Candidate[] = [...jiraByKey.values()]
 
   const seenIds = new Set(result.map((c) => c.id))
   for (const t of input.todos) {

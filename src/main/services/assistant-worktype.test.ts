@@ -1,15 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { QA_EPIC_PATTERN, SUSTAIN_EPIC_PATTERN } from './project-sync-plan'
 import type { PlanItem, WorkClassifyInput } from './assistant-types'
 import {
   classifyWork,
   extractVersion,
   isGroupCandidate,
   isGroupItem,
-  QA_PATTERN,
-  SUSTAIN_PATTERN,
   WORK_TYPE_LABEL,
   workTypeLabel
 } from './assistant-worktype'
@@ -133,13 +130,6 @@ describe('extractVersion (A48)', () => {
 })
 
 describe('패턴·라벨 (A48)', () => {
-  it('A48: SUSTAIN·QA 패턴이 project-sync-plan 과 같다', () => {
-    expect(SUSTAIN_PATTERN.source).toBe(SUSTAIN_EPIC_PATTERN.source)
-    expect(SUSTAIN_PATTERN.flags).toBe(SUSTAIN_EPIC_PATTERN.flags)
-    expect(QA_PATTERN.source).toBe(QA_EPIC_PATTERN.source)
-    expect(QA_PATTERN.flags).toBe(QA_EPIC_PATTERN.flags)
-  })
-
   it('A48: workTypeLabel 은 qa 에만 버전을 붙인다', () => {
     expect(workTypeLabel('qa', '4.174.0')).toBe('QA 4.174.0')
     expect(workTypeLabel('qa', null)).toBe('QA')

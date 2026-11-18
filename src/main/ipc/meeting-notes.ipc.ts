@@ -16,7 +16,6 @@ import {
 interface MeetingNoteFilter {
   q?: string
   kind?: 'all' | 'meeting' | 'interview'
-  projectId?: number | null // null·undefined=전체, 숫자=해당 프로젝트
 }
 
 interface ListRow {
@@ -25,8 +24,6 @@ interface ListRow {
   kind: 'meeting' | 'interview'
   started_at: string
   duration_ms: number
-  project_id: number | null
-  project_name: string | null
   tldr: string | null
   key_points: string | null
   decisions: string | null
@@ -64,20 +61,13 @@ export function listMeetingNotes(db: Db, filter?: MeetingNoteFilter) {
     where.push('m.kind = ?')
     params.push(filter.kind)
   }
-  // null·undefined 는 전체다. 이유: 화면의 "모든 프로젝트"와 스토어 기본값이 null 을 보낸다
-  if (typeof filter?.projectId === 'number') {
-    where.push('m.project_id = ?')
-    params.push(filter.projectId)
-  }
 
   const rows = db
     .prepare(
-      `SELECT m.id, m.title, m.kind, m.started_at, m.duration_ms, m.project_id,
-              p.name AS project_name, s.tldr, s.key_points, s.decisions, s.action_items,
-              s.generated_at
+      `SELECT m.id, m.title, m.kind, m.started_at, m.duration_ms, s.tldr, s.key_points,
+              s.decisions, s.action_items, s.generated_at
          FROM meetings m
          JOIN meeting_summaries s ON s.meeting_id = m.id
-         LEFT JOIN projects p ON p.id = m.project_id
         WHERE ${where.join(' AND ')}
         ORDER BY m.started_at DESC, m.id DESC`
     )
@@ -91,8 +81,6 @@ export function listMeetingNotes(db: Db, filter?: MeetingNoteFilter) {
       kind: r.kind,
       started_at: r.started_at,
       duration_ms: r.duration_ms,
-      project_id: r.project_id,
-      project_name: r.project_name,
       tldr: r.tldr,
       key_point_count: parseJsonArray(r.key_points).length,
       decision_count: parseJsonArray(r.decisions).length,
@@ -106,7 +94,7 @@ export function listMeetingNotes(db: Db, filter?: MeetingNoteFilter) {
 
 export function meetingNoteMarkdown(db: Db, id: number): string {
   const meeting = db.prepare('SELECT * FROM meetings WHERE id = ?').get(id) as
-    | (NoteDetail['meeting'] & { project_id: number | null })
+    | NoteDetail['meeting']
     | undefined
   if (!meeting) return ''
   const speakers = db
@@ -131,19 +119,12 @@ export function meetingNoteMarkdown(db: Db, id: number): string {
         fact_checks: parseJsonArray(s.fact_checks)
       }
     : null
-  const project =
-    meeting.project_id != null
-      ? (db.prepare('SELECT name FROM projects WHERE id = ?').get(meeting.project_id) as
-          | { name: string }
-          | undefined)
-      : undefined
   return buildMeetingNoteMarkdown({
     meeting,
     speakers,
     segments,
     summary,
-    attendees: listAttendees(db, id),
-    projectName: project?.name ?? null
+    attendees: listAttendees(db, id)
   })
 }
 

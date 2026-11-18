@@ -19,8 +19,6 @@ const note = (id: number, title: string, startedAt: string): MeetingNoteItem => 
   kind: 'meeting',
   started_at: startedAt,
   duration_ms: 30 * 60_000,
-  project_id: null,
-  project_name: null,
   tldr: `${title} 요약`,
   key_point_count: 1,
   decision_count: 2,

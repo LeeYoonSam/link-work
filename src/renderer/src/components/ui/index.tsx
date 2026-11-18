@@ -2,8 +2,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ReactNode, MouseEventHandler } from 'react'
-import { typo, surface, taskTag } from './tokens'
-import { parseTaskLabel, isIssueKey } from '../../utils/taskLabel'
+import { typo, surface } from './tokens'
 import { placeTooltip, TOOLTIP_MARGIN } from '../../utils/tooltipPosition'
 
 export * from './tokens'
@@ -370,45 +369,5 @@ export function ClampedText({
     <Tooltip content={text} className="block min-w-0" focusable={focusable}>
       {body}
     </Tooltip>
-  )
-}
-
-// 작업명 선두의 `[PROJ-1681] [검색홈]` 같은 접두사를 칩으로 떼어내 제목이 쓸 폭을 넓힌다.
-// 칩은 inline-flex라야 제목과 한 흐름에 놓여 line-clamp가 전체에 걸린다.
-export function TaskLabel({
-  name,
-  lines = 2,
-  className = '',
-  leading,
-  focusable = true
-}: {
-  name: string
-  lines?: 1 | 2
-  className?: string
-  /** 행 높이 제어용 line-height 클래스 (예: 'leading-[14px]') */
-  leading?: string
-  /** 조상이 이미 포커스 가능하면 false로 넘긴다 */
-  focusable?: boolean
-}): React.ReactNode {
-  const { tags, title } = parseTaskLabel(name)
-  return (
-    <ClampedText
-      text={name}
-      lines={lines}
-      focusable={focusable}
-      className={`${leading ?? ''} ${className}`}
-    >
-      {tags.map((tag, i) => (
-        <span
-          key={`${tag}-${i}`}
-          className={`mr-1 inline-flex items-center align-baseline whitespace-nowrap rounded px-1 py-0 text-[10px] ${
-            isIssueKey(tag) ? taskTag.issue : taskTag.domain
-          }`}
-        >
-          {tag}
-        </span>
-      ))}
-      {title}
-    </ClampedText>
   )
 }

@@ -190,14 +190,14 @@ export function formatCheckedAt(iso: string | null): string | null {
 /** 해제 전 확인 문구. 카드와 팝업이 같은 문구를 쓴다 */
 export const DISCONNECT_CONFIRM: Record<IntegrationId, string> = {
   google: 'Google 캘린더 연결을 해제할까요? 회의 일정을 더 이상 가져오지 않습니다.',
-  jira: 'Jira 연결을 해제할까요? 릴리스 노트와 프로젝트 싱크업을 더 이상 쓸 수 없습니다.',
+  jira: 'Jira 연결을 해제할까요? 릴리스 노트와 프로젝트 보드를 더 이상 쓸 수 없습니다.',
   bitbucket: 'Bitbucket 연결을 해제할까요? AI가 더 이상 Bitbucket 저장소를 읽을 수 없습니다.',
   notion: 'Notion 연결을 해제할까요? AI가 더 이상 Notion 문서를 읽을 수 없습니다.'
 }
 
 export const INTEGRATION_LABELS: Record<IntegrationId, { title: string; purpose: string }> = {
   google: { title: 'Google 캘린더', purpose: '캘린더 화면과 오늘 화면에 회의 일정을 가져옵니다' },
-  jira: { title: 'Jira', purpose: '릴리스 노트와 프로젝트 싱크업에 Jira 이슈를 읽어 옵니다' },
+  jira: { title: 'Jira', purpose: '릴리스 노트와 프로젝트 보드에 Jira 이슈를 읽어 옵니다' },
   bitbucket: { title: 'Bitbucket', purpose: 'AI 대화가 저장소의 파일과 PR 을 읽습니다' },
   notion: { title: 'Notion', purpose: 'AI 대화가 Notion 문서를 검색하고 읽습니다' }
 }

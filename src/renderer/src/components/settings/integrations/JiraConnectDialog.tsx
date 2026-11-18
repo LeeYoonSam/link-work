@@ -93,7 +93,7 @@ export default function JiraConnectDialog({
   return (
     <ConnectDialog
       title="Jira 연결"
-      purpose="릴리스 노트와 프로젝트 싱크업이 Jira 이슈를 읽어 옵니다(읽기 전용)."
+      purpose="릴리스 노트와 프로젝트 보드가 Jira 이슈를 읽어 옵니다(읽기 전용)."
       scopes={JIRA_SCOPES}
       scopesNote="Atlassian API 토큰은 최대 1년까지 유효합니다. Bitbucket 과 같은 발급 페이지를 씁니다."
       issueUrl={ATLASSIAN_TOKEN_URL}

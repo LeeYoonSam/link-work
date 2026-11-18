@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 // 앱 내 링크가 화면에 넘기는 포커스 요청이다.
 // 할 일은 todoStore.selectedTodoId, 오늘은 assistantStore.setFocus 를 쓴다
-export type FocusEntity = 'memo' | 'task' | 'variable' | 'release' | 'recording' | 'note' | 'calendar'
+export type FocusEntity = 'memo' | 'variable' | 'release' | 'recording' | 'note' | 'calendar'
 
 export type FocusRequest =
   | { entity: Exclude<FocusEntity, 'calendar'>; id: number; nonce: number }

@@ -5,7 +5,6 @@ import {
   buildMeetingBriefing,
   escapeMarkdownText,
   hasMeetingContext,
-  matchProjects,
   MEETING_LINE_MAX,
   MEETING_TITLE_MAX,
   meetingNoticeText,
@@ -17,17 +16,14 @@ import type { MeetingContext } from './assistant-types'
 function ctx(over: Partial<MeetingContext> = {}): MeetingContext {
   return {
     meeting: { id: 'evt1', title: 'LinkWork 주간 회의', startAt: '2026-11-02 14:00:00', endAt: '2026-11-02 15:00:00' },
-    projects: [],
     pastMeetings: [],
     openActionItems: [],
-    relatedItems: [],
     errors: [],
     ...over
   }
 }
 
 const FULL = ctx({
-  projects: [{ id: 1, name: 'LinkWork' }, { id: 2, name: '비서' }],
   pastMeetings: [
     {
       meetingId: 10, title: 'LinkWork 주간 회의', startedAt: '2026-10-26 14:00:00',
@@ -35,8 +31,7 @@ const FULL = ctx({
     },
     { meetingId: 9, title: 'LinkWork 주간회의', startedAt: '2026-10-19 14:00:00', tldr: null, openActionItems: [] }
   ],
-  openActionItems: ['QA 체크리스트 작성', '릴리스 노트 초안'],
-  relatedItems: [{ id: 5, title: '비서 MVP5 구현', status: 'in_progress' }]
+  openActionItems: ['QA 체크리스트 작성', '릴리스 노트 초안']
 })
 
 describe('상수', () => {
@@ -64,55 +59,12 @@ describe('normalizeTitle·sameTitle', () => {
   })
 })
 
-describe('matchProjects', () => {
-  it('matchProjects: 정규화한 제목에 프로젝트 이름이 포함되면 매칭이다', () => {
-    const projects = [
-      { id: 1, name: 'Link Work' },
-      { id: 2, name: '결제' },
-      { id: 3, name: '정산' }
-    ]
-    expect(matchProjects('[LinkWork] 결제 연동 리뷰', projects)).toEqual([
-      { id: 1, name: 'Link Work' },
-      { id: 2, name: '결제' }
-    ])
-    expect(matchProjects('전사 타운홀', projects)).toEqual([])
-  })
-
-  it('matchProjects: 정규화한 이름이 1자인 프로젝트는 제외한다', () => {
-    const projects = [{ id: 1, name: 'A' }, { id: 2, name: '앱' }, { id: 3, name: ' A! ' }, { id: 4, name: '앱 팀' }]
-    expect(matchProjects('A 앱 팀 회의', projects)).toEqual([{ id: 4, name: '앱 팀' }])
-  })
-
-  it('matchProjects: 최대 3건이다. 이름 길이 내림차순, 같으면 id 오름차순이다', () => {
-    const projects = [
-      { id: 5, name: '검색' },
-      { id: 4, name: '결제' },
-      { id: 3, name: '추천엔진' },
-      { id: 2, name: '정산시스템' },
-      { id: 1, name: '중복' },
-      { id: 1, name: '중복' }
-    ]
-    const r = matchProjects('정산시스템 추천엔진 결제 검색 중복 통합 회의', projects)
-    expect(r).toEqual([
-      { id: 2, name: '정산시스템' },
-      { id: 3, name: '추천엔진' },
-      { id: 1, name: '중복' }
-    ])
-  })
-
-  it('matchProjects: 제목이 비면 빈 배열이다', () => {
-    expect(matchProjects('   ', [{ id: 1, name: '결제' }])).toEqual([])
-  })
-})
-
 describe('hasMeetingContext', () => {
   it('자료가 하나라도 있으면 참이다. errors 만 있으면 거짓이다', () => {
     expect(hasMeetingContext(ctx())).toBe(false)
     expect(hasMeetingContext(ctx({ errors: ['지난 회의를 읽지 못했습니다'] }))).toBe(false)
-    expect(hasMeetingContext(ctx({ projects: [{ id: 1, name: '결제' }] }))).toBe(true)
     expect(hasMeetingContext(ctx({ pastMeetings: FULL.pastMeetings }))).toBe(true)
     expect(hasMeetingContext(ctx({ openActionItems: ['x'] }))).toBe(true)
-    expect(hasMeetingContext(ctx({ relatedItems: FULL.relatedItems }))).toBe(true)
   })
 })
 
@@ -120,22 +72,18 @@ describe('buildMeetingBriefing', () => {
   it('I.6 형식으로 모든 절을 만든다', () => {
     expect(buildMeetingBriefing(FULL).split('\n')).toEqual([
       '# LinkWork 주간 회의 14:00',
-      '- 관련 프로젝트: LinkWork, 비서',
       '## 지난 회의',
       '- 10-26 LinkWork 주간 회의 — 배포 일정 확정. 다음 주 QA 진행',
       '- 10-19 LinkWork 주간회의',
       '## 미완료 액션아이템 (2)',
       '- QA 체크리스트 작성',
-      '- 릴리스 노트 초안',
-      '## 오늘 계획 중 관련 항목',
-      '- 비서 MVP5 구현'
+      '- 릴리스 노트 초안'
     ])
   })
 
-  it('자료가 없으면 없음 문구를 쓰고 액션아이템·관련 항목 절을 뺀다', () => {
+  it('자료가 없으면 없음 문구를 쓰고 액션아이템 절을 뺀다', () => {
     expect(buildMeetingBriefing(ctx()).split('\n')).toEqual([
       '# LinkWork 주간 회의 14:00',
-      '- 관련 프로젝트 없음',
       '## 지난 회의',
       '- 같은 제목의 지난 회의 없음'
     ])
@@ -146,8 +94,7 @@ describe('buildMeetingBriefing', () => {
     const md = buildMeetingBriefing(ctx({
       meeting: { ...FULL.meeting, title: long },
       pastMeetings: [{ ...FULL.pastMeetings[0], tldr: long }],
-      openActionItems: [long],
-      relatedItems: [{ id: 1, title: long, status: 'planned' }]
+      openActionItems: [long]
     }))
     const lines = md.split('\n')
     for (const l of lines) expect(Array.from(l).length).toBeLessThanOrEqual(MEETING_LINE_MAX)
@@ -162,10 +109,8 @@ describe('buildMeetingBriefing', () => {
     const evil = '[보안 확인](https://evil.example)'
     const md = buildMeetingBriefing(ctx({
       meeting: { ...FULL.meeting, title: evil },
-      projects: [{ id: 1, name: evil }],
       pastMeetings: [{ ...FULL.pastMeetings[0], title: evil, tldr: evil }],
-      openActionItems: [evil],
-      relatedItems: [{ id: 1, title: evil, status: 'planned' }]
+      openActionItems: [evil]
     }))
     // 이스케이프하지 않은 링크 문법이 본문 어디에도 없다
     expect(md).not.toMatch(/(^|[^\\])\[[^\]]*[^\\]\]\(/m)
@@ -183,14 +128,14 @@ describe('buildMeetingBriefing', () => {
 })
 
 describe('meetingNoticeText', () => {
-  it('제목은 <회의 제목> <lead>분 전, 본문은 <프로젝트> · 미완료 액션 N건 이다', () => {
+  it('제목은 <회의 제목> <lead>분 전, 본문은 미완료 액션 N건 이다', () => {
     expect(meetingNoticeText(FULL, 15)).toEqual({
       title: 'LinkWork 주간 회의 15분 전',
-      body: 'LinkWork, 비서 · 미완료 액션 2건'
+      body: '미완료 액션 2건'
     })
     expect(meetingNoticeText(ctx(), 10)).toEqual({
       title: 'LinkWork 주간 회의 10분 전',
-      body: '관련 프로젝트 없음 · 미완료 액션 0건'
+      body: '미완료 액션 0건'
     })
   })
 

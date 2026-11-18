@@ -154,7 +154,7 @@ export const MORNING_SYNC_MAX_ATTEMPTS = 3
 /** running 이 이보다 오래되면 failed 로 본다. 앱이 동기화 중에 꺼진 경우다. */
 export const MORNING_SYNC_STALE_MIN = 15
 /** 판정 순서다. 실행기도 이 순서로 실행한다. */
-export const MORNING_SYNC_PARTS: readonly MorningSyncPartName[] = ['release', 'project']
+export const MORNING_SYNC_PARTS: readonly MorningSyncPartName[] = ['release']
 
 // 마지막 시도 뒤 간격이 지났는지. 시각을 읽지 못하면 지났다고 본다
 function retryGapPassed(part: MorningSyncPart, at: string): boolean {

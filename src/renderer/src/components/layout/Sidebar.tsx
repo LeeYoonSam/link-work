@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useProjectStore } from '../../stores/projectStore'
+import { useNavigationStore } from '../../stores/navigationStore'
 import { formatElapsed, useRecorderStore } from '../../stores/recorderStore'
 import { useMorningSyncStore, type MorningSyncPartName } from '../../stores/morningSyncStore'
 import MenuIcon from '../icons/MenuIcon'
@@ -7,22 +7,19 @@ import { NAV_FOOTER, NAV_GROUPS, type ViewId } from './navConfig'
 
 // 아침 자동 동기화의 새 항목 배지를 다는 메뉴다
 const MORNING_BADGE_PART: Partial<Record<ViewId, MorningSyncPartName>> = {
-  projects: 'project',
   releases: 'release'
 }
 
 export default function Sidebar(): React.ReactNode {
-  const { view, setView, setProjectView } = useProjectStore()
+  const { view, setView } = useNavigationStore()
   const recorderState = useRecorderStore((s) => s.state)
   // 초 단위로만 구독해 리렌더를 1초에 한 번으로 제한
   const elapsedSec = useRecorderStore((s) => Math.floor(s.elapsedMs / 1000))
   const isRecording = recorderState === 'recording' || recorderState === 'paused'
-  const unseenProject = useMorningSyncStore((s) => s.unseenCount('project'))
   const unseenRelease = useMorningSyncStore((s) => s.unseenCount('release'))
   const markSeen = useMorningSyncStore((s) => s.markSeen)
 
   const unseen: Record<MorningSyncPartName, number> = {
-    project: unseenProject,
     release: unseenRelease
   }
 
@@ -31,7 +28,7 @@ export default function Sidebar(): React.ReactNode {
     const part = MORNING_BADGE_PART[view]
     if (part && unseen[part] > 0) markSeen(part)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, unseenProject, unseenRelease])
+  }, [view, unseenRelease])
 
   return (
     <aside className="w-56 bg-gray-900 text-white flex flex-col h-screen">
@@ -52,10 +49,7 @@ export default function Sidebar(): React.ReactNode {
               return (
                 <button
                   key={item.id}
-                  onClick={() => {
-                    setView(item.id)
-                    if (item.id === 'projects') setProjectView('list')
-                  }}
+                  onClick={() => setView(item.id)}
                   className={`w-full text-left px-4 py-2.5 flex items-center gap-3 text-sm transition-colors ${
                     view === item.id
                       ? 'bg-gray-700 text-white'

@@ -15,8 +15,8 @@ vi.mock('../../stores/recordingStore', () => ({
 vi.mock('../../stores/meetingNotesStore', () => ({
   useMeetingNotesStore: Object.assign(() => ({}), { getState: () => ({ select: () => {} }) })
 }))
-vi.mock('../../stores/projectStore', () => ({
-  useProjectStore: Object.assign(() => ({}), { getState: () => ({ setView: () => {} }) })
+vi.mock('../../stores/navigationStore', () => ({
+  useNavigationStore: Object.assign(() => ({}), { getState: () => ({ setView: () => {} }) })
 }))
 
 const SummaryPanel = (await import('./SummaryPanel')).default

@@ -60,12 +60,6 @@ export function registerRecognitionAidsIpc(): void {
     if (priority !== undefined) payload.priority = priority
     const enabled = asBoolean(raw.enabled)
     if (enabled !== undefined) payload.enabled = enabled
-    // project_id는 null(전역)이 정상 값이라 undefined와 구분해서 넘긴다.
-    if (raw.project_id === null) payload.project_id = null
-    else {
-      const projectId = asId(raw.project_id)
-      if (projectId !== null) payload.project_id = projectId
-    }
     return upsertGlossary(db, payload)
   })
 

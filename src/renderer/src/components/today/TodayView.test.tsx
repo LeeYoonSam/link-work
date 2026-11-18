@@ -202,16 +202,9 @@ vi.mock('../dashboard/HomeSchedule', () => ({
     <div id="home-schedule" data-logical={props.logicalDate ? 'yes' : 'no'} />
   )
 }))
-// 진행 중 프로젝트(home-projects)와 중요 메모(home-overview)는 따로 그린다 (부록 M.11 Q1)
+// 중요 메모(home-overview) 표식이다 (부록 M.11 Q1)
 vi.mock('../dashboard/HomeOverview', () => ({
-  HomeProjects: () => <div id="home-projects" />,
-  HomeMemos: () => <div id="home-overview" />,
-  default: () => (
-    <div>
-      <div id="home-projects" />
-      <div id="home-overview" />
-    </div>
-  )
+  HomeMemos: () => <div id="home-overview" />
 }))
 
 const TodayView = (await import('./TodayView')).default
@@ -488,7 +481,6 @@ describe('TodayView 상태별 렌더링', () => {
         meeting: { id: 'cal-1', title: '주간 스프린트', startAt: '2099-01-01 23:59:00', endAt: '2099-01-01 23:59:59' },
         title: '주간 스프린트 15분 전',
         body: '결제 · 미완료 액션 1건',
-        projects: [{ id: 3, name: '결제' }],
         hasContext: true,
         ruleMarkdown: '# 주간 스프린트 23:59\n- 관련 프로젝트: 결제',
         llmStatus: 'off',
@@ -533,7 +525,6 @@ describe('TodayView 상태별 렌더링', () => {
         meeting: { id: 'cal-2', title: '주간 스프린트', startAt: '2026-11-02 11:00:00', endAt: '2026-11-02 12:00:00' },
         title: '주간 스프린트 15분 전',
         body: '결제',
-        projects: [],
         hasContext: false,
         ruleMarkdown: '- 관련 프로젝트: 결제',
         llmStatus: 'off',
@@ -560,7 +551,6 @@ describe('TodayView 상태별 렌더링', () => {
           meeting: { id: `cal-${id}`, title, startAt, endAt: startAt },
           title: `${title} 15분 전`,
           body: '',
-          projects: [],
           hasContext: false,
           ruleMarkdown: `- ${line}`,
           llmStatus: 'off',
@@ -1015,9 +1005,9 @@ describe('오늘 화면 순수 헬퍼', () => {
     expect(rest.map((c) => c.id)).toEqual(['task:5', 'task:6', 'task:7', 'todo:9'])
   })
 
-  it('originTarget: todo·task 만 원본 완료 대상이다. jira 는 숨긴다', () => {
+  it('originTarget: todo 만 원본 완료 대상이다. 기존 행의 task·jira 는 숨긴다', () => {
     expect(originTarget({ source: 'todo', candidate_id: 'todo:5' })).toEqual({ kind: 'todo', id: 5 })
-    expect(originTarget({ source: 'task', candidate_id: 'task:12' })).toEqual({ kind: 'task', id: 12 })
+    expect(originTarget({ source: 'task', candidate_id: 'task:12' })).toBeNull()
     expect(originTarget({ source: 'jira', candidate_id: 'jira:PROJ-1' })).toBeNull()
     expect(originTarget({ source: 'action_item', candidate_id: 'action_item:7:0' })).toBeNull()
   })
@@ -1084,7 +1074,6 @@ describe('오늘 화면 배치 (부록 J.8)', () => {
         meeting: { id: 'cal-1', title: '주간 스프린트', startAt: '2099-01-01 23:59:00', endAt: '2099-01-01 23:59:59' },
         title: '주간 스프린트 15분 전',
         body: '결제',
-        projects: [],
         hasContext: false,
         ruleMarkdown: '- 관련 프로젝트: 결제',
         llmStatus: 'off',
@@ -1124,14 +1113,13 @@ describe('오늘 화면 배치 (부록 J.8)', () => {
       jiraConnected: false
     })
 
-  it('A60 근무 중 순서: 헤더(브리핑 요약) → 요약 타일 → 진행 중 프로젝트 → 오늘(할 일 → 회의) → 후보 → 기타 회의 브리핑 → 맥락 복구 → 중요 메모 → 더 보기', () => {
+  it('A60 근무 중 순서: 헤더(브리핑 요약) → 요약 타일 → 오늘(할 일 → 회의) → 후보 → 기타 회의 브리핑 → 맥락 복구 → 중요 메모 → 더 보기', () => {
     state.today = working()
     for (const html of [render(), renderOpen()]) {
       const marks = [
         '근무 중',
         'id="today-briefing"',
         'id="today-summary"',
-        'id="home-projects"',
         'id="today-agenda"',
         '>오늘</h3>',
         'id="today-tasks"',
@@ -1157,8 +1145,7 @@ describe('오늘 화면 배치 (부록 J.8)', () => {
       expect(html).not.toContain('전체 보기')
       // 후보 더 보기는 후보 카드 1곳에만 있다. 더 보기 안에는 없다 (A59)
       expect(html.split('후보 더 보기').length - 1).toBe(1)
-      // 프로젝트·메모는 1번씩만 그린다 (Q5)
-      expect(html.split('id="home-projects"').length - 1).toBe(1)
+      // 메모는 1번만 그린다 (Q5)
       expect(html.split('id="home-overview"').length - 1).toBe(1)
       // 체크인 카드는 없다 (부록 L)
       expect(html).not.toContain('어떻게 됐나요')
@@ -1177,7 +1164,7 @@ describe('오늘 화면 배치 (부록 J.8)', () => {
     expect(html).not.toContain('lg:col-span-')
   })
 
-  it('A60 계획 없음: 타일·오늘 카드·후보 카드가 없고 진행 중 프로젝트 → 홈 일정 → 회의 브리핑 → 중요 메모 → 더 보기 순이다', () => {
+  it('A60 계획 없음: 타일·오늘 카드·후보 카드가 없고 홈 일정 → 회의 브리핑 → 중요 메모 → 더 보기 순이다', () => {
     state.today = payload({ plan: null, events: [meeting()] })
     for (const html of [render(), renderOpen()]) {
       expect(html).not.toContain('today-summary')
@@ -1185,7 +1172,6 @@ describe('오늘 화면 배치 (부록 J.8)', () => {
       expect(html).not.toContain('today-inbox')
       expect(html).not.toContain('today-briefing')
       const marks = [
-        'id="home-projects"',
         'id="home-schedule"',
         'id="meeting-briefing-',
         'id="home-overview"',
@@ -1522,7 +1508,6 @@ describe('홈 일정 단일 불변식 (메뉴 통합)', () => {
         meeting: { id: 'cal-1', title: '주간 스프린트', startAt: '2099-01-01 23:59:00', endAt: '2099-01-01 23:59:59' },
         title: '주간 스프린트 15분 전',
         body: '결제',
-        projects: [],
         hasContext: false,
         ruleMarkdown: '- 관련 프로젝트: 결제',
         llmStatus: 'off',
@@ -1544,7 +1529,7 @@ describe('홈 일정 단일 불변식 (메뉴 통합)', () => {
     expect(html.indexOf('id="home-overview"')).toBeLessThan(html.indexOf('id="today-more"'))
   })
 
-  it('A60 오늘 계획을 못 읽어도 빈 카드 → 진행 중 프로젝트 → 홈 일정 → 중요 메모를 1번씩 그린다. 일정은 로컬 날짜 기준이다 (Q4)', () => {
+  it('A60 오늘 계획을 못 읽어도 빈 카드 → 홈 일정 → 중요 메모를 1번씩 그린다. 일정은 로컬 날짜 기준이다 (Q4)', () => {
     state.today = null
     const ordered = (html: string, marks: string[]): void => {
       const at = marks.map((m) => html.indexOf(m))
@@ -1553,14 +1538,14 @@ describe('홈 일정 단일 불변식 (메뉴 통합)', () => {
     }
     let html = render()
     expect(html).toContain('오늘 계획이 아직 없어요.')
-    for (const id of ['home-projects', 'home-schedule', 'home-overview']) expect(count(html, `id="${id}"`)).toBe(1)
+    for (const id of ['home-schedule', 'home-overview']) expect(count(html, `id="${id}"`)).toBe(1)
     expect(html).toContain('data-logical="no"')
-    ordered(html, ['오늘 계획이 아직 없어요.', 'id="home-projects"', 'id="home-schedule"', 'id="home-overview"'])
+    ordered(html, ['오늘 계획이 아직 없어요.', 'id="home-schedule"', 'id="home-overview"'])
     state.error = '데이터베이스를 열 수 없습니다'
     html = render()
     expect(html).toContain('다시 시도')
-    for (const id of ['home-projects', 'home-schedule', 'home-overview']) expect(count(html, `id="${id}"`)).toBe(1)
-    ordered(html, ['다시 시도', 'id="home-projects"', 'id="home-schedule"', 'id="home-overview"'])
+    for (const id of ['home-schedule', 'home-overview']) expect(count(html, `id="${id}"`)).toBe(1)
+    ordered(html, ['다시 시도', 'id="home-schedule"', 'id="home-overview"'])
   })
 
   it('TodayView 는 assistant:changed 를 직접 구독하지 않는다. 이유: dataSync 와 겹쳐 load 가 2번 돈다', () => {
@@ -1571,8 +1556,8 @@ describe('홈 일정 단일 불변식 (메뉴 통합)', () => {
   })
 })
 
-// ASSISTANT A54·PROJECT_SYNC R11 아침 자동 동기화의 변경 내역 줄과 상태 줄
-describe('아침 동기화 변경 내역 (A54, R11)', () => {
+// ASSISTANT A54 아침 자동 동기화의 변경 내역 줄과 상태 줄
+describe('아침 동기화 변경 내역 (A54)', () => {
   // 문자열을 거쳐 바꾼다. 이유: 이전 타입 정의에도 컴파일된다
   const MORNING = 'morning_sync' as string as AssistantEvent['kind']
   const morning = (body: Record<string, unknown>, over: Partial<AssistantEvent> = {}): AssistantEvent =>
@@ -1599,35 +1584,31 @@ describe('아침 동기화 변경 내역 (A54, R11)', () => {
     ...extra
   })
 
-  it('describeMorningSync: 두 부분이 성공하면 건수를 보인다', () => {
+  it('describeMorningSync: 성공하면 건수를 보인다. 옛 행의 project 파트는 무시한다', () => {
     const ev = morning({
       release: ok({ newCount: 2, updatedCount: 30 }),
       project: ok({ newCount: 1, updatedCount: 2, reviewCount: 1 })
     })
     // 릴리스의 갱신 수는 보이지 않는다
-    expect(describeMorningSync(ev)).toBe(
-      '08:01 아침 동기화 · 릴리스 새 2건 · 프로젝트 새 1건 · 갱신 2건 · 확인 필요 1건'
-    )
+    expect(describeMorningSync(ev)).toBe('08:01 아침 동기화 · 릴리스 새 2건')
     expect(describeMorningSync(morning({ release: ok({ newCount: 1, failedCount: 2 }) }))).toBe(
       '08:01 아침 동기화 · 릴리스 새 1건 · 일부 실패 2건'
     )
   })
 
   it('describeMorningSync: 변경 0건·실패·건너뜀·미룸·진행 중을 구분한다', () => {
-    expect(describeMorningSync(morning({ release: ok(), project: ok() }))).toBe(
-      '08:01 아침 동기화 · 릴리스 변경 없음 · 프로젝트 변경 없음'
-    )
+    expect(describeMorningSync(morning({ release: ok() }))).toBe('08:01 아침 동기화 · 릴리스 변경 없음')
     expect(
       describeMorningSync(
-        morning({
-          release: { status: 'failed', attempts: 2, error: 'Jira 토큰이 만료됐어요' },
-          // main 은 건너뛴 이유를 error 에 둔다
-          project: { status: 'skipped', attempts: 0, error: 'Jira 미연결' }
-        })
+        morning({ release: { status: 'failed', attempts: 2, error: 'Jira 토큰이 만료됐어요' } })
       )
-    ).toBe('08:01 아침 동기화 · 릴리스 실패 (Jira 토큰이 만료됐어요) · 프로젝트 건너뜀 (Jira 미연결)')
-    expect(describeMorningSync(morning({ project: { status: 'deferred', attempts: 1 } }))).toBe(
-      '08:01 아침 동기화 · 프로젝트 미룸 (검토 중인 미리보기 있음)'
+    ).toBe('08:01 아침 동기화 · 릴리스 실패 (Jira 토큰이 만료됐어요)')
+    // main 은 건너뛴 이유를 error 에 둔다
+    expect(describeMorningSync(morning({ release: { status: 'skipped', attempts: 0, error: 'Jira 미연결' } }))).toBe(
+      '08:01 아침 동기화 · 릴리스 건너뜀 (Jira 미연결)'
+    )
+    expect(describeMorningSync(morning({ release: { status: 'deferred', attempts: 1 } }))).toBe(
+      '08:01 아침 동기화 · 릴리스 미룸 (검토 중인 미리보기 있음)'
     )
     expect(describeMorningSync(morning({ release: { status: 'running', attempts: 1 } }))).toBe(
       '08:01 아침 동기화 · 릴리스 진행 중'
@@ -1649,12 +1630,12 @@ describe('아침 동기화 변경 내역 (A54, R11)', () => {
       plan: plan(),
       events: [
         event({ id: 10, payload: JSON.stringify({ calendarAdded: 1, timelineChanged: true }) }),
-        morning({ release: ok({ newCount: 3 }), project: ok({ newCount: 1 }) })
+        morning({ release: ok({ newCount: 3 }) })
       ]
     })
     expect(render()).not.toContain('아침 동기화')
     const html = renderOpen()
-    expect(html).toContain('08:01 아침 동기화 · 릴리스 새 3건 · 프로젝트 새 1건')
+    expect(html).toContain('08:01 아침 동기화 · 릴리스 새 3건')
     expect(html.indexOf('08:01 아침 동기화')).toBeLessThan(html.indexOf('10:42 회의 1건 추가로 시간표 갱신'))
     expect(html.indexOf('id="today-more"')).toBeLessThan(html.indexOf('08:01 아침 동기화'))
   })
@@ -1666,15 +1647,10 @@ describe('아침 동기화 변경 내역 (A54, R11)', () => {
 
   it('morningStatusLine: 시각·건수·실패를 1줄로 만든다. 오늘이 아니면 날짜를 붙인다', () => {
     const today = '2026-11-02'
-    expect(morningStatusLine('아침 싱크업', 'project', null, today)).toBeNull()
+    expect(morningStatusLine('아침 동기화', 'release', null, today)).toBeNull()
     expect(
-      morningStatusLine(
-        '아침 싱크업',
-        'project',
-        parseMorningPart(ok({ newCount: 1, updatedCount: 2, reviewCount: 1 })),
-        today
-      )
-    ).toBe('아침 싱크업 08:01 · 새 1건 · 갱신 2건 · 확인 필요 1건')
+      morningStatusLine('아침 동기화', 'release', parseMorningPart(ok({ newCount: 1, failedCount: 2 })), today)
+    ).toBe('아침 동기화 08:01 · 새 1건 · 일부 실패 2건')
     expect(
       morningStatusLine(
         '아침 동기화',
@@ -1687,8 +1663,8 @@ describe('아침 동기화 변경 내역 (A54, R11)', () => {
       '아침 동기화 11/2 08:01 · 변경 없음'
     )
     expect(
-      morningStatusLine('아침 싱크업', 'project', parseMorningPart({ status: 'skipped', error: '기본 프로젝트 없음' }), today)
-    ).toBe('아침 싱크업 건너뜀 · 기본 프로젝트 없음')
+      morningStatusLine('아침 동기화', 'release', parseMorningPart({ status: 'skipped', error: '기본 프로젝트 없음' }), today)
+    ).toBe('아침 동기화 건너뜀 · 기본 프로젝트 없음')
   })
 
   it('parseMorningPart: 상태가 없거나 객체가 아니면 null 이다. 숫자가 아니면 0 이다', () => {
@@ -1697,7 +1673,7 @@ describe('아침 동기화 변경 내역 (A54, R11)', () => {
     expect(parseMorningPart({ attempts: 1 })).toBeNull()
     const part = parseMorningPart({ status: 'ok', newCount: '3' })
     expect(part?.newCount).toBe(0)
-    expect(describeMorningPart('project', part!)).toBe('프로젝트 변경 없음')
+    expect(describeMorningPart('release', part!)).toBe('릴리스 변경 없음')
   })
 })
 

@@ -7,7 +7,7 @@ import { SourceBadge, daysBetween, dueLabel } from './PlanItemRow'
 import { EMPHASIS, SUBSECTION_TITLE } from './todayTokens'
 
 // 계속 제외 기록과 같은 후보를 찾는다. id 가 같거나 Jira 키가 같으면 같은 후보다.
-// 이유: task 가 생기면 같은 티켓의 후보 id 가 'jira:KEY' 에서 'task:N' 으로 바뀐다 (부록 M2)
+// 이유: 예전 제외 기록은 같은 티켓을 작업(task) 후보 id 로 남겼을 수 있다 (부록 M2)
 export function candidateOfExclusion(
   exclusion: Pick<PlanExclusion, 'candidate_id' | 'jira_key'>,
   candidates: Candidate[]

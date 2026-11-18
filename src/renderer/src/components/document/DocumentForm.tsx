@@ -1,34 +1,23 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useDocumentStore } from '../../stores/documentStore'
-import { useProjectStore } from '../../stores/projectStore'
 import type { Document } from '../../types'
 import { SectionTitle, button } from '../ui'
 
 interface DocumentFormProps {
   onClose: () => void
   editingDocument?: Document | null
-  defaultProjectId?: number | null
 }
 
 export default function DocumentForm({
   onClose,
-  editingDocument,
-  defaultProjectId
+  editingDocument
 }: DocumentFormProps): React.ReactNode {
   const { createDocument, updateDocument } = useDocumentStore()
-  const { projects, fetchProjects } = useProjectStore()
 
   const [name, setName] = useState(editingDocument?.name || '')
   const [url, setUrl] = useState(editingDocument?.url || '')
   const [type, setType] = useState<'link' | 'file'>(editingDocument?.type || 'link')
   const [description, setDescription] = useState(editingDocument?.description || '')
-  const [projectId, setProjectId] = useState<number | null>(
-    editingDocument?.project_id ?? defaultProjectId ?? null
-  )
-
-  useEffect(() => {
-    fetchProjects()
-  }, [])
 
   const handleUrlChange = (value: string): void => {
     setUrl(value)
@@ -47,8 +36,7 @@ export default function DocumentForm({
       name: name.trim(),
       url: url.trim(),
       type,
-      description: description.trim() || undefined,
-      project_id: projectId
+      description: description.trim() || undefined
     }
 
     if (editingDocument) {
@@ -111,22 +99,6 @@ export default function DocumentForm({
               placeholder="Optional description"
               rows={2}
             />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Project</label>
-            <select
-              value={projectId ?? ''}
-              onChange={(e) => setProjectId(e.target.value ? Number(e.target.value) : null)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">None (General)</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">

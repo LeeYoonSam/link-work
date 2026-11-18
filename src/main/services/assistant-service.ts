@@ -116,7 +116,7 @@ import type {
 } from './assistant-types'
 
 // 비서 흐름 조정 모듈이다. IPC 와 스케줄러가 이 파일만 부른다.
-// A2: 이 파일은 비서 테이블과 assistant_* 설정만 쓴다. 원본(projects·tasks·todos·meetings)은 쓰지 않는다.
+// A2: 이 파일은 비서 테이블과 assistant_* 설정만 쓴다. 원본(todos·meetings 등)은 쓰지 않는다.
 
 type Db = ReturnType<typeof getDatabase>
 
@@ -1413,8 +1413,6 @@ async function runDueMeetingBriefingsImpl(meetings: MeetingRef[], now: Date): Pr
   })
   if (due.length === 0) return []
 
-  const plan = getPlanByDate(db, today)
-  const items = plan ? listPlanItems(db, plan.id) : []
   const llmReady = settings.llmEnabled && safeHeadlessAvailable()
 
   const sent: SentMeetingNotice[] = []
@@ -1437,7 +1435,7 @@ async function runDueMeetingBriefingsImpl(meetings: MeetingRef[], now: Date): Pr
       }
 
       // A46: DB 읽기만 한다. throw 하지 않는다
-      const ctx = collectMeetingContext(db, d.meeting, items)
+      const ctx = collectMeetingContext(db, d.meeting)
       const ruleMarkdown = buildMeetingBriefing(ctx)
       const notice = meetingNoticeText(ctx, settings.meetingLeadMin)
       const hasContext = hasMeetingContext(ctx)
@@ -1447,7 +1445,6 @@ async function runDueMeetingBriefingsImpl(meetings: MeetingRef[], now: Date): Pr
         meeting: d.meeting,
         title: notice.title,
         body: notice.body,
-        projects: ctx.projects,
         hasContext,
         ruleMarkdown,
         llmStatus: willLlm ? 'pending' : 'off',
@@ -1502,9 +1499,7 @@ export async function regenerateMeetingBriefing(eventId: number, now?: Date): Pr
     return buildPayload(db, settings, today, t)
   }
 
-  const plan = getPlanByDate(db, ev.plan_date)
-  const items = plan ? listPlanItems(db, plan.id) : []
-  const ctx = collectMeetingContext(db, payload.meeting, items)
+  const ctx = collectMeetingContext(db, payload.meeting)
   // 카드가 진행 상태를 보이게 한다. 이전 본문은 결과가 올 때까지 둔다
   patchMeetingPayload(eventId, { llmStatus: 'pending', llmError: null })
   emitChanged({ date: today, reason: 'meeting' })

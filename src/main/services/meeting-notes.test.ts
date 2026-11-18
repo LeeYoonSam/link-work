@@ -35,7 +35,6 @@ const base: Omit<NoteDetail, 'meeting' | 'summary'> = {
 describe('buildMeetingNoteMarkdown — 회의', () => {
   const md = buildMeetingNoteMarkdown({
     ...base,
-    projectName: '결제 개편',
     meeting: { title: '주간 회의', kind: 'meeting', started_at: '2026-10-01 10:00:00', duration_ms: 1800000 },
     summary: {
       ...emptySummary,
@@ -52,7 +51,7 @@ describe('buildMeetingNoteMarkdown — 회의', () => {
   it('제목·메타·섹션을 만든다', () => {
     expect(md.startsWith('# 주간 회의\n')).toBe(true)
     expect(md).toContain('참석자: 김철수, 이영희')
-    expect(md).toContain('프로젝트: 결제 개편')
+    expect(md).not.toContain('프로젝트:')
     expect(md).toContain('길이: 30분')
     for (const h of ['## TL;DR', '## 핵심 포인트', '## 결정사항', '## 액션아이템', '## 전사']) {
       expect(md).toContain(h)

@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
-import { useProjectStore } from '../../stores/projectStore'
 import { useRecognitionAidsStore } from '../../stores/recognitionAidsStore'
 import { formatClock } from '../../utils/processing-progress'
 import type { Meeting, MeetingStatus } from '../../types'
-import { Badge, IconButton, ProgressBar, TrashIcon, PencilIcon, XIcon, LinkIcon, UndoIcon, button } from '../ui'
+import { Badge, IconButton, ProgressBar, TrashIcon, PencilIcon, XIcon, UndoIcon, button } from '../ui'
 import AudioPlayer from './AudioPlayer'
 import SpeakerTimeline from './SpeakerTimeline'
 import SummaryPanel from './SummaryPanel'
@@ -84,7 +83,6 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
     cancelling,
     renameMeeting,
     removeMeeting,
-    linkProject,
     reprocessMeeting,
     summarizeMeeting,
     setExpectedSpeakers,
@@ -92,7 +90,6 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
     cancelProcessing,
     refreshCurrent
   } = useRecordingStore()
-  const { projects, fetchProjects } = useProjectStore()
   const { members, fetchAll: fetchAids } = useRecognitionAidsStore()
 
   const [tab, setTab] = useState<Tab>('timeline')
@@ -100,7 +97,6 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
   const [titleValue, setTitleValue] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [linkingProject, setLinkingProject] = useState(false)
   // 재처리/재분리는 회의별로 독립 실행되므로, 어느 회의에 대해 트리거됐는지 id로 추적한다.
   // (MeetingDetailView는 회의 전환 시 언마운트되지 않고 재사용되므로 boolean을 쓰면
   //  다른 회의 버튼에도 "처리 중…" 잔상이 남는다.)
@@ -149,9 +145,8 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
     }
   }, [meeting?.id, meeting?.status])
 
-  // 프로젝트 목록(연결 드롭다운) · 구성원 목록(참석자 편집) 로드
+  // 구성원 목록(참석자 편집) 로드
   useEffect(() => {
-    void fetchProjects()
     void fetchAids()
   }, [])
 
@@ -216,15 +211,6 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
     } finally {
       setDeleting(false)
       setConfirmDelete(false)
-    }
-  }
-
-  const handleLinkProject = async (projectId: number | null): Promise<void> => {
-    setLinkingProject(true)
-    try {
-      await linkProject(meeting.id, projectId)
-    } finally {
-      setLinkingProject(false)
     }
   }
 
@@ -472,34 +458,6 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
               무음 −{formatDuration(compaction.removedMs)} ({compaction.pct}%)
             </Badge>
           )}
-
-          {/* 프로젝트 연결 (값 없음 = 미연결) */}
-          <div className="flex items-center gap-1">
-            <LinkIcon
-              size={11}
-              className={meeting.project_id ? 'text-blue-500' : 'text-gray-400'}
-            />
-            <select
-              value={meeting.project_id ?? ''}
-              onChange={(e) =>
-                void handleLinkProject(e.target.value ? Number(e.target.value) : null)
-              }
-              disabled={linkingProject}
-              title="프로젝트 연결"
-              className={`text-[11px] bg-transparent border-none focus:outline-none cursor-pointer disabled:opacity-50 max-w-[180px] ${
-                meeting.project_id
-                  ? 'text-blue-600 font-medium'
-                  : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              <option value="">프로젝트 미연결</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </div>
 
         </div>
 

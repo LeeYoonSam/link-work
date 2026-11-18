@@ -27,7 +27,7 @@ describe('AssistantSettingsFields', () => {
   it('회의 브리핑 설정 2개와 노출 키를 보여 준다', () => {
     const html = render(SETTINGS)
     expect(html).toContain('회의 전 브리핑')
-    expect(html).toContain('회의 시작 전에 관련 프로젝트·지난 회의·액션아이템을 알립니다')
+    expect(html).toContain('회의 시작 전에 지난 회의·액션아이템을 알립니다')
     expect(html).toContain('회의 전 알림(분)')
     expect(html).toContain('권장 15분. 기존 10분 전 일정 알림보다 앞서게 두세요')
     expect(html).toContain('날짜 경계')

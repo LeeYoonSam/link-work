@@ -17,7 +17,6 @@ interface GlossaryUpsertInput {
   note?: string | null
   priority?: number
   enabled?: boolean
-  project_id?: number | null
 }
 
 interface MemberUpsertInput {

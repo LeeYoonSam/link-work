@@ -2,7 +2,7 @@
 // 구독 대상은 ai:dataChanged, assistant:changed, 창 focus 다.
 // App 메인 창이 installDataSync 를 1번 설치한다. 화면별 개별 구독을 두지 않는다.
 // 이유: 같은 이벤트로 load 가 2번 돈다.
-import { useProjectStore } from './projectStore'
+import { useNavigationStore } from './navigationStore'
 import { useTodoStore } from './todoStore'
 import { useMemoStore } from './memoStore'
 import { useVariableStore } from './variableStore'
@@ -25,16 +25,7 @@ export async function refreshEntity(entity: string): Promise<void> {
     }
   }
 
-  if (entity === 'project') {
-    const projectStore = useProjectStore.getState()
-    add(() => projectStore.fetchProjects(undefined, { silent: true }))
-    // 상세 화면이 실제로 열려 있을 때만 상세를 다시 읽는다. 태스크 수정을 반영한다.
-    // currentProject 는 목록으로 나가도 남는다. 그래서 projectView 로 한 번 더 거른다
-    if (projectStore.projectView === 'detail' && projectStore.currentProject) {
-      const id = projectStore.currentProject.id
-      add(() => projectStore.fetchProject(id))
-    }
-  } else if (entity === 'todo') {
+  if (entity === 'todo') {
     const todoStore = useTodoStore.getState()
     add(() => todoStore.fetchTodos({ silent: true }))
     add(() => todoStore.fetchActiveTodos({ silent: true }))
@@ -50,16 +41,7 @@ export async function refreshEntity(entity: string): Promise<void> {
   } else if (entity === 'variable') {
     add(() => useVariableStore.getState().fetchVariables())
   } else if (entity === 'document') {
-    // 문서 목록 store 는 전체 목록과 프로젝트별 목록이 같이 쓴다.
-    // 프로젝트 상세가 열려 있으면 그 프로젝트 문서만 다시 읽는다
-    const projectStore = useProjectStore.getState()
-    const documentStore = useDocumentStore.getState()
-    if (projectStore.projectView === 'detail' && projectStore.currentProject) {
-      const id = projectStore.currentProject.id
-      add(() => documentStore.fetchDocuments(id))
-    } else {
-      add(() => documentStore.fetchAllDocuments())
-    }
+    add(() => useDocumentStore.getState().fetchAllDocuments())
   } else if (entity === 'sync_status') {
     // 아침 자동 동기화가 끝났다. 배지·상태 줄과 오늘 화면 변경 내역을 다시 읽는다
     add(() => useMorningSyncStore.getState().load())
@@ -72,9 +54,8 @@ export async function refreshEntity(entity: string): Promise<void> {
 // focus 때 다시 읽는다. 오늘 화면은 열려 있을 때만 다시 읽는다.
 // 이유: getToday 는 수집을 부를 수 있어 목록 조회보다 무겁다
 async function reloadOnFocus(): Promise<void> {
-  const view = useProjectStore.getState().view
+  const view = useNavigationStore.getState().view
   const jobs: Promise<void>[] = [
-    refreshEntity('project'),
     refreshEntity('todo'),
     useMorningSyncStore
       .getState()

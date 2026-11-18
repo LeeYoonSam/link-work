@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { MorningSyncPartName, MorningSyncStatus } from '../types'
 
-// 아침 자동 동기화 상태 (docs/ASSISTANT.md A54, docs/PROJECT_SYNC.md R11).
+// 아침 자동 동기화 상태 (docs/ASSISTANT.md A54).
 // 사이드바 배지와 목록 화면 상태 줄이 읽는다. 이 스토어는 아무것도 쓰지 않는다.
 // 타입은 types/index.ts 의 공유 타입을 쓴다. 기존 import 경로를 위해 부분 이름만 다시 내보낸다
 export type { MorningSyncPartName }
@@ -10,21 +10,21 @@ type MorningStatusResult =
   | { success: true; status: MorningSyncStatus }
   | { success: false; error?: string }
 
-// preload 의 projectSync.morningStatus 다. 이전 preload 에는 없을 수 있어 선택으로 읽는다
+// preload 의 morningSync.status 다. 이전 preload 에는 없을 수 있어 선택으로 읽는다
 interface MorningStatusApi {
-  morningStatus?: () => Promise<MorningStatusResult>
+  status?: () => Promise<MorningStatusResult>
 }
 
-function morningStatusApi(): MorningStatusApi['morningStatus'] | undefined {
-  const g = globalThis as unknown as { window?: { api?: { projectSync?: MorningStatusApi } } }
+function morningStatusApi(): MorningStatusApi['status'] | undefined {
+  const g = globalThis as unknown as { window?: { api?: { morningSync?: MorningStatusApi } } }
   const api = g.window?.api
-  return api?.projectSync?.morningStatus
+  return api?.morningSync?.status
 }
 
 export type SeenMarks = Record<MorningSyncPartName, string | null>
 
 const SEEN_KEY = 'linkwork.morningSync.seen'
-const EMPTY_SEEN: SeenMarks = { release: null, project: null }
+const EMPTY_SEEN: SeenMarks = { release: null }
 
 // 한 번의 실행을 가리키는 표식이다. 같은 실행의 새 항목은 한 번만 알린다
 export function runMark(status: MorningSyncStatus | null, part: MorningSyncPartName): string | null {
@@ -52,10 +52,8 @@ function readSeen(): SeenMarks {
     const raw = globalThis.localStorage?.getItem(SEEN_KEY)
     if (!raw) return { ...EMPTY_SEEN }
     const v = JSON.parse(raw) as Partial<Record<string, unknown>>
-    return {
-      release: typeof v.release === 'string' ? v.release : null,
-      project: typeof v.project === 'string' ? v.project : null
-    }
+    // 옛 값에 남은 다른 파트 키는 무시한다
+    return { release: typeof v.release === 'string' ? v.release : null }
   } catch {
     return { ...EMPTY_SEEN }
   }

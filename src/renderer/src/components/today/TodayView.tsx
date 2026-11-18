@@ -20,7 +20,7 @@ import { SUBSECTION_TITLE } from './todayTokens'
 import CommandInput from './CommandInput'
 import MoreSection from './MoreSection'
 import HomeSchedule from '../dashboard/HomeSchedule'
-import { HomeMemos, HomeProjects } from '../dashboard/HomeOverview'
+import { HomeMemos } from '../dashboard/HomeOverview'
 
 // '오늘 할 일' 순서 목록. 제안·무시 항목은 뺀다.
 // 활성 항목을 rank 순으로 먼저 두고, 완료·미룸·제외 항목을 rank 순으로 뒤에 둔다
@@ -164,7 +164,6 @@ export default function TodayView({
         ) : (
           <EmptyState>{loading ? '오늘 계획을 불러오는 중…' : '오늘 계획이 아직 없어요.'}</EmptyState>
         )}
-        <HomeProjects />
         <HomeSchedule />
         <HomeMemos />
       </div>
@@ -284,9 +283,6 @@ export default function TodayView({
           <SummaryTiles tiles={tiles} />
         </div>
       ) : null}
-
-      {/* 진행 중 프로젝트는 오늘 카드·홈 일정 위에 둔다. 계획 유무와 무관하다 (부록 M.11 Q2·Q3) */}
-      <HomeProjects />
 
       {plan ? (
         <>

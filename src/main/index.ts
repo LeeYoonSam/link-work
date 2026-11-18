@@ -3,8 +3,6 @@ import { join, basename } from 'path'
 import { stat, open, readFile } from 'fs/promises'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initDatabase, closeDatabase, getDatabase } from './db/database'
-import { registerProjectIpc } from './ipc/project.ipc'
-import { registerTaskIpc } from './ipc/task.ipc'
 import { registerCalendarIpc } from './ipc/calendar.ipc'
 import { registerDocumentIpc } from './ipc/document.ipc'
 import { registerVariableIpc } from './ipc/variable.ipc'
@@ -20,7 +18,8 @@ import { registerRecognitionAidsIpc } from './ipc/recognition-aids.ipc'
 import { registerExportIpc } from './ipc/export.ipc'
 import { registerReleaseNoteIpc } from './ipc/release-note.ipc'
 import { registerBackupIpc } from './ipc/backup.ipc'
-import { registerProjectSyncIpc } from './ipc/project-sync.ipc'
+import { registerJiraBoardIpc } from './ipc/jira-board.ipc'
+import { registerMorningSyncIpc } from './ipc/morning-sync.ipc'
 import { registerAssistantIpc } from './ipc/assistant.ipc'
 import { registerSettingsIpc } from './ipc/settings.ipc'
 import { cancelAllAiQueries } from './services/ai-agent'
@@ -346,8 +345,6 @@ app.whenReady().then(() => {
   })
 
   initDatabase()
-  registerProjectIpc()
-  registerTaskIpc()
   registerCalendarIpc()
   registerDocumentIpc()
   registerVariableIpc()
@@ -363,7 +360,8 @@ app.whenReady().then(() => {
   registerExportIpc()
   registerReleaseNoteIpc()
   registerBackupIpc()
-  registerProjectSyncIpc()
+  registerJiraBoardIpc()
+  registerMorningSyncIpc()
   registerAssistantIpc()
   registerSettingsIpc()
   ipcMain.on('recorder:state', (event, payload) => {

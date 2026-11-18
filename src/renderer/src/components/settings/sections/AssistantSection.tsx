@@ -337,7 +337,7 @@ export function AssistantSettingsFields({
         {toggle(
           'morningSyncEnabled',
           '아침 자동 동기화',
-          '매일 아침 1회 릴리스 노트와 Jira 프로젝트를 가져옵니다. 새 프로젝트 추가와 빈 칸 채우기만 자동으로 합니다'
+          '매일 아침 1회 Jira 릴리스 노트를 가져옵니다'
         )}
         <div className="grid grid-cols-2 gap-3 mt-1">
           <Field
@@ -357,7 +357,7 @@ export function AssistantSettingsFields({
           {toggle(
             'meetingBriefingEnabled',
             '회의 전 브리핑',
-            '회의 시작 전에 관련 프로젝트·지난 회의·액션아이템을 알립니다'
+            '회의 시작 전에 지난 회의·액션아이템을 알립니다'
           )}
         </div>
         <div className="grid grid-cols-2 gap-3">

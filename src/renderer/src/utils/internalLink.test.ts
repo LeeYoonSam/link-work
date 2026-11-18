@@ -13,11 +13,10 @@ describe('parseInternalLink — 신규 항목 링크', () => {
     expect(parseInternalLink(href)).toEqual(expected)
   })
 
-  it('project/1/task/9 는 작업 id 를 담는다', () => {
+  it('project/1/task/9 는 프로젝트 보드 화면으로 간다', () => {
     expect(parseInternalLink('linkwork://project/1/task/9')).toEqual({
-      kind: 'project',
-      id: 1,
-      taskId: 9
+      kind: 'view',
+      view: 'projects'
     })
   })
 
@@ -79,11 +78,10 @@ describe('parseInternalLink — 신규 항목 링크', () => {
 })
 
 describe('parseInternalLink — 레거시 링크', () => {
-  it('project/1 은 작업 id 가 null 이다', () => {
+  it('project/1 은 프로젝트 보드 화면으로 간다', () => {
     expect(parseInternalLink('linkwork://project/1')).toEqual({
-      kind: 'project',
-      id: 1,
-      taskId: null
+      kind: 'view',
+      view: 'projects'
     })
   })
 

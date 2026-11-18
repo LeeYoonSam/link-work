@@ -63,7 +63,6 @@ export function MeetingNoteRow({
       </div>
       <div className="mt-0.5 text-[11px] text-gray-400">
         {n.started_at.slice(0, 10)} · {formatDuration(n.duration_ms)}
-        {n.project_name && ` · ${n.project_name}`}
       </div>
       {n.tldr && <p className="mt-1 text-xs text-gray-600 line-clamp-2">{n.tldr}</p>}
       {(n.decision_count > 0 || n.action_item_count > 0) && (

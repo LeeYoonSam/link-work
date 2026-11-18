@@ -6,11 +6,9 @@
 // - A1: Jira 는 jira.ts 의 조회 함수만 쓴다.
 // - 조회 실패는 throw 하지 않는다. 해당 출처를 null 로 두고 errors 에 문구를 넣는다.
 import type Database from 'better-sqlite3'
-import { ACTIVE_STATUSES } from '../../renderer/src/utils/projectOrder'
-import { applyProjectAutoStatus } from '../utils/project-dates'
 import { buildCandidates } from './assistant-candidates'
 import { addDays, isoToLocalDateTime, logicalDate, toLocalDateTime } from './assistant-day'
-import { MEETING_LINE_MAX, matchProjects, sameTitle } from './assistant-meeting'
+import { MEETING_LINE_MAX, sameTitle } from './assistant-meeting'
 import { RECOVERY_LIMITS, RECOVERY_WRAPUP_MAX_DAYS } from './assistant-recovery'
 import { calendarToBusy } from './assistant-slots'
 import type {
@@ -24,10 +22,8 @@ import type {
   JiraSnapshotRef,
   MeetingContext,
   MeetingPastRef,
-  MeetingProjectRef,
   MeetingRef,
   PlanItem,
-  PlanItemStatus,
   RecoveryActivityGroup,
   RecoveryContext,
   RecoveryEntityType,
@@ -38,7 +34,6 @@ import type {
   RecoveryTodoDone,
   RefreshMode,
   SourceCheckTimes,
-  TaskRow,
   TodoRow,
   VanishedResolution
 } from './assistant-types'
@@ -74,81 +69,7 @@ const CALENDAR_NOT_CONNECTED = 'Google 캘린더가 연결되어 있지 않아 �
 const CALENDAR_FAILED = 'Google 캘린더 조회에 실패해 오늘 일정을 확인하지 못했습니다.'
 const JIRA_FAILED = 'Jira 조회에 실패했습니다.'
 
-const ACTIVE_PROJECT_STATUSES = new Set<string>(ACTIVE_STATUSES)
-
 // ── DB 읽기 ──
-
-interface ProjectStatusRow {
-  id: number
-  name: string
-  dev_start_date: string
-  dev_end_date: string
-  qa_start_date: string
-  qa_end_date: string
-  deploy_date: string
-  status: string
-  status_manual: number
-  priority: string | null
-}
-
-function normalizeProjectPriority(value: string | null): TaskRow['project_priority'] {
-  return value === 'now' || value === 'next' || value === 'later' ? value : null
-}
-
-// 활성 프로젝트 판정은 대시보드·트레이와 같다. 자동 상태를 계산한 뒤 ACTIVE_STATUSES 로 거른다.
-function readActiveProjects(db: Database.Database): Map<number, ProjectStatusRow> {
-  const projects = db
-    .prepare(
-      `SELECT id, name, dev_start_date, dev_end_date, qa_start_date, qa_end_date, deploy_date,
-              status, status_manual, priority
-       FROM projects`
-    )
-    .all() as ProjectStatusRow[]
-  const active = new Map<number, ProjectStatusRow>()
-  for (const p of projects) {
-    const resolved = applyProjectAutoStatus(p)
-    if (ACTIVE_PROJECT_STATUSES.has(resolved.status)) active.set(p.id, p)
-  }
-  return active
-}
-
-function readTasks(db: Database.Database): TaskRow[] {
-  const active = readActiveProjects(db)
-  if (active.size === 0) return []
-
-  const rows = db
-    .prepare(
-      `SELECT id, project_id, name, status, end_date, jira_issue_key
-       FROM tasks
-       WHERE status IS NULL OR status != 'done'
-       ORDER BY id`
-    )
-    .all() as {
-    id: number
-    project_id: number
-    name: string
-    status: string | null
-    end_date: string | null
-    jira_issue_key: string | null
-  }[]
-
-  const tasks: TaskRow[] = []
-  for (const r of rows) {
-    const project = active.get(r.project_id)
-    if (!project) continue
-    tasks.push({
-      id: r.id,
-      project_id: r.project_id,
-      project_name: project.name,
-      project_priority: normalizeProjectPriority(project.priority),
-      name: r.name,
-      status: r.status ?? 'pending',
-      end_date: r.end_date,
-      jira_issue_key: r.jira_issue_key
-    })
-  }
-  return tasks
-}
 
 function readTodos(db: Database.Database): TodoRow[] {
   return db
@@ -189,24 +110,6 @@ function readActionItems(db: Database.Database, now: Date): ActionItemRow[] {
     })
   }
   return items
-}
-
-// activity_log.created_at 은 UTC 기본값이다. A12 형식에 맞춰 로컬 시각으로 바꾼다.
-function readTaskTouchedAt(db: Database.Database, taskIds: Set<number>): Record<number, string> {
-  if (taskIds.size === 0) return {}
-  const rows = db
-    .prepare(
-      `SELECT entity_id, datetime(MAX(created_at), 'localtime') AS touched
-       FROM activity_log
-       WHERE entity_type = 'task' AND entity_id IS NOT NULL
-       GROUP BY entity_id`
-    )
-    .all() as { entity_id: number; touched: string | null }[]
-  const out: Record<number, string> = {}
-  for (const r of rows) {
-    if (r.touched && taskIds.has(r.entity_id)) out[r.entity_id] = r.touched
-  }
-  return out
 }
 
 // ── 캘린더 ──
@@ -343,10 +246,8 @@ export async function collectSources(
   const today = logicalDate(now, settings.dayRollover)
 
   // 로컬 출처
-  const tasks = readTasks(db)
   const todos = readTodos(db)
   const actionItems = readActionItems(db, now)
-  const taskTouchedAt = readTaskTouchedAt(db, new Set(tasks.map((t) => t.id)))
 
   // 캘린더
   const calendarConnected = isCalendarConnected()
@@ -398,11 +299,9 @@ export async function collectSources(
   }
 
   const candidates = buildCandidates({
-    tasks,
     todos,
     jiraIssues: jiraIssues === null ? null : jiraIssues.map(toJiraCandidateInput),
-    actionItems,
-    taskTouchedAt
+    actionItems
   })
 
   return {
@@ -426,16 +325,6 @@ const REASSIGNED_NOTE = '담당 변경'
 
 function parseNumericId(raw: string): number | null {
   return /^\d+$/.test(raw) ? Number(raw) : null
-}
-
-function resolveTask(db: Database.Database, id: number): VanishedResolution | null {
-  const row = db.prepare('SELECT status FROM tasks WHERE id = ?').get(id) as
-    | { status: string | null }
-    | undefined
-  if (!row) return { kind: 'dropped', note: DELETED_NOTE }
-  if (row.status === 'done') return { kind: 'done' }
-  // 원본이 남아 있고 완료도 아니면 해석하지 않는다. 항목을 그대로 둔다.
-  return null
 }
 
 function resolveTodo(db: Database.Database, id: number): VanishedResolution | null {
@@ -482,7 +371,7 @@ async function resolveJira(
   const pending: string[] = []
   for (const id of ids) {
     const key = id.slice('jira:'.length)
-    // 싱크업이 같은 키의 작업을 만들면 후보 ID 가 task 로 바뀐다. 그 작업으로 교체한다.
+    // 같은 키의 다른 후보가 있으면 그 후보로 교체한다.
     const merged = current.find((c) => c.jiraKey === key && c.id !== id)
     if (merged) out[id] = { kind: 'replace', candidate: merged }
     else if (/^[A-Z][A-Z0-9_]*-\d+$/.test(key)) pending.push(key)
@@ -527,10 +416,7 @@ export async function resolveVanished(
     try {
       const [source, ...rest] = id.split(':')
       let resolution: VanishedResolution | null = null
-      if (source === 'task') {
-        const n = parseNumericId(rest[0] ?? '')
-        if (n !== null) resolution = resolveTask(db, n)
-      } else if (source === 'todo') {
+      if (source === 'todo') {
         const n = parseNumericId(rest[0] ?? '')
         if (n !== null) resolution = resolveTodo(db, n)
       } else if (source === 'action_item') {
@@ -560,7 +446,7 @@ const WRAPUP_MAX_CHARS = 2000
 const TLDR_MAX_CHARS = 300
 const NO_NAME = '(이름 없음)'
 const UNFINISHED_STATUSES = new Set<string>(['planned', 'in_progress', 'deferred'])
-const RECOVERY_ENTITY_TYPES: readonly RecoveryEntityType[] = ['project', 'task', 'todo']
+const RECOVERY_ENTITY_TYPES: readonly RecoveryEntityType[] = ['todo']
 
 const ACTIVITY_FAILED = '활동 기록 조회에 실패했습니다.'
 const MEETINGS_FAILED = '회의 요약 조회에 실패했습니다.'
@@ -591,8 +477,6 @@ interface ActivityRow {
 }
 
 const NAME_SQL: Record<RecoveryEntityType, string> = {
-  project: 'SELECT name AS name FROM projects WHERE id = ?',
-  task: 'SELECT name AS name FROM tasks WHERE id = ?',
   todo: 'SELECT title AS name FROM todos WHERE id = ?'
 }
 
@@ -667,11 +551,9 @@ function readActivityGroups(db: Database.Database, since: string): RecoveryActiv
 function readRecoveryMeetings(db: Database.Database, since: string): RecoveryMeeting[] {
   const rows = db
     .prepare(
-      `SELECT m.id AS meeting_id, m.title, m.started_at, p.name AS project_name,
-              ms.tldr, ms.action_items
+      `SELECT m.id AS meeting_id, m.title, m.started_at, ms.tldr, ms.action_items
        FROM meeting_summaries ms
        JOIN meetings m ON m.id = ms.meeting_id
-       LEFT JOIN projects p ON p.id = m.project_id
        WHERE ms.generated_at >= ?
        ORDER BY m.started_at DESC, m.id DESC
        LIMIT ?`
@@ -680,7 +562,6 @@ function readRecoveryMeetings(db: Database.Database, since: string): RecoveryMee
     meeting_id: number
     title: string | null
     started_at: string | null
-    project_name: string | null
     tldr: string | null
     action_items: string | null
   }[]
@@ -694,7 +575,6 @@ function readRecoveryMeetings(db: Database.Database, since: string): RecoveryMee
       meetingId: r.meeting_id,
       title: r.title ?? '',
       startedAt: r.started_at ?? '',
-      projectName: nonBlank(r.project_name),
       tldr: tldr === null ? null : tldr.slice(0, TLDR_MAX_CHARS),
       openActionItems: open.slice(0, RECOVERY_LIMITS.actionItemsPerMeeting),
       openActionCount: open.length
@@ -800,21 +680,16 @@ export async function collectRecovery(
 
 // ── 회의 전 브리핑 수집 (부록 I.3.1, I.5) ──
 // A46: DB 읽기만 한다. Jira·캘린더를 부르지 않는다. 일정은 호출자가 캐시에서 읽어 넘긴다.
-// A2: meetings·meeting_summaries·projects 는 SELECT 만 한다.
+// A2: meetings·meeting_summaries 는 SELECT 만 한다.
 
 export const MEETING_LIMITS = {
   pastDays: 90,
   pastCandidates: 200,
   pastMeetings: 3,
-  actionItems: 10,
-  relatedItems: 5
+  actionItems: 10
 } as const
 
-const MEETING_RELATED_STATUSES = new Set<PlanItemStatus>(['planned', 'in_progress'])
-
-const MEETING_PROJECTS_FAILED = '프로젝트 조회에 실패했습니다.'
 const MEETING_PAST_FAILED = '지난 회의 조회에 실패했습니다.'
-const MEETING_ITEMS_FAILED = '오늘 계획 항목 확인에 실패했습니다.'
 
 /** 캘린더 일정을 회의 참조로 바꾼다. 종일 일정과 시각 변환 실패는 null 이다 */
 export function toMeetingRef(e: CalendarEvent): MeetingRef | null {
@@ -873,27 +748,8 @@ function readPastMeetings(db: Database.Database, meeting: MeetingRef): MeetingPa
   return out
 }
 
-function relatedItemsOf(items: PlanItem[], projects: MeetingProjectRef[]): MeetingContext['relatedItems'] {
-  if (projects.length === 0) return []
-  const projectIds = new Set(projects.map((p) => p.id))
-  return items
-    .filter((i) => i.project_id !== null && projectIds.has(i.project_id) && MEETING_RELATED_STATUSES.has(i.status))
-    .sort((a, b) => {
-      if (a.rank === b.rank) return a.id - b.id
-      if (a.rank === null) return 1
-      if (b.rank === null) return -1
-      return a.rank - b.rank
-    })
-    .slice(0, MEETING_LIMITS.relatedItems)
-    .map((i) => ({ id: i.id, title: i.title, status: i.status }))
-}
-
 /** 회의 브리핑 맥락. throw 하지 않는다. 실패한 출처는 비우고 errors 에 문구를 넣는다 (A46) */
-export function collectMeetingContext(
-  db: Database.Database,
-  meeting: MeetingRef,
-  items: PlanItem[]
-): MeetingContext {
+export function collectMeetingContext(db: Database.Database, meeting: MeetingRef): MeetingContext {
   const errors: string[] = []
   function guard<T>(message: string, empty: T, read: () => T): T {
     try {
@@ -905,15 +761,8 @@ export function collectMeetingContext(
     }
   }
 
-  const projects = guard<MeetingProjectRef[]>(MEETING_PROJECTS_FAILED, [], () => {
-    const active = [...readActiveProjects(db).values()].map((p) => ({ id: p.id, name: p.name ?? '' }))
-    return matchProjects(meeting.title, active)
-  })
   const pastMeetings = guard<MeetingPastRef[]>(MEETING_PAST_FAILED, [], () => readPastMeetings(db, meeting))
   const openActionItems = pastMeetings.flatMap((m) => m.openActionItems).slice(0, MEETING_LIMITS.actionItems)
-  const relatedItems = guard<MeetingContext['relatedItems']>(MEETING_ITEMS_FAILED, [], () =>
-    relatedItemsOf(items, projects)
-  )
 
-  return { meeting, projects, pastMeetings, openActionItems, relatedItems, errors }
+  return { meeting, pastMeetings, openActionItems, errors }
 }

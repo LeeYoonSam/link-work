@@ -137,7 +137,7 @@ describe('buildSystemPrompt — 앱 내 링크', () => {
       expect(prompt).toContain('linkwork://memo/{id}')
       expect(prompt).toContain('linkwork://todo/{id}')
       expect(prompt).toContain('linkwork://release/{id}')
-      expect(prompt).toContain('linkwork://project/{projectId}/task/{taskId}')
+      expect(prompt).not.toContain('linkwork://project/')
       expect(prompt).toContain('linkwork://note/{id}')
       expect(prompt).toContain('메뉴 링크는 목록 전체를 안내할 때만 쓰세요')
     }

@@ -70,10 +70,7 @@ vi.mock('./jira', () => jira)
 const release = vi.hoisted(() => ({ syncAllReleases: vi.fn() }))
 vi.mock('./release-note-sync', () => release)
 
-const projectSync = vi.hoisted(() => ({ runAutoProjectSync: vi.fn(), refreshAllJiraProjects: vi.fn() }))
-vi.mock('./project-sync', () => projectSync)
-
-import { getMorningSyncStatus, morningSyncEventKey, runMorningSyncIfDue, toProjectOutcome } from './morning-sync'
+import { getMorningSyncStatus, morningSyncEventKey, runMorningSyncIfDue } from './morning-sync'
 
 const NOW = new Date(2026, 10, 5, 8, 10, 0)
 const KEY = 'morning_sync:2026-11-05'
@@ -89,14 +86,6 @@ function releaseOk(): void {
     metaOnly: [],
     failed: [],
     linked: 1
-  })
-}
-
-function projectOk(): void {
-  projectSync.runAutoProjectSync.mockResolvedValue({
-    status: 'applied',
-    result: { created: 2, updated: 1 },
-    needsReview: 1
   })
 }
 
@@ -116,8 +105,6 @@ beforeEach(() => {
   jira.isJiraConnected.mockReturnValue(true)
   jira.getDefaultJiraProjectKey.mockReturnValue('APP')
   releaseOk()
-  projectOk()
-  projectSync.refreshAllJiraProjects.mockResolvedValue({ projects: 1, statusChanged: 2, tasksAdded: 1 })
 })
 
 describe('A54: 아침 자동 동기화 실행기', () => {
@@ -125,15 +112,14 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(morningSyncEventKey('2026-11-05')).toBe(KEY)
   })
 
-  it('A54: 설정 시각이 지나면 행 1개를 만들고 두 부분을 실행해 payload 에 기록한다', async () => {
+  it('A54: 설정 시각이 지나면 행 1개를 만들고 릴리스 부분을 실행해 payload 에 기록한다', async () => {
     await runMorningSyncIfDue(false, NOW)
     expect(release.syncAllReleases).toHaveBeenCalledTimes(1)
-    expect(projectSync.runAutoProjectSync).toHaveBeenCalledTimes(1)
     const row = store.rows.get(KEY)
     expect(row).toMatchObject({ kind: 'morning_sync', plan_date: '2026-11-05', status: 'logged' })
     const p = payloadOf()
     expect(p.release).toMatchObject({ status: 'ok', attempts: 1, newCount: 1, updatedCount: 2, error: null })
-    expect(p.project).toMatchObject({ status: 'ok', attempts: 1, newCount: 2, updatedCount: 1, reviewCount: 1 })
+    expect(p.project).toBeUndefined()
     expect(p.release?.finishedAt).toBe('2026-11-05 08:10:00')
   })
 
@@ -141,7 +127,6 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     await runMorningSyncIfDue(false, NOW)
     await runMorningSyncIfDue(false, new Date(2026, 10, 5, 9, 0, 0))
     expect(release.syncAllReleases).toHaveBeenCalledTimes(1)
-    expect(projectSync.runAutoProjectSync).toHaveBeenCalledTimes(1)
   })
 
   it('A54: 설정 시각 이전이면 행을 만들지 않는다', async () => {
@@ -162,7 +147,6 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     await runMorningSyncIfDue(false, NOW)
     expect(store.insertEvent).toHaveBeenCalledTimes(1)
     expect(release.syncAllReleases).not.toHaveBeenCalled()
-    expect(projectSync.runAutoProjectSync).not.toHaveBeenCalled()
     expect(syncStatusSends()).toBe(0)
   })
 
@@ -180,25 +164,12 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(getMorningSyncStatus().inFlight).toBe(false)
   })
 
-  it('A54: 릴리스 부분이 throw 해도 싱크업 부분은 실행한다', async () => {
+  it('A54·A13: 릴리스 부분이 throw 하면 failed 로 기록하고 throw 하지 않는다', async () => {
     release.syncAllReleases.mockRejectedValue(new Error('Jira 토큰이 만료되었습니다.'))
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     await expect(runMorningSyncIfDue(false, NOW)).resolves.toBeUndefined()
     errSpy.mockRestore()
-    expect(projectSync.runAutoProjectSync).toHaveBeenCalledTimes(1)
-    const p = payloadOf()
-    expect(p.release).toMatchObject({ status: 'failed', attempts: 1, error: 'Jira 토큰이 만료되었습니다.' })
-    expect(p.project).toMatchObject({ status: 'ok' })
-  })
-
-  it('A54: 싱크업 부분이 throw 해도 릴리스 결과는 남는다', async () => {
-    projectSync.runAutoProjectSync.mockRejectedValue(new Error('network'))
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    await runMorningSyncIfDue(false, NOW)
-    errSpy.mockRestore()
-    const p = payloadOf()
-    expect(p.release).toMatchObject({ status: 'ok' })
-    expect(p.project).toMatchObject({ status: 'failed', error: 'network' })
+    expect(payloadOf().release).toMatchObject({ status: 'failed', attempts: 1, error: 'Jira 토큰이 만료되었습니다.' })
   })
 
   it('A54: 실패한 부분만 30분 뒤에 다시 하고 시도 수를 센다', async () => {
@@ -210,7 +181,6 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(release.syncAllReleases).toHaveBeenCalledTimes(1)
     await runMorningSyncIfDue(false, new Date(2026, 10, 5, 8, 40, 0))
     expect(release.syncAllReleases).toHaveBeenCalledTimes(2)
-    expect(projectSync.runAutoProjectSync).toHaveBeenCalledTimes(1)
     expect(payloadOf().release).toMatchObject({ status: 'ok', attempts: 2 })
   })
 
@@ -235,14 +205,11 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(payloadOf().release).toMatchObject({ status: 'ok', failedCount: 1, updatedCount: 1 })
   })
 
-  it('A54: Jira 미연결이면 두 부분이 skipped 이고 동기화를 부르지 않는다', async () => {
+  it('A54: Jira 미연결이면 skipped 이고 동기화를 부르지 않는다', async () => {
     jira.isJiraConnected.mockReturnValue(false)
     await runMorningSyncIfDue(false, NOW)
     expect(release.syncAllReleases).not.toHaveBeenCalled()
-    expect(projectSync.runAutoProjectSync).not.toHaveBeenCalled()
-    const p = payloadOf()
-    expect(p.release).toMatchObject({ status: 'skipped' })
-    expect(p.project).toMatchObject({ status: 'skipped' })
+    expect(payloadOf().release).toMatchObject({ status: 'skipped' })
     // skipped 는 그날 다시 하지 않는다
     jira.isJiraConnected.mockReturnValue(true)
     await runMorningSyncIfDue(false, new Date(2026, 10, 5, 12, 0, 0))
@@ -268,19 +235,10 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(payloadOf().release).toMatchObject({ status: 'ok', attempts: 1 })
   })
 
-  it('A54: deferred 는 시도로 세지 않는다', async () => {
-    projectSync.runAutoProjectSync.mockResolvedValueOnce({ status: 'deferred' })
-    await runMorningSyncIfDue(false, NOW)
-    expect(payloadOf().project).toMatchObject({ status: 'deferred', attempts: 0 })
-    await runMorningSyncIfDue(false, new Date(2026, 10, 5, 8, 41, 0))
-    expect(projectSync.runAutoProjectSync).toHaveBeenCalledTimes(2)
-    expect(payloadOf().project).toMatchObject({ status: 'ok', attempts: 1 })
-  })
-
   it('A54: 선점 뒤와 부분마다 ai:dataChanged sync_status 를 보낸다', async () => {
     await runMorningSyncIfDue(false, NOW)
-    // 선점 1회 + 부분 2회
-    expect(syncStatusSends()).toBe(3)
+    // 선점 1회 + 부분 1회
+    expect(syncStatusSends()).toBe(2)
   })
 
   it('A13: getDatabase 가 throw 해도 throw 하지 않는다', async () => {
@@ -300,18 +258,18 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     await expect(runMorningSyncIfDue(false, NOW)).resolves.toBeUndefined()
     errSpy.mockRestore()
     electron.windows.pop()
-    expect(payloadOf().project).toMatchObject({ status: 'ok' })
+    expect(payloadOf().release).toMatchObject({ status: 'ok' })
   })
 
   it('A54: 상태 조회는 마지막 행과 설정을 돌려준다. 행이 없으면 부분이 null 이다', async () => {
     expect(getMorningSyncStatus()).toEqual({
-      enabled: true, at: '08:00', inFlight: false, date: null, release: null, project: null
+      enabled: true, at: '08:00', inFlight: false, date: null, release: null
     })
     await runMorningSyncIfDue(false, NOW)
     const s = getMorningSyncStatus()
     expect(s.date).toBe('2026-11-05')
     expect(s.release).toMatchObject({ status: 'ok', newCount: 1 })
-    expect(s.project).toMatchObject({ status: 'ok', newCount: 2 })
+    expect(s).not.toHaveProperty('project')
   })
 
   it('A54: 실행 중이 아닌데 남은 running 은 상태 조회에서 failed 로 보여 준다', () => {
@@ -326,81 +284,20 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     })
     expect(getMorningSyncStatus().release).toMatchObject({ status: 'failed', error: '동기화가 중단되었습니다.' })
   })
-})
-
-describe('R11 결과 변환 (toProjectOutcome)', () => {
-  it('deferred 를 알아본다', () => {
-    expect(toProjectOutcome({ status: 'deferred' }).status).toBe('deferred')
-  })
-
-  it('result 의 created·updated 와 needsReview 를 센다', () => {
-    expect(toProjectOutcome({ status: 'applied', result: { created: 3, updated: 4 }, needsReview: 2 })).toMatchObject({
-      status: 'ok', newCount: 3, updatedCount: 4, reviewCount: 2
+  it('A54: 옛 행에 project 부분이 남아 있어도 무시하고 릴리스만 판정한다', async () => {
+    store.rows.set(KEY, {
+      id: 9, event_key: KEY, kind: 'morning_sync', plan_date: '2026-11-05',
+      scheduled_at: '2026-11-05 08:00:00', fired_at: '2026-11-05 08:00:00', status: 'logged', ref_id: null,
+      payload: JSON.stringify({
+        date: '2026-11-05',
+        release: { status: 'ok', attempts: 1, startedAt: '2026-11-05 08:00:00', finishedAt: '2026-11-05 08:01:00' },
+        project: { status: 'failed', attempts: 1, startedAt: '2026-11-05 08:00:00', finishedAt: '2026-11-05 08:01:00' }
+      })
     })
-    expect(toProjectOutcome({ status: 'noop', result: null, needsReview: [{}, {}] })).toMatchObject({
-      status: 'ok', newCount: 0, updatedCount: 0, reviewCount: 2
-    })
-  })
-
-  it('형식이 틀린 값은 0 으로 센다', () => {
-    expect(toProjectOutcome(null)).toMatchObject({ status: 'ok', newCount: 0 })
-    expect(toProjectOutcome({ result: { created: -1, updated: 'x' } })).toMatchObject({ newCount: 0, updatedCount: 0 })
-  })
-})
-
-describe('R12 아침 Jira 연결 작업 새로고침', () => {
-  it('R12: R11 자동 싱크업 뒤에 refreshAllJiraProjects 를 1번 부르고 부분 결과는 R11 값이다', async () => {
-    await runMorningSyncIfDue(false, NOW)
-    expect(projectSync.refreshAllJiraProjects).toHaveBeenCalledTimes(1)
-    const r11Order = projectSync.runAutoProjectSync.mock.invocationCallOrder[0]
-    const r12Order = projectSync.refreshAllJiraProjects.mock.invocationCallOrder[0]
-    expect(r12Order).toBeGreaterThan(r11Order)
-    expect(payloadOf().project).toMatchObject({ status: 'ok', newCount: 2, updatedCount: 1, reviewCount: 1 })
-  })
-
-  it('R12: R11 이 deferred 여도 R12 는 돈다. 부분은 deferred 로 남는다', async () => {
-    projectSync.runAutoProjectSync.mockResolvedValueOnce({ status: 'deferred' })
-    await runMorningSyncIfDue(false, NOW)
-    expect(projectSync.refreshAllJiraProjects).toHaveBeenCalledTimes(1)
-    expect(payloadOf().project).toMatchObject({ status: 'deferred', attempts: 0 })
-  })
-
-  it('R12: 새로고침이 throw 하면 싱크업 부분은 failed 이고 R11 의 수는 남는다', async () => {
-    projectSync.refreshAllJiraProjects.mockRejectedValue(new Error('token expired'))
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    await runMorningSyncIfDue(false, NOW)
-    errSpy.mockRestore()
-    expect(payloadOf().project).toMatchObject({
-      status: 'failed',
-      error: 'token expired',
-      attempts: 1,
-      newCount: 2,
-      updatedCount: 1,
-      reviewCount: 1
-    })
-  })
-
-  it('R12: R11 이 deferred 이고 새로고침이 throw 하면 failed 다', async () => {
-    projectSync.runAutoProjectSync.mockResolvedValueOnce({ status: 'deferred' })
-    projectSync.refreshAllJiraProjects.mockRejectedValue(new Error('403'))
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    await runMorningSyncIfDue(false, NOW)
-    errSpy.mockRestore()
-    expect(payloadOf().project).toMatchObject({ status: 'failed', error: '403', attempts: 1 })
-  })
-
-  it('R12: R11 이 throw 하면 새로고침을 부르지 않고 failed 다', async () => {
-    projectSync.runAutoProjectSync.mockRejectedValue(new Error('network'))
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    await runMorningSyncIfDue(false, NOW)
-    errSpy.mockRestore()
-    expect(projectSync.refreshAllJiraProjects).not.toHaveBeenCalled()
-    expect(payloadOf().project).toMatchObject({ status: 'failed', error: 'network' })
-  })
-
-  it('R12: Jira 미연결이면 새로고침도 부르지 않는다', async () => {
-    jira.isJiraConnected.mockReturnValue(false)
-    await runMorningSyncIfDue(false, NOW)
-    expect(projectSync.refreshAllJiraProjects).not.toHaveBeenCalled()
+    await runMorningSyncIfDue(false, new Date(2026, 10, 5, 9, 0, 0))
+    expect(release.syncAllReleases).not.toHaveBeenCalled()
+    const s = getMorningSyncStatus()
+    expect(s.release).toMatchObject({ status: 'ok' })
+    expect(s).not.toHaveProperty('project')
   })
 })
