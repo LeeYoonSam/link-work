@@ -81,7 +81,7 @@
    - Bitbucket: `read:repository:bitbucket`(필수, 저장소 파일 읽기), `read:pullrequest:bitbucket`(권장, PR 링크 읽기), `read:user:bitbucket`(권장, 연결 계정 이름 표시). 쓰기 범위는 필요 없다
    - Jira: Atlassian API token. 범위 없음, 계정 권한 그대로 읽기만 사용. 만료일은 발급할 때 정한 날짜
    - Notion: 내부 통합의 "콘텐츠 읽기" 권한, 페이지 ⋯ → 연결에서 통합 추가. claude.ai 커넥터 대안 안내
-   - Google: `calendar.readonly`. redirect URI `http://localhost:8945/callback` 과 [복사]
+   - Google: `calendar.readonly`. redirect URI `http://localhost:8945/callback` 과 [복사]. 연결 순서를 번호 목록 6단계로 안내한다(프로젝트 선택 → Calendar API·동의 화면 → OAuth 클라이언트 '웹 애플리케이션' → 리디렉션 URI 등록 → ID·Secret 입력 → 계정 선택, 기본 캘린더만 읽음)
 3. [발급 페이지 열기 ↗]: `https://id.atlassian.com/manage-profile/security/api-tokens`(Jira·Bitbucket), `https://www.notion.so/my-integrations`, `https://console.cloud.google.com/apis/credentials`
 4. 입력 칸. 이메일은 다른 Atlassian 연동(Jira ↔ Bitbucket)에서 미리 채운다. 비밀값은 `type=password`, Enter 로 제출
 5. [확인 후 저장]. 진행 중에는 "확인 중…". 검증은 기존 save IPC 가 한다(실패하면 저장하지 않음). Google 은 `saveSettings` 다음 바로 `auth`
