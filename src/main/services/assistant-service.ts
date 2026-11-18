@@ -20,8 +20,14 @@ import {
   type BriefingInput,
   type MeetingLlmInput
 } from './assistant-briefing'
-import { buildRecovery, recoveryContextOf, recoveryToMarkdown, shouldAutoRecover } from './assistant-recovery'
-import { logicalDate, toLocalDateTime, toHHmm } from './assistant-day'
+import {
+  buildRecovery,
+  RECOVERY_WRAPUP_MAX_DAYS,
+  recoveryContextOf,
+  recoveryToMarkdown,
+  shouldAutoRecover
+} from './assistant-recovery'
+import { daysBetween, logicalDate, toLocalDateTime, toHHmm } from './assistant-day'
 import { buildStartPlanItems, buildTimeline, roundUpToQuarter, workFieldsOf } from './assistant-slots'
 import { isGroupItem } from './assistant-worktype'
 import {
@@ -68,6 +74,7 @@ import {
   readAssistantSettings,
   reopenPlan,
   saveWrapupNote,
+  skipWrapupNote,
   setBriefing,
   setBriefingError,
   setBriefingInstruction,
@@ -190,7 +197,8 @@ function todayOf(db: Db, now: Date): { settings: AssistantSettings; today: strin
 
 function missingWrapupDateOf(db: Db, today: string): string | null {
   const last = getLastPlanBefore(db, today)
-  if (last && last.closed_by === 'auto' && !last.wrapup_note) return last.plan_date
+  // 사용자가 건너뛰기를 누른 날짜는 다시 묻지 않는다. 앱을 다시 켜도 같다
+  if (last && last.closed_by === 'auto' && !last.wrapup_note && !last.wrapup_skipped_at) return last.plan_date
   return null
 }
 
@@ -281,6 +289,21 @@ function requireItemOfPlan(db: Db, itemId: unknown, plan: DailyPlan): PlanItem {
   return item
 }
 
+// 직전 계획의 퇴근 메모다. 맥락 복구와 같은 기준이다: 공백일수 RECOVERY_WRAPUP_MAX_DAYS 일 이내, 비어 있지 않음
+function previousNoteOf(db: Db, today: string): BriefingInput['previousNote'] {
+  const last = getLastPlanBefore(db, today)
+  const note = last?.wrapup_note?.trim() ?? ''
+  if (!last || note === '') return null
+  let gap: number
+  try {
+    gap = daysBetween(last.plan_date, today)
+  } catch {
+    return null
+  }
+  if (!Number.isFinite(gap) || gap > RECOVERY_WRAPUP_MAX_DAYS) return null
+  return { date: last.plan_date, note: note.slice(0, WRAPUP_MAX) }
+}
+
 function briefingInputOf(
   db: Db,
   plan: DailyPlan,
@@ -298,22 +321,42 @@ function briefingInputOf(
     timeline: timelineOf(plan, items, settings, today, now),
     errors,
     // G.7: 저장된 브리핑 지시. 하루 시작·다시 생성·명령 적용이 모두 이 1곳을 거친다
-    instruction: plan.briefing_instruction ?? null
+    instruction: plan.briefing_instruction ?? null,
+    // 직전 퇴근 메모. 같은 1곳을 거치므로 다시 생성·명령 적용 브리핑에도 들어간다
+    previousNote: previousNoteOf(db, today)
   }
 }
 
-async function runLlmBriefing(planId: number, input: BriefingInput, settings: AssistantSettings): Promise<void> {
+// LLM 브리핑이 실제로 시작되는 조건이다. startBackgroundBriefing 과 재생성 판단이 이 한 곳을 본다
+function llmBriefingRuns(settings: AssistantSettings): boolean {
+  return settings.llmEnabled && safeHeadlessAvailable()
+}
+
+// rulesOnFailure 가 true 면 LLM 실패 때 규칙 브리핑(메모 포함)으로 바꾼다. 메모 저장 뒤 재생성이 쓴다.
+// 기본(false)은 기존 동작이다: 본문은 두고 오류만 적는다
+async function runLlmBriefing(
+  planId: number,
+  input: BriefingInput,
+  settings: AssistantSettings,
+  rulesOnFailure: boolean
+): Promise<void> {
+  const fail = (error: string): void => {
+    const db = getDatabase()
+    if (rulesOnFailure) {
+      setBriefing(db, planId, { text: renderRuleBriefing(input), source: 'rules', model: null, at: toLocalDateTime(new Date()) })
+    }
+    setBriefingError(db, planId, error)
+  }
   try {
     const r = await requestLlmBriefing(input, settings.llmModel)
-    const db = getDatabase()
     if (r.ok) {
-      setBriefing(db, planId, { text: r.markdown, source: 'llm', model: r.model, at: toLocalDateTime(new Date()) })
+      setBriefing(getDatabase(), planId, { text: r.markdown, source: 'llm', model: r.model, at: toLocalDateTime(new Date()) })
     } else {
-      setBriefingError(db, planId, r.error)
+      fail(r.error)
     }
   } catch (err) {
     try {
-      setBriefingError(getDatabase(), planId, toMessage(err))
+      fail(toMessage(err))
     } catch {
       // DB 가 닫혔으면 기록을 건너뛴다
     }
@@ -321,10 +364,16 @@ async function runLlmBriefing(planId: number, input: BriefingInput, settings: As
 }
 
 // A8: LLM 브리핑은 계획 생성을 막지 않는다. 결과를 기다리지 않는다
-function startBackgroundBriefing(planId: number, input: BriefingInput, settings: AssistantSettings, date: string): void {
-  if (!settings.llmEnabled || !safeHeadlessAvailable()) return
+function startBackgroundBriefing(
+  planId: number,
+  input: BriefingInput,
+  settings: AssistantSettings,
+  date: string,
+  rulesOnFailure = false
+): void {
+  if (!llmBriefingRuns(settings)) return
   // 줄에 동기로 선다. 하루 시작 때 복구 LLM 보다 먼저 실행된다 (F.5)
-  const task = llmSerialized(() => runLlmBriefing(planId, input, settings)).finally(() => {
+  const task = llmSerialized(() => runLlmBriefing(planId, input, settings, rulesOnFailure)).finally(() => {
     backgroundTasks.delete(task)
     emitChanged({ date, reason: 'briefing' })
   })
@@ -508,14 +557,71 @@ function normalizeNote(note: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null
 }
 
+const NO_PLAN_FOR_DATE = '해당 날짜의 계획이 없습니다.'
+
 export async function saveWrapup(note: string, planDate: string, now: Date = new Date()): Promise<DailyPlan> {
   if (typeof planDate !== 'string' || !DATE_RE.test(planDate)) throw new Error('날짜 형식이 올바르지 않습니다.')
   const clean = normalizeNote(note)
   if (clean === null) throw new Error('메모를 입력하세요.')
+  // 브리핑을 다시 쓰므로 사용자 쓰기 줄에 선다. 최신화·명령 적용과 엇갈리지 않는다
+  return serialized(() => saveWrapupImpl(clean, planDate, now))
+}
+
+async function saveWrapupImpl(note: string, planDate: string, now: Date): Promise<DailyPlan> {
   const db = getDatabase()
-  const saved = saveWrapupNote(db, planDate, clean, toLocalDateTime(now))
-  if (!saved) throw new Error('해당 날짜의 계획이 없습니다.')
+  const { settings, today, at } = todayOf(db, now)
+  const saved = saveWrapupNote(db, planDate, note, at)
+  if (!saved) throw new Error(NO_PLAN_FOR_DATE)
+  // 오늘 기준 직전 계획의 메모를 뒤늦게 적었으면 오늘 브리핑을 다시 만든다.
+  // 메모 저장은 이미 끝났다. 브리핑 재생성 실패가 저장 결과를 바꾸지 않는다
+  try {
+    regenerateBriefingAfterWrapup(db, settings, today, at, now, planDate)
+  } catch (err) {
+    console.error('[assistant] briefing after wrapup', err)
+  }
   return saved
+}
+
+function regenerateBriefingAfterWrapup(
+  db: Db,
+  settings: AssistantSettings,
+  today: string,
+  at: string,
+  now: Date,
+  planDate: string
+): void {
+  const plan = getPlanByDate(db, today)
+  if (!plan) return
+  const last = getLastPlanBefore(db, today)
+  if (!last || last.plan_date !== planDate) return
+  const input = briefingInputOf(db, plan, settings, today, now, lastCollected?.errors ?? [])
+  // LLM 재생성이 실제로 시작되고 현재 브리핑이 LLM 결과이면 그 결과를 그대로 둔다.
+  // 새 LLM 결과가 곧 교체하고, 실패하면 규칙 브리핑(메모 포함)으로 바꾼다 (rulesOnFailure).
+  // 시작되지 않으면 메모가 바로 보이도록 규칙 브리핑을 쓴다
+  const llmWillRun = llmBriefingRuns(settings)
+  if (!(llmWillRun && plan.briefing_source === 'llm')) {
+    setBriefing(db, plan.id, { text: renderRuleBriefing(input), source: 'rules', model: null, at })
+  }
+  emitChanged({ date: today, reason: 'briefing' })
+  startBackgroundBriefing(plan.id, input, settings, today, true)
+}
+
+/**
+ * 어제 메모 입력 '건너뛰기' 를 저장한다. 앱을 다시 켜도 그 날짜의 입력 칸이 다시 나오지 않는다.
+ * 계획이 없으면 saveWrapup 과 같은 오류다.
+ */
+export async function skipWrapup(planDate: string, now: Date = new Date()): Promise<TodayPayload> {
+  if (typeof planDate !== 'string' || !DATE_RE.test(planDate)) throw new Error('날짜 형식이 올바르지 않습니다.')
+  return serialized(() => skipWrapupImpl(planDate, now))
+}
+
+async function skipWrapupImpl(planDate: string, now: Date): Promise<TodayPayload> {
+  const db = getDatabase()
+  const { settings, today, at } = todayOf(db, now)
+  const skipped = skipWrapupNote(db, planDate, at)
+  if (!skipped) throw new Error(NO_PLAN_FOR_DATE)
+  emitChanged({ date: today, reason: 'day' })
+  return buildPayload(db, settings, today, now)
 }
 
 export function runRefresh(mode: RefreshMode, now: Date = new Date()): Promise<TodayPayload | null> {
@@ -694,7 +800,7 @@ export async function refreshBriefing(now: Date = new Date()): Promise<TodayPayl
   }
   // 버튼은 결과를 기다린다. 실패해도 규칙 브리핑은 그대로 남는다
   const input = briefingInputOf(db, plan, settings, today, now, lastCollected?.errors ?? [])
-  await llmSerialized(() => runLlmBriefing(plan.id, input, settings))
+  await llmSerialized(() => runLlmBriefing(plan.id, input, settings, false))
   emitChanged({ date: today, reason: 'briefing' })
   return buildPayload(getDatabase(), settings, today, now)
 }

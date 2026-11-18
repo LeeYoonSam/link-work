@@ -19,6 +19,7 @@ import {
   runRefresh,
   saveSettings,
   saveWrapup,
+  skipWrapup,
   setItemStatus,
   startDay
 } from '../services/assistant-service'
@@ -56,6 +57,10 @@ export function registerAssistantIpc(): void {
 
   ipcMain.handle('assistant:saveWrapup', (_e, note: string, date: string) =>
     wrap(async () => ({ plan: await saveWrapup(note, date) }))
+  )
+
+  ipcMain.handle('assistant:skipWrapup', (_e, date: string) =>
+    wrap(async () => ({ today: await skipWrapup(date) }))
   )
 
   // 근무 중이 아니면 최신화할 계획이 없다. 이때는 현재 상태를 돌려준다

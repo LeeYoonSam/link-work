@@ -304,6 +304,7 @@ const api = {
     closeDay: (note?: string) => ipcRenderer.invoke('assistant:closeDay', note),
     reopenDay: () => ipcRenderer.invoke('assistant:reopenDay'),
     saveWrapup: (note: string, date: string) => ipcRenderer.invoke('assistant:saveWrapup', note, date),
+    skipWrapup: (date: string) => ipcRenderer.invoke('assistant:skipWrapup', date),
     refresh: () => ipcRenderer.invoke('assistant:refresh'),
     refreshBriefing: () => ipcRenderer.invoke('assistant:refreshBriefing'),
     generateRecovery: () => ipcRenderer.invoke('assistant:generateRecovery'),

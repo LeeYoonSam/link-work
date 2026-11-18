@@ -42,6 +42,8 @@ export interface BriefingInput {
   errors: string[]
   // 사용자가 확인한 오늘 방침이다 (부록 G.7). 없으면 null 이다.
   instruction: string | null
+  // 직전 계획의 퇴근 메모다. 공백일수 7일 이내이고 비어 있지 않을 때만 채운다. 없으면 null 이다.
+  previousNote: { date: string; note: string } | null
 }
 
 const INSTRUCTION_MAX = 200
@@ -51,6 +53,30 @@ function instructionOf(input: BriefingInput): string | null {
   if (typeof input.instruction !== 'string') return null
   const line = oneLine(input.instruction, INSTRUCTION_MAX)
   return line.length > 0 ? line : null
+}
+
+// 퇴근 메모 상한. 저장 상한(WRAPUP_MAX)과 맥락 복구 상한(WRAPUP_MAX_CHARS)과 같다.
+export const PREVIOUS_NOTE_MAX = 2000
+const PREVIOUS_NOTE_HEADING = '지난 퇴근 메모'
+
+// 퇴근 메모를 줄 단위로 정리한다. 빈 줄은 빼고, 앞의 목록 기호는 지운다. 남은 줄이 없으면 null 이다.
+function previousNoteOf(input: BriefingInput): { date: string; lines: string[] } | null {
+  const prev = input.previousNote
+  if (!prev || typeof prev.note !== 'string' || typeof prev.date !== 'string') return null
+  const lines = prev.note
+    .slice(0, PREVIOUS_NOTE_MAX)
+    .split(/\r?\n/)
+    .map((l) => oneLine(l.replace(/^\s*[-*+]\s+/, ''), PREVIOUS_NOTE_MAX))
+    .filter((l) => l !== '')
+  return lines.length > 0 ? { date: oneLine(prev.date, 10), lines } : null
+}
+
+// 메모 절이다. 메모 문장은 코드가 그대로 붙인다. LLM 이 빼먹어도 보인다.
+// 제목에 '할 일' 을 넣지 않는다. 화면 요약(briefingSummary)이 그 절을 뺀다.
+function previousNoteSection(input: BriefingInput): string[] {
+  const note = previousNoteOf(input)
+  if (note === null) return []
+  return [`## ${PREVIOUS_NOTE_HEADING} (${note.date})`, '', ...note.lines.map((l) => `- ${plainLead(l)}`), '']
 }
 
 // 계획에 속한 상태. 제안·무시·제외 항목은 계획 목록에 넣지 않는다.
@@ -86,8 +112,10 @@ function oneLine(text: string, max = 200): string {
 }
 
 // 줄 맨 앞의 블록 문법을 글자로 바꾼다. 외부 문장이 제목·인용·목록·표가 되지 않게 한다.
+// 숫자 목록은 구분자(. 또는 )) 앞에 \ 를 둔다. 마크다운은 ASCII 구두점만 이스케이프하므로 숫자 앞에 두면 \ 가 보인다.
 function plainLead(text: string): string {
-  return /^([#>*+\-|]|\d+[.)])/.test(text) ? `\\${text}` : text
+  if (/^\d+[.)]/.test(text)) return text.replace(/^(\d+)([.)])/, '$1\\$2')
+  return /^[#>*+\-|]/.test(text) ? `\\${text}` : text
 }
 
 // 굵게 표시 안에 넣는 글자의 '*' 를 이스케이프한다.
@@ -390,6 +418,7 @@ export function renderRuleBriefing(input: BriefingInput): string {
   if (facts.instruction !== null) out.push('## 오늘 방침', '', `- ${facts.instruction}`, '')
 
   out.push(...greetingLines(facts), '')
+  out.push(...previousNoteSection(input))
   out.push(planHeading(facts.rows.length), '', renderPlanTable(facts.rows), '')
   out.push(...noteSection(ruleNotes(facts)))
 
@@ -428,6 +457,9 @@ export function briefingToMarkdown(value: BriefingJson, input: BriefingInput): s
     const reason = value.focus_reason === null ? '' : oneLine(value.focus_reason, 120)
     out.push(`**먼저 할 일**: ${workText(focus)}${reason !== '' ? ` — ${reason}` : ''}`, '')
   }
+
+  // 메모는 LLM 출력과 무관하게 코드가 붙인다
+  out.push(...previousNoteSection(input))
 
   out.push(planHeading(facts.rows.length), '', renderPlanTable(facts.rows), '')
 
@@ -477,6 +509,12 @@ ${ASSISTANT_SPEECH_JSON_NOTE}
 export function neutralizeMarkers(text: string): string {
   return text.replace(/\[\/?(데이터|명령|지시)\]/g, '($1)')
 }
+
+// 메모가 있을 때만 프롬프트 첫머리에 붙는 규칙이다. 화면이 메모 절을 따로 붙이므로 반복을 막는다.
+export const PREVIOUS_NOTE_RULE =
+  'previous_wrapup_note 는 사용자가 지난 근무일 퇴근 때 남긴 메모다. 참고 맥락으로만 쓴다. ' +
+  '화면이 메모를 따로 보여 주므로 메모 문장을 그대로 반복해 출력하지 않는다. ' +
+  '메모가 오늘 계획 항목과 이어지면 greeting 이나 notes 에서 짧게 연결만 한다.'
 
 export function buildBriefingPrompt(input: BriefingInput): string {
   const facts = buildBriefingFacts(input)
@@ -559,8 +597,12 @@ export function buildBriefingPrompt(input: BriefingInput): string {
     })),
     failed_sources: facts.errors
   }
-  const json = neutralizeMarkers(JSON.stringify(data, null, 2))
-  const prompt = `아래 [데이터] 로 오늘 브리핑 JSON 을 만든다.\n\n[데이터]\n${json}\n[/데이터]`
+  // 메모가 없으면 프롬프트는 메모 도입 전과 글자까지 같다
+  const note = previousNoteOf(input)
+  const payload = note === null ? data : { ...data, previous_wrapup_note: { date: note.date, note: note.lines.join('\n') } }
+  const json = neutralizeMarkers(JSON.stringify(payload, null, 2))
+  const lead = note === null ? '' : `\n${PREVIOUS_NOTE_RULE}`
+  const prompt = `아래 [데이터] 로 오늘 브리핑 JSON 을 만든다.${lead}\n\n[데이터]\n${json}\n[/데이터]`
   // A38: 지시는 [데이터] 밖이다. DATA_RULE 이 [데이터] 안의 지시를 무시하라고 하기 때문이다.
   const instruction = instructionOf(input)
   if (instruction === null) return prompt

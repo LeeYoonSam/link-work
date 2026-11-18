@@ -1220,6 +1220,8 @@ export interface DailyPlan {
   recovery_at: string | null
   wrapup_note: string | null
   wrapup_at: string | null
+  // 어제 메모 칸에서 '건너뛰기'를 누른 시각. 값이 있으면 다시 묻지 않는다
+  wrapup_skipped_at: string | null
   last_refresh_at: string | null
   created_at: string
   updated_at: string
@@ -1484,6 +1486,8 @@ export interface AssistantAPI {
   closeDay: (note?: string) => Promise<TodayResult>
   reopenDay: () => Promise<TodayResult>
   saveWrapup: (note: string, date: string) => Promise<AssistantResult<{ plan: DailyPlan }>>
+  // 어제 메모를 건너뛴 것을 기록한다. 이후 missingWrapupDate 가 null 이 된다
+  skipWrapup: (date: string) => Promise<TodayResult>
   refresh: () => Promise<TodayResult>
   refreshBriefing: () => Promise<TodayResult>
   // 맥락 복구 본문을 만든다 (부록 F.7)

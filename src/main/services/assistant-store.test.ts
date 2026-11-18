@@ -75,6 +75,7 @@ import {
   setBriefingInstruction,
   setEventResponse,
   setRecovery,
+  skipWrapupNote,
   updateEventPayload,
   updateEventStatus,
   updatePlanItems,
@@ -296,6 +297,29 @@ describe('퇴근·다시 열기·메모', () => {
     closePlan(db, plan.id, 'auto', '2026-11-03 09:00:00')
     expect(saveWrapupNote(db, '2026-11-02', '어제 메모', '2026-11-03 09:10:00')?.wrapup_note).toBe('어제 메모')
     expect(saveWrapupNote(db, '2026-10-01', 'x', '2026-11-03 09:10:00')).toBeNull()
+  })
+
+  it('새 계획의 wrapup_skipped_at 은 null 이다', () => {
+    expect(startPlan().wrapup_skipped_at).toBeNull()
+  })
+
+  it('skipWrapupNote 는 건너뛴 시각만 기록한다. 계획이 없으면 null 이다', () => {
+    const plan = startPlan()
+    closePlan(db, plan.id, 'auto', '2026-11-03 09:00:00')
+    const skipped = skipWrapupNote(db, '2026-11-02', '2026-11-03 09:10:00')
+    expect(skipped?.wrapup_skipped_at).toBe('2026-11-03 09:10:00')
+    expect(skipped?.wrapup_note).toBeNull()
+    expect(skipped?.status).toBe('closed')
+    expect(skipped?.closed_by).toBe('auto')
+    expect(getPlanByDate(db, '2026-11-02')?.wrapup_skipped_at).toBe('2026-11-03 09:10:00')
+    expect(getLastPlanBefore(db, '2026-11-03')?.wrapup_skipped_at).toBe('2026-11-03 09:10:00')
+    expect(skipWrapupNote(db, '2026-10-01', '2026-11-03 09:10:00')).toBeNull()
+  })
+
+  it('A12: skipWrapupNote 는 날짜·시각 형식을 확인한다', () => {
+    startPlan()
+    expect(() => skipWrapupNote(db, '2026/11/02', '2026-11-03 09:10:00')).toThrow()
+    expect(() => skipWrapupNote(db, '2026-11-02', '09:10')).toThrow()
   })
 })
 

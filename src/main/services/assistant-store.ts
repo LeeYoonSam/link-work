@@ -61,12 +61,13 @@ function parseSnapshot(raw: string | null): SourceSnapshot | null {
   }
 }
 
-// briefing_instruction 은 migrateAssistantSchema 가 더한 컬럼이다 (부록 G.7.1). 값이 없으면 null 로 맞춘다.
+// briefing_instruction·wrapup_skipped_at 은 migrateAssistantSchema 가 더한 컬럼이다 (부록 G.7.1). 값이 없으면 null 로 맞춘다.
 function toPlan(row: PlanRow): DailyPlan {
   return {
     ...row,
     source_snapshot: parseSnapshot(row.source_snapshot),
-    briefing_instruction: row.briefing_instruction ?? null
+    briefing_instruction: row.briefing_instruction ?? null,
+    wrapup_skipped_at: row.wrapup_skipped_at ?? null
   }
 }
 
@@ -251,6 +252,18 @@ export function saveWrapupNote(db: Db, planDate: string, note: string, at: strin
       at,
       plan.id
     )
+    return requirePlan(db, plan.id)
+  })()
+}
+
+// 어제 메모 입력 '건너뛰기' 를 기록한다. 계획이 없으면 null 이다. 메모는 건드리지 않는다.
+export function skipWrapupNote(db: Db, planDate: string, at: string): DailyPlan | null {
+  assertDate(planDate, 'planDate')
+  assertDateTime(at, 'at')
+  return db.transaction(() => {
+    const plan = getPlanByDate(db, planDate)
+    if (!plan) return null
+    db.prepare('UPDATE daily_plans SET wrapup_skipped_at = ?, updated_at = ? WHERE id = ?').run(at, at, plan.id)
     return requirePlan(db, plan.id)
   })()
 }

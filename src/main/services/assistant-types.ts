@@ -83,6 +83,7 @@ export interface DailyPlan {
   recovery_text: string | null; recovery_source: 'rules' | 'llm' | null; recovery_at: string | null
   wrapup_note: string | null; wrapup_at: string | null; last_refresh_at: string | null
   briefing_instruction: string | null   // 사용자 브리핑 방침 (부록 G.7)
+  wrapup_skipped_at: string | null      // 어제 메모 입력을 건너뛴 시각. 있으면 missingWrapupDate 를 내지 않는다
   created_at: string; updated_at: string
 }
 

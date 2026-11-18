@@ -90,7 +90,8 @@ vi.mock('./assistant-briefing', async (importOriginal) => {
     ...actual,
     requestLlmBriefing: briefing.requestLlmBriefing,
     requestLlmRecovery: briefing.requestLlmRecovery,
-    requestLlmMeetingBriefing: briefing.requestLlmMeetingBriefing
+    requestLlmMeetingBriefing: briefing.requestLlmMeetingBriefing,
+    renderRuleBriefing: vi.fn(actual.renderRuleBriefing)
   }
 })
 
@@ -131,11 +132,14 @@ import {
   runDueMeetingBriefings,
   runRefresh,
   saveSettings,
+  saveWrapup,
   setAssistantChangedListener,
+  skipWrapup,
   setItemStatus,
   startDay,
   waitForAssistantBackground
 } from './assistant-service'
+import * as briefingModule from './assistant-briefing'
 import { getEventById, getPlanByDate, getPlanItem, insertEvent, listPlanItems, upsertExclusion } from './assistant-store'
 import type {
   AssistantChangedEvent,
@@ -306,6 +310,214 @@ describe('startDay', () => {
     expect(tue.logicalDate).toBe('2026-11-03')
     expect(tue.plan?.status).toBe('active')
     expect(tue.missingWrapupDate).toBe('2026-11-02')
+  })
+})
+
+describe('퇴근 메모와 하루 브리핑', () => {
+  const NOTE = '결제 오류 원인은 캐시 키 충돌. 내일 수정 PR 올리기'
+  const TUE_1000 = new Date(2026, 10, 3, 10, 0, 0)
+
+  it('전날 버튼 퇴근 메모가 다음 날 규칙 브리핑에 들어간다', async () => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(MON_0940)
+    await closeDay(NOTE, MON_1100)
+    const tue = await startDay(TUE_0930)
+    expect(tue.plan?.briefing_source).toBe('rules')
+    expect(tue.plan?.briefing_text).toContain('## 지난 퇴근 메모 (2026-11-02)')
+    expect(tue.plan?.briefing_text).toContain(`- ${NOTE}`)
+    expect(tue.missingWrapupDate).toBeNull()
+  })
+
+  it('LLM 브리핑 입력에도 직전 메모가 들어간다', async () => {
+    briefing.requestLlmBriefing.mockResolvedValue({ ok: false, error: 'x' })
+    await startDay(MON_0940)
+    await closeDay(NOTE, MON_1100)
+    await startDay(TUE_0930)
+    await waitForAssistantBackground()
+    const input = briefing.requestLlmBriefing.mock.calls.at(-1)?.[0] as { previousNote: unknown }
+    expect(input.previousNote).toEqual({ date: '2026-11-02', note: NOTE })
+  })
+
+  it('메모는 공백 7일까지 넣고 8일부터는 넣지 않는다 (맥락 복구와 같은 기준)', async () => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(MON_0940)
+    await closeDay(NOTE, MON_1100)
+    const day7 = await startDay(new Date(2026, 10, 9, 9, 30, 0))
+    expect(day7.plan?.briefing_text).toContain('## 지난 퇴근 메모 (2026-11-02)')
+  })
+
+  it('메모가 8일 전이면 브리핑에 넣지 않는다', async () => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(MON_0940)
+    await closeDay(NOTE, MON_1100)
+    const day8 = await startDay(new Date(2026, 10, 10, 9, 30, 0))
+    expect(day8.plan?.briefing_text).not.toContain('지난 퇴근 메모')
+  })
+
+  it('메모가 없으면 브리핑에 메모 절이 없다', async () => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(MON_0940)
+    await closeDay(null, MON_1100)
+    const tue = await startDay(TUE_0930)
+    expect(tue.plan?.briefing_text).not.toContain('지난 퇴근 메모')
+  })
+
+  it('자동 닫힘·메모 없음이면 missingWrapupDate 가 그 날짜다. skipWrapup 뒤에는 다시 읽어도 null 이다', async () => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(MON_0940)
+    const tue = await startDay(TUE_0930)
+    expect(tue.missingWrapupDate).toBe('2026-11-02')
+
+    const skipped = await skipWrapup('2026-11-02', TUE_1000)
+    expect(skipped.missingWrapupDate).toBeNull()
+    expect(getPlanByDate(getDatabase(), '2026-11-02')?.wrapup_skipped_at).toBe('2026-11-03 10:00:00')
+    expect(getPlanByDate(getDatabase(), '2026-11-02')?.wrapup_note).toBeNull()
+    expect((await getToday(TUE_1000)).missingWrapupDate).toBeNull()
+    expect(changed).toContainEqual({ date: '2026-11-03', reason: 'day' })
+  })
+
+  it('skipWrapup 은 날짜 형식과 계획 유무를 확인한다', async () => {
+    await expect(skipWrapup('2026/11/02', TUE_1000)).rejects.toThrow('날짜 형식')
+    await expect(skipWrapup('2026-10-01', TUE_1000)).rejects.toThrow('해당 날짜의 계획이 없습니다.')
+  })
+
+  it('오늘 시작 뒤 어제 메모를 저장하면 오늘 규칙 브리핑을 다시 쓰고 LLM 브리핑을 다시 만든다', async () => {
+    briefing.requestLlmBriefing.mockResolvedValue({ ok: false, error: 'x' })
+    await startDay(MON_0940)
+    const tue = await startDay(TUE_0930)
+    expect(tue.missingWrapupDate).toBe('2026-11-02')
+    expect(tue.plan?.briefing_text).not.toContain('지난 퇴근 메모')
+    await waitForAssistantBackground()
+    briefing.requestLlmBriefing.mockClear()
+    changed.length = 0
+
+    const saved = await saveWrapup(NOTE, '2026-11-02', TUE_1000)
+    expect(saved.plan_date).toBe('2026-11-02')
+    expect(saved.wrapup_note).toBe(NOTE)
+
+    const after = getPlanByDate(getDatabase(), '2026-11-03')
+    expect(after?.briefing_source).toBe('rules')
+    expect(after?.briefing_text).toContain('## 지난 퇴근 메모 (2026-11-02)')
+    expect(after?.briefing_text).toContain(`- ${NOTE}`)
+    expect(changed).toContainEqual({ date: '2026-11-03', reason: 'briefing' })
+
+    await waitForAssistantBackground()
+    expect(briefing.requestLlmBriefing).toHaveBeenCalledTimes(1)
+    const input = briefing.requestLlmBriefing.mock.calls[0][0] as { previousNote: unknown }
+    expect(input.previousNote).toEqual({ date: '2026-11-02', note: NOTE })
+    expect((await getToday(TUE_1000)).missingWrapupDate).toBeNull()
+  })
+
+  it('직전 계획이 아닌 날짜나 오늘 계획이 없으면 브리핑을 다시 쓰지 않는다', async () => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(MON_0940)
+    await closeDay(null, MON_1100)
+    // 오늘(11-03) 계획이 없다
+    await saveWrapup(NOTE, '2026-11-02', TUE_0930)
+    expect(getPlanByDate(getDatabase(), '2026-11-03')).toBeNull()
+    expect(getPlanByDate(getDatabase(), '2026-11-02')?.briefing_text).not.toContain('지난 퇴근 메모')
+
+    // 오늘 계획 메모는 오늘 브리핑을 바꾸지 않는다
+    await startDay(TUE_0930)
+    const before = getPlanByDate(getDatabase(), '2026-11-03')?.briefing_text
+    await saveWrapup('오늘 메모', '2026-11-03', TUE_1000)
+    expect(getPlanByDate(getDatabase(), '2026-11-03')?.briefing_text).toBe(before)
+  })
+
+  it('아침 LLM 브리핑이 있고 LLM 재생성이 도는 동안에는 규칙 브리핑으로 덮지 않고, 새 LLM 결과로 교체된다', async () => {
+    briefing.requestLlmBriefing
+      .mockResolvedValueOnce({ ok: true, markdown: '# 아침 LLM', model: 'm' })
+      .mockResolvedValueOnce({ ok: true, markdown: '# 아침 LLM', model: 'm' })
+    await startDay(MON_0940)
+    await startDay(TUE_0930)
+    await waitForAssistantBackground()
+    expect(getPlanByDate(getDatabase(), '2026-11-03')?.briefing_source).toBe('llm')
+
+    let resolveLlm: (v: unknown) => void = () => undefined
+    briefing.requestLlmBriefing.mockImplementationOnce(() => new Promise((r) => (resolveLlm = r)))
+    await saveWrapup(NOTE, '2026-11-02', TUE_1000)
+    // LLM 결과를 기다리는 동안 아침 LLM 본문이 그대로 남는다
+    const during = getPlanByDate(getDatabase(), '2026-11-03')
+    expect(during?.briefing_source).toBe('llm')
+    expect(during?.briefing_text).toBe('# 아침 LLM')
+
+    resolveLlm({ ok: true, markdown: '# 새 LLM', model: 'm' })
+    await waitForAssistantBackground()
+    const after = getPlanByDate(getDatabase(), '2026-11-03')
+    expect(after?.briefing_source).toBe('llm')
+    expect(after?.briefing_text).toBe('# 새 LLM')
+  })
+
+  it('LLM 재생성이 실패하면 아침 LLM 브리핑 대신 메모가 든 규칙 브리핑이 남고 오류가 기록된다', async () => {
+    briefing.requestLlmBriefing
+      .mockResolvedValueOnce({ ok: true, markdown: '# 아침 LLM', model: 'm' })
+      .mockResolvedValueOnce({ ok: true, markdown: '# 아침 LLM', model: 'm' })
+    await startDay(MON_0940)
+    await startDay(TUE_0930)
+    await waitForAssistantBackground()
+
+    briefing.requestLlmBriefing.mockResolvedValueOnce({ ok: false, error: 'LLM 실패' })
+    await saveWrapup(NOTE, '2026-11-02', TUE_1000)
+    await waitForAssistantBackground()
+    const after = getPlanByDate(getDatabase(), '2026-11-03')
+    expect(after?.briefing_source).toBe('rules')
+    expect(after?.briefing_text).toContain('## 지난 퇴근 메모 (2026-11-02)')
+    expect(after?.briefing_text).not.toContain('# 아침 LLM')
+    expect(after?.briefing_error).toBe('LLM 실패')
+  })
+
+  it('LLM 재생성이 돌지 않으면(AI 브리핑 꺼짐) 아침 LLM 브리핑도 메모가 든 규칙 브리핑으로 바뀐다', async () => {
+    briefing.requestLlmBriefing
+      .mockResolvedValueOnce({ ok: true, markdown: '# 아침 LLM', model: 'm' })
+      .mockResolvedValueOnce({ ok: true, markdown: '# 아침 LLM', model: 'm' })
+    await startDay(MON_0940)
+    await startDay(TUE_0930)
+    await waitForAssistantBackground()
+    saveSettings({ llmEnabled: false })
+
+    await saveWrapup(NOTE, '2026-11-02', TUE_1000)
+    const after = getPlanByDate(getDatabase(), '2026-11-03')
+    expect(after?.briefing_source).toBe('rules')
+    expect(after?.briefing_text).toContain(`- ${NOTE}`)
+    // 재생성 LLM 은 부르지 않는다. 호출 수는 아침 두 번 그대로다
+    expect(briefing.requestLlmBriefing).toHaveBeenCalledTimes(2)
+  })
+
+  it('LLM 재생성이 돌지 않으면(헤드리스 사용 불가) 아침 LLM 브리핑도 메모가 든 규칙 브리핑으로 바뀐다', async () => {
+    briefing.requestLlmBriefing
+      .mockResolvedValueOnce({ ok: true, markdown: '# 아침 LLM', model: 'm' })
+      .mockResolvedValueOnce({ ok: true, markdown: '# 아침 LLM', model: 'm' })
+    await startDay(MON_0940)
+    await startDay(TUE_0930)
+    await waitForAssistantBackground()
+    headless.isHeadlessAvailable.mockReturnValue(false)
+
+    await saveWrapup(NOTE, '2026-11-02', TUE_1000)
+    const after = getPlanByDate(getDatabase(), '2026-11-03')
+    expect(after?.briefing_source).toBe('rules')
+    expect(after?.briefing_text).toContain(`- ${NOTE}`)
+  })
+
+  it('브리핑 재생성이 실패해도 메모 저장은 남고 saveWrapup 은 성공한다', async () => {
+    headless.isHeadlessAvailable.mockReturnValue(false)
+    await startDay(MON_0940)
+    await startDay(TUE_0930)
+    vi.mocked(briefingModule.renderRuleBriefing).mockImplementationOnce(() => {
+      throw new Error('briefing boom')
+    })
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const saved = await saveWrapup(NOTE, '2026-11-02', TUE_1000)
+
+    expect(saved.wrapup_note).toBe(NOTE)
+    expect(getPlanByDate(getDatabase(), '2026-11-02')?.wrapup_note).toBe(NOTE)
+    expect(errSpy).toHaveBeenCalledWith('[assistant] briefing after wrapup', expect.any(Error))
+    errSpy.mockRestore()
+  })
+
+  it('saveWrapup 은 계획이 없으면 기존 오류를 낸다', async () => {
+    await expect(saveWrapup(NOTE, '2026-10-01', TUE_1000)).rejects.toThrow('해당 날짜의 계획이 없습니다.')
+    await expect(saveWrapup('   ', '2026-10-01', TUE_1000)).rejects.toThrow('메모를 입력하세요.')
   })
 })
 

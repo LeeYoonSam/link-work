@@ -259,7 +259,7 @@ export default function TodayView({
         onCloseDay={(note) => void closeDay(note)}
         onReopenDay={() => void reopenDay()}
         onSaveWrapup={(note, date) => void saveWrapup(note, date)}
-        onSkipWrapup={skipWrapup}
+        onSkipWrapup={(date) => void skipWrapup(date)}
       >
         {plan && showBriefing ? (
           <BriefingCard
