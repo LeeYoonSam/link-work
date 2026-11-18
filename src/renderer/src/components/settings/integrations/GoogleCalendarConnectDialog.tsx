@@ -12,6 +12,15 @@ export const GOOGLE_SCOPES: ConnectScope[] = [
   { scope: 'calendar.readonly', reason: '회의 일정을 읽기만 합니다', need: '필수' }
 ]
 
+// 팝업에 번호 순서로 보이는 연결 안내. 리디렉션 URI 단계(4번)는 [복사] 버튼이 있어 컴포넌트가 따로 그린다.
+export const GOOGLE_CONNECT_STEPS: string[] = [
+  '[발급 페이지 열기]로 Google Cloud 콘솔을 열고 프로젝트를 고릅니다. 없으면 새로 만듭니다.',
+  '처음이면 "API 및 서비스 > 라이브러리"에서 Google Calendar API 를 사용 설정하고 OAuth 동의 화면을 만듭니다. 회사 계정은 "내부", 개인 계정은 "외부"로 하고 테스트 사용자에 본인을 추가합니다.',
+  '"사용자 인증 정보 만들기 > OAuth 클라이언트 ID"에서 유형을 "웹 애플리케이션"으로 고릅니다.',
+  '만들어진 Client ID 와 Client Secret 을 아래에 붙여 넣고 [저장 후 Google 로그인]을 누릅니다.',
+  '로그인 창에서 일정을 가져올 Google 계정을 고르고 캘린더 읽기를 허용합니다. 그 계정의 기본 캘린더만 읽습니다.'
+]
+
 export interface GoogleCalendarConnectDialogProps {
   onClose: () => void
   onConnected: () => void
@@ -77,22 +86,34 @@ export default function GoogleCalendarConnectDialog({
       scopes={GOOGLE_SCOPES}
       scopesNote={
         <div>
-          <p className="mb-1">
-            Google Cloud 콘솔에서 OAuth 클라이언트(데스크톱 또는 웹)를 만들고 아래 리디렉션 URI 를
-            등록합니다.
+          <p className="text-xs font-medium text-gray-700 mb-1.5">연결 순서</p>
+          <ol className="list-decimal pl-4 space-y-1.5">
+            {GOOGLE_CONNECT_STEPS.slice(0, 3).map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+            <li>
+              &ldquo;승인된 리디렉션 URI&rdquo;에 아래 주소를 추가합니다.
+              <span className="flex items-center gap-2 mt-1">
+                <code className="px-1.5 py-0.5 bg-gray-100 rounded font-mono text-[11px] text-gray-800">
+                  {GOOGLE_REDIRECT_URI}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => void handleCopy()}
+                  className={`px-2 py-0.5 text-[11px] ${button.subtle}`}
+                >
+                  {copied ? '복사됨' : '복사'}
+                </button>
+              </span>
+            </li>
+            {GOOGLE_CONNECT_STEPS.slice(3).map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+          <p className="mt-2">
+            예전에 만든 OAuth 클라이언트가 있으면 그대로 쓸 수 있습니다. Client Secret 이 보이지 않으면
+            그 클라이언트에서 보안 비밀을 새로 추가하세요.
           </p>
-          <div className="flex items-center gap-2">
-            <code className="px-1.5 py-0.5 bg-gray-100 rounded font-mono text-[11px] text-gray-800">
-              {GOOGLE_REDIRECT_URI}
-            </code>
-            <button
-              type="button"
-              onClick={() => void handleCopy()}
-              className={`px-2 py-0.5 text-[11px] ${button.subtle}`}
-            >
-              {copied ? '복사됨' : '복사'}
-            </button>
-          </div>
         </div>
       }
       issueUrl={GOOGLE_CREDENTIALS_URL}

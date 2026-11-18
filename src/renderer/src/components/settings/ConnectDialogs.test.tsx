@@ -97,6 +97,16 @@ describe('ConnectDialogs', () => {
     expect(html).toContain('ntn_ 으로 시작하는 토큰')
   })
 
+  it('Google 팝업은 연결 순서를 번호 목록 6단계로 안내한다', () => {
+    const html = google()
+    expect(html).toContain('연결 순서')
+    expect(html.match(/<li>/g)?.length).toBe(6)
+    expect(html).toContain('Google Calendar API')
+    expect(html).toContain('웹 애플리케이션')
+    expect(html).toContain('승인된 리디렉션 URI')
+    expect(html).toContain('기본 캘린더만 읽습니다')
+  })
+
   it('Google 팝업은 redirect URI 와 calendar.readonly 권한을 보여 준다', () => {
     const html = google()
     expect(html).toContain('http://localhost:8945/callback')
