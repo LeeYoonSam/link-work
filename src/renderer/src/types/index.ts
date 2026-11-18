@@ -1089,9 +1089,18 @@ export interface TaskRefreshResult {
 // main의 services/backup-service.ts가 만드는 manifest.json과 같은 모양이라
 // 한쪽만 바꾸면 복원 화면이 조용히 빈 값을 그린다 — 둘을 함께 고칠 것.
 
+/**
+ * 백업 그룹 ID. 순서가 고정이다(main 의 services/backup-groups.ts 의 BACKUP_GROUP_IDS 와 같다).
+ * 그룹을 추가하면 main 쪽 formatVersion 을 반드시 올린다.
+ */
+export type BackupGroupId = 'work' | 'meetings' | 'library' | 'ai' | 'settings'
+
 export interface BackupManifest {
   format: 'linkwork-backup'
+  /** 1 = 이전 형식(늘 전체 백업), 2 = 그룹 선택 백업 */
   formatVersion: number
+  /** 이 백업에 담긴 그룹(고정 순서). main 이 v1 은 5개 전체로 정규화해 내려준다. */
+  groups: BackupGroupId[]
   appVersion: string
   /** ISO 문자열 */
   createdAt: string
@@ -1103,6 +1112,15 @@ export interface BackupManifest {
   }
   /** 백업에서 실제로 제거된 기기 종속 시크릿 — 'auth_tokens' | 'app_settings:notion_token' */
   excluded: string[]
+}
+
+/** `backup:stats` — 현재 데이터의 그룹별 행 수와 파일 용량 */
+export interface BackupGroupStat {
+  id: BackupGroupId
+  /** 테이블별 행 수. settings 는 app_settings 키 수 */
+  tables: Record<string, number>
+  /** 그룹에 속한 파일(recordings/ · ai-attachments/). 파일이 없는 그룹은 0 */
+  files: { count: number; bytes: number }
 }
 
 export interface BackupProgress {
@@ -1121,8 +1139,10 @@ export interface BackupSummary {
 }
 
 export interface BackupAPI {
-  /** 저장 다이얼로그 → .zip 하나로 내보내기. 취소하면 canceled=true */
-  exportToFile: () => Promise<{
+  /** 현재 데이터의 그룹별 건수·파일 용량 (내보내기·복원 화면 표시용) */
+  stats: () => Promise<{ success: boolean; groups?: BackupGroupStat[]; error?: string }>
+  /** 저장 다이얼로그 → 고른 그룹만 .zip 하나로 내보내기. 취소하면 canceled=true */
+  exportToFile: (groups: BackupGroupId[]) => Promise<{
     success: boolean
     canceled?: boolean
     /** 만들어진 백업 .zip의 전체 경로 */
@@ -1137,8 +1157,24 @@ export interface BackupAPI {
     summary?: BackupSummary
     error?: string
   }>
-  /** 현재 데이터를 백업으로 **대체**하고 앱을 재시작한다. 성공 응답 뒤 1초 후 재시작. */
-  importBackup: (path: string) => Promise<{ success: boolean; error?: string }>
+  /**
+   * 고른 그룹만 현재 데이터를 백업 내용으로 **교체**하고(합치지 않음) 앱을 재시작한다.
+   * 고르지 않은 그룹은 그대로 둔다. 성공 응답 뒤 1초 후 재시작.
+   */
+  importBackup: (
+    path: string,
+    groups: BackupGroupId[]
+  ) => Promise<{
+    success: boolean
+    restoredDbBackupPath?: string
+    groups?: BackupGroupId[]
+    warnings?: string[]
+    /** 경고가 1건 이상이면 true — main 은 자동 재시작하지 않고 `restart()` 를 기다린다 */
+    restartPending?: boolean
+    error?: string
+  }>
+  /** restartPending 으로 멈춘 복원 뒤, 사용자가 경고를 읽고 나서 앱을 재시작한다 */
+  restart: () => Promise<{ success: true }>
   /** 진행률 구독. 반환 함수를 호출하면 해제된다. */
   onProgress: (cb: (p: BackupProgress) => void) => () => void
 }
