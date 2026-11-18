@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { PlanItem, Task } from '../types'
+import type { PlanItem, Task, TodayPayload, TodayResult } from '../types'
 
 // 원본 완료가 Jira 연결 작업의 상태를 바꾸지 않는지 고정한다 (PROJECT_SYNC R12).
 // 열린 화면 갱신은 이 테스트의 관심사가 아니라 잘라낸다.
@@ -35,7 +35,10 @@ const taskRow = (id: number, key: string | null): Task => ({
 
 const api = {
   task: { update: vi.fn(async () => taskRow(7, null)), list: vi.fn(async (): Promise<Task[]> => []) },
-  todo: { complete: vi.fn(async () => ({})) }
+  todo: { complete: vi.fn(async () => ({})) },
+  assistant: {
+    skipWrapup: vi.fn(async (): Promise<TodayResult> => ({ success: false, error: '' }))
+  }
 }
 
 beforeEach(() => {
@@ -94,5 +97,40 @@ describe('R12 원본 완료 잠금', () => {
   it('R12 isJiraLinkedTask 는 목록에 없는 작업을 연결 작업으로 보지 않는다', async () => {
     const list = vi.fn(async () => [taskRow(8, 'ICA-2')])
     expect(await isJiraLinkedTask(item({}), 7, list)).toBe(false)
+  })
+})
+
+// 어제 메모 건너뛰기는 DB 에 기록한다. 칸은 누르는 즉시 숨긴다
+describe('어제 메모 건너뛰기', () => {
+  const payload = { plan: null, missingWrapupDate: null } as unknown as TodayPayload
+
+  beforeEach(() => {
+    useAssistantStore.setState({ today: null, skippedWrapupDate: null, error: '', busy: false })
+  })
+
+  it('skipWrapup 은 그 날짜로 IPC 를 부르고 응답의 today 를 반영한다', async () => {
+    api.assistant.skipWrapup.mockResolvedValueOnce({ success: true, today: payload })
+    const pending = useAssistantStore.getState().skipWrapup('2026-11-17')
+    // 응답 전에 칸을 숨긴다
+    expect(useAssistantStore.getState().skippedWrapupDate).toBe('2026-11-17')
+    await pending
+    expect(api.assistant.skipWrapup).toHaveBeenCalledWith('2026-11-17')
+    expect(useAssistantStore.getState().today).toBe(payload)
+    expect(useAssistantStore.getState().error).toBe('')
+  })
+
+  it('기록에 실패하면 error 를 두고 칸은 숨긴 채로 둔다', async () => {
+    api.assistant.skipWrapup.mockResolvedValueOnce({ success: false, error: 'DB 잠김' })
+    await useAssistantStore.getState().skipWrapup('2026-11-17')
+    expect(useAssistantStore.getState().error).toBe('DB 잠김')
+    expect(useAssistantStore.getState().skippedWrapupDate).toBe('2026-11-17')
+    expect(useAssistantStore.getState().today).toBeNull()
+  })
+
+  it('IPC 가 예외를 던져도 error 를 두고 칸은 숨긴 채로 둔다', async () => {
+    api.assistant.skipWrapup.mockRejectedValueOnce(new Error('IPC 끊김'))
+    await useAssistantStore.getState().skipWrapup('2026-11-17')
+    expect(useAssistantStore.getState().error).toBe('IPC 끊김')
+    expect(useAssistantStore.getState().skippedWrapupDate).toBe('2026-11-17')
   })
 })

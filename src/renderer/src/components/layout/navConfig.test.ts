@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { NAV_GROUPS, VIEW_IDS, VIEW_LABELS, normalizeView } from './navConfig'
+import { NAV_FOOTER, NAV_GROUPS, VIEW_IDS, VIEW_LABELS, normalizeView } from './navConfig'
 
 describe('navConfig', () => {
   it('모든 ViewId 에 빈 문자열이 아닌 레이블이 있다', () => {
@@ -9,20 +9,27 @@ describe('navConfig', () => {
     expect(Object.keys(VIEW_LABELS).sort()).toEqual([...VIEW_IDS].sort())
   })
 
-  it('NAV_GROUPS 가 각 ViewId 를 정확히 1번씩 담는다', () => {
-    const ids = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.id))
+  it('NAV_GROUPS 와 NAV_FOOTER 가 각 ViewId 를 정확히 1번씩 담는다', () => {
+    const ids = [...NAV_GROUPS.flatMap((g) => g.items.map((i) => i.id)), ...NAV_FOOTER.map((i) => i.id)]
     expect(ids.length).toBe(VIEW_IDS.length)
     expect([...ids].sort()).toEqual([...VIEW_IDS].sort())
   })
 
+  it('settings 는 하단 고정 항목이다', () => {
+    expect(NAV_FOOTER.map((i) => i.id)).toEqual(['settings'])
+    expect(NAV_FOOTER[0]).toEqual({ id: 'settings', label: '설정', icon: 'settings' })
+    const groupIds = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.id))
+    expect(groupIds).not.toContain('settings')
+  })
+
   it('메뉴 항목 레이블은 VIEW_LABELS 와 같다', () => {
-    for (const g of NAV_GROUPS) {
-      for (const i of g.items) expect(i.label).toBe(VIEW_LABELS[i.id])
+    for (const i of [...NAV_GROUPS.flatMap((g) => g.items), ...NAV_FOOTER]) {
+      expect(i.label).toBe(VIEW_LABELS[i.id])
     }
   })
 
   it('오늘은 전용 아이콘을 쓰고 캘린더 아이콘과 겹치지 않는다', () => {
-    const items = NAV_GROUPS.flatMap((g) => g.items)
+    const items = [...NAV_GROUPS.flatMap((g) => g.items), ...NAV_FOOTER]
     expect(items.find((i) => i.id === 'today')?.icon).toBe('today')
     const icons = items.map((i) => i.icon)
     expect(new Set(icons).size).toBe(icons.length)
@@ -43,6 +50,10 @@ describe('navConfig', () => {
 
   it('normalizeView 는 알려진 값을 그대로 돌려준다', () => {
     for (const id of VIEW_IDS) expect(normalizeView(id)).toBe(id)
+  })
+
+  it('normalizeView 는 settings 를 그대로 돌려준다', () => {
+    expect(normalizeView('settings')).toBe('settings')
   })
 
   it('normalizeView 는 dashboard 를 today 로 옮긴다', () => {

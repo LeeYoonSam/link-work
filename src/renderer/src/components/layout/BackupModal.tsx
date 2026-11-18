@@ -1,27 +1,50 @@
 import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
-import type { BackupManifest, BackupProgress } from '../../types'
+import type { BackupGroupId, BackupGroupStat, BackupManifest, BackupProgress } from '../../types'
 import { useBackupStore } from '../../stores/backupStore'
 import { useRecorderStore } from '../../stores/recorderStore'
 import { AlertTriangleIcon, ProgressBar, XIcon, button, surface, typo } from '../ui'
+import {
+  BACKUP_GROUP_IDS,
+  BACKUP_GROUPS,
+  type BackupGroupDef,
+  canExport,
+  confirmKey,
+  countLabel,
+  findStat,
+  groupRowCount,
+  isLegacyBackup,
+  isPartialSelection,
+  manifestFiles,
+  manifestGroups,
+  toggleGroup
+} from './backupGroups'
 
-// 앱 데이터 전체(SQLite + 녹음 파일 + AI 첨부)를 .zip 파일 하나로 내보내고 되돌리는 모달.
+// 앱 데이터(SQLite + 녹음 파일 + AI 첨부) 중 고른 그룹을 .zip 파일 하나로 내보내고,
+// 고른 그룹만 되돌리는 모달. 그룹 정의는 backupGroups.ts, 동작은 docs/DATA_BACKUP.md.
 // ProjectExportModal의 오버레이/헤더/푸터 구조를 그대로 따른다.
 
 interface BackupModalProps {
   onClose: () => void
-  /** 확인 체크가 걸린 백업 경로의 초기값. 테스트에서 체크된 상태를 그려보려고 둔다. */
-  initialConfirmedPath?: string | null
+  /**
+   * 확인 체크가 걸린 키(`confirmKey(path, groups)`)의 초기값.
+   * 테스트에서 체크된 상태를 그려보려고 둔다.
+   */
+  initialConfirmedKey?: string | null
+  /** 내보내기 그룹 선택의 초기값. 기본은 전체. 테스트용 */
+  initialExportGroups?: BackupGroupId[]
+  /** 복원 그룹 선택의 초기값(어느 백업에 대한 선택인지와 함께). 테스트용 */
+  initialRestoreSelection?: { path: string; groups: BackupGroupId[] } | null
 }
 
 /**
- * 확인 체크가 지금 고른 백업에 대한 것인지 판정한다.
+ * 확인 체크가 지금 고른 백업·그룹 조합에 대한 것인지 판정한다.
  *
- * 둘 다 null이면(아무것도 안 골랐고 확인도 없음) 확인된 것이 아니다 — `confirmedPath`가
- * null이 아닐 것을 먼저 요구하는 이유다.
+ * 키는 `confirmKey(path, groups)` 다. 둘 다 null이면(아무것도 안 골랐고 확인도 없음)
+ * 확인된 것이 아니다 — `confirmedKey`가 null이 아닐 것을 먼저 요구하는 이유다.
  */
-export function isConfirmedFor(confirmedPath: string | null, pickedPath: string | null): boolean {
-  return confirmedPath !== null && confirmedPath === pickedPath
+export function isConfirmedFor(confirmedKey: string | null, currentKey: string | null): boolean {
+  return confirmedKey !== null && confirmedKey === currentKey
 }
 
 // 바이트를 사람이 읽는 단위로. GB에서 멈춘다 — 녹음 폴더가 수 GB라 그 위 단위는 쓸 일이 없다.
@@ -38,14 +61,25 @@ export function formatBytes(bytes: number): string {
   return `${unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`
 }
 
+// 그룹 체크박스 한 줄의 보조 숫자. 파일이 따라가는 그룹은 개수·용량을 덧붙인다.
+function statText(def: BackupGroupDef, stat: BackupGroupStat | undefined): string | null {
+  if (!stat) return null
+  const parts = def.counts.map((c) => `${c.label} ${stat.tables[c.table] ?? 0}${def.unit}`)
+  if (def.files) {
+    parts.push(`${def.files.label} ${stat.files.count}개 · ${formatBytes(stat.files.bytes)}`)
+  }
+  return parts.join(' · ')
+}
+
 // 요약 카드에 보여줄 테이블. 전체 테이블은 30개가 넘어 나열하면 오히려 안 읽히므로
 // 사용자가 "내 데이터"로 인식하는 다섯 가지만 고른다.
-const SUMMARY_ROWS: ReadonlyArray<readonly [string, string]> = [
-  ['projects', '프로젝트'],
-  ['tasks', '작업'],
-  ['todos', 'TODO'],
-  ['memos', '메모'],
-  ['meetings', '회의']
+// 각 행은 속한 그룹을 함께 든다 — 그 그룹이 백업에 없으면 0건이 아니라 아예 보이지 않아야 한다.
+const SUMMARY_ROWS: ReadonlyArray<readonly [string, string, BackupGroupId]> = [
+  ['projects', '프로젝트', 'work'],
+  ['tasks', '작업', 'work'],
+  ['todos', 'TODO', 'work'],
+  ['memos', '메모', 'library'],
+  ['meetings', '회의', 'meetings']
 ]
 
 // main이 message를 함께 보내면 그쪽을 쓰고, 없을 때의 기본 문구다.
@@ -98,7 +132,9 @@ function Progress({
 
 export default function BackupModal({
   onClose,
-  initialConfirmedPath = null
+  initialConfirmedKey = null,
+  initialExportGroups,
+  initialRestoreSelection = null
 }: BackupModalProps): React.ReactNode {
   const {
     exporting,
@@ -106,27 +142,54 @@ export default function BackupModal({
     progress,
     lastExport,
     pickedSummary,
+    stats,
+    importWarnings,
+    restartPending,
     error,
+    loadStats,
     exportToFile,
     pickBackup,
     importBackup,
+    restart,
     reset,
     subscribeProgress
   } = useBackupStore()
   const recorderState = useRecorderStore((s) => s.state)
 
-  // 확인 체크는 boolean이 아니라 **"어느 백업을 확인했는가"**로 들고 있는다.
-  // 백업 A를 체크한 뒤 B를 고르면 boolean은 켜진 채 남아, B 요약을 읽지도 않고
-  // 되돌릴 수 없는 복원이 즉시 눌린다. 경로를 담아두면 대상이 바뀌는 순간
-  // 저절로 어긋나 풀리므로 동기화가 필요 없다(effect 없이 렌더 중 파생).
+  // 내보내기 그룹. 기본은 전체 — 예전처럼 "그냥 저장"하면 전부 담긴다.
+  const [exportGroups, setExportGroups] = useState<BackupGroupId[]>(
+    initialExportGroups ?? [...BACKUP_GROUP_IDS]
+  )
+
+  // 복원 그룹 선택도 "어느 백업에 대한 선택인가"로 들고 있는다. 다른 백업을 고르면
+  // 경로가 어긋나 그 백업에 든 그룹 전체(기본값)로 저절로 돌아간다(effect 없이 렌더 중 파생).
   const pickedPath = pickedSummary?.path ?? null
-  const [confirmedPath, setConfirmedPath] = useState<string | null>(initialConfirmedPath)
-  const confirmed = isConfirmedFor(confirmedPath, pickedPath)
+  const availableGroups = pickedSummary ? manifestGroups(pickedSummary.manifest) : []
+  const [restoreSelection, setRestoreSelection] = useState<{
+    path: string
+    groups: BackupGroupId[]
+  } | null>(initialRestoreSelection)
+  const restoreGroups =
+    restoreSelection && restoreSelection.path === pickedPath
+      ? restoreSelection.groups.filter((g) => availableGroups.includes(g))
+      : availableGroups
+
+  // 확인 체크는 boolean이 아니라 **"어느 백업의 어느 그룹 조합을 확인했는가"**로 들고 있는다.
+  // 백업 A를 체크한 뒤 B를 고르거나, 체크한 뒤 그룹을 더 고르면 boolean은 켜진 채 남아
+  // 읽지 않은 조합이 즉시 복원된다. 키를 담아두면 대상이 바뀌는 순간 저절로 어긋나 풀린다.
+  const currentKey = pickedPath ? confirmKey(pickedPath, restoreGroups) : null
+  const [confirmedKey, setConfirmedKey] = useState<string | null>(initialConfirmedKey)
+  const confirmed = isConfirmedFor(confirmedKey, currentKey)
 
   // 작업이 도는 동안 닫으면 진행 상황을 볼 방법이 사라진다
   const busy = exporting || importing
 
   useEffect(() => subscribeProgress(), [subscribeProgress])
+
+  // 그룹 옆 숫자. 열 때 한 번 받는다(COUNT 몇십 개와 폴더 stat 이라 가볍다)
+  useEffect(() => {
+    void loadStats()
+  }, [loadStats])
 
   // 모달을 닫을 때 이전 세션의 요약·에러가 남지 않게 한다
   useEffect(() => () => reset(), [reset])
@@ -148,14 +211,25 @@ export default function BackupModal({
     onClose()
   }
 
+  const toggleRestoreGroup = (id: BackupGroupId): void => {
+    if (!pickedPath) return
+    setRestoreSelection({
+      path: pickedPath,
+      groups: toggleGroup(restoreGroups, id)
+    })
+  }
+
+  const exportAllowed = canExport(exportGroups)
   const isRecording = recorderState !== 'idle'
   const restoreBlockedReason = isRecording
     ? '녹음 중에는 복원할 수 없습니다. 녹음을 멈춘 뒤 다시 시도하세요.'
     : importing
       ? '복원 중입니다. 끝나면 앱이 스스로 다시 시작됩니다.'
-      : !confirmed
-        ? '위 확인란에 체크해야 복원할 수 있습니다.'
-        : null
+      : restoreGroups.length === 0
+        ? '복원할 항목을 하나 이상 고르세요.'
+        : !confirmed
+          ? '위 확인란에 체크해야 복원할 수 있습니다.'
+          : null
 
   return (
     <div
@@ -170,9 +244,10 @@ export default function BackupModal({
           <div className="min-w-0">
             <h3 className="text-base font-semibold text-gray-900">데이터 백업 · 복원</h3>
             <p className="mt-1 text-xs leading-relaxed text-gray-500">
-              녹음 파일·전사·요약·프로젝트·TODO·메모·용어집 등 앱 데이터 전체를 파일 하나(.zip)로
-              내보냅니다. Google/Notion/Jira 인증 정보는 기기에 묶여 있어 제외되며 새 PC에서 다시
-              연결해야 합니다. 음성 모델은 자동으로 다시 내려받습니다.
+              업무·회의(녹음 파일 포함)·자료·AI 대화·설정 중 선택한 항목을 파일 하나(.zip)로
+              내보내고, 선택한 항목만 되돌립니다. Google/Notion/Jira/Bitbucket 인증 토큰은 기기에
+              묶여 있어 백업에서 빠집니다. 복원해도 이 기기의 연결은 유지되며, 연동 계정이 백업과
+              다를 때만 다시 연결합니다. 음성 모델은 자동으로 다시 내려받습니다.
             </p>
           </div>
           <button
@@ -193,125 +268,295 @@ export default function BackupModal({
             </div>
           )}
 
-          {/* ── 내보내기 ── */}
-          <section className="space-y-3">
-            <div>
-              <h4 className="text-sm font-semibold text-gray-900">내보내기</h4>
-              <p className={`mt-0.5 ${typo.meta}`}>
-                저장할 위치를 고르면 LinkWork-backup-날짜.zip 파일 하나로 담습니다.
-              </p>
-            </div>
-            <button
-              onClick={() => void exportToFile()}
-              disabled={busy}
-              className={`px-4 py-2 text-sm disabled:opacity-40 ${button.primary}`}
-            >
-              {exporting ? '내보내는 중...' : '백업 파일(.zip) 저장…'}
-            </button>
-
-            {progress && !importing && <Progress progress={progress} direction="export" />}
-
-            {lastExport && (
-              <div className={`${surface.subtle} px-3 py-2.5 space-y-1 text-xs text-gray-600`}>
-                <div className="text-gray-700 break-all">저장 위치: {lastExport.path}</div>
-                <div className="tabular-nums">
-                  회의 {lastExport.manifest.db.tables.meetings ?? 0}건 · 녹음 파일{' '}
-                  {lastExport.manifest.files.recordings.count}개 ·{' '}
-                  {formatBytes(lastExport.manifest.files.recordings.bytes)}
-                </div>
-                {/* manifest는 압축 **전** 원본 바이트를 적는다. .zip 파일 자체 크기와 다르므로
-                    "전체"가 아니라 "담긴 데이터"로 부른다 — 사용자가 파일 크기로 오해하면 안 된다. */}
-                <div className="tabular-nums">
-                  담긴 데이터 {formatBytes(totalBytes(lastExport.manifest))}
+          {restartPending ? (
+            // 복원은 커밋됐고 main 이 재시작을 멈춘 채 기다린다. DB 가 이미 바뀌었으므로
+            // 경고를 읽고 재시작하는 것 말고는 아무 조작도 열지 않는다(닫기도 막는다 — busy).
+            <section className="space-y-3" data-testid="restart-pending">
+              <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">
+                <AlertTriangleIcon size={14} className="mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <p className="font-semibold">복원을 마쳤습니다. 아래 내용을 확인하세요.</p>
+                  <ul className="list-disc pl-4 space-y-0.5">
+                    {importWarnings.map((w) => (
+                      <li key={w}>{w}</li>
+                    ))}
+                  </ul>
                 </div>
               </div>
-            )}
-          </section>
-
-          <div className="border-t border-gray-200" />
-
-          {/* ── 가져오기 ── */}
-          <section className="space-y-3">
-            <div>
-              <h4 className="text-sm font-semibold text-gray-900">가져오기</h4>
-              <p className={`mt-0.5 ${typo.meta}`}>
-                내보내둔 백업 파일(.zip)을 고르면 내용을 확인한 뒤 복원할 수 있습니다.
-              </p>
-            </div>
-            <button
-              onClick={() => void pickBackup()}
-              disabled={busy}
-              className={`px-4 py-2 text-sm disabled:opacity-40 ${button.subtle}`}
-            >
-              백업 파일(.zip) 선택…
-            </button>
-
-            {pickedSummary && (
-              <>
-                <div className={`${surface.subtle} px-3 py-2.5 space-y-2 text-xs text-gray-600`}>
-                  <div className="text-gray-700 break-all">{pickedSummary.path}</div>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1">
-                    <span>생성일 {formatCreatedAt(pickedSummary.manifest.createdAt)}</span>
-                    <span>앱 버전 {pickedSummary.manifest.appVersion}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-x-3 gap-y-1 tabular-nums">
-                    {SUMMARY_ROWS.map(([key, label]) => (
-                      <span key={key}>
-                        {label} {pickedSummary.manifest.db.tables[key] ?? 0}건
-                      </span>
-                    ))}
-                  </div>
-                  <div className="tabular-nums">
-                    녹음 파일 {pickedSummary.manifest.files.recordings.count}개 ·{' '}
-                    {formatBytes(pickedSummary.manifest.files.recordings.bytes)} · 담긴 데이터{' '}
-                    {formatBytes(totalBytes(pickedSummary.manifest))}
-                  </div>
-                  {pickedSummary.warnings.length > 0 && (
-                    <ul className="list-disc pl-4 space-y-0.5 text-amber-700">
-                      {pickedSummary.warnings.map((w) => (
-                        <li key={w}>{w}</li>
-                      ))}
-                    </ul>
-                  )}
+              <button
+                onClick={() => void restart()}
+                className={`px-4 py-2 text-sm ${button.primary}`}
+              >
+                확인 후 재시작
+              </button>
+            </section>
+          ) : (
+            <>
+              {/* ── 내보내기 ── */}
+              <section className="space-y-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-900">내보내기</h4>
+                  <p className={`mt-0.5 ${typo.meta}`}>
+                    담을 항목을 고르고 저장할 위치를 정하면 LinkWork-backup-날짜.zip 파일 하나로
+                    담습니다.
+                  </p>
                 </div>
 
-                <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-relaxed text-red-700">
-                  <AlertTriangleIcon size={14} className="mt-0.5 shrink-0" />
-                  <span>
-                    현재 앱 데이터가 이 백업으로 <strong className="font-semibold">모두 대체</strong>
-                    되고 앱이 다시 시작됩니다. 현재 DB는{' '}
-                    <code className="font-mono">linkwork.db.bak-&lt;시각&gt;</code>으로 보관됩니다.
-                  </span>
+                <div
+                  className={`${surface.subtle} px-3 py-2 space-y-1.5`}
+                  data-testid="export-groups"
+                >
+                  {BACKUP_GROUPS.map((def) => {
+                    const checked = exportGroups.includes(def.id)
+                    const detail = statText(def, findStat(stats, def.id))
+                    return (
+                      <label
+                        key={def.id}
+                        className="flex items-start gap-2 text-xs text-gray-700 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          name="export-group"
+                          value={def.id}
+                          checked={checked}
+                          onChange={() => setExportGroups((prev) => toggleGroup(prev, def.id))}
+                          disabled={busy}
+                          className="mt-0.5 w-4 h-4 accent-blue-600 shrink-0"
+                        />
+                        <span className="min-w-0">
+                          <span className="font-medium text-gray-900">{def.label}</span>
+                          <span className="text-gray-500"> — {def.menus}</span>
+                          {detail && (
+                            <span className={`block tabular-nums ${typo.metaFaint}`}>{detail}</span>
+                          )}
+                        </span>
+                      </label>
+                    )
+                  })}
                 </div>
-
-                <label className="flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={confirmed}
-                    onChange={(e) => setConfirmedPath(e.target.checked ? pickedPath : null)}
-                    disabled={importing}
-                    className="mt-0.5 w-4 h-4 accent-red-600 shrink-0"
-                  />
-                  위 내용을 확인했으며 현재 데이터가 대체되어도 좋습니다.
-                </label>
-
-                {importing && progress && <Progress progress={progress} direction="import" />}
 
                 <div className="space-y-1.5">
                   <button
-                    onClick={() => void importBackup(pickedSummary.path)}
-                    disabled={!confirmed || busy || isRecording}
-                    className={`px-4 py-2 text-sm disabled:opacity-40 ${button.danger}`}
+                    onClick={() => void exportToFile(exportGroups)}
+                    disabled={busy || !exportAllowed}
+                    className={`px-4 py-2 text-sm disabled:opacity-40 ${button.primary}`}
                   >
-                    {importing ? '재시작 중...' : '복원 후 재시작'}
+                    {exporting ? '내보내는 중...' : '백업 파일(.zip) 저장…'}
                   </button>
-                  {restoreBlockedReason && (
-                    <div className={typo.metaFaint}>{restoreBlockedReason}</div>
+                  {!exportAllowed && (
+                    <div className={typo.metaFaint}>내보낼 항목을 하나 이상 고르세요.</div>
                   )}
                 </div>
-              </>
-            )}
-          </section>
+
+                {progress && !importing && <Progress progress={progress} direction="export" />}
+
+                {lastExport && (
+                  <div className={`${surface.subtle} px-3 py-2.5 space-y-1 text-xs text-gray-600`}>
+                    <div className="text-gray-700 break-all">저장 위치: {lastExport.path}</div>
+                    <div>
+                      담은 항목:{' '}
+                      {BACKUP_GROUPS.filter((d) =>
+                        manifestGroups(lastExport.manifest).includes(d.id)
+                      )
+                        .map((d) => d.label)
+                        .join(', ')}
+                    </div>
+                    {manifestGroups(lastExport.manifest).includes('meetings') && (
+                      <div className="tabular-nums">
+                        회의 {lastExport.manifest.db.tables.meetings ?? 0}건 · 녹음 파일{' '}
+                        {lastExport.manifest.files.recordings.count}개 ·{' '}
+                        {formatBytes(lastExport.manifest.files.recordings.bytes)}
+                      </div>
+                    )}
+                    {/* manifest는 압축 **전** 원본 바이트를 적는다. .zip 파일 자체 크기와 다르므로
+                    "전체"가 아니라 "담긴 데이터"로 부른다 — 사용자가 파일 크기로 오해하면 안 된다. */}
+                    <div className="tabular-nums">
+                      담긴 데이터 {formatBytes(totalBytes(lastExport.manifest))}
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              <div className="border-t border-gray-200" />
+
+              {/* ── 가져오기 ── */}
+              <section className="space-y-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-900">가져오기</h4>
+                  <p className={`mt-0.5 ${typo.meta}`}>
+                    내보내둔 백업 파일(.zip)을 고르면 내용을 확인한 뒤 원하는 항목만 복원할 수
+                    있습니다.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    // 같은 경로의 파일이 그 사이 바뀌었을 수 있으므로 고를 때마다 확인을 새로 받는다
+                    setConfirmedKey(null)
+                    void pickBackup()
+                  }}
+                  disabled={busy}
+                  className={`px-4 py-2 text-sm disabled:opacity-40 ${button.subtle}`}
+                >
+                  백업 파일(.zip) 선택…
+                </button>
+
+                {pickedSummary && (
+                  <>
+                    <div
+                      className={`${surface.subtle} px-3 py-2.5 space-y-2 text-xs text-gray-600`}
+                    >
+                      <div className="text-gray-700 break-all">{pickedSummary.path}</div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1">
+                        <span>생성일 {formatCreatedAt(pickedSummary.manifest.createdAt)}</span>
+                        <span>앱 버전 {pickedSummary.manifest.appVersion}</span>
+                        {isLegacyBackup(pickedSummary.manifest) && (
+                          <span className="text-gray-700">이전 형식(전체) 백업</span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 tabular-nums">
+                        {SUMMARY_ROWS.filter(([, , group]) => availableGroups.includes(group)).map(
+                          ([key, label]) => (
+                            <span key={key}>
+                              {label} {pickedSummary.manifest.db.tables[key] ?? 0}건
+                            </span>
+                          )
+                        )}
+                      </div>
+                      {availableGroups.includes('meetings') && (
+                        <div className="tabular-nums">
+                          녹음 파일 {pickedSummary.manifest.files.recordings.count}개 ·{' '}
+                          {formatBytes(pickedSummary.manifest.files.recordings.bytes)}
+                        </div>
+                      )}
+                      <div className="tabular-nums">
+                        담긴 데이터 {formatBytes(totalBytes(pickedSummary.manifest))}
+                      </div>
+                      {pickedSummary.warnings.length > 0 && (
+                        <ul className="list-disc pl-4 space-y-0.5 text-amber-700">
+                          {pickedSummary.warnings.map((w) => (
+                            <li key={w}>{w}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    <div className="space-y-1.5" data-testid="restore-groups">
+                      <div className={typo.meta}>복원할 항목 (현재 → 백업)</div>
+                      {BACKUP_GROUPS.map((def) => {
+                        const inBackup = availableGroups.includes(def.id)
+                        const checked = inBackup && restoreGroups.includes(def.id)
+                        const stat = findStat(stats, def.id)
+                        const backupFiles = manifestFiles(pickedSummary.manifest, def.id)
+                        return (
+                          <label
+                            key={def.id}
+                            className={`flex items-start gap-2 text-xs ${
+                              inBackup ? 'text-gray-700 cursor-pointer' : 'text-gray-400'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              name="restore-group"
+                              value={def.id}
+                              checked={checked}
+                              onChange={() => toggleRestoreGroup(def.id)}
+                              disabled={!inBackup || importing}
+                              className="mt-0.5 w-4 h-4 accent-red-600 shrink-0"
+                            />
+                            <span className="min-w-0">
+                              <span
+                                className={inBackup ? 'font-medium text-gray-900' : 'font-medium'}
+                              >
+                                {def.label}
+                              </span>
+                              <span className={inBackup ? 'text-gray-500' : ''}>
+                                {' '}
+                                — {def.menus}
+                              </span>
+                              {inBackup ? (
+                                <span className={`block tabular-nums ${typo.metaFaint}`}>
+                                  {def.comparable
+                                    ? `${countLabel(def)} 현재 ${stat ? groupRowCount(def, stat.tables) : '?'}${def.unit} → 백업 ${groupRowCount(def, pickedSummary.manifest.db.tables)}${def.unit}`
+                                    : // 기준이 달라 비교하지 않는다(backupGroups.ts 의 comparable) — 현재 키 수만
+                                      stat
+                                      ? `현재 ${countLabel(def)} ${groupRowCount(def, stat.tables)}${def.unit}`
+                                      : ''}
+                                  {def.files && backupFiles
+                                    ? ` · ${def.files.label} ${backupFiles.count}개 · ${formatBytes(backupFiles.bytes)}`
+                                    : ''}
+                                </span>
+                              ) : (
+                                <span className="block">이 백업에 없음</span>
+                              )}
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+
+                    <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-relaxed text-red-700">
+                      <AlertTriangleIcon size={14} className="mt-0.5 shrink-0" />
+                      <div className="space-y-1">
+                        <p>
+                          선택한 항목은 현재 데이터가 백업 내용으로{' '}
+                          <strong className="font-semibold">교체</strong>
+                          됩니다(합치지 않음). 선택하지 않은 항목은 그대로 둡니다. 복원 후 앱이 다시
+                          시작되며, 확인할 경고가 있으면 그 내용을 읽은 뒤 직접 재시작합니다. 복원 전
+                          데이터베이스는{' '}
+                          <code className="font-mono">linkwork.db.bak-&lt;시각&gt;</code>
+                          으로, 덮어쓸 녹음·첨부는{' '}
+                          <code className="font-mono">recordings.bak-&lt;시각&gt;/</code>·
+                          <code className="font-mono">ai-attachments.bak-&lt;시각&gt;/</code>로
+                          보관합니다.
+                        </p>
+                        {restoreGroups.length > 0 && isPartialSelection(restoreGroups) && (
+                          <p>
+                            다른 기기나 다른 시점의 데이터와 섞이면, 확인되지 않는
+                            회의·문서·용어집의 프로젝트 연결과 회의 액션아이템의 할 일 연결은
+                            끊깁니다.
+                          </p>
+                        )}
+                        {restoreGroups.includes('settings') && (
+                          <p>연동 계정이 백업과 다르면 그 연동은 다시 연결해야 합니다.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <label className="flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        name="restore-confirm"
+                        checked={confirmed}
+                        onChange={(e) => setConfirmedKey(e.target.checked ? currentKey : null)}
+                        disabled={importing || restoreGroups.length === 0}
+                        className="mt-0.5 w-4 h-4 accent-red-600 shrink-0"
+                      />
+                      위 내용을 확인했으며 선택한 항목의 현재 데이터가 교체되어도 좋습니다.
+                    </label>
+
+                    {importing && progress && <Progress progress={progress} direction="import" />}
+
+                    <div className="space-y-1.5">
+                      <button
+                        onClick={() => {
+                          // 복원 한 번에 확인 한 번 — 실패 뒤 같은 체크로 다시 누르지 못하게 푼다
+                          setConfirmedKey(null)
+                          void importBackup(pickedSummary.path, restoreGroups)
+                        }}
+                        disabled={!confirmed || busy || isRecording || restoreGroups.length === 0}
+                        className={`px-4 py-2 text-sm disabled:opacity-40 ${button.danger}`}
+                      >
+                        {importing ? '재시작 중...' : '선택 항목 복원 후 재시작'}
+                      </button>
+                      {restoreBlockedReason && (
+                        <div className={typo.metaFaint}>{restoreBlockedReason}</div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </section>
+            </>
+          )}
         </div>
 
         <div className="flex items-center justify-end px-6 py-4 border-t border-gray-200">

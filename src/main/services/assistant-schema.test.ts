@@ -147,6 +147,49 @@ describe('ASSISTANT_SCHEMA', () => {
 // briefing_instruction 컬럼이 없던 MVP3 시점 DDL 이다 (부록 G.7.1)
 const OLD_SCHEMA = ASSISTANT_SCHEMA.replace('    briefing_instruction TEXT,\n', '')
 
+// wrapup_skipped_at 컬럼이 없던 시점 DDL 이다 (어제 메모 건너뛰기 영구 저장 이전)
+const PRE_SKIP_SCHEMA = ASSISTANT_SCHEMA.replace('    wrapup_skipped_at TEXT,\n', '')
+
+describe('daily_plans.wrapup_skipped_at', () => {
+  it('새 DDL 의 daily_plans 에 wrapup_skipped_at 컬럼이 있다', () => {
+    const db = new Database(':memory:')
+    db.exec(ASSISTANT_SCHEMA)
+    expect(columns(db, 'daily_plans')).toContain('wrapup_skipped_at')
+    db.close()
+  })
+
+  it('migrateAssistantSchema 는 옛 DDL 에 wrapup_skipped_at 을 더하고 기존 행을 지킨다', () => {
+    expect(PRE_SKIP_SCHEMA).not.toBe(ASSISTANT_SCHEMA)
+    const db = new Database(':memory:')
+    db.exec(PRE_SKIP_SCHEMA)
+    expect(columns(db, 'daily_plans')).not.toContain('wrapup_skipped_at')
+    db.prepare(
+      "INSERT INTO daily_plans (plan_date, started_at, wrapup_note) VALUES ('2026-11-01', '2026-11-01 09:00:00', '메모')"
+    ).run()
+
+    migrateAssistantSchema(db)
+
+    expect(columns(db, 'daily_plans')).toContain('wrapup_skipped_at')
+    expect(
+      db.prepare('SELECT wrapup_note, wrapup_skipped_at FROM daily_plans WHERE plan_date = ?').get('2026-11-01')
+    ).toEqual({ wrapup_note: '메모', wrapup_skipped_at: null })
+    expect(() => migrateAssistantSchema(db)).not.toThrow()
+    expect(columns(db, 'daily_plans').filter((c) => c === 'wrapup_skipped_at')).toHaveLength(1)
+    db.close()
+  })
+
+  it('briefing_instruction 과 wrapup_skipped_at 이 모두 없던 DB 도 한 번에 맞춘다', () => {
+    const db = new Database(':memory:')
+    db.exec(PRE_SKIP_SCHEMA.replace('    briefing_instruction TEXT,\n', ''))
+    migrateAssistantSchema(db)
+    const fresh = new Database(':memory:')
+    fresh.exec(ASSISTANT_SCHEMA)
+    expect([...columns(db, 'daily_plans')].sort()).toEqual([...columns(fresh, 'daily_plans')].sort())
+    db.close()
+    fresh.close()
+  })
+})
+
 describe('migrateAssistantSchema', () => {
   it('새 DDL 의 daily_plans 에 briefing_instruction 컬럼이 있다', () => {
     const db = new Database(':memory:')
@@ -273,5 +316,6 @@ describe('initDatabase', () => {
     expect(names(db, 'index')).toContain('idx_daily_plans_one_active')
     // database.ts 가 ASSISTANT_SCHEMA 다음에 migrateAssistantSchema 를 부른다
     expect(columns(db, 'daily_plans')).toContain('briefing_instruction')
+    expect(columns(db, 'daily_plans')).toContain('wrapup_skipped_at')
   })
 })

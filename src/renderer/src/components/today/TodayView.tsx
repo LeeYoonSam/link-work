@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AssistantNavigateEvent, DailyPlan, PlanItem, RecoveryState, TodayPayload } from '../../types'
 import { useAssistantStore } from '../../stores/assistantStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { Card, EmptyState, SectionTitle, button } from '../ui'
 import DayHeader from './DayHeader'
 import BriefingCard, { briefingSummary } from './BriefingCard'
@@ -17,7 +18,6 @@ import Timeline from './Timeline'
 import ChangeLog from './ChangeLog'
 import { SUBSECTION_TITLE } from './todayTokens'
 import CommandInput from './CommandInput'
-import AssistantSettingsModal from './AssistantSettingsModal'
 import MoreSection from './MoreSection'
 import HomeSchedule from '../dashboard/HomeSchedule'
 import { HomeMemos, HomeProjects } from '../dashboard/HomeOverview'
@@ -121,13 +121,11 @@ export default function TodayView({
     removeExclusion,
     focusItem,
     completeOrigin,
-    saveSettings,
     setFocus,
     clearError,
     regenerateMeetingBriefing,
     meetingRegeneratingIds
   } = useAssistantStore()
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(moreOpenInitial)
 
   // assistant:changed 구독은 stores/dataSync.ts 가 앱 전체에 1번 둔다.
@@ -259,7 +257,7 @@ export default function TodayView({
         onCloseDay={(note) => void closeDay(note)}
         onReopenDay={() => void reopenDay()}
         onSaveWrapup={(note, date) => void saveWrapup(note, date)}
-        onSkipWrapup={skipWrapup}
+        onSkipWrapup={(date) => void skipWrapup(date)}
       >
         {plan && showBriefing ? (
           <BriefingCard
@@ -415,22 +413,14 @@ export default function TodayView({
         <div className="flex justify-end">
           <button
             type="button"
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => useSettingsStore.getState().open('assistant')}
             className={`px-3 py-1.5 text-sm ${button.ghost}`}
+            title="설정 > 비서로 이동합니다"
           >
             비서 설정
           </button>
         </div>
       </MoreSection>
-
-      {settingsOpen ? (
-        <AssistantSettingsModal
-          settings={today.settings}
-          busy={busy}
-          onClose={() => setSettingsOpen(false)}
-          onSave={saveSettings}
-        />
-      ) : null}
     </div>
   )
 }

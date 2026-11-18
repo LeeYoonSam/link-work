@@ -13,6 +13,7 @@ export type MenuIconName =
   | 'recordings'
   | 'notes'
   | 'releases'
+  | 'settings'
 
 const PATHS: Record<MenuIconName, React.ReactNode> = {
   // 오늘 화면 전용 해 모양. 캘린더 아이콘과 겹치지 않게 따로 둔다
@@ -193,6 +194,19 @@ const PATHS: Record<MenuIconName, React.ReactNode> = {
       />
       <circle cx="7.4" cy="7.4" r="1.9" fill="#fff" stroke={INK} strokeWidth="1.7" />
       <path d="M13.2 11.8l3.4 3.4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" />
+    </>
+  ),
+  // 톱니바퀴. 사이드바 하단의 설정 항목
+  settings: (
+    <>
+      <path
+        d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+        fill="#ADB5BD"
+        stroke={INK}
+        strokeWidth="1.9"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="12" r="3" fill="#fff" stroke={INK} strokeWidth="1.9" />
     </>
   )
 }

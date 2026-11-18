@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCalendarStore, useWeekEvents, weekKey } from '../../stores/calendarStore'
 import { useFocusRequest, useFocusStore } from '../../stores/focusStore'
 import { useFlash } from '../../hooks/useFocusFlash'
-import CalendarSettings from './CalendarSettings'
+import { useSettingsStore } from '../../stores/settingsStore'
+import GoogleCalendarConnectDialog from '../settings/integrations/GoogleCalendarConnectDialog'
 import DayScheduleCard from './DayScheduleCard'
 import {
   addDays,
@@ -14,13 +15,13 @@ import {
   parseISO,
   startOfWeek
 } from 'date-fns'
-import { SectionTitle, EmptyState, Badge, button } from '../ui'
+import { SectionTitle, EmptyState, Badge, Card, button } from '../ui'
 
 const WORK_DAYS = 5
 
 export default function CalendarView(): React.ReactNode {
   const { status, loading, fetchEvents, fetchStatus, refreshEvents } = useCalendarStore()
-  const [showSettings, setShowSettings] = useState(false)
+  const [connectOpen, setConnectOpen] = useState(false)
   // 0 = 이번 주, -1 = 지난주, +1 = 다음 주
   const [weekOffset, setWeekOffset] = useState(0)
   const todayRef = useRef<HTMLDivElement>(null)
@@ -110,12 +111,27 @@ export default function CalendarView(): React.ReactNode {
     [weekStart]
   )
 
+  // 미연결이면 빈 상태 카드를 보인다. [연결] 은 같은 팝업을 이 자리에서 띄우고,
+  // 자격 증명·계정 관리는 설정 > 연동이 맡는다
   if (!status.hasCredentials || !status.connected) {
-    return <CalendarSettings />
-  }
-
-  if (showSettings) {
-    return <CalendarSettings onBack={() => setShowSettings(false)} />
+    return (
+      <>
+        <CalendarNotConnected
+          checking={!statusChecked}
+          onConnect={() => setConnectOpen(true)}
+          onOpenSettings={() => useSettingsStore.getState().open('integrations')}
+        />
+        {connectOpen ? (
+          <GoogleCalendarConnectDialog
+            onClose={() => setConnectOpen(false)}
+            onConnected={() => {
+              setConnectOpen(false)
+              void fetchStatus()
+            }}
+          />
+        ) : null}
+      </>
+    )
   }
 
   return (
@@ -169,10 +185,11 @@ export default function CalendarView(): React.ReactNode {
             Refresh
           </button>
           <button
-            onClick={() => setShowSettings(true)}
+            onClick={() => useSettingsStore.getState().open('integrations')}
             className={`px-3 py-1.5 text-sm ${button.subtle}`}
+            title="설정 > 연동에서 Google 캘린더 연결을 관리합니다"
           >
-            Settings
+            설정
           </button>
         </div>
       </div>
@@ -194,6 +211,39 @@ export default function CalendarView(): React.ReactNode {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+// Google 캘린더가 연결되지 않았을 때의 빈 상태 카드다
+export function CalendarNotConnected({
+  checking,
+  onConnect,
+  onOpenSettings
+}: {
+  checking: boolean
+  onConnect: () => void
+  onOpenSettings: () => void
+}): React.ReactNode {
+  if (checking) return <EmptyState>연결 상태를 확인하는 중…</EmptyState>
+  return (
+    <div className="max-w-lg mx-auto mt-12">
+      <Card padding="md" className="text-center">
+        <h3 className="text-base font-semibold text-gray-900 mb-1">
+          Google 캘린더가 연결되지 않았습니다
+        </h3>
+        <p className="text-sm text-gray-500 mb-4">
+          연결하면 이번 주 회의 일정을 여기에서 보고 오늘 화면·회의 브리핑에 씁니다. (읽기 전용)
+        </p>
+        <div className="flex justify-center gap-2">
+          <button type="button" onClick={onConnect} className={`px-4 py-2 text-sm ${button.primary}`}>
+            연결
+          </button>
+          <button type="button" onClick={onOpenSettings} className={`px-4 py-2 text-sm ${button.subtle}`}>
+            설정에서 관리
+          </button>
+        </div>
+      </Card>
     </div>
   )
 }

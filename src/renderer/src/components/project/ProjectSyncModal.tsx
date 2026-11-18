@@ -334,7 +334,7 @@ export default function ProjectSyncModal({ onClose }: { onClose: () => void }): 
         </div>
 
         <div className="flex-1 overflow-auto px-6 py-4 space-y-4">
-          <JiraTokenWarning status={jiraStatus} />
+          <JiraTokenWarning status={jiraStatus} onOpenSettings={() => setShowSettings(true)} />
 
           {(phase === 'idle' || phase === 'loading') && (
             <EmptyState>Jira에서 할 일 이슈를 불러오는 중입니다…</EmptyState>

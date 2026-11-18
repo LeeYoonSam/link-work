@@ -30,38 +30,71 @@ import { PassThrough } from 'stream'
 import { pipeline } from 'stream/promises'
 import * as yauzl from 'yauzl'
 import { ZipFile } from 'yazl'
+import {
+  BACKUP_GROUP_IDS,
+  GROUP_FILE_DIRS,
+  GROUP_TABLES,
+  SECRET_SETTING_KEYS,
+  SECRET_TABLES,
+  classifySettingKey,
+  normalizeGroups,
+  type BackupFileDir,
+  type BackupGroupId
+} from './backup-groups'
+import { applySchema } from '../db/schema'
+import {
+  filterSnapshotGroups,
+  mergeBackupIntoLive,
+  prepareBackupDb,
+  tableExists
+} from './backup-restore-db'
 
-export const BACKUP_FORMAT_VERSION = 1
+// 시크릿 정의는 backup-groups.ts로 옮겼다. 기존 import 경로를 지키려고 같은 이름으로 다시 내보낸다.
+export { SECRET_SETTING_KEYS, SECRET_TABLES }
+export type { BackupGroupId }
+
+/**
+ * 형식 v2: manifest.groups가 생겼다(선택 백업). v1은 언제나 전체 백업이었다.
+ * **그룹을 추가할 때는 이 값을 반드시 올린다** — 구버전 앱이 모르는 그룹을 조용히 버리지 않도록.
+ */
+export const BACKUP_FORMAT_VERSION = 2
 export const BACKUP_FILE_PREFIX = 'LinkWork-backup-'
 export const BACKUP_FILE_EXTENSION = '.zip'
 export const MANIFEST_ENTRY = 'manifest.json'
 export const DB_FILE = 'linkwork.db'
 
-/** 행을 통째로 지우는 테이블(테이블 자체는 남긴다 — 스키마가 달라지면 복원 후 마이그레이션이 꼬인다) */
-export const SECRET_TABLES: readonly string[] = ['auth_tokens']
-
-/**
- * app_settings에서 지우는 키 — safeStorage로 암호화해 저장하는 값만.
- * - `notion_token`: services/notion.ts:25 (TOKEN_KEY, encrypt로 저장)
- * - `jira_api_token`: services/jira.ts:38 (TOKEN_KEY, encrypt로 저장)
- * - `google_client_secret`: services/google-auth.ts saveSettings (encrypt로 저장 — 새 PC에서 다시 입력)
- * - `bitbucket_api_token`: services/bitbucket.ts (TOKEN_KEY, encrypt로 저장)
- *   `bitbucket_email`은 평문이라 남긴다. 연결 판정은 token 기준이라 복원 뒤에는 미연동으로 보인다.
- * ipc/ai.ipc.ts는 자체 키를 저장하지 않고 saveNotionToken()에 위임하므로 추가 키가 없다.
- * google_client_id, jira_site_url 같은 평문 설정은 기기 종속이 아니라 **남긴다**.
- */
-export const SECRET_SETTING_KEYS: readonly string[] = [
-  'notion_token',
-  'jira_api_token',
-  'google_client_secret',
-  'bitbucket_api_token'
-]
+type FileDir = BackupFileDir
 
 /** userData 바로 아래에서 통째로 옮기는 폴더. models/는 첫 실행 시 다시 받으므로 제외. */
-const FILE_GROUPS = [
-  { dir: 'recordings', key: 'recordings' as const },
-  { dir: 'ai-attachments', key: 'attachments' as const }
+const FILE_GROUPS: ReadonlyArray<{ dir: FileDir; key: 'recordings' | 'attachments' }> = [
+  { dir: 'recordings', key: 'recordings' },
+  { dir: 'ai-attachments', key: 'attachments' }
 ]
+
+/** 그룹 목록이 담는 파일 폴더(중복 없이) */
+export function fileDirsForGroups(groups: readonly BackupGroupId[]): FileDir[] {
+  const dirs = new Set<FileDir>()
+  for (const g of groups) for (const d of GROUP_FILE_DIRS[g]) dirs.add(d)
+  return FILE_GROUPS.map((f) => f.dir).filter((d) => dirs.has(d))
+}
+
+function isAllGroups(groups: readonly BackupGroupId[]): boolean {
+  return BACKUP_GROUP_IDS.every((g) => groups.includes(g))
+}
+
+/**
+ * IPC 인자로 들어온 그룹 목록을 검증한다. 렌더러 값은 믿지 않는다.
+ * 실패하면 사용자에게 보여 줄 문장을 돌려준다.
+ */
+export function parseGroupsArg(
+  v: unknown
+): { ok: true; groups: BackupGroupId[] } | { ok: false; error: string } {
+  const groups = normalizeGroups(v)
+  if (!groups) {
+    return { ok: false, error: '백업할 항목을 하나 이상 올바르게 선택하세요.' }
+  }
+  return { ok: true, groups }
+}
 
 /**
  * 이미 압축돼 있거나(이미지) 압축해도 이득이 없는(WAV PCM) 확장자는 그대로 저장한다.
@@ -75,6 +108,9 @@ export interface BackupManifest {
   appVersion: string
   createdAt: string
   platform: string
+  /** 이 백업에 든 그룹(고정 순서, 중복 없음, 1개 이상). v1 manifest는 전체로 정규화한다. */
+  groups: BackupGroupId[]
+  /** 그룹 필터 뒤의 행 수 — 빠진 그룹의 테이블은 0 */
   db: { bytes: number; tables: Record<string, number> }
   files: {
     recordings: { count: number; bytes: number }
@@ -130,9 +166,32 @@ export interface ExportOptions {
   sourceDb?: DatabaseLike
   /** manifest.appVersion. 생략하면 electron app.getVersion()(테스트 주입용). */
   appVersion?: string
+  /** 담을 그룹. 생략하면 전체. 빈 배열이나 모르는 id는 거부한다. */
+  groups?: readonly BackupGroupId[]
+}
+
+/** 백업 화면에 그룹별로 보여 주는 현재 건수와 파일 용량 */
+export interface BackupGroupStat {
+  id: BackupGroupId
+  /**
+   * 그룹 테이블별 행 수. settings 그룹은 테이블이 없어서 `app_settings` 하나로,
+   * settings로 분류되는 키 수를 담는다(시크릿·work 키 제외).
+   */
+  tables: Record<string, number>
+  files: { count: number; bytes: number }
+}
+
+export interface ImportResult {
+  restoredDbBackupPath: string
+  /** 실제로 복원한 그룹 */
+  groups: BackupGroupId[]
+  /** 복원은 됐지만 사용자가 알아야 할 것(연동 재연결, 끊긴 계획 항목 등) */
+  warnings: string[]
 }
 
 export interface ImportOptions {
+  /** 복원할 그룹. 생략하면 백업에 든 그룹 전부. manifest.groups의 부분집합이어야 한다. */
+  groups?: readonly BackupGroupId[]
   paths?: BackupPaths
   onProgress?: (p: BackupProgress) => void
   /** DB 파일을 덮어쓰기 전에 열려 있는 핸들을 닫는다 (= db/database의 closeDatabase). */
@@ -168,6 +227,8 @@ export function buildManifest(input: {
   tables: Record<string, number>
   files: BackupManifest['files']
   excluded: string[]
+  /** 생략하면 전체 */
+  groups?: readonly BackupGroupId[]
   createdAt?: string
   platform?: string
 }): BackupManifest {
@@ -177,6 +238,7 @@ export function buildManifest(input: {
     appVersion: input.appVersion,
     createdAt: input.createdAt ?? new Date().toISOString(),
     platform: input.platform ?? process.platform,
+    groups: normalizeGroups(input.groups ?? BACKUP_GROUP_IDS) ?? [...BACKUP_GROUP_IDS],
     db: { bytes: input.dbBytes, tables: input.tables },
     files: input.files,
     excluded: input.excluded
@@ -211,6 +273,21 @@ export function validateManifest(
       reason: `더 새로운 버전의 백업입니다 (형식 v${raw.formatVersion}, 이 앱은 v${BACKUP_FORMAT_VERSION}까지). 앱을 업데이트한 뒤 다시 시도하세요.`
     }
   }
+  // v1 백업은 언제나 전체였다. v2부터는 groups가 반드시 있어야 하고 아는 id만 허용한다.
+  let groups: BackupGroupId[]
+  if (raw.formatVersion < 2) {
+    groups = [...BACKUP_GROUP_IDS]
+  } else {
+    const parsed = normalizeGroups(raw.groups)
+    if (!parsed) {
+      return {
+        ok: false,
+        reason:
+          'manifest의 groups가 없거나 비었거나 이 앱이 모르는 항목이 있습니다. 앱을 업데이트했는지 확인하세요.'
+      }
+    }
+    groups = parsed
+  }
   if (typeof raw.appVersion !== 'string') return { ok: false, reason: 'appVersion이 없습니다.' }
   if (typeof raw.createdAt !== 'string') return { ok: false, reason: 'createdAt이 없습니다.' }
   if (!isRecord(raw.db) || typeof raw.db.bytes !== 'number' || !isRecord(raw.db.tables)) {
@@ -229,6 +306,7 @@ export function validateManifest(
     appVersion: raw.appVersion,
     createdAt: raw.createdAt,
     platform: typeof raw.platform === 'string' ? raw.platform : 'unknown',
+    groups,
     db: { bytes: raw.db.bytes, tables: raw.db.tables as Record<string, number> },
     files: { recordings: raw.files.recordings, attachments: raw.files.attachments },
     excluded: Array.isArray(raw.excluded) ? raw.excluded.filter((x) => typeof x === 'string') : []
@@ -284,10 +362,15 @@ function assertInside(rootDir: string, target: string): void {
 /**
  * recordings/ · ai-attachments/ **바로 아래 파일만** 모은다.
  * 재귀하지 않고(.DS_Store 같은) 숨김 파일과 하위 폴더는 건너뛴다.
+ * dirs를 주면 그 폴더만 본다(선택 백업·복원). 생략하면 전부.
  */
-export async function planFileCopies(userDataDir: string): Promise<FileCopyPlanEntry[]> {
+export async function planFileCopies(
+  userDataDir: string,
+  dirs?: readonly FileDir[]
+): Promise<FileCopyPlanEntry[]> {
   const plan: FileCopyPlanEntry[] = []
   for (const group of FILE_GROUPS) {
+    if (dirs && !dirs.includes(group.dir)) continue
     const dir = join(userDataDir, group.dir)
     let entries: Dirent[]
     try {
@@ -316,13 +399,6 @@ function tallyFiles(plan: FileCopyPlanEntry[]): BackupManifest['files'] {
     files[key].bytes += entry.bytes
   }
   return files
-}
-
-function tableExists(db: DatabaseLike, name: string): boolean {
-  const rows = db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .all(name)
-  return rows.length > 0
 }
 
 /**
@@ -367,6 +443,47 @@ export function readTableCounts(db: DatabaseLike): Record<string, number> {
   return counts
 }
 
+/**
+ * 백업 화면용 그룹별 현재 건수·파일 용량. COUNT(*) 몇십 번과 녹음·첨부 폴더의
+ * readdir+stat이 전부라 화면을 열 때마다 불러도 된다.
+ * 없는 테이블(구버전 DB)은 건너뛴다.
+ */
+export async function collectGroupStats(
+  db: DatabaseLike,
+  userDataDir: string
+): Promise<BackupGroupStat[]> {
+  const count = (table: string): number => {
+    const rows = db.prepare(`SELECT COUNT(*) AS c FROM "${table}"`).all() as { c: number }[]
+    return Number(rows[0]?.c ?? 0)
+  }
+
+  let settingsKeys = 0
+  if (tableExists(db, 'app_settings')) {
+    const keys = db.prepare('SELECT key FROM app_settings').all() as { key: string }[]
+    settingsKeys = keys.filter((r) => classifySettingKey(r.key) === 'settings').length
+  }
+
+  const plan = await planFileCopies(userDataDir)
+  const stats: BackupGroupStat[] = []
+  for (const id of BACKUP_GROUP_IDS) {
+    const tables: Record<string, number> = {}
+    for (const table of GROUP_TABLES[id]) {
+      if (tableExists(db, table)) tables[table] = count(table)
+    }
+    if (id === 'settings') tables.app_settings = settingsKeys
+
+    const dirs = GROUP_FILE_DIRS[id]
+    const files = { count: 0, bytes: 0 }
+    for (const entry of plan) {
+      if (!dirs.some((d) => entry.rel.startsWith(`${d}/`))) continue
+      files.count += 1
+      files.bytes += entry.bytes
+    }
+    stats.push({ id, tables, files })
+  }
+  return stats
+}
+
 // ── 기본값(electron) 지연 해석 ──
 
 async function resolveDefaultPaths(): Promise<BackupPaths> {
@@ -395,10 +512,12 @@ function sqlQuote(path: string): string {
 /**
  * 라이브 DB를 destPath에 일관된 사본으로 뜨고, 그 사본에서 시크릿을 지운다.
  * WAL이 켜져 있어도 안전하다(파일 복사와 달리 -wal을 신경 쓸 필요가 없다).
+ * groups를 주면 빠지는 그룹의 행·설정 키를 사본에서 지운다(스키마는 남긴다).
  */
 export function snapshotDatabase(
   destPath: string,
-  sourceDb: DatabaseLike
+  sourceDb: DatabaseLike,
+  groups: readonly BackupGroupId[] = BACKUP_GROUP_IDS
 ): { excluded: string[]; tables: Record<string, number> } {
   sourceDb.exec(`VACUUM INTO ${sqlQuote(destPath)}`)
 
@@ -406,7 +525,13 @@ export function snapshotDatabase(
   try {
     // 백업 안에서는 단일 파일이어야 한다 — WAL을 끄면 -wal/-shm이 생기지 않는다.
     copy.pragma('journal_mode = DELETE')
+    // **무엇이든 지우기 전에 FK를 끈다.** 켠 채로 projects를 지우면 사본 안의
+    // meetings.project_id가 ON DELETE SET NULL로 지워져, 회의만 복원할 때 연결이 사라진다.
+    copy.pragma('foreign_keys = OFF')
     const excluded = stripSecrets(copy as unknown as DatabaseLike)
+    if (!isAllGroups(groups)) {
+      filterSnapshotGroups(copy as unknown as DatabaseLike, [...groups])
+    }
     copy.exec('VACUUM') // 지운 시크릿이 free page에 남지 않도록 스크럽
     const tables = readTableCounts(copy as unknown as DatabaseLike)
     return { excluded, tables }
@@ -470,6 +595,13 @@ export async function exportBackup(
   zipPath: string,
   opts: ExportOptions = {}
 ): Promise<{ path: string; manifest: BackupManifest }> {
+  // 그룹 검증은 아무것도 만들기 전에 한다 — 빈 선택으로 "빈 백업"을 만들면 안 된다.
+  let groups: BackupGroupId[] = [...BACKUP_GROUP_IDS]
+  if (opts.groups !== undefined) {
+    const parsed = parseGroupsArg(opts.groups)
+    if (!parsed.ok) throw new Error(parsed.error)
+    groups = parsed.groups
+  }
   const paths = opts.paths ?? (await resolveDefaultPaths())
   const sourceDb = opts.sourceDb ?? (await resolveSourceDb())
   const appVersion = opts.appVersion ?? (await resolveDefaultAppVersion())
@@ -488,13 +620,14 @@ export async function exportBackup(
     // 1) DB 스냅샷 (임시 폴더에 만든 뒤 zip에 넣고 버린다)
     report({ phase: 'db', progress: 0.02, message: '데이터베이스 스냅샷을 만드는 중…' })
     const dbCopy = join(workDir, DB_FILE)
-    const { excluded, tables } = snapshotDatabase(dbCopy, sourceDb)
+    const { excluded, tables } = snapshotDatabase(dbCopy, sourceDb, groups)
     const dbBytes = (await stat(dbCopy)).size
 
     // 2) 넣을 파일 목록과 manifest를 먼저 확정한다 (manifest는 마지막에 기록)
-    const plan = await planFileCopies(paths.userDataDir)
+    //    파일은 포함한 그룹의 폴더만 담는다.
+    const plan = await planFileCopies(paths.userDataDir, fileDirsForGroups(groups))
     const files = tallyFiles(plan)
-    const manifest = buildManifest({ appVersion, dbBytes, tables, files, excluded })
+    const manifest = buildManifest({ appVersion, dbBytes, tables, files, excluded, groups })
 
     // 3) 스트리밍으로 zip 기록. 진행률은 zip에 흘러나온 바이트 / 원본 총량 추정치.
     //    .wav를 비압축으로 저장하므로 이 추정치는 실제와 꽤 가깝다.
@@ -565,7 +698,21 @@ interface ScannedZip {
  * 엔트리를 한 번 훑는다. 여기서 zip slip 검사도 함께 한다 —
  * 이름이 위험한 항목이 하나라도 있으면 그 파일은 통째로 거부한다.
  */
-async function scanZip(zip: yauzl.ZipFile): Promise<ScannedZip> {
+type EntryKind = NonNullable<ReturnType<typeof classifyEntry>>
+
+/** 선택 복원에서 풀 엔트리만 고른다. manifest·DB는 늘 포함. */
+function entryFilter(dirs: readonly FileDir[]): (kind: EntryKind) => boolean {
+  return (kind) =>
+    kind === 'manifest' ||
+    kind === 'db' ||
+    (kind === 'recordings' && dirs.includes('recordings')) ||
+    (kind === 'attachments' && dirs.includes('ai-attachments'))
+}
+
+async function scanZip(
+  zip: yauzl.ZipFile,
+  include: (kind: EntryKind) => boolean = () => true
+): Promise<ScannedZip> {
   const result: ScannedZip = {
     manifestEntry: null,
     hasDb: false,
@@ -577,6 +724,7 @@ async function scanZip(zip: yauzl.ZipFile): Promise<ScannedZip> {
     assertSafeEntryName(entry.fileName)
     const kind = classifyEntry(entry.fileName)
     if (kind === null) continue // 모르는 항목은 세지도 풀지도 않는다
+    if (!include(kind)) continue // 이번에 복원하지 않는 그룹의 파일
     result.uncompressedBytes += entry.uncompressedSize
     if (kind === 'manifest') result.manifestEntry = entry
     else if (kind === 'db') result.hasDb = true
@@ -647,7 +795,8 @@ export async function inspectBackup(
 async function extractZip(
   zipPath: string,
   destDir: string,
-  onBytes: (written: number) => void
+  onBytes: (written: number) => void,
+  include: (kind: EntryKind) => boolean = () => true
 ): Promise<void> {
   let zip: yauzl.ZipFile
   try {
@@ -661,7 +810,9 @@ async function extractZip(
     for await (const entry of zip.eachEntry()) {
       if (entry.fileName.endsWith('/')) continue
       assertSafeEntryName(entry.fileName)
-      if (classifyEntry(entry.fileName) === null) continue // 모르는 항목은 풀지 않는다
+      const kind = classifyEntry(entry.fileName)
+      if (kind === null) continue // 모르는 항목은 풀지 않는다
+      if (!include(kind)) continue // 이번에 복원하지 않는 그룹의 파일
 
       const dest = join(destDir, entry.fileName)
       assertInside(destDir, dest)
@@ -734,82 +885,163 @@ function scaleProgress(
 }
 
 /**
- * 압축을 푼 폴더로 현재 앱 데이터를 **대체**한다 (zip 층 없이도 테스트할 수 있게 분리).
- * DB를 다시 열지 않는다 — 호출측이 app.relaunch()로 재시작하고, 재시작 시 initDatabase()가
- * 구버전 백업이면 마이그레이션까지 수행한다.
- * 녹음·첨부는 덮어쓰기만 하고 기존 파일을 지우지 않는다(비파괴).
+ * 요청 그룹을 검증한다: 비어 있지 않고, 아는 id이며, 백업에 든 그룹의 부분집합이어야 한다.
+ * 실패는 throw — **DB를 닫기 전에** 불러야 한다(아무것도 바꾸지 않고 거부).
  */
-export async function restoreFromFolder(
-  dir: string,
-  opts: ImportOptions
-): Promise<{ restoredDbBackupPath: string }> {
-  const paths = opts.paths ?? (await resolveDefaultPaths())
-  const report = (p: BackupProgress): void => opts.onProgress?.(p)
-
-  const sourceDbPath = join(dir, DB_FILE)
-  if (!existsSync(sourceDbPath)) throw new Error(`복원할 ${DB_FILE}을 찾지 못했습니다.`)
-
-  // 1) **먼저 핸들을 닫는다.** WAL이 켜져 있어 최근 쓰기가 -wal에만 있을 수 있는데,
-  //    닫기 전에 linkwork.db만 복사하면 보관본에 그 내용이 빠진다(= 되돌릴 수 없는 보관본).
-  //    깨끗한 close는 WAL을 체크포인트해 본 파일에 합쳐 준다.
-  report({ phase: 'db', progress: 0.1, message: '현재 데이터베이스를 보관하는 중…' })
-  opts.closeDb()
-  opts.onDbClosed?.()
-
-  let restoredDbBackupPath = ''
-  if (existsSync(paths.dbPath)) {
-    restoredDbBackupPath = `${paths.dbPath}.bak-${backupStamp()}`
-    await copyFile(paths.dbPath, restoredDbBackupPath)
-    opts.onRollbackPointCreated?.(restoredDbBackupPath)
+function resolveRestoreGroups(
+  requested: readonly BackupGroupId[] | undefined,
+  available: readonly BackupGroupId[]
+): BackupGroupId[] {
+  if (requested === undefined) return [...available]
+  const groups = normalizeGroups(requested)
+  if (!groups) throw new Error('복원할 항목을 하나 이상 올바르게 선택하세요.')
+  const missing = groups.filter((g) => !available.includes(g))
+  if (missing.length > 0) {
+    throw new Error(`이 백업에 없는 항목은 복원할 수 없습니다: ${missing.join(', ')}`)
   }
-
-  // 2) WAL 잔재를 지운 뒤 덮어쓴다.
-  //    -wal/-shm을 남기면 새 DB 파일 위에 옛 WAL이 재생돼 데이터가 섞인다.
-  report({ phase: 'db', progress: 0.25, message: '데이터베이스를 복원하는 중…' })
-  await rm(`${paths.dbPath}-wal`, { force: true })
-  await rm(`${paths.dbPath}-shm`, { force: true })
-  await copyFile(sourceDbPath, paths.dbPath)
-
-  // 3) 녹음·첨부 복사
-  const plan = await planFileCopies(dir)
-  const totalBytes = plan.reduce((sum, e) => sum + e.bytes, 0)
-  for (const group of FILE_GROUPS) {
-    await mkdir(join(paths.userDataDir, group.dir), { recursive: true })
-  }
-  let copied = 0
-  report({ phase: 'files', progress: 0.3, message: `파일 ${plan.length}개를 복원하는 중…` })
-  for (const entry of plan) {
-    await copyFile(entry.src, join(paths.userDataDir, entry.rel))
-    copied += entry.bytes
-    report({
-      phase: 'files',
-      progress: totalBytes > 0 ? 0.3 + (copied / totalBytes) * 0.7 : 0.95,
-      message: '파일 복원 중…'
-    })
-  }
-
-  return { restoredDbBackupPath }
+  return groups
 }
 
 /**
- * 백업 .zip으로 현재 앱 데이터를 **대체**한다.
- * zip을 os.tmpdir에 푼 뒤 restoreFromFolder에 넘기고, 끝나면 임시 폴더를 지운다.
+ * 같은 이름의 기존 파일을 `userData/<dir>.bak-<시각>/`로 옮긴 뒤 백업 파일을 복사한다.
+ * 같은 볼륨 안의 rename이라 빠르고, 덮어쓴 녹음을 되돌릴 수 있다.
+ * 같은 폴더의 다른 파일은 지우지 않는다.
  */
-export async function importBackup(
-  zipPath: string,
-  opts: ImportOptions
-): Promise<{ restoredDbBackupPath: string }> {
+async function copyFilesWithBackup(
+  plan: FileCopyPlanEntry[],
+  userDataDir: string,
+  stamp: string,
+  onCopied: (bytes: number) => void
+): Promise<void> {
+  const madeBakDirs = new Set<string>()
+  for (const entry of plan) {
+    const dest = join(userDataDir, entry.rel)
+    assertInside(userDataDir, dest)
+    if (existsSync(dest)) {
+      const [dir, name] = entry.rel.split('/')
+      const bakDir = join(userDataDir, `${dir}.bak-${stamp}`)
+      if (!madeBakDirs.has(bakDir)) {
+        await mkdir(bakDir, { recursive: true })
+        madeBakDirs.add(bakDir)
+      }
+      await rename(dest, join(bakDir, name))
+    }
+    await copyFile(entry.src, dest)
+    onCopied(entry.bytes)
+  }
+}
+
+/**
+ * 압축을 푼 폴더의 백업으로 **선택한 그룹만** 교체한다 (zip 층 없이도 테스트할 수 있게 분리).
+ * 선택하지 않은 그룹은 행도 파일도 바꾸지 않는다. 순서는 docs/DATA_BACKUP.md §3:
+ *   1) 백업 DB 사본을 현재 스키마까지 올리고(applySchema) 모르는 테이블·컬럼이면 거부 — **닫기 전**
+ *   2) 라이브 DB를 닫고 .bak-<시각>으로 보관
+ *   3) 라이브 파일을 제자리에서 한 트랜잭션으로 고친다(실패하면 ROLLBACK, 라이브는 그대로)
+ *   4) 커밋 뒤 선택 그룹의 파일을 복사(같은 이름은 <dir>.bak-<시각>/로 먼저 옮긴다)
+ * DB를 다시 열지 않는다 — 호출측이 app.relaunch()로 재시작한다.
+ */
+export async function restoreFromFolder(dir: string, opts: ImportOptions): Promise<ImportResult> {
+  const paths = opts.paths ?? (await resolveDefaultPaths())
+  const report = (p: BackupProgress): void => opts.onProgress?.(p)
+
+  const groups = resolveRestoreGroups(opts.groups, BACKUP_GROUP_IDS)
+
+  const sourceDbPath = join(dir, DB_FILE)
+  if (!existsSync(sourceDbPath)) throw new Error(`복원할 ${DB_FILE}을 찾지 못했습니다.`)
+  const liveExists = existsSync(paths.dbPath)
+  // 라이브 DB 가 없으면(새 기기) 빈 스키마 DB 를 임시로 만들어 같은 경로(검사·병합)를 탄다.
+  // 그냥 사본을 복사하면 고르지 않은 그룹과 refs 표까지 들어오고 모르는 스키마도 검사되지 않는다.
+  const blank = liveExists ? null : await makeBlankLiveDb()
+
+  try {
+    // 1) 백업 사본을 현재 스키마로 올린다. 라이브를 닫기 전이라 실패해도 바뀌는 것이 없다.
+    report({ phase: 'db', progress: 0.05, message: '백업 데이터베이스를 확인하는 중…' })
+    const liveTarget = blank ? blank.dbPath : paths.dbPath
+    prepareBackupDb(sourceDbPath, liveTarget)
+
+    // 2) **먼저 핸들을 닫는다.** WAL이 켜져 있어 최근 쓰기가 -wal에만 있을 수 있는데,
+    //    닫기 전에 linkwork.db만 복사하면 보관본에 그 내용이 빠진다(= 되돌릴 수 없는 보관본).
+    //    깨끗한 close는 WAL을 체크포인트해 본 파일에 합쳐 준다.
+    report({ phase: 'db', progress: 0.1, message: '현재 데이터베이스를 보관하는 중…' })
+    opts.closeDb()
+    opts.onDbClosed?.()
+
+    const stamp = backupStamp()
+    let restoredDbBackupPath = ''
+    if (liveExists) {
+      restoredDbBackupPath = `${paths.dbPath}.bak-${stamp}`
+      await copyFile(paths.dbPath, restoredDbBackupPath)
+      opts.onRollbackPointCreated?.(restoredDbBackupPath)
+    }
+
+    // 3) 선택 그룹의 테이블을 교체한다. 파일을 갈아끼우지 않고 제자리에서 고치므로
+    //    -wal/-shm은 **지우지 않는다**(남은 프레임을 잃을 수 있다).
+    report({ phase: 'db', progress: 0.25, message: '데이터베이스를 복원하는 중…' })
+    const warnings: string[] = []
+    const merged = mergeBackupIntoLive(liveTarget, sourceDbPath, groups)
+    warnings.push(...merged.warnings)
+    if (blank) {
+      // 새 기기: 병합이 끝난 빈 DB 를 자리에 둔다. 스키마 설정·시드는 재시작 때 initDatabase 가 한다.
+      await mkdir(dirname(paths.dbPath), { recursive: true })
+      await copyFile(blank.dbPath, paths.dbPath)
+    }
+
+    // 4) 선택 그룹의 녹음·첨부 복사
+    const dirs = fileDirsForGroups(groups)
+    const plan = await planFileCopies(dir, dirs)
+    const totalBytes = plan.reduce((sum, e) => sum + e.bytes, 0)
+    for (const d of dirs) {
+      await mkdir(join(paths.userDataDir, d), { recursive: true })
+    }
+    let copied = 0
+    report({ phase: 'files', progress: 0.3, message: `파일 ${plan.length}개를 복원하는 중…` })
+    await copyFilesWithBackup(plan, paths.userDataDir, stamp, (bytes) => {
+      copied += bytes
+      report({
+        phase: 'files',
+        progress: totalBytes > 0 ? 0.3 + (copied / totalBytes) * 0.7 : 0.95,
+        message: '파일 복원 중…'
+      })
+    })
+
+    return { restoredDbBackupPath, groups, warnings }
+  } finally {
+    if (blank) await rm(blank.dir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+/** 라이브 DB 가 없을 때 쓸 빈 스키마 DB 를 임시 폴더에 만든다(새 기기의 복원 대상). */
+async function makeBlankLiveDb(): Promise<{ dir: string; dbPath: string }> {
+  const dir = await mkdtemp(join(tmpdir(), 'linkwork-blank-'))
+  const dbPath = join(dir, DB_FILE)
+  const blank = new Database(dbPath)
+  try {
+    applySchema(blank)
+  } finally {
+    blank.close()
+  }
+  return { dir, dbPath }
+}
+
+/**
+ * 백업 .zip에서 **선택한 그룹만** 현재 앱 데이터에 교체해 넣는다.
+ * DB를 닫기 전에 그룹 검증·여유 공간 확인·압축 해제를 끝낸다 — 여기서 실패하면 바뀌는 것이 없다.
+ * zip은 os.tmpdir에 풀고(DB와 선택 그룹의 파일만) 끝나면 임시 폴더를 지운다.
+ */
+export async function importBackup(zipPath: string, opts: ImportOptions): Promise<ImportResult> {
   const paths = opts.paths ?? (await resolveDefaultPaths())
   const report = (p: BackupProgress): void => opts.onProgress?.(p)
 
   report({ phase: 'db', progress: 0.02, message: '백업 파일을 확인하는 중…' })
-  await inspectBackup(zipPath, { paths })
+  const { manifest } = await inspectBackup(zipPath, { paths })
+  const groups = resolveRestoreGroups(opts.groups, manifest.groups)
+  const include = entryFilter(fileDirsForGroups(groups))
 
   // 압축 해제에 얼마나 필요한지 다시 훑는다 (inspect는 요약만 돌려준다)
   const zip = await yauzl.openPromise(zipPath, { lazyEntries: true, autoClose: false })
   let needed: number
   try {
-    needed = (await scanZip(zip)).uncompressedBytes
+    needed = (await scanZip(zip, include)).uncompressedBytes
   } finally {
     zip.close()
   }
@@ -821,13 +1053,20 @@ export async function importBackup(
   const workDir = await mkdtemp(join(tmpdir(), 'linkwork-restore-'))
   try {
     report({ phase: 'files', progress: 0.05, message: '백업 파일을 푸는 중…' })
-    await extractZip(zipPath, workDir, (written) => {
-      const ratio = needed > 0 ? Math.min(written / needed, 1) : 1
-      report({ phase: 'files', progress: 0.05 + ratio * 0.4, message: '백업 파일을 푸는 중…' })
-    })
+    await extractZip(
+      zipPath,
+      workDir,
+      (written) => {
+        const ratio = needed > 0 ? Math.min(written / needed, 1) : 1
+        report({ phase: 'files', progress: 0.05 + ratio * 0.4, message: '백업 파일을 푸는 중…' })
+      },
+      include
+    )
 
     return await restoreFromFolder(workDir, {
       ...opts,
+      groups,
+      paths,
       onProgress: scaleProgress(report, 0.45, 0.98)
     })
   } finally {

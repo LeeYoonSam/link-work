@@ -20,6 +20,7 @@ export const ASSISTANT_SCHEMA = `
     recovery_at TEXT,
     wrapup_note TEXT,
     wrapup_at TEXT,
+    wrapup_skipped_at TEXT,
     last_refresh_at TEXT,
     created_at TEXT DEFAULT (datetime('now','localtime')),
     updated_at TEXT DEFAULT (datetime('now','localtime'))
@@ -86,7 +87,9 @@ export const ASSISTANT_SCHEMA = `
 // 기존 DB 에 없는 비서 컬럼을 더한다. 여러 번 실행해도 결과가 같다 (부록 G.7.1).
 // database.ts 가 db.exec(ASSISTANT_SCHEMA) 다음 줄에서 부른다. 새 DB 는 DDL 에 이미 컬럼이 있다.
 const ADDED_DAILY_PLAN_COLUMNS: { name: string; ddl: string }[] = [
-  { name: 'briefing_instruction', ddl: 'ALTER TABLE daily_plans ADD COLUMN briefing_instruction TEXT' }
+  { name: 'briefing_instruction', ddl: 'ALTER TABLE daily_plans ADD COLUMN briefing_instruction TEXT' },
+  // 어제 메모 입력 '건너뛰기' 기록. 값이 있으면 그 날짜의 메모 입력 칸을 다시 보여 주지 않는다
+  { name: 'wrapup_skipped_at', ddl: 'ALTER TABLE daily_plans ADD COLUMN wrapup_skipped_at TEXT' }
 ]
 
 // 업무 유형·묶음 컬럼 (부록 J.5, A50).

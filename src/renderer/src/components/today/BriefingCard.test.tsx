@@ -73,6 +73,7 @@ const plan = (over: Partial<DailyPlan> = {}): DailyPlan => ({
   recovery_at: null,
   wrapup_note: null,
   wrapup_at: null,
+  wrapup_skipped_at: null,
   last_refresh_at: '2026-11-02 10:42:00',
   created_at: '2026-11-02 09:40:00',
   updated_at: '2026-11-02 09:40:00',
@@ -136,6 +137,31 @@ describe('briefingSummary (V2)', () => {
     expect(briefingSummary('\n\n')).toBe('')
     expect(briefingSummary('## 오늘 할 일\n\n계획 항목이 없어요.\n')).toBe('')
     expect(briefingSummary('| a | b |\n| --- | --- |')).toBe('')
+  })
+
+  it('지난 퇴근 메모 절은 요약에 남고, 뒤의 오늘 할 일 절은 뺀다', () => {
+    // 메모 절 제목에는 '할 일' 이 없어서 요약에 남는다. 메모 줄은 목록이라 '· ' 로 바뀐다
+    const s = briefingSummary(
+      [
+        '좋은 아침이에요.',
+        '',
+        '## 지난 퇴근 메모 (2026-11-17)',
+        '',
+        '- 로그인 버그 재현까지 했어요',
+        '- 할 일 정리는 못 했어요',
+        '',
+        '## 오늘 할 일 1건',
+        '',
+        '| 항목 | 유형 |',
+        '| --- | --- |',
+        '| 문서 리뷰 | 예정 |'
+      ].join('\n')
+    )
+    expect(s.split('\n\n')).toEqual([
+      '좋은 아침이에요.',
+      '지난 퇴근 메모 (2026-11-17)\n· 로그인 버그 재현까지 했어요\n· 할 일 정리는 못 했어요'
+    ])
+    expect(s).not.toContain('문서 리뷰')
   })
 
   it('이스케이프·링크를 글자로 풀고 본문 없는 제목은 버린다', () => {

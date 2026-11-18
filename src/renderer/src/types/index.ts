@@ -879,6 +879,8 @@ export interface JiraConnectionStatus {
   expired: boolean
   /** 전체 동기화가 배포 버전과 같은 이름의 릴리스를 찾을 Jira 프로젝트. 미설정이면 전체 동기화 불가 */
   defaultProjectKey: string | null
+  /** 저장된 Atlassian 이메일. Bitbucket 팝업에 미리 채운다. 토큰은 돌려주지 않는다 */
+  email: string | null
 }
 
 /**
@@ -936,6 +938,24 @@ export interface JiraAPI {
   /** 전체 동기화가 릴리스를 찾을 기준 프로젝트. null이면 해제 */
   setDefaultProject: (projectKey: string | null) => Promise<{ success: boolean; error?: string }>
   openIssue: (issueKey: string) => Promise<{ success: boolean }>
+}
+
+// ── 설정 화면: 연동 연결 테스트 (main 의 services/integration-verify.ts 와 같은 모양) ──
+export type IntegrationId = 'google' | 'jira' | 'bitbucket' | 'notion'
+export type IntegrationVerifyCode =
+  | 'not_connected'
+  | 'auth_failed'
+  | 'expired'
+  | 'unreachable'
+  | 'unknown'
+/** throw 하지 않는다. 비밀값은 담지 않는다. checkedAt 은 ISO 문자열 */
+export type IntegrationVerifyResult =
+  | { ok: true; account: string | null; checkedAt: string }
+  | { ok: false; code: IntegrationVerifyCode; error: string; checkedAt: string }
+
+export interface SettingsAPI {
+  /** 저장된 자격 증명으로 가장 가벼운 GET 한 번. 연결 안 됐으면 외부 호출 없이 not_connected */
+  verifyIntegration: (id: IntegrationId) => Promise<IntegrationVerifyResult>
 }
 
 // ── Jira 프로젝트 싱크업 (docs/PROJECT_SYNC.md) ──
@@ -1089,9 +1109,18 @@ export interface TaskRefreshResult {
 // main의 services/backup-service.ts가 만드는 manifest.json과 같은 모양이라
 // 한쪽만 바꾸면 복원 화면이 조용히 빈 값을 그린다 — 둘을 함께 고칠 것.
 
+/**
+ * 백업 그룹 ID. 순서가 고정이다(main 의 services/backup-groups.ts 의 BACKUP_GROUP_IDS 와 같다).
+ * 그룹을 추가하면 main 쪽 formatVersion 을 반드시 올린다.
+ */
+export type BackupGroupId = 'work' | 'meetings' | 'library' | 'ai' | 'settings'
+
 export interface BackupManifest {
   format: 'linkwork-backup'
+  /** 1 = 이전 형식(늘 전체 백업), 2 = 그룹 선택 백업 */
   formatVersion: number
+  /** 이 백업에 담긴 그룹(고정 순서). main 이 v1 은 5개 전체로 정규화해 내려준다. */
+  groups: BackupGroupId[]
   appVersion: string
   /** ISO 문자열 */
   createdAt: string
@@ -1103,6 +1132,15 @@ export interface BackupManifest {
   }
   /** 백업에서 실제로 제거된 기기 종속 시크릿 — 'auth_tokens' | 'app_settings:notion_token' */
   excluded: string[]
+}
+
+/** `backup:stats` — 현재 데이터의 그룹별 행 수와 파일 용량 */
+export interface BackupGroupStat {
+  id: BackupGroupId
+  /** 테이블별 행 수. settings 는 app_settings 키 수 */
+  tables: Record<string, number>
+  /** 그룹에 속한 파일(recordings/ · ai-attachments/). 파일이 없는 그룹은 0 */
+  files: { count: number; bytes: number }
 }
 
 export interface BackupProgress {
@@ -1121,8 +1159,10 @@ export interface BackupSummary {
 }
 
 export interface BackupAPI {
-  /** 저장 다이얼로그 → .zip 하나로 내보내기. 취소하면 canceled=true */
-  exportToFile: () => Promise<{
+  /** 현재 데이터의 그룹별 건수·파일 용량 (내보내기·복원 화면 표시용) */
+  stats: () => Promise<{ success: boolean; groups?: BackupGroupStat[]; error?: string }>
+  /** 저장 다이얼로그 → 고른 그룹만 .zip 하나로 내보내기. 취소하면 canceled=true */
+  exportToFile: (groups: BackupGroupId[]) => Promise<{
     success: boolean
     canceled?: boolean
     /** 만들어진 백업 .zip의 전체 경로 */
@@ -1137,8 +1177,24 @@ export interface BackupAPI {
     summary?: BackupSummary
     error?: string
   }>
-  /** 현재 데이터를 백업으로 **대체**하고 앱을 재시작한다. 성공 응답 뒤 1초 후 재시작. */
-  importBackup: (path: string) => Promise<{ success: boolean; error?: string }>
+  /**
+   * 고른 그룹만 현재 데이터를 백업 내용으로 **교체**하고(합치지 않음) 앱을 재시작한다.
+   * 고르지 않은 그룹은 그대로 둔다. 성공 응답 뒤 1초 후 재시작.
+   */
+  importBackup: (
+    path: string,
+    groups: BackupGroupId[]
+  ) => Promise<{
+    success: boolean
+    restoredDbBackupPath?: string
+    groups?: BackupGroupId[]
+    warnings?: string[]
+    /** 경고가 1건 이상이면 true — main 은 자동 재시작하지 않고 `restart()` 를 기다린다 */
+    restartPending?: boolean
+    error?: string
+  }>
+  /** restartPending 으로 멈춘 복원 뒤, 사용자가 경고를 읽고 나서 앱을 재시작한다 */
+  restart: () => Promise<{ success: true }>
   /** 진행률 구독. 반환 함수를 호출하면 해제된다. */
   onProgress: (cb: (p: BackupProgress) => void) => () => void
 }
@@ -1220,6 +1276,8 @@ export interface DailyPlan {
   recovery_at: string | null
   wrapup_note: string | null
   wrapup_at: string | null
+  // 어제 메모 칸에서 '건너뛰기'를 누른 시각. 값이 있으면 다시 묻지 않는다
+  wrapup_skipped_at: string | null
   last_refresh_at: string | null
   created_at: string
   updated_at: string
@@ -1484,6 +1542,8 @@ export interface AssistantAPI {
   closeDay: (note?: string) => Promise<TodayResult>
   reopenDay: () => Promise<TodayResult>
   saveWrapup: (note: string, date: string) => Promise<AssistantResult<{ plan: DailyPlan }>>
+  // 어제 메모를 건너뛴 것을 기록한다. 이후 missingWrapupDate 가 null 이 된다
+  skipWrapup: (date: string) => Promise<TodayResult>
   refresh: () => Promise<TodayResult>
   refreshBriefing: () => Promise<TodayResult>
   // 맥락 복구 본문을 만든다 (부록 F.7)

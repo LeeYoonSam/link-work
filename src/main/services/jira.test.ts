@@ -55,7 +55,8 @@ import {
   MAX_SYNC_ISSUES,
   saveJiraCredentials,
   setDefaultJiraProjectKey,
-  SYNC_TRIGGER_STATUS
+  SYNC_TRIGGER_STATUS,
+  verifyStoredJira
 } from './jira'
 
 interface ResponseInit {
@@ -548,6 +549,32 @@ describe('429 재시도', () => {
       'Jira API 요청 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.'
     )
     expect(fetchMock).toHaveBeenCalledTimes(5)
+  })
+})
+
+describe('연결 테스트 verifyStoredJira', () => {
+  beforeEach(connect)
+
+  it('표시명을 계정으로 돌려준다', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ displayName: '홍길동', emailAddress: 'a@b.c' }))
+    await expect(verifyStoredJira()).resolves.toEqual({ account: '홍길동' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('429 여도 재시도하지 않고 바로 status 429 를 붙여 던진다', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({}, { status: 429, headers: { 'Retry-After': '30' } })
+    )
+    const err = await verifyStoredJira().catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err).toMatchObject({ status: 429 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('401 은 status 를 붙인 채 던진다', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({}, { status: 401 }))
+    const err = await verifyStoredJira().catch((e: unknown) => e)
+    expect(err).toMatchObject({ status: 401 })
   })
 })
 

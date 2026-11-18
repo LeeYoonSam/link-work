@@ -250,6 +250,25 @@ export async function saveBitbucketCredentials(
   return { account }
 }
 
+/**
+ * 설정 화면 [연결 테스트]. 저장된 자격 증명으로 /user 를 GET 한 번 부른다.
+ * 403 은 read:user 스코프만 없는 것이라(등록과 같은 판단) 성공으로 보고 이메일을 계정으로 쓴다.
+ * 그 밖의 실패는 status 가 붙은 BitbucketHttpError 를 그대로 던진다(분류는 integration-verify.ts).
+ */
+export async function verifyStoredBitbucket(): Promise<{ account: string | null }> {
+  const email = getBitbucketEmail()
+  try {
+    const me = await getJson<{ display_name?: unknown }>(`${API_BASE}/user`, getStoredAuth())
+    if (typeof me.display_name === 'string' && me.display_name.trim()) {
+      return { account: me.display_name.trim() }
+    }
+    return { account: email }
+  } catch (err) {
+    if (err instanceof BitbucketHttpError && err.status === 403) return { account: email }
+    throw err
+  }
+}
+
 // ── 저장소 조회 ──
 
 export interface BitbucketDirectoryEntry {

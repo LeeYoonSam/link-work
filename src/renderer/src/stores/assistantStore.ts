@@ -24,7 +24,7 @@ interface AssistantStore {
   candidates: Candidate[]
   candidatesLoading: boolean
   candidatesError: string
-  // 사용자가 '건너뛰기'를 누른 어제 메모 날짜
+  // 사용자가 '건너뛰기'를 누른 어제 메모 날짜. DB 기록 전에도 칸을 바로 숨긴다
   skippedWrapupDate: string | null
   // 알림 클릭으로 열린 영역
   focus: Focus | null
@@ -44,7 +44,8 @@ interface AssistantStore {
   closeDay: (note?: string) => Promise<void>
   reopenDay: () => Promise<void>
   saveWrapup: (note: string, date: string) => Promise<boolean>
-  skipWrapup: (date: string) => void
+  // 건너뛰기를 DB 에 기록한다. 칸은 누르는 즉시 숨긴다
+  skipWrapup: (date: string) => Promise<void>
   refresh: () => Promise<void>
   refreshBriefing: () => Promise<void>
   // 맥락 복구 본문을 만든다 (부록 F.7)
@@ -223,7 +224,18 @@ export const useAssistantStore = create<AssistantStore>((set, get) => {
       }
     },
 
-    skipWrapup: (date) => set({ skippedWrapupDate: date }),
+    // 낙관적으로 먼저 숨긴다. 기록에 실패해도 이번 세션에서는 다시 보이지 않는다.
+    // busy 를 쓰지 않는다. 이유: 다른 동작 중에 눌러도 기록이 빠지면 안 된다
+    skipWrapup: async (date) => {
+      set({ skippedWrapupDate: date })
+      try {
+        const res = await window.api.assistant.skipWrapup(date)
+        if (res.success) setToday(res.today)
+        else set({ error: res.error || '건너뛰기 기록에 실패했습니다' })
+      } catch (e) {
+        set({ error: errorText(e, '건너뛰기 기록에 실패했습니다') })
+      }
+    },
 
     refresh: async () => {
       await run(() => window.api.assistant.refresh(), '새로고침에 실패했습니다')

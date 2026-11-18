@@ -1,11 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
 import { formatElapsed, useRecorderStore } from '../../stores/recorderStore'
 import { useMorningSyncStore, type MorningSyncPartName } from '../../stores/morningSyncStore'
 import MenuIcon from '../icons/MenuIcon'
-import { ArchiveIcon } from '../ui'
-import BackupModal from './BackupModal'
-import { NAV_GROUPS, type ViewId } from './navConfig'
+import { NAV_FOOTER, NAV_GROUPS, type ViewId } from './navConfig'
 
 // 아침 자동 동기화의 새 항목 배지를 다는 메뉴다
 const MORNING_BADGE_PART: Partial<Record<ViewId, MorningSyncPartName>> = {
@@ -22,7 +20,6 @@ export default function Sidebar(): React.ReactNode {
   const unseenProject = useMorningSyncStore((s) => s.unseenCount('project'))
   const unseenRelease = useMorningSyncStore((s) => s.unseenCount('release'))
   const markSeen = useMorningSyncStore((s) => s.markSeen)
-  const [backupOpen, setBackupOpen] = useState(false)
 
   const unseen: Record<MorningSyncPartName, number> = {
     project: unseenProject,
@@ -92,18 +89,23 @@ export default function Sidebar(): React.ReactNode {
         ))}
       </nav>
 
-      {/* 하루에 한 번 쓸 일도 없는 기능이라 nav 목록에 섞지 않고 하단에 따로 둔다 */}
+      {/* 하루에 몇 번 쓰지 않는 화면이라 nav 목록에 섞지 않고 하단에 따로 둔다. 백업·복원은 설정 > 데이터로 옮겼다 */}
       <div className="mt-auto border-t border-gray-700">
-        <button
-          onClick={() => setBackupOpen(true)}
-          className="w-full text-left px-4 py-3 flex items-center gap-3 text-sm text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
-        >
-          <ArchiveIcon size={18} className="shrink-0" />
-          데이터 백업 · 복원
-        </button>
+        {NAV_FOOTER.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => setView(item.id)}
+            className={`w-full text-left px-4 py-3 flex items-center gap-3 text-sm transition-colors ${
+              view === item.id
+                ? 'bg-gray-700 text-white'
+                : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+            }`}
+          >
+            <MenuIcon name={item.icon} size={18} dimmed={view !== item.id} />
+            {item.label}
+          </button>
+        ))}
       </div>
-
-      {backupOpen && <BackupModal onClose={() => setBackupOpen(false)} />}
     </aside>
   )
 }

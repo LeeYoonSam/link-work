@@ -129,6 +129,8 @@
 2. 다음 날 04:00 이 지나면, 비서가 계획을 자동 닫기한다. `closed_by` 는 `auto` 다.
 3. 다음 하루 시작 때 화면이 `어제 메모가 없어요. 한 줄 남길까요?` 를 보여 준다. 입력은 선택이다.
 4. 사용자가 입력하면, 비서가 전날 계획의 `wrapup_note` 에 저장한다.
+5. 사용자가 '건너뛰기'를 누르면, 비서가 전날 계획의 `wrapup_skipped_at` 에 시각을 기록한다. 앱을 다시 켜도 다시 묻지 않는다.
+6. 저장한 메모는 다음 하루 브리핑의 '지난 퇴근 메모'에 들어간다. 공백이 7일 이하일 때만이다.
 
 ### 2.5 시작을 잊은 날 (MVP1)
 1. 사용자가 시작 알림을 무시한다.
@@ -190,6 +192,7 @@ CREATE TABLE IF NOT EXISTS daily_plans (
   recovery_at TEXT,
   wrapup_note TEXT,                            -- 퇴근 메모
   wrapup_at TEXT,
+  wrapup_skipped_at TEXT,                      -- 어제 메모 칸에서 '건너뛰기'를 누른 시각. 값이 있으면 다시 묻지 않는다
   last_refresh_at TEXT,
   created_at TEXT DEFAULT (datetime('now','localtime')),
   updated_at TEXT DEFAULT (datetime('now','localtime'))
@@ -275,6 +278,7 @@ CREATE INDEX IF NOT EXISTS idx_assistant_events_date ON assistant_events(plan_da
 - 새 테이블과 인덱스는 `IF NOT EXISTS` 로 만든다.
 - 나중에 컬럼을 추가하면, `database.ts` 의 `PRAGMA table_info` 관례를 따른다.
 - `assistant-schema.test.ts` 는 `ASSISTANT_SCHEMA` 를 2회 실행해 멱등성을 확인한다.
+- `daily_plans.wrapup_skipped_at` 은 기존 DB 에 `migrateAssistantSchema` 가 더한다. `ADDED_DAILY_PLAN_COLUMNS` 의 `ALTER TABLE daily_plans ADD COLUMN wrapup_skipped_at TEXT` 다.
 
 ---
 
@@ -420,12 +424,18 @@ export function shouldSendStartNudge(input: NudgeInput): boolean
 5. 계획·항목·출처 스냅샷을 트랜잭션으로 저장한다. 항목의 `added_by` 는 `start` 다.
 6. 규칙 브리핑을 저장한다.
 7. LLM 브리핑을 백그라운드로 시작한다.
-8. 직전 계획이 `closed_by = 'auto'` 이고 `wrapup_note` 가 없으면, 응답에 `missingWrapupDate` 를 넣는다. 화면은 이 값으로 어제 메모 입력을 보여 준다.
+8. 직전 계획이 `closed_by = 'auto'` 이고 `wrapup_note` 가 없고 `wrapup_skipped_at` 도 없으면, 응답에 `missingWrapupDate` 를 넣는다. 화면은 이 값으로 어제 메모 입력을 보여 준다.
 
 ### 6.3 퇴근과 다시 열기
 - `closeDay(note?)`: 계획을 `closed` 로 바꾼다. `closed_by` 는 `button` 이다. note 가 있으면 `wrapup_note` 에 저장한다.
 - `reopenDay()`: 오늘 논리 날짜의 `closed` 계획을 `active` 로 되돌린다. 다른 날짜의 계획은 다시 열 수 없다.
-- `saveWrapup(note, date)`: 지정 날짜 계획의 `wrapup_note` 를 저장한다. 어제 메모 입력도 이 함수를 쓴다.
+- `saveWrapup(note, date)`: 지정 날짜 계획의 `wrapup_note` 를 저장한다. 어제 메모 입력도 이 함수를 쓴다. `todayOf` 를 거치므로 자동 닫기(A18)도 실행한다. 반환은 그대로 `DailyPlan` 이다.
+  - 재생성: `serialized` 줄 안에서 저장한 뒤, `date < 오늘` 이고 오늘 계획이 있고 `date` 가 `getLastPlanBefore(오늘)` 의 `plan_date` 이면 오늘 브리핑을 다시 만든다. 순서는 규칙 브리핑 저장(`setBriefing`, source `rules`) → `emitChanged({ date: 오늘, reason: 'briefing' })` → 백그라운드 LLM 브리핑(`startDay` 와 같다)이다. 이유: 메모가 오늘 브리핑의 '지난 퇴근 메모'에 들어가야 한다.
+  - 예외: LLM 브리핑이 실제로 도는 조건(`llmEnabled` 이고 헤드리스 사용 가능)이고 오늘 브리핑이 이미 `llm` 이면 규칙 브리핑으로 덮어쓰지 않는다. LLM 재생성만 시작한다. 이 재생성이 실패하면 메모가 든 규칙 브리핑으로 바꾸고 `briefing_error` 를 기록한다. 이유: 아침에 만든 LLM 브리핑을 규칙 버전으로 잃지 않는다.
+  - 재생성이 실패해도 저장 결과는 바뀌지 않는다.
+- `skipWrapup(date)`: 지정 날짜 계획의 `wrapup_skipped_at` 에 현재 시각을 기록한다. 메모는 건드리지 않는다. 어제 메모 칸의 '건너뛰기'가 쓴다. `serialized` 줄에서 실행하고 `emitChanged({ date: 오늘, reason: 'day' })` 를 보낸다. 응답은 `today` 다. 기록 뒤에는 `missingWrapupDate` 가 null 이다.
+  - 날짜 형식이 틀리면 `날짜 형식이 올바르지 않습니다.`, 계획이 없으면 `해당 날짜의 계획이 없습니다.` 오류다.
+- 렌더러 스토어 `skipWrapup(date)` 는 `skippedWrapupDate` 를 먼저 세워 칸을 바로 숨긴다. 그다음 `assistant:skipWrapup` 을 부르고, 성공하면 응답의 `today` 로 바꾼다. 실패하면 `error` 를 두되 그 세션에서는 칸을 다시 보이지 않는다.
 
 ### 6.4 자동 닫기 (A18)
 - `plan_date < 오늘 논리 날짜` 인 `active` 계획을 `closed` 로 바꾼다. `closed_by` 는 `auto` 다. `closed_at` 은 처리 시각이다.
@@ -764,7 +774,7 @@ export interface PlanItem {
 export interface DailyPlan {
   id; plan_date; status; started_at; closed_at; closed_by
   briefing_text; briefing_source; briefing_model; briefing_error; briefing_at
-  recovery_text; recovery_at; wrapup_note; wrapup_at; last_refresh_at
+  recovery_text; recovery_at; wrapup_note; wrapup_at; wrapup_skipped_at; last_refresh_at
 }
 export interface AssistantEvent { id; event_key; kind; plan_date; scheduled_at; fired_at; status; ref_id; payload; response; responded_at }
 export interface TodayPayload {
@@ -782,6 +792,7 @@ export interface AssistantAPI {
   closeDay: (note?: string) => Promise<Result<{ today: TodayPayload }>>
   reopenDay: () => Promise<Result<{ today: TodayPayload }>>
   saveWrapup: (note: string, date: string) => Promise<Result<{ plan: DailyPlan }>>
+  skipWrapup: (date: string) => Promise<Result<{ today: TodayPayload }>>   // 어제 메모 건너뛰기를 기록한다
   refresh: () => Promise<Result<{ today: TodayPayload }>>
   refreshBriefing: () => Promise<Result<{ today: TodayPayload }>>        // LLM 만 다시
   listCandidates: () => Promise<Result<{ candidates: Candidate[] }>>
@@ -1101,7 +1112,8 @@ export interface DailyPlan {
   briefing_text: string | null; briefing_source: 'rules' | 'llm' | null; briefing_model: string | null
   briefing_error: string | null; briefing_at: string | null
   recovery_text: string | null; recovery_source: 'rules' | 'llm' | null; recovery_at: string | null
-  wrapup_note: string | null; wrapup_at: string | null; last_refresh_at: string | null
+  wrapup_note: string | null; wrapup_at: string | null; wrapup_skipped_at: string | null
+  last_refresh_at: string | null
   created_at: string; updated_at: string
 }
 
@@ -1258,6 +1270,7 @@ export function closePlan(db, planId: number, by: PlanClosedBy, at: string, note
 export function closeStalePlans(db, today: string, at: string): number[]     // A18. plansToAutoClose 를 쓴다
 export function reopenPlan(db, planId: number, at: string): DailyPlan        // 다른 active 가 있으면 throw
 export function saveWrapupNote(db, planDate: string, note: string, at: string): DailyPlan | null
+export function skipWrapupNote(db, planDate: string, at: string): DailyPlan | null   // wrapup_skipped_at 만 기록한다. 계획이 없으면 null
 export function setBriefing(db, planId: number, b: { text: string; source: 'rules' | 'llm'; model: string | null; at: string }): void  // briefing_error 를 NULL 로 둔다
 export function setBriefingError(db, planId: number, error: string): void   // 본문은 그대로 둔다
 export function listPlanItems(db, planId: number): PlanItem[]
@@ -1304,6 +1317,7 @@ export function clearJiraCache(): void
 `assistant-briefing.ts`:
 ```ts
 export interface BriefingInput { logicalDate: string; plan: DailyPlan; items: PlanItem[]; calendar: CalendarRef[]; errors: string[] }
+// 추가: previousNote: { date: string; note: string } | null  — 직전 계획의 퇴근 메모. 공백 7일 이하일 때만 채운다
 export const BriefingSchema: z.ZodType<BriefingJson>
 export function renderRuleBriefing(input: BriefingInput): string
 export function briefingToMarkdown(value: BriefingJson, items: PlanItem[]): string
@@ -1325,7 +1339,8 @@ export async function getToday(now?: Date): Promise<TodayPayload>
 export async function startDay(now?: Date): Promise<TodayPayload>
 export async function closeDay(note?: string | null, now?: Date): Promise<TodayPayload>
 export async function reopenDay(now?: Date): Promise<TodayPayload>
-export async function saveWrapup(note: string, planDate: string, now?: Date): Promise<DailyPlan>
+export async function saveWrapup(note: string, planDate: string, now?: Date): Promise<DailyPlan>   // 직전 계획이면 오늘 브리핑을 다시 만든다. 사용자 쓰기 줄(serialized)을 탄다
+export async function skipWrapup(planDate: string, now?: Date): Promise<TodayPayload>   // 사용자 쓰기 줄(serialized)을 탄다
 export async function runRefresh(mode: 'full' | 'local', now?: Date): Promise<TodayPayload | null>   // 근무 중이 아니면 null
 export async function refreshBriefing(now?: Date): Promise<TodayPayload>
 export async function listCandidates(now?: Date): Promise<Candidate[]>
@@ -1354,6 +1369,7 @@ IPC 채널 15개와 push 2개:
 | closeDay | `assistant:closeDay` | `note?` | `{ success: true, today }` |
 | reopenDay | `assistant:reopenDay` | 없음 | `{ success: true, today }` |
 | saveWrapup | `assistant:saveWrapup` | `note, date` | `{ success: true, plan }` |
+| skipWrapup | `assistant:skipWrapup` | `date` | `{ success: true, today }` |
 | refresh | `assistant:refresh` | 없음 | `{ success: true, today }` |
 | refreshBriefing | `assistant:refreshBriefing` | 없음 | `{ success: true, today }` |
 | listCandidates | `assistant:listCandidates` | 없음 | `{ success: true, candidates }` |
@@ -4386,6 +4402,7 @@ export interface BriefingFacts {
 **규칙 브리핑** `renderRuleBriefing(input)` 출력 구조:
 1. `## 오늘 방침` (지시가 있을 때만, A38).
 2. 인사 단락. 코드 템플릿 문장 2~4개. 회의 수·시간대, 첫 집중 시각, 남은 집중 시간, 집중 작업.
+2-1. `## 지난 퇴근 메모 (YYYY-MM-DD)` + 메모 줄마다 불릿 (`previousNote` 가 있을 때만).
 3. `## 오늘 할 일 N건` + 표.
 4. `## 챙길 것` 불릿. 조건별 고정 문장. 0건이면 절을 뺀다.
    - `qa` 가 있으면 `QA {버전} 이 {진행 중이에요|예정이에요}.` 1줄. 맨 위에 둔다.
@@ -4429,6 +4446,7 @@ const BriefingObject = z.object({
 1. `## 오늘 방침` (A38, 코드).
 2. `greeting` 단락 (LLM).
 3. `**먼저 할 일**: {KEY 제목} — {focus_reason}` (코드가 id 를 제목으로 바꾼다. `focus_candidate_id` 가 계획 항목 밖이거나 묶음 항목이면 줄을 뺀다).
+3-1. `## 지난 퇴근 메모 (YYYY-MM-DD)` (코드, 규칙 브리핑과 같은 함수). LLM 출력과 무관하게 붙인다.
 4. `## 오늘 할 일 N건` + 표 (코드, 규칙 브리핑과 같은 함수).
 5. `## 챙길 것`: `notes` (LLM) 뒤에 코드의 확인 실패 출처 문장을 붙인다. 합쳐서 0건이면 절을 뺀다.
 
@@ -4439,6 +4457,29 @@ const BriefingObject = z.object({
 - 시스템 프롬프트 규칙 추가: `회의와 블록을 하나씩 나열하지 않는다. 회의는 수와 시간대로만 말한다.` `표와 목록을 만들지 않는다. 화면이 표를 따로 보여 준다.` `focus_candidate_id 는 is_group 이 false 인 항목만 고른다.` `QA 항목이 진행 중이면 greeting 에서 배포 버전을 말한다.`
 - `WRITING_STYLE_RULES` 대신 `ASSISTANT_SPEECH_RULES` 와 `ASSISTANT_SPEECH_JSON_NOTE` 를 넣는다.
 - `[지시]` 블록과 `neutralizeMarkers` 는 그대로다 (A38·A9).
+
+**지난 퇴근 메모** (`BriefingInput.previousNote`):
+- `briefingInputOf` 가 채운다. 조건은 `getLastPlanBefore(오늘)` 의 `wrapup_note` 가 trim 뒤 비어 있지 않고, `daysBetween(plan_date, 오늘) <= 7` 이다. 맥락 복구와 같은 `RECOVERY_WRAPUP_MAX_DAYS` 다. 아니면 null 이다.
+- 브리핑 진입점은 모두 `briefingInputOf` 를 거친다. `startDay`, `refreshBriefing`, `applyCommand` 의 브리핑 조작, `saveWrapup` 재생성이다.
+- 형식은 규칙 브리핑과 LLM 브리핑이 같다:
+  ```markdown
+  ## 지난 퇴근 메모 (YYYY-MM-DD)
+
+  - 메모 1줄
+  - 메모 2줄
+  ```
+- 날짜는 직전 계획의 `plan_date` 다.
+- 메모는 2000자(`PREVIOUS_NOTE_MAX`)에서 자른다. 저장 상한·맥락 복구 상한과 같다. 줄바꿈으로 나누고, 빈 줄을 뺀다. 각 줄은 공백을 접어 한 줄로 만든다.
+- 사용자가 쓴 앞의 목록 기호(`- `, `* `, `+ `)는 지우고 `- ` 항목 1개로 만든다. `#`·`>`·`*`·`+`·`-`·`|`·`1.` 로 시작하는 줄은 `plainLead` 가 백슬래시로 이스케이프한다. 예: `- \# 제목 아님`.
+- 메모가 공백뿐이면 절을 만들지 않는다.
+- 규칙 브리핑과 LLM 브리핑 모두 코드가 절을 붙인다. 그래서 LLM 출력과 무관하게 결정적으로 보인다.
+- 절 제목에 '할 일' 을 넣지 않는다. 이유: 화면 요약(`briefingSummary`)이 '할 일' 절을 뺀다. 요약에는 제목 줄과 `· 메모` 줄로 보인다.
+- `previousNote` 가 null 이면 브리핑 Markdown 과 LLM 프롬프트가 도입 전과 글자까지 같다.
+
+LLM 프롬프트:
+- `[데이터]` JSON 에 `previous_wrapup_note: { date, note }` 를 더한다. note 는 줄을 `\n` 으로 잇는다. 마커는 `neutralizeMarkers` 로 무력화한다.
+- 메모가 있을 때만 첫 줄 `아래 [데이터] 로 오늘 브리핑 JSON 을 만든다.` 다음 줄에 `PREVIOUS_NOTE_RULE` 을 붙인다: `previous_wrapup_note 는 사용자가 지난 근무일 퇴근 때 남긴 메모다. 참고 맥락으로만 쓴다. 화면이 메모를 따로 보여 주므로 메모 문장을 그대로 반복해 출력하지 않는다. 메모가 오늘 계획 항목과 이어지면 greeting 이나 notes 에서 짧게 연결만 한다.`
+- `BRIEFING_SYSTEM_PROMPT` 는 바꾸지 않는다.
 
 2026-11-03 LLM 브리핑 예시:
 ```markdown

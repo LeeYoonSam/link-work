@@ -273,6 +273,11 @@ const api = {
       ipcRenderer.invoke('jira:setDefaultProject', projectKey),
     openIssue: (issueKey: string) => ipcRenderer.invoke('jira:openIssue', issueKey)
   },
+  // 설정 화면: 저장된 자격 증명으로 연결 테스트. throw 하지 않고 비밀값을 돌려주지 않는다
+  settings: {
+    verifyIntegration: (id: 'google' | 'jira' | 'bitbucket' | 'notion') =>
+      ipcRenderer.invoke('settings:verifyIntegration', id)
+  },
   // Jira 할 일 이슈 → 프로젝트/작업/문서. Jira는 읽기만 하고 LinkWork DB에만 쓴다
   projectSync: {
     preview: () => ipcRenderer.invoke('projectSync:preview'),
@@ -285,12 +290,18 @@ const api = {
       ipcRenderer.invoke('projectSync:refreshTasks', projectId, reason)
   },
   backup: {
-    // 저장 위치를 고르면 LinkWork-backup-<시각>.zip 파일 하나를 만든다
-    exportToFile: () => ipcRenderer.invoke('backup:export'),
+    // 그룹별 현재 건수·파일 용량 (백업 화면 표시용)
+    stats: () => ipcRenderer.invoke('backup:stats'),
+    // 고른 그룹만 담아 LinkWork-backup-<시각>.zip 파일 하나를 만든다
+    exportToFile: (groups: string[]) => ipcRenderer.invoke('backup:export', groups),
     // 백업 .zip을 골라 manifest만 확인한다 (복원은 별도 확인 후)
     pickBackup: () => ipcRenderer.invoke('backup:pick'),
-    // 성공하면 main이 1초 뒤 앱을 재시작한다 — 이 promise 이후 렌더러 상태는 의미가 없다
-    importBackup: (path: string) => ipcRenderer.invoke('backup:import', path),
+    // 고른 그룹만 교체한다. 경고가 없으면 main이 1초 뒤 재시작하고, 있으면 restartPending: true로
+    // 돌려주고 restart()를 기다린다. 어느 쪽이든 이 promise 이후 DB IPC는 실패한다
+    importBackup: (path: string, groups: string[]) =>
+      ipcRenderer.invoke('backup:import', path, groups),
+    // 경고가 있는 복원(restartPending: true) 뒤 사용자가 확인하면 앱을 다시 띄운다
+    restart: () => ipcRenderer.invoke('backup:restart'),
     onProgress: (callback: (p: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, p: unknown): void => callback(p)
       ipcRenderer.on('backup:progress', handler)
@@ -304,6 +315,7 @@ const api = {
     closeDay: (note?: string) => ipcRenderer.invoke('assistant:closeDay', note),
     reopenDay: () => ipcRenderer.invoke('assistant:reopenDay'),
     saveWrapup: (note: string, date: string) => ipcRenderer.invoke('assistant:saveWrapup', note, date),
+    skipWrapup: (date: string) => ipcRenderer.invoke('assistant:skipWrapup', date),
     refresh: () => ipcRenderer.invoke('assistant:refresh'),
     refreshBriefing: () => ipcRenderer.invoke('assistant:refreshBriefing'),
     generateRecovery: () => ipcRenderer.invoke('assistant:generateRecovery'),
