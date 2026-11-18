@@ -36,6 +36,7 @@ import {
   GROUP_TABLES,
   SECRET_SETTING_KEYS,
   SECRET_TABLES,
+  CACHE_TABLES,
   classifySettingKey,
   normalizeGroups,
   type BackupFileDir,
@@ -509,6 +510,13 @@ function sqlQuote(path: string): string {
   return `'${path.replace(/'/g, "''")}'`
 }
 
+/** **백업 사본**에서 캐시 테이블(CACHE_TABLES)의 행을 지운다. 원본에서 다시 받는 값이라 옮기지 않는다 */
+export function stripCaches(db: DatabaseLike): void {
+  for (const table of CACHE_TABLES) {
+    if (tableExists(db, table)) db.exec(`DELETE FROM ${table}`)
+  }
+}
+
 /**
  * 라이브 DB를 destPath에 일관된 사본으로 뜨고, 그 사본에서 시크릿을 지운다.
  * WAL이 켜져 있어도 안전하다(파일 복사와 달리 -wal을 신경 쓸 필요가 없다).
@@ -529,6 +537,7 @@ export function snapshotDatabase(
     // meetings.project_id가 ON DELETE SET NULL로 지워져, 회의만 복원할 때 연결이 사라진다.
     copy.pragma('foreign_keys = OFF')
     const excluded = stripSecrets(copy as unknown as DatabaseLike)
+    stripCaches(copy as unknown as DatabaseLike)
     if (!isAllGroups(groups)) {
       filterSnapshotGroups(copy as unknown as DatabaseLike, [...groups])
     }

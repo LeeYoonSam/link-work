@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useMemoStore } from '../../stores/memoStore'
 import MarkdownContent from '../memo/MarkdownContent'
-import { formatDateSafe } from '../../utils/date'
+import { formatUtcDbTime } from '../../utils/date'
 import { SectionTitle, StarIcon } from '../ui'
 
 // 홈의 중요 메모 구역 (부록 M.11 Q1). 중요 메모만 읽는다 (Q5).
@@ -31,7 +31,7 @@ export function HomeMemos(): React.ReactNode {
             </div>
             {/* 오늘 화면은 ISO 날짜를 보이지 않는다 (A53). 그래서 'M/d HH:mm' 으로 줄인다 */}
             <div className="text-xs text-gray-500 mt-2 tabular-nums">
-              {formatDateSafe(memo.created_at, 'M/d HH:mm')}
+              {formatUtcDbTime(memo.created_at, 'M/d HH:mm')}
             </div>
           </div>
         ))}

@@ -248,7 +248,6 @@ const TOOL_LABELS: Record<string, string> = {
   get_todo: 'TODO 상세 조회',
   search_memos: '메모 검색',
   get_memo: '메모 상세 조회',
-  list_documents: '문서 조회',
   list_variables: '변수 조회',
   get_activity_log: '활동 로그 조회',
   get_calendar_events: '캘린더 일정 조회',
@@ -272,11 +271,9 @@ const TOOL_LABELS: Record<string, string> = {
   create_todo: 'TODO 생성',
   create_memo: '메모 생성',
   create_variable: '변수 생성',
-  create_document: '문서 링크 생성',
   update_todo: 'TODO 수정',
   update_memo: '메모 수정',
-  update_variable: '변수 수정',
-  update_document: '문서 링크 수정'
+  update_variable: '변수 수정'
 }
 
 // 패키징된 GUI 앱은 셸 PATH를 물려받지 못하므로 시스템에 설치된
@@ -396,11 +393,10 @@ export function buildSystemPrompt(
 LinkWork는 개인 업무 관리 데스크톱 앱으로, 다음 데이터를 관리합니다:
 - TODO: 우선순위/마감일/태그/완료 이력
 - 메모(Memos): 마크다운 메모, 카테고리/중요 표시
-- 문서(Documents): 참고 링크/파일 모음
 - 변수(Variables): 자주 쓰는 키-값 저장소
 - 활동 로그: 모든 데이터의 생성/수정/삭제 이력
 - 릴리스 노트: Jira 릴리스(버전)와 동기화된 버전별 작업 내용 (list_release_notes로 목록, get_release_note로 상세 조회 — 앱에 동기화된 로컬 데이터라 Jira 도구를 쓰지 않아도 됩니다)
-- 프로젝트 보드: 기본 Jira 프로젝트의 에픽·작업·하위 작업 계층을 보여주는 화면 (전용 조회 도구가 없으니 Jira 도구로 조회하고, 화면 안내는 linkwork://view/projects 링크를 쓰세요)
+- 프로젝트 화면: 기본 Jira 프로젝트를 탭 3개로 보여 줍니다. 티켓 탭은 에픽·작업·하위 작업 계층, 릴리스 탭은 릴리스 노트, 문서 탭은 Jira 티켓에 연결된 웹링크·첨부·본문 링크·연결 이슈 모음입니다. 티켓과 문서 탭은 전용 조회 도구가 없으니 Jira 도구로 조회하세요. 화면 안내는 티켓 탭 linkwork://view/projects, 릴리스 탭 linkwork://view/releases, 문서 탭 linkwork://view/documents 링크를 쓰세요
 - Google 캘린더: 연동된 회의/미팅 일정 (get_calendar_events로 조회)
 - 개인 비서: 오늘 계획·브리핑·맥락 복구·최근 한 일·회의 액션아이템 (get_today_plan, get_recent_work, list_meeting_action_items 로 조회. 앱 로컬 데이터라 Jira 도구를 쓰지 않아도 됩니다)
 ${
@@ -450,7 +446,6 @@ ${WRITING_STYLE_RULES}
 ## 앱 내 링크 규칙 (중요)
 사용자가 클릭해서 해당 항목으로 바로 이동하도록 아래 형식의 링크를 쓰세요.
 특정 항목을 안내할 때는 항목 링크를 쓰세요. 앱이 그 항목으로 이동해 강조하고, 가능하면 상세를 엽니다.
-- 문서: [문서명](linkwork://document/{id}) — 클릭하면 문서가 바로 열립니다
 - 메모: [메모 요약](linkwork://memo/{id})
 - 할 일: [할 일 제목](linkwork://todo/{id})
 - 변수: [변수 키](linkwork://variable/{id}) — 값은 공개하지 않고 행만 강조합니다
@@ -459,8 +454,8 @@ ${WRITING_STYLE_RULES}
 - 회의록: [회의 제목](linkwork://note/{id}) — id 는 회의 id(meeting_id)입니다
 - 캘린더: [일정 제목](linkwork://calendar/{YYYY-MM-DD}/{eventId}) — eventId 는 get_calendar_events 결과의 id 입니다. 날짜만 안내할 때는 linkwork://calendar/{YYYY-MM-DD} 를 쓰세요
 - 오늘 화면 항목: [항목 제목](linkwork://today/item/{id}) — id 는 get_today_plan 결과 항목의 id 입니다
-- 메뉴: [할 일 보러가기](linkwork://view/todos) — 메뉴 링크는 목록 전체를 안내할 때만 쓰세요. view 값(메뉴 이름): today(오늘)|projects(프로젝트)|todos(할 일)|calendar(캘린더)|releases(릴리스)|reports(주간 보고)|recordings(녹음)|notes(회의록)|documents(문서)|memos(메모)|variables(변수). 링크 텍스트에는 괄호 안의 메뉴 이름을 쓰세요
-- 릴리스 노트 질문에 답한 뒤에는 그 릴리스의 링크(linkwork://release/{id})를 안내하세요. 여러 릴리스를 함께 안내할 때만 [릴리스 보러가기](linkwork://view/releases)를 쓰세요
+- 메뉴: [할 일 보러가기](linkwork://view/todos) — 메뉴 링크는 목록 전체를 안내할 때만 쓰세요. view 값(메뉴 이름): today(오늘)|projects(프로젝트)|todos(할 일)|calendar(캘린더)|reports(주간 보고)|recordings(녹음)|notes(회의록)|memos(메모)|variables(변수). 링크 텍스트에는 괄호 안의 메뉴 이름을 쓰세요. 릴리스와 문서는 메뉴가 아니라 프로젝트 화면의 탭이며, 링크는 linkwork://view/releases(릴리스 탭)와 linkwork://view/documents(문서 탭)를 씁니다
+- 릴리스 노트 질문에 답한 뒤에는 그 릴리스의 링크(linkwork://release/{id})를 안내하세요. 여러 릴리스를 함께 안내할 때만 [릴리스 탭 보러가기](linkwork://view/releases)를 쓰세요 (프로젝트 화면의 릴리스 탭이 열립니다)
 - 도구 결과에 link 필드가 있으면 그 값을 그대로 쓰세요
 - 일반 웹 URL은 그대로 마크다운 링크로 표기
 링크의 id는 반드시 도구가 반환한 실제 id를 사용하세요. id를 모르면 링크를 만들지 마세요.
@@ -470,8 +465,8 @@ ${
     ? `## 데이터 작성 규칙 (쓰기 도구 활성${
         writeMode === 'auto' ? ' — 자동 승인 모드' : writeMode === 'plan' ? ' — 계획 모드' : ''
       })
-- 생성: create_todo / create_memo / create_variable / create_document
-- 수정: update_todo / update_memo / update_variable / update_document
+- 생성: create_todo / create_memo / create_variable
+- 수정: update_todo / update_memo / update_variable
 위 도구로 데이터를 **생성·수정**할 수 있습니다.
 1. ${
         writeMode === 'auto'
@@ -482,12 +477,11 @@ ${
       }
 2. 사용자가 거절하면 같은 내용으로 다시 시도하지 말고, 무엇을 바꿀지 물어보세요.
 3. 쓰기 전에 조회 도구로 맥락을 먼저 확인하세요. 특히 수정은 반드시 조회 도구로 대상 id와 현재 값을 확인한 뒤, **변경할 필드만** 전달하세요.
-4. 참고 문서 URL(컨플루언스, 지라 티켓, 스펙 문서 등)을 등록할 때는 create_document를 사용하세요 (문서마다 1회 호출, name은 문서 제목). 같은 URL을 중복 생성하지 마세요 — list_documents로 기존 문서를 확인하세요.
-5. 메모 content와 TODO notes는 **전체 교체**됩니다. 부분 수정 시 반드시 get_memo / get_todo로 전문을 조회한 뒤, 수정 사항을 반영한 전체 내용을 전달하세요 (목록 도구의 잘린 내용을 그대로 쓰면 데이터가 유실됩니다).
-6. 여러 항목을 바꿀 때는 항목마다 도구를 한 번씩 호출하세요 (한 호출 = 한 항목).${writeMode === 'ask' ? ' 호출마다 승인을 받습니다.' : ''}
-7. 사용자가 형식을 지정하지 않으면 데이터 성격에 맞게 정리해서 작성하세요 (메모는 마크다운 구조화, TODO 제목은 간결한 행동 단위).
-8. 삭제는 지원하지 않습니다 — 요청 시 해당 메뉴에서 직접 작업하도록 안내하세요. (메모 보관 처리, TODO 완료/복원은 update 도구로 가능합니다)
-9. 생성/수정 후에는 도구 결과의 link 를 그대로 써서 해당 항목을 안내하세요.`
+4. 메모 content와 TODO notes는 **전체 교체**됩니다. 부분 수정 시 반드시 get_memo / get_todo로 전문을 조회한 뒤, 수정 사항을 반영한 전체 내용을 전달하세요 (목록 도구의 잘린 내용을 그대로 쓰면 데이터가 유실됩니다).
+5. 여러 항목을 바꿀 때는 항목마다 도구를 한 번씩 호출하세요 (한 호출 = 한 항목).${writeMode === 'ask' ? ' 호출마다 승인을 받습니다.' : ''}
+6. 사용자가 형식을 지정하지 않으면 데이터 성격에 맞게 정리해서 작성하세요 (메모는 마크다운 구조화, TODO 제목은 간결한 행동 단위).
+7. 삭제는 지원하지 않습니다 — 요청 시 해당 메뉴에서 직접 작업하도록 안내하세요. (메모 보관 처리, TODO 완료/복원은 update 도구로 가능합니다)
+8. 생성/수정 후에는 도구 결과의 link 를 그대로 써서 해당 항목을 안내하세요.`
     : `## 데이터 작성 안내
 이 채팅은 읽기 전용 모드라 당신은 데이터를 생성·수정할 수 없습니다. 사용자가 데이터 추가/수정을 요청하면,
 입력창 아래의 모드 선택을 "자동 모드", "승인 후 쓰기", "계획 모드" 중 하나로 바꾸면 AI가 직접 생성·수정할 수 있다고 안내하거나 해당 메뉴에서 직접 작업하도록 안내하세요.

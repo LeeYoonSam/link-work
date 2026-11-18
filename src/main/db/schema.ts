@@ -11,6 +11,31 @@ import { RECOGNITION_AIDS_SCHEMA } from '../services/recognition-aids'
 import { ASSISTANT_SCHEMA, migrateAssistantSchema } from '../services/assistant-schema'
 
 /**
+ * 프로젝트 보드 캐시(services/jira-board-store.ts). Jira에서 다시 받을 수 있는 값이라 백업하지 않는다
+ * (backup-groups.ts NON_GROUP_TABLES). 행은 기본 Jira 프로젝트 키로 나뉜다.
+ * - jira_board_issues.data: JiraBoardIssue JSON. updated 는 Jira updated, synced_at 은 받은 시각(ISO)
+ * - jira_board_sync.last_sync_at: 마지막 동기화(전체·증분) 시작 시각. 증분 조회의 기준점이다
+ */
+export const JIRA_BOARD_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS jira_board_issues (
+    project_key TEXT NOT NULL,
+    issue_key   TEXT NOT NULL,
+    data        TEXT NOT NULL,
+    updated     TEXT NOT NULL,
+    synced_at   TEXT NOT NULL,
+    PRIMARY KEY (project_key, issue_key)
+  );
+  CREATE TABLE IF NOT EXISTS jira_board_sync (
+    project_key        TEXT PRIMARY KEY,
+    my_account_id      TEXT,
+    last_full_sync_at  TEXT,
+    last_sync_at       TEXT,
+    truncated          INTEGER NOT NULL DEFAULT 0,
+    recent_done_days   INTEGER NOT NULL
+  );
+`
+
+/**
  * 릴리스 노트에서 project_id를 걷어낸다.
  *
  * 릴리스 노트는 Jira 릴리스의 미러라 LinkWork 프로젝트와 이어 둘 이유가 없었는데, 프로젝트마다
@@ -404,6 +429,8 @@ export function applySchema(db: Database.Database): void {
   // 비서 테이블(daily_plans·plan_items·assistant_events). 정의는 services/assistant-schema.ts.
   db.exec(ASSISTANT_SCHEMA)
   migrateAssistantSchema(db)
+  // 프로젝트 보드 캐시. 새 테이블만 만든다(기존 DB에도 IF NOT EXISTS 로 안전하게 붙는다)
+  db.exec(JIRA_BOARD_SCHEMA)
 
   // Migrations for existing databases
   const memoColumns = db.prepare("PRAGMA table_info(memos)").all() as { name: string }[]

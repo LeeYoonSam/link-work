@@ -17,19 +17,19 @@ const memo: Memo = {
 }
 
 describe('MemoViewer', () => {
-  it('onEdit을 받으면 메모 복사 버튼과 Edit 버튼을 함께 그린다', () => {
+  it('onEdit을 받으면 메모 복사 버튼과 편집 버튼을 함께 그린다', () => {
     const html = renderToStaticMarkup(
       <MemoViewer memo={memo} onClose={() => {}} onEdit={() => {}} />
     )
     expect(html).toContain('메모 복사')
-    expect(html).toContain('Edit')
-    // 메모 복사가 Edit 앞에 온다
-    expect(html.indexOf('메모 복사')).toBeLessThan(html.indexOf('Edit'))
+    expect(html).toContain('편집')
+    // 메모 복사가 편집 앞에 온다
+    expect(html.indexOf('메모 복사')).toBeLessThan(html.indexOf('편집'))
   })
 
-  it('onEdit이 없어도 메모 복사 버튼은 그린다', () => {
+  it('onEdit이 없어도 메모 복사 버튼은 그리고 편집 버튼은 뺀다', () => {
     const html = renderToStaticMarkup(<MemoViewer memo={memo} onClose={() => {}} />)
     expect(html).toContain('메모 복사')
-    expect(html).not.toContain('Edit')
+    expect(html).not.toContain('편집')
   })
 })

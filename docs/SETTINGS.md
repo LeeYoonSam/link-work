@@ -13,8 +13,8 @@
 | 캘린더 미연결 빈 상태 카드 | [연결] 은 `GoogleCalendarConnectDialog` 를 그 자리에서 띄운다. [설정에서 관리] 는 `open('integrations')` |
 | AI 대화 채팅 목록 하단 "Notion 연동", "Bitbucket 연동" | 상태 점과 라벨만 보이고, 누르면 `open('integrations')` |
 | AI 대화 Claude 사용 불가 배너 | [설정 > AI에서 확인] 은 `open('ai')`. [다시 확인] 은 그대로 |
-| Jira 토큰 만료·만료 임박 배너(`JiraTokenWarning`) | 문구 끝 [설정 열기]. 호출부가 `onOpenSettings` 를 주면 그 자리의 Jira 팝업을 열고(릴리스 화면), 없을 때만 `open('integrations')` |
-| 릴리스 화면의 Jira 설정 | 화면을 옮기지 않는다. `JiraSettingsModal`(래퍼)이 `JiraConnectDialog` 와 기본 프로젝트 select 를 그 자리에서 띄운다 |
+| Jira 토큰 만료·만료 임박 배너(`JiraTokenWarning`) | 문구 끝 [설정 열기]. 호출부가 `onOpenSettings` 를 주면 그 자리의 Jira 팝업을 열고(프로젝트 화면의 릴리스 탭), 없을 때만 `open('integrations')` |
+| 프로젝트 화면 릴리스 탭의 Jira 설정 | 화면을 옮기지 않는다. `JiraSettingsModal`(래퍼)이 `JiraConnectDialog` 와 기본 프로젝트 select 를 그 자리에서 띄운다 |
 | 프로젝트 보드의 Jira 미연결·기본 프로젝트 미설정 안내 | [설정에서 연결] 은 설정 화면으로 이동한다(`setView('settings')`). 보드는 [PROJECT_BOARD.md](PROJECT_BOARD.md) |
 
 `useSettingsStore.open(section?)` 는 섹션을 고르고 `useNavigationStore.setView('settings')` 를 호출한다.

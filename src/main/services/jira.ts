@@ -6,10 +6,10 @@ import { getDatabase } from '../db/database'
 // [가드레일]
 // - API 토큰은 app_settings에 safeStorage로 암호화해 저장한다 (notion.ts와 동일 패턴).
 // - renderer에는 연결 여부·계정 표시명·만료일만 내보내고 토큰 값은 절대 노출하지 않는다.
-// - 이 모듈은 조회 API(myself, project, version, search/jql)만 호출한다 — 쓰기 API 호출 금지.
+// - 이 모듈은 조회 API(myself, project, version, search/jql, issue/{key}/remotelink)만 호출한다 — 쓰기 API 호출 금지.
 //   프로젝트 보드도 Jira를 읽기만 하고 DB에 쓰지 않는다.
 // - Jira REST 호출은 전부 이 파일에만 둔다. 엔드포인트가 또 바뀌어도 수정 지점이 하나다
-//   (구 /rest/api/3/search 제거 전례 — 아래 listIssuesByFixVersion 주석 참고).
+//   (구 /rest/api/3/search 제거 전례 — 아래 searchJql 주석 참고).
 // - 한 릴리스에서 가져오는 이슈는 MAX_ISSUES로 상한을 둬 응답이 무한정 커지지 않게 한다.
 
 const REQUEST_TIMEOUT_MS = 15_000
@@ -376,6 +376,55 @@ async function fetchAllPageBean<T>(buildPath: (startAt: number) => string): Prom
   return collected
 }
 
+/**
+ * /rest/api/3/search/jql 커서 페이지네이션 공용 루프. 릴리스·보드·비서 검색이 모두 이것을 쓴다.
+ * - 구 GET|POST /rest/api/3/search는 2025년 10월에 제거됐다(410 Gone). 되돌리지 말 것.
+ *   이 엔드포인트는 startAt/total이 없는 커서 기반이다. nextPageToken이 없으면 마지막 페이지다.
+ * - /search/jql은 fields를 명시하지 않으면 id/key 정도만 돌려준다(구 /search와 다른 점).
+ * - limit에 닿거나, 토큰이 남았는데 페이지 상한(MAX_ISSUE_PAGES)에 걸리면 truncated다.
+ * - map이 null을 돌려주면 그 행은 건너뛴다(센 것으로 치지 않는다).
+ */
+async function searchJql<R, T>(
+  jql: string,
+  fields: string,
+  limit: number,
+  map: (raw: R) => T | null
+): Promise<{ issues: T[]; truncated: boolean }> {
+  const issues: T[] = []
+  let truncated = false
+  let nextPageToken: string | undefined
+
+  for (let page = 0; page < MAX_ISSUE_PAGES; page++) {
+    const params = new URLSearchParams({ jql, fields, maxResults: String(ISSUE_PAGE_SIZE) })
+    if (nextPageToken) params.set('nextPageToken', nextPageToken)
+
+    const data = (await jiraRequest(`/rest/api/3/search/jql?${params}`)) as {
+      issues?: R[]
+      nextPageToken?: string
+    }
+
+    for (const raw of data.issues ?? []) {
+      if (issues.length >= limit) {
+        truncated = true
+        break
+      }
+      const mapped = map(raw)
+      if (mapped !== null) issues.push(mapped)
+    }
+
+    nextPageToken = data.nextPageToken ?? undefined
+    if (!nextPageToken) break
+    if (issues.length >= limit) {
+      truncated = true
+      break
+    }
+    // 아직 토큰이 남았는데 페이지 상한에 걸렸다면 가져오지 못한 이슈가 있다는 뜻이다.
+    if (page === MAX_ISSUE_PAGES - 1) truncated = true
+  }
+
+  return { issues, truncated }
+}
+
 export async function listJiraProjects(): Promise<JiraProjectSummary[]> {
   const values = await fetchAllPageBean<{ key?: string; name?: string }>(
     (startAt) =>
@@ -463,56 +512,24 @@ export async function listIssuesByFixVersion(
   // 따옴표 없이 그대로 끼워 넣을 수 있는 것은 바로 위에서 숫자임을 검증했기 때문이다 —
   // assertVersionId를 빼면 JQL 인젝션이 열린다.
   const id = assertVersionId(versionId)
-  const jql = `fixVersion = ${id} ORDER BY issuetype, key`
+  // fields를 지우면 릴리스 노트가 제목 없는 껍데기가 된다(searchJql 주석 참고).
+  return searchJql<RawIssue, JiraIssueSummary>(
+    `fixVersion = ${id} ORDER BY issuetype, key`,
+    'summary,issuetype,status,resolution,parent',
+    MAX_ISSUES,
+    toIssueSummary
+  )
+}
 
-  const issues: JiraIssueSummary[] = []
-  let truncated = false
-  let nextPageToken: string | undefined
-
-  for (let page = 0; page < MAX_ISSUE_PAGES; page++) {
-    const params = new URLSearchParams({
-      jql,
-      // /search/jql은 fields를 명시하지 않으면 id/key 정도만 돌려준다. 구 /search와 다른 점이라
-      // 여기를 지우면 릴리스 노트가 제목 없는 껍데기가 된다.
-      fields: 'summary,issuetype,status,resolution,parent',
-      maxResults: String(ISSUE_PAGE_SIZE)
-    })
-    if (nextPageToken) params.set('nextPageToken', nextPageToken)
-
-    // 구 GET|POST /rest/api/3/search는 2025년 10월에 제거됐다(410 Gone). 되돌리지 말 것.
-    // 이 엔드포인트는 startAt/total이 없는 커서 기반이라 페이지네이션 방식도 다르다.
-    const data = (await jiraRequest(`/rest/api/3/search/jql?${params}`)) as {
-      issues?: RawIssue[]
-      nextPageToken?: string
-    }
-
-    for (const raw of data.issues ?? []) {
-      if (issues.length >= MAX_ISSUES) {
-        truncated = true
-        break
-      }
-      issues.push({
-        key: raw.key ?? '',
-        issueType: raw.fields?.issuetype?.name ?? null,
-        status: raw.fields?.status?.name ?? null,
-        resolution: raw.fields?.resolution?.name ?? null,
-        summary: raw.fields?.summary ?? '',
-        parentKey: raw.fields?.parent?.key ?? null
-      })
-    }
-
-    nextPageToken = data.nextPageToken ?? undefined
-    // 토큰이 없으면 마지막 페이지다 — total이 없으므로 이것이 유일한 종료 신호다.
-    if (!nextPageToken) break
-    if (issues.length >= MAX_ISSUES) {
-      truncated = true
-      break
-    }
-    // 아직 토큰이 남았는데 페이지 상한에 걸렸다면 가져오지 못한 이슈가 있다는 뜻이다.
-    if (page === MAX_ISSUE_PAGES - 1) truncated = true
+function toIssueSummary(raw: RawIssue): JiraIssueSummary {
+  return {
+    key: raw.key ?? '',
+    issueType: raw.fields?.issuetype?.name ?? null,
+    status: raw.fields?.status?.name ?? null,
+    resolution: raw.fields?.resolution?.name ?? null,
+    summary: raw.fields?.summary ?? '',
+    parentKey: raw.fields?.parent?.key ?? null
   }
-
-  return { issues, truncated }
 }
 
 // ── 이슈 검색 (services/jira-board.ts 프로젝트 보드, assistant-sources.ts 비서) ──
@@ -523,7 +540,8 @@ export const MAX_SEARCH_ISSUES = 500
 const SEARCH_KEY_CHUNK = 50
 
 const SEARCH_FIELDS =
-  'summary,status,issuetype,priority,parent,assignee,duedate,updated,resolutiondate,labels,description'
+  'summary,status,issuetype,priority,parent,assignee,duedate,updated,resolutiondate,labels,description,' +
+  'fixVersions,attachment,issuelinks'
 
 export type JiraIssueLevel = 'epic' | 'standard' | 'subtask'
 export type JiraStatusCategory = 'new' | 'indeterminate' | 'done'
@@ -550,6 +568,29 @@ export interface JiraSearchIssue {
   labels: string[]
   /** ADF 원본. 해석은 jira-adf.ts가 한다 */
   description: unknown
+  /** 이 이슈의 fixVersions */
+  fixVersions: { id: string; name: string }[]
+  /** 첨부 목록. url 은 첨부 content URL(브라우저에서 Jira 로그인으로 열린다) */
+  attachments: JiraAttachmentRef[]
+  /** 연결 이슈(issuelinks) */
+  issueLinks: JiraIssueLinkRef[]
+}
+
+export interface JiraAttachmentRef {
+  filename: string
+  url: string
+  mimeType: string | null
+  size: number | null
+  createdAt: string | null
+}
+
+export interface JiraIssueLinkRef {
+  /** 이 이슈에서 본 관계 이름(Jira 표시 이름. 예: 관심, 선행 작업, blocks) */
+  relation: string
+  key: string
+  summary: string
+  /** 연결된 이슈의 상태 이름. 없으면 null */
+  status: string | null
 }
 
 const PROJECT_KEY_RE = /^[A-Z][A-Z0-9_]*$/
@@ -586,7 +627,69 @@ interface RawSearchIssue {
     resolutiondate?: string | null
     labels?: string[] | null
     description?: unknown
+    fixVersions?: Array<{ id?: string | number; name?: string } | null> | null
+    attachment?: Array<{
+      filename?: string
+      content?: string
+      mimeType?: string
+      size?: number
+      created?: string
+    } | null> | null
+    issuelinks?: Array<{
+      type?: { name?: string; inward?: string; outward?: string } | null
+      inwardIssue?: RawLinkedIssue | null
+      outwardIssue?: RawLinkedIssue | null
+    } | null> | null
   }
+}
+
+interface RawLinkedIssue {
+  key?: string
+  fields?: { summary?: string; status?: { name?: string } | null }
+}
+
+function toFixVersions(raw: NonNullable<RawSearchIssue['fields']>['fixVersions']): { id: string; name: string }[] {
+  const out: { id: string; name: string }[] = []
+  for (const v of raw ?? []) {
+    if (v?.id === undefined || v.id === null) continue
+    out.push({ id: String(v.id), name: v.name ?? String(v.id) })
+  }
+  return out
+}
+
+function toAttachments(raw: NonNullable<RawSearchIssue['fields']>['attachment']): JiraAttachmentRef[] {
+  const out: JiraAttachmentRef[] = []
+  for (const a of raw ?? []) {
+    if (!a || typeof a.content !== 'string' || !/^https?:\/\//i.test(a.content)) continue
+    out.push({
+      filename: a.filename?.trim() || a.content,
+      url: a.content,
+      mimeType: a.mimeType ?? null,
+      size: typeof a.size === 'number' && Number.isFinite(a.size) ? a.size : null,
+      createdAt: a.created ?? null
+    })
+  }
+  return out
+}
+
+// 바깥 방향이면 outward("선행 작업"), 안쪽 방향이면 inward("후행 작업") 표시 이름을 쓴다
+function toIssueLinks(raw: NonNullable<RawSearchIssue['fields']>['issuelinks']): JiraIssueLinkRef[] {
+  const out: JiraIssueLinkRef[] = []
+  for (const link of raw ?? []) {
+    if (!link) continue
+    const outward = link.outwardIssue ?? null
+    const other = outward ?? link.inwardIssue ?? null
+    if (!other?.key || !ISSUE_KEY_RE.test(other.key)) continue
+    const relation =
+      (outward ? link.type?.outward : link.type?.inward) || link.type?.name || '연결'
+    out.push({
+      relation,
+      key: other.key,
+      summary: other.fields?.summary ?? '',
+      status: other.fields?.status?.name ?? null
+    })
+  }
+  return out
 }
 
 // 계층은 hierarchyLevel(1=에픽, 0=표준, -1=하위 작업)이 기준이다. 오래된 응답에 값이 없으면
@@ -622,51 +725,17 @@ export function toSearchIssue(raw: RawSearchIssue): JiraSearchIssue {
     updated: f.updated ?? '',
     resolvedAt: f.resolutiondate || null,
     labels: Array.isArray(f.labels) ? f.labels : [],
-    description: f.description ?? null
+    description: f.description ?? null,
+    fixVersions: toFixVersions(f.fixVersions),
+    attachments: toAttachments(f.attachment),
+    issueLinks: toIssueLinks(f.issuelinks)
   }
 }
 
-// listIssuesByFixVersion과 같은 커서 페이지네이션이지만 필드가 달라 따로 둔다.
-async function searchIssues(
-  jql: string
-): Promise<{ issues: JiraSearchIssue[]; truncated: boolean }> {
-  const issues: JiraSearchIssue[] = []
-  let truncated = false
-  let nextPageToken: string | undefined
-
-  for (let page = 0; page < MAX_ISSUE_PAGES; page++) {
-    const params = new URLSearchParams({
-      jql,
-      // /search/jql은 fields를 명시하지 않으면 id/key 정도만 돌려준다.
-      fields: SEARCH_FIELDS,
-      maxResults: String(ISSUE_PAGE_SIZE)
-    })
-    if (nextPageToken) params.set('nextPageToken', nextPageToken)
-
-    // 구 /rest/api/3/search는 제거됐다(410 Gone) — listIssuesByFixVersion 주석 참고.
-    const data = (await jiraRequest(`/rest/api/3/search/jql?${params}`)) as {
-      issues?: RawSearchIssue[]
-      nextPageToken?: string
-    }
-
-    for (const raw of data.issues ?? []) {
-      if (issues.length >= MAX_SEARCH_ISSUES) {
-        truncated = true
-        break
-      }
-      if (raw.key) issues.push(toSearchIssue(raw))
-    }
-
-    nextPageToken = data.nextPageToken ?? undefined
-    if (!nextPageToken) break
-    if (issues.length >= MAX_SEARCH_ISSUES) {
-      truncated = true
-      break
-    }
-    if (page === MAX_ISSUE_PAGES - 1) truncated = true
-  }
-
-  return { issues, truncated }
+function searchIssues(jql: string): Promise<{ issues: JiraSearchIssue[]; truncated: boolean }> {
+  return searchJql<RawSearchIssue, JiraSearchIssue>(jql, SEARCH_FIELDS, MAX_SEARCH_ISSUES, (raw) =>
+    raw.key ? toSearchIssue(raw) : null
+  )
 }
 
 // 키 목록을 SEARCH_KEY_CHUNK개씩 나눠 `<field> in (...)` 검색을 돌리고 합친다.
@@ -684,6 +753,29 @@ async function searchByKeyChunks(
     truncated = truncated || found.truncated
   }
   return { issues, truncated }
+}
+
+export interface JiraRemoteLink {
+  title: string
+  url: string
+}
+
+/**
+ * 이슈에 붙은 웹링크(Confluence·Figma 등, remotelink). 이슈당 GET 1회다.
+ * http(s)가 아닌 것은 버리고, 제목이 없으면 URL을 이름으로 쓴다.
+ */
+export async function listRemoteLinks(issueKey: string): Promise<JiraRemoteLink[]> {
+  const key = assertIssueKey(issueKey)
+  const data = (await jiraRequest(`/rest/api/3/issue/${key}/remotelink`)) as Array<{
+    object?: { url?: string; title?: string }
+  }>
+  const links: JiraRemoteLink[] = []
+  for (const item of Array.isArray(data) ? data : []) {
+    const url = item?.object?.url
+    if (!url || !/^https?:\/\//i.test(url)) continue
+    links.push({ url, title: item.object?.title?.trim() || url })
+  }
+  return links
 }
 
 /** 연결된 계정의 accountId — "내 담당" 판정에 쓴다 */
@@ -718,6 +810,61 @@ export async function listRecentlyDoneProjectIssues(
   }
   return searchIssues(
     `project = ${key} AND statusCategory = Done AND resolved >= -${days}d ORDER BY resolved DESC`
+  )
+}
+
+/** 증분 조회 기간 상한(분). 7일 + 여유 10분. 그보다 오래됐으면 호출자가 전체 동기화를 한다 */
+export const MAX_UPDATED_MINUTES = 7 * 24 * 60 + 10
+
+/**
+ * 프로젝트에서 최근 minutes 분 안에 바뀐 이슈를 고르는 JQL.
+ * 절대 날짜가 아니라 상대 시간을 쓴다 — JQL 날짜 리터럴은 Jira 사용자 프로필 시간대로
+ * 해석돼 로컬 시각과 어긋난다. 상대 시간은 서버 현재 시각 기준이라 시간대와 무관하다.
+ * 두 값 모두 JQL 에 들어간다. 네트워크 전에 검증한다.
+ */
+function updatedSinceJql(projectKey: string, minutes: number): string {
+  const key = assertProjectKey(projectKey)
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_UPDATED_MINUTES) {
+    throw new Error('잘못된 조회 기간')
+  }
+  return `project = ${key} AND updated >= "-${minutes}m" ORDER BY updated DESC`
+}
+
+/** 프로젝트에서 최근 minutes 분 안에 바뀐 이슈(프로젝트 보드 증분 동기화) */
+export async function listUpdatedProjectIssues(
+  projectKey: string,
+  minutes: number
+): Promise<{ issues: JiraSearchIssue[]; truncated: boolean }> {
+  return searchIssues(updatedSinceJql(projectKey, minutes))
+}
+
+/** 릴리스 변경분 동기화가 쓰는 이슈. 릴리스 항목 필드 + 지금 걸린 fixVersion ID */
+export interface JiraReleaseChangeIssue extends JiraIssueSummary {
+  /** 지금 이 이슈의 fixVersions 버전 ID. 비었으면 [] */
+  fixVersionIds: string[]
+}
+
+interface RawReleaseChangeIssue extends RawIssue {
+  fields?: RawIssue['fields'] & { fixVersions?: Array<{ id?: string | number }> | null }
+}
+
+/** 프로젝트에서 최근 minutes 분 안에 바뀐 이슈(릴리스 변경분 동기화). 상한은 MAX_ISSUES */
+export async function listUpdatedReleaseIssues(
+  projectKey: string,
+  minutes: number
+): Promise<{ issues: JiraReleaseChangeIssue[]; truncated: boolean }> {
+  return searchJql<RawReleaseChangeIssue, JiraReleaseChangeIssue>(
+    updatedSinceJql(projectKey, minutes),
+    'summary,issuetype,status,resolution,parent,fixVersions',
+    MAX_ISSUES,
+    (raw) => {
+      if (!raw.key) return null
+      const ids: string[] = []
+      for (const v of raw.fields?.fixVersions ?? []) {
+        if (v?.id !== undefined && v.id !== null) ids.push(String(v.id))
+      }
+      return { ...toIssueSummary(raw), fixVersionIds: ids }
+    }
   )
 }
 
@@ -788,45 +935,10 @@ function toMyIssue(raw: RawMyIssue): JiraMyIssue {
   }
 }
 
-// searchIssues 와 같은 커서 페이지네이션이다. 필드와 상한만 다르다.
-async function searchMyIssues(
-  jql: string
-): Promise<{ issues: JiraMyIssue[]; truncated: boolean }> {
-  const issues: JiraMyIssue[] = []
-  let truncated = false
-  let nextPageToken: string | undefined
-
-  for (let page = 0; page < MAX_ISSUE_PAGES; page++) {
-    const params = new URLSearchParams({
-      jql,
-      fields: MY_ISSUE_FIELDS,
-      maxResults: String(ISSUE_PAGE_SIZE)
-    })
-    if (nextPageToken) params.set('nextPageToken', nextPageToken)
-
-    const data = (await jiraRequest(`/rest/api/3/search/jql?${params}`)) as {
-      issues?: RawMyIssue[]
-      nextPageToken?: string
-    }
-
-    for (const raw of data.issues ?? []) {
-      if (issues.length >= MAX_MY_ISSUES) {
-        truncated = true
-        break
-      }
-      if (raw.key) issues.push(toMyIssue(raw))
-    }
-
-    nextPageToken = data.nextPageToken ?? undefined
-    if (!nextPageToken) break
-    if (issues.length >= MAX_MY_ISSUES) {
-      truncated = true
-      break
-    }
-    if (page === MAX_ISSUE_PAGES - 1) truncated = true
-  }
-
-  return { issues, truncated }
+function searchMyIssues(jql: string): Promise<{ issues: JiraMyIssue[]; truncated: boolean }> {
+  return searchJql<RawMyIssue, JiraMyIssue>(jql, MY_ISSUE_FIELDS, MAX_MY_ISSUES, (raw) =>
+    raw.key ? toMyIssue(raw) : null
+  )
 }
 
 /** 내게 할당된 미완료 이슈. projectKey 가 있으면 그 프로젝트로 좁힌다 */

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { useReleaseNoteStore } from '../../stores/releaseNoteStore'
+import { useBoardHasIssue, useJiraBoardStore } from '../../stores/jiraBoardStore'
+import { useNavigationStore } from '../../stores/navigationStore'
 import { FOCUS_RING_CLASS, focusDomId, useFocusScroll } from '../../hooks/useFocusFlash'
 import { buildReleaseNoteMarkdown } from '../../utils/releaseNoteExport'
 import type { ReleaseNoteItem, ReleaseNoteSummary } from '../../types'
@@ -161,12 +163,34 @@ export function formatSyncedAt(value: string | null): string | null {
   return format(parsed, 'yyyy-MM-dd HH:mm')
 }
 
+// 행 요약 줄의 동기화 상태 문구.
+// last_synced_at 이 없어도 이슈가 들어 있을 수 있다 — 전체 동기화가 다시 받지 못한 릴리스는
+// 항목을 남긴 채 마지막 동기화 시각만 비운다. 그때 '아직 동기화하지 않았습니다'라고 하면 모순이다.
+// 0건도 정상 결과라 "가져온 이슈: 0건"으로 못 박는다 — 빈 화면이 실패로 읽히면 안 된다
+export function releaseSyncStatusText(
+  note: Pick<ReleaseNoteSummary, 'last_synced_at' | 'item_count'>
+): string {
+  const syncedAt = formatSyncedAt(note.last_synced_at)
+  if (syncedAt) return `가져온 이슈: ${note.item_count}건 · 마지막 동기화 ${syncedAt}`
+  if (note.item_count > 0) {
+    return `가져온 이슈: ${note.item_count}건 · 최신이 아닐 수 있습니다. 동기화로 다시 받으세요`
+  }
+  return '아직 동기화하지 않았습니다'
+}
+
 function sanitizeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '_').trim() || '릴리스노트'
 }
 
-// 이슈 목록 — 그룹 헤더 + 하위 들여쓰기
-export function ReleaseNoteItemList({ items }: { items: ReleaseNoteItem[] }): React.ReactNode {
+// 이슈 목록 — 그룹 헤더 + 하위 들여쓰기.
+// itemAction 은 항목 끝에 붙일 동작이다(릴리스 탭의 "보드에서 보기"). 순수 렌더를 위해 바깥에서 받는다
+export function ReleaseNoteItemList({
+  items,
+  itemAction
+}: {
+  items: ReleaseNoteItem[]
+  itemAction?: (issueKey: string) => React.ReactNode
+}): React.ReactNode {
   if (items.length === 0) {
     return <EmptyState compact>이 릴리스에 포함된 이슈가 없습니다</EmptyState>
   }
@@ -198,12 +222,35 @@ export function ReleaseNoteItemList({ items }: { items: ReleaseNoteItem[] }): Re
                     {item.status}
                   </Badge>
                 )}
+                {itemAction?.(item.issue_key)}
               </div>
             ))}
           </div>
         </div>
       ))}
     </div>
+  )
+}
+
+// 릴리스 항목 → 프로젝트 티켓 탭의 그 이슈로 간다 (plan4 3절).
+// 보드 스냅샷에 없거나 트리에 그려질 수 없는 이슈면 갈 곳이 없어 버튼을 숨긴다
+export function RevealOnBoardButton({ issueKey }: { issueKey: string }): React.ReactNode {
+  const revealable = useBoardHasIssue(issueKey)
+  if (!revealable) return null
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        // 선택·펼침을 먼저 정해 두고 탭을 연다. 티켓 탭이 마운트되며 바로 그 이슈를 그린다
+        if (useJiraBoardStore.getState().revealIssue(issueKey)) {
+          useNavigationStore.getState().openProjectsTab('tickets')
+        }
+      }}
+      title={`프로젝트 티켓 탭에서 ${issueKey} 보기`}
+      className="shrink-0 text-[11px] text-blue-600 hover:text-blue-800 hover:underline"
+    >
+      보드에서 보기
+    </button>
   )
 }
 
@@ -234,7 +281,6 @@ export default function ReleaseNoteRow({
   const syncing = syncingId === note.id
   // 이번 세션의 실패 메시지를 우선한다 — main이 last_sync_error를 남기지 않는 경우에도 보여야 한다
   const error = syncErrors[note.id] ?? note.last_sync_error
-  const syncedAt = formatSyncedAt(note.last_synced_at)
   // truncated는 DB에 남지 않아 앱을 다시 켜면 사라진다. 상한에 닿은 항목 수로 보완하되,
   // 이때는 정확히 500건인 릴리스와 구분할 수 없으므로 단정하지 않는다.
   const truncated = syncResults[note.id]?.truncated === true
@@ -338,11 +384,8 @@ export default function ReleaseNoteRow({
               {note.jira_project_key}
             </span>
           </div>
-          {/* 0건도 정상 결과라 "가져온 이슈: 0건"으로 못 박는다 — 빈 화면이 실패로 읽히면 안 된다 */}
           <div className="text-xs text-gray-400">
-            {syncedAt
-              ? `가져온 이슈: ${note.item_count}건 · 마지막 동기화 ${syncedAt}`
-              : '아직 동기화하지 않았습니다'}
+            {releaseSyncStatusText(note)}
             {note.release_date && ` · 릴리스일 ${note.release_date}`}
           </div>
         </div>
@@ -401,7 +444,10 @@ export default function ReleaseNoteRow({
           {detailLoading && !detail ? (
             <EmptyState compact>불러오는 중입니다…</EmptyState>
           ) : (
-            <ReleaseNoteItemList items={detail?.items ?? []} />
+            <ReleaseNoteItemList
+              items={detail?.items ?? []}
+              itemAction={(key) => <RevealOnBoardButton issueKey={key} />}
+            />
           )}
         </div>
       )}

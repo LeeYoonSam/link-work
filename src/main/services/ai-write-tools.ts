@@ -28,11 +28,9 @@ export const LINKWORK_WRITE_TOOL_NAMES = [
   'create_todo',
   'create_memo',
   'create_variable',
-  'create_document',
   'update_todo',
   'update_memo',
-  'update_variable',
-  'update_document'
+  'update_variable'
 ].map((name) => `mcp__linkwork__${name}`)
 
 const dateField = (desc: string): z.ZodString =>
@@ -102,7 +100,7 @@ function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] 
 }
 
 // AI가 데이터를 생성하면 열려 있는 화면(store)이 갱신되도록 renderer에 알린다.
-function notifyDataChanged(entity: 'todo' | 'memo' | 'variable' | 'document'): void {
+function notifyDataChanged(entity: 'todo' | 'memo' | 'variable'): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send('ai:dataChanged', { entity })
@@ -130,22 +128,6 @@ function buildSetClause(
     }
   }
   return { set, values, keys }
-}
-
-// 문서 링크 URL 검증 — http/https만 허용한다.
-// javascript:/file: 등 다른 스킴은 셸로 열릴 때 위험하므로 쓰기 단계에서 차단한다.
-// 위반이면 한국어 오류 문자열을, 통과면 null을 반환한다 (create_document/update_document 공용).
-function validateDocumentUrl(url: string): string | null {
-  let parsed: URL
-  try {
-    parsed = new URL(url)
-  } catch {
-    return `url '${url.slice(0, 100)}'을(를) 해석하지 못했습니다. http:// 또는 https://로 시작하는 전체 주소를 전달하세요.`
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return `url은 http 또는 https 주소만 허용됩니다 (전달된 스킴: ${parsed.protocol}).`
-  }
-  return null
 }
 
 // 태그 이름 목록 → 태그 id 변환. 기존 태그는 연결, 없는 태그는 생성 (create/update 공용)
@@ -235,12 +217,6 @@ export function getUpdatePreview(
           | undefined
         if (!row) return null
         return maskSecretVariable(row)
-      }
-      case 'update_document': {
-        const row = db
-          .prepare('SELECT id, name, url, type, description FROM documents WHERE id = ?')
-          .get(args.document_id) as Record<string, unknown> | undefined
-        return row ?? null
       }
       default:
         return null
@@ -382,46 +358,6 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         variable_id: Number(result.lastInsertRowid),
         key: args.key,
         link: `linkwork://variable/${result.lastInsertRowid}`
-      })
-    }
-  )
-
-  const createDocument = tool(
-    'create_document',
-    '새 문서 링크를 1건 생성한다. 지라 티켓·컨플루언스 페이지 같은 참고 문서를 등록할 때 사용한다. 같은 url의 문서가 이미 있으면 생성하지 않고 오류를 반환한다. 여러 문서를 등록할 때는 문서마다 한 번씩 호출한다. 실행 전 사용자 승인이 필요하다.',
-    {
-      name: z.string().min(1).max(200).describe('문서 이름 (예: 티켓 제목, 페이지 제목)'),
-      url: z.string().min(1).max(2000).describe('문서 주소 — http:// 또는 https:// 전체 주소만 허용'),
-      description: z.string().max(500).optional().describe('문서 설명')
-    },
-    async (args) => {
-      const urlError = validateDocumentUrl(args.url)
-      if (urlError) return jsonResult({ error: urlError })
-      const db = getDatabase()
-      // url이 겹치면 중복 등록하지 않는다
-      const existing = db
-        .prepare('SELECT id, name FROM documents WHERE url = ?')
-        .get(args.url) as { id: number; name: string } | undefined
-      if (existing) {
-        return jsonResult({
-          error: `같은 url의 문서가 이미 있습니다(id=${existing.id}, name=${existing.name}). 내용을 바꾸려면 update_document 도구로 수정하세요.`
-        })
-      }
-      const result = db
-        .prepare(
-          `INSERT INTO documents (name, url, type, description, sort_order)
-           VALUES (?, ?, 'link', ?, 0)`
-        )
-        .run(args.name, args.url, args.description ?? null)
-      const documentId = result.lastInsertRowid
-      logActivity('document', 'create', documentId, args.name, 'AI 생성')
-      logWriteExecuted('create_document', `id=${documentId}, name=${args.name}`)
-      notifyDataChanged('document')
-      return jsonResult({
-        created: true,
-        document_id: Number(documentId),
-        name: args.name,
-        link: `linkwork://document/${documentId}`
       })
     }
   )
@@ -677,58 +613,12 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
     }
   )
 
-  const updateDocument = tool(
-    'update_document',
-    '기존 문서 링크를 수정한다. document_id로 대상을 지정하고 변경할 필드만 전달한다 (전달하지 않은 필드는 유지). 실행 전 사용자 승인이 필요하다.',
-    {
-      document_id: z.number().int().positive().describe('수정할 문서 id (조회 도구로 먼저 확인)'),
-      name: z.string().min(1).max(200).optional().describe('문서 이름'),
-      url: z
-        .string()
-        .min(1)
-        .max(2000)
-        .optional()
-        .describe('문서 주소 — http:// 또는 https:// 전체 주소만 허용'),
-      description: z.string().max(500).nullable().optional().describe('문서 설명 (null이면 비움)')
-    },
-    async (args) => {
-      if (args.url !== undefined) {
-        const urlError = validateDocumentUrl(args.url)
-        if (urlError) return jsonResult({ error: urlError })
-      }
-      const db = getDatabase()
-      const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(args.document_id) as
-        | { name: string }
-        | undefined
-      if (!row) {
-        return jsonResult({
-          error: `문서 id=${args.document_id}를 찾지 못했습니다. 조회 도구로 id를 확인하세요.`
-        })
-      }
-      const { set, values, keys } = buildSetClause(args, ['name', 'url', 'description'])
-      if (set.length === 0) return jsonResult({ error: '변경할 필드가 없습니다.' })
-      set.push("updated_at = datetime('now')")
-      db.prepare(`UPDATE documents SET ${set.join(', ')} WHERE id = ?`).run(...values, args.document_id)
-      logActivity('document', 'update', args.document_id, args.name ?? row.name, `AI 수정: ${keys.join(', ')}`)
-      logWriteExecuted('update_document', `id=${args.document_id}, fields=${keys.join(',')}`)
-      notifyDataChanged('document')
-      return jsonResult({
-        updated: true,
-        document_id: args.document_id,
-        updated_fields: keys,
-        link: `linkwork://document/${args.document_id}`
-      })
-    }
-  )
-
   return [
     createTodo,
     createMemo,
     createVariable,
-    createDocument,
     updateTodo,
     updateMemo,
-    updateVariable,
-    updateDocument
+    updateVariable
   ]
 }

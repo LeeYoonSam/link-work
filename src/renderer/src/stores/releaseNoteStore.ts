@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   JiraConnectionStatus,
+  ReleaseChangeSyncResult,
   ReleaseNoteSummary,
   ReleaseNoteWithItems,
   SyncAllResult
@@ -41,6 +42,11 @@ interface ReleaseNoteStore {
   /** 마지막 전체 동기화 결과. 다음 전체 동기화 전까지 화면에 남긴다 */
   syncAllResult: SyncAllResult | null
   syncAllError: string
+  /** 변경분 동기화 진행 중. 화면 진입 자동 갱신과 새로고침 버튼이 같이 쓴다 */
+  changeSyncRunning: boolean
+  /** 마지막 변경분 동기화 결과. skipped·full 은 담지 않는다(full 은 syncAllResult 로 보인다) */
+  changeSyncResult: ReleaseChangeSyncResult | null
+  changeSyncError: string
 
   fetchJiraStatus: () => Promise<void>
   fetchReleaseNotes: (deployVersion: string) => Promise<void>
@@ -50,6 +56,9 @@ interface ReleaseNoteStore {
   syncNote: (id: number) => Promise<ActionResult>
   syncAll: () => Promise<void>
   clearSyncAllResult: () => void
+  /** 마지막 동기화 이후 바뀐 이슈만 반영한다. force 가 아니면 main 이 10분 이내 재호출을 건너뛴다 */
+  syncChanges: (force: boolean) => Promise<void>
+  clearChangeSyncError: () => void
 }
 
 export const useReleaseNoteStore = create<ReleaseNoteStore>((set, get) => ({
@@ -67,6 +76,9 @@ export const useReleaseNoteStore = create<ReleaseNoteStore>((set, get) => ({
   syncAllRunning: false,
   syncAllResult: null,
   syncAllError: '',
+  changeSyncRunning: false,
+  changeSyncResult: null,
+  changeSyncError: '',
 
   fetchJiraStatus: async () => {
     const jiraStatus = await window.api.jira.status()
@@ -124,6 +136,8 @@ export const useReleaseNoteStore = create<ReleaseNoteStore>((set, get) => ({
   },
 
   syncAll: async () => {
+    // 변경분 동기화와 겹치지 않게 한다. main 도 막지만 버튼 상태가 어긋나지 않게 여기서도 거른다
+    if (get().syncAllRunning || get().changeSyncRunning) return
     // 직전 결과를 먼저 지운다 — 새로 도는 동안 옛 요약이 남아 있으면 방금 결과로 오해한다
     set({ syncAllRunning: true, syncAllError: '', syncAllResult: null })
     try {
@@ -142,8 +156,63 @@ export const useReleaseNoteStore = create<ReleaseNoteStore>((set, get) => ({
     }
   },
 
-  clearSyncAllResult: () => set({ syncAllResult: null, syncAllError: '' })
+  clearSyncAllResult: () => set({ syncAllResult: null, syncAllError: '' }),
+
+  syncChanges: async (force) => {
+    // 진행 중이면 다시 부르지 않는다. StrictMode 이중 마운트로 자동 호출이 두 번 나가도 1번만 돈다
+    if (get().changeSyncRunning || get().syncAllRunning) return
+    set({ changeSyncRunning: true, changeSyncError: '' })
+    try {
+      const res = await window.api.releaseNote.syncChanges(force)
+      if (!res.success) {
+        set({ changeSyncError: res.error || '변경분 갱신에 실패했습니다' })
+        return
+      }
+      const result = res.result
+      if (result.mode === 'skipped') return
+      if (result.mode === 'full') {
+        // 전체 동기화로 넘어갔다. 결과는 기존 전체 동기화 요약으로 보인다
+        set({ syncAllResult: result.full ?? null, changeSyncResult: null })
+        await refreshLists(get)
+        await refreshOpenDetails(get)
+        return
+      }
+      set({ changeSyncResult: result })
+      // 목록은 main 의 ai:dataChanged 알림으로 다시 읽힌다. 펼쳐 둔 상세만 여기서 다시 읽는다
+      if (hasChanges(result)) await refreshOpenDetails(get)
+    } catch (e) {
+      set({ changeSyncError: e instanceof Error && e.message ? e.message : '변경분 갱신에 실패했습니다' })
+    } finally {
+      set({ changeSyncRunning: false })
+    }
+  },
+
+  clearChangeSyncError: () => set({ changeSyncError: '' })
 }))
+
+function hasChanges(result: ReleaseChangeSyncResult): boolean {
+  return result.changed.length > 0 || result.linked > 0 || result.metaUpdated > 0
+}
+
+// 변경분 결과 한 줄. 예: '릴리스 2개에서 5건 갱신 · 신규 릴리스 1개'.
+// 변경이 없으면 null 이다. 이유: 화면을 열 때마다 '변경 없음'이 아침 동기화 줄을 가린다
+export function describeChangeSync(result: ReleaseChangeSyncResult | null): string | null {
+  if (!result || result.mode !== 'incremental') return null
+  const parts: string[] = []
+  if (result.changed.length > 0) {
+    const n = result.changed.reduce((sum, c) => sum + c.upserted + c.removed, 0)
+    parts.push(`릴리스 ${result.changed.length}개에서 ${n}건 갱신`)
+  }
+  if (result.linked > 0) parts.push(`신규 릴리스 ${result.linked}개`)
+  if (result.metaUpdated > 0) parts.push(`릴리스 정보 ${result.metaUpdated}개 갱신`)
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
+// 펼쳐 둔 릴리스의 상세를 다시 읽는다. 화면에 항목이 보이는 중이라 옛 항목이 남으면 안 된다
+async function refreshOpenDetails(get: () => ReleaseNoteStore): Promise<void> {
+  const ids = Object.keys(get().details).map(Number)
+  await Promise.all(ids.map((id) => get().fetchDetail(id).catch(() => null)))
+}
 
 // 프로젝트 상세 목록과 전체 목록 중 이미 읽은 것만 다시 읽는다.
 // 두 화면이 동시에 떠 있을 수 있어 한쪽만 갱신하면 다른 쪽이 옛 항목 수를 계속 보여준다.

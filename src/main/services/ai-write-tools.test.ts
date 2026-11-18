@@ -77,9 +77,6 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<Re
   return JSON.parse(res.content[0].text) as Record<string, unknown>
 }
 
-function documentById(id: number): Record<string, unknown> {
-  return getDatabase().prepare('SELECT * FROM documents WHERE id = ?').get(id) as Record<string, unknown>
-}
 
 afterAll(() => {
   closeDatabase()
@@ -91,51 +88,32 @@ beforeEach(() => {
 })
 
 describe('쓰기 도구 목록', () => {
-  it('프로젝트·작업 쓰기 도구는 없다', async () => {
+  it('프로젝트·작업·문서 쓰기 도구는 없다', async () => {
     const tools = (await buildWriteTools()) as unknown as Array<{ name: string }>
     const names = tools.map((t) => t.name)
-    for (const removed of ['create_project', 'create_task', 'update_project', 'update_task']) {
-      expect(names).not.toContain(removed)
-      expect(LINKWORK_WRITE_TOOL_NAMES).not.toContain(`mcp__linkwork__${removed}`)
-    }
+    // 문서 메뉴를 없앴다. 이름을 그대로 적지 않고 패턴으로 확인한다
+    for (const name of names) expect(name).not.toMatch(/project|task|document/)
     // 등록한 도구와 자동 허용 이름 목록이 어긋나지 않는다
     expect(LINKWORK_WRITE_TOOL_NAMES).toEqual(names.map((n) => `mcp__linkwork__${n}`))
+    expect(names).toEqual([
+      'create_todo',
+      'create_memo',
+      'create_variable',
+      'update_todo',
+      'update_memo',
+      'update_variable'
+    ])
   })
 })
 
-describe('create_document / update_document', () => {
-  it('문서는 프로젝트 연결 없이 만든다', async () => {
-    const result = await callTool('create_document', { name: '스펙', url: 'https://example.com/spec' })
+describe('create_memo', () => {
+  it('메모를 만들고 앱 내 링크를 돌려준다', async () => {
+    const result = await callTool('create_memo', { content: '# 회의 메모' })
 
-    expect(result).toMatchObject({ created: true, name: '스펙' })
-    expect(result.project_id).toBeUndefined()
-    expect(documentById(Number(result.document_id)).project_id).toBeNull()
-  })
-
-  it('같은 url 이 이미 있으면 기존 행의 project_id 와 관계없이 만들지 않는다', async () => {
-    // 옛 데이터: 프로젝트에 연결된 문서. 테이블은 남아 있다
-    const db = getDatabase()
-    const project = db
-      .prepare(
-        `INSERT INTO projects (name, dev_start_date, dev_end_date, qa_start_date, qa_end_date, deploy_date)
-         VALUES ('P', '2026-11-01', '2026-11-20', '2026-11-21', '2026-11-25', '2026-12-01')`
-      )
-      .run()
-    db.prepare("INSERT INTO documents (name, url, type, project_id) VALUES ('옛 문서', 'https://example.com/a', 'link', ?)")
-      .run(Number(project.lastInsertRowid))
-
-    const result = await callTool('create_document', { name: '새 문서', url: 'https://example.com/a' })
-
-    expect(String(result.error)).toContain('같은 url의 문서가 이미 있습니다')
-  })
-
-  it('update_document 는 project_id 를 받아도 바꾸지 않는다', async () => {
-    const created = await callTool('create_document', { name: '스펙', url: 'https://example.com/spec' })
-    const id = Number(created.document_id)
-
-    const result = await callTool('update_document', { document_id: id, name: '새 스펙', project_id: 3 })
-
-    expect(result).toMatchObject({ updated: true, updated_fields: ['name'] })
-    expect(documentById(id)).toMatchObject({ name: '새 스펙', project_id: null })
+    expect(result).toMatchObject({ created: true })
+    const row = getDatabase().prepare('SELECT content FROM memos ORDER BY id DESC LIMIT 1').get() as {
+      content: string
+    }
+    expect(row.content).toBe('# 회의 메모')
   })
 })

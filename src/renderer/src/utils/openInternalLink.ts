@@ -13,17 +13,10 @@ import { useFocusStore } from '../stores/focusStore'
 export async function openInternalLink(href: string): Promise<void> {
   const target = parseInternalLink(href)
   if (!target) return
-  const { setView } = useNavigationStore.getState()
+  const { setView, openProjectsTab } = useNavigationStore.getState()
   const { requestFocus } = useFocusStore.getState()
 
   switch (target.kind) {
-    case 'document': {
-      const docs = await window.api.document.listAll()
-      const doc = docs.find((d) => d.id === target.id)
-      if (doc) await window.api.document.open(doc.url, doc.type)
-      else setView('documents')
-      return
-    }
     case 'memo':
       requestFocus({ entity: 'memo', id: target.id })
       setView('memos')
@@ -45,8 +38,9 @@ export async function openInternalLink(href: string): Promise<void> {
       setView('calendar')
       return
     case 'release':
+      // 포커스 요청을 먼저 두고 탭을 연다. 릴리스 탭이 마운트되며 요청을 소비한다
       requestFocus({ entity: 'release', id: target.id })
-      setView('releases')
+      openProjectsTab('releases')
       return
     case 'recording': {
       const recording = useRecordingStore.getState()
@@ -69,7 +63,12 @@ export async function openInternalLink(href: string): Promise<void> {
       setView('today')
       return
     case 'view': {
-      // parseInternalLink 가 이미 별칭을 옮겼다. 한 번 더 걸러 화면 ID 만 넘긴다
+      // parseInternalLink 가 이미 별칭을 옮겼다. 탭이 있으면 화면과 탭을 한 번에 바꾼다
+      if (target.view === 'projects' && target.tab) {
+        openProjectsTab(target.tab)
+        return
+      }
+      // 한 번 더 걸러 화면 ID 만 넘긴다
       const view = normalizeView(target.view)
       if (view) setView(view)
       return

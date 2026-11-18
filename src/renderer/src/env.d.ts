@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 /// <reference types="react" />
 
-import type { CalendarAPI, TrayAPI, DocumentAPI, VariableAPI, MemoAPI, MemoCategoryAPI, ReportAPI, TodoAPI, TodoTagAPI, AiAPI, RecordingAPI, RecorderBridgeAPI, RecognitionAidsAPI, ExportAPI, ReleaseNoteAPI, JiraAPI, BackupAPI, JiraBoardAPI, MorningSyncAPI, MeetingNotesAPI, AssistantAPI, AssistantNavigateEvent, AssistantResult, SettingsAPI } from './types'
+import type { CalendarAPI, TrayAPI, VariableAPI, MemoAPI, MemoCategoryAPI, ReportAPI, TodoAPI, TodoTagAPI, AiAPI, RecordingAPI, RecorderBridgeAPI, RecognitionAidsAPI, ExportAPI, ReleaseNoteAPI, JiraAPI, BackupAPI, JiraBoardAPI, MorningSyncAPI, MeetingNotesAPI, AssistantAPI, AssistantNavigateEvent, AssistantResult, SettingsAPI } from './types'
 
 // takePendingNavigate 는 오래된 preload 에 없을 수 있다. 그래서 선택 속성으로 둔다
 type AssistantBridge = AssistantAPI & {
@@ -13,7 +13,6 @@ declare global {
     api: {
       tray: TrayAPI
       calendar: CalendarAPI
-      document: DocumentAPI
       variable: VariableAPI
       memo: MemoAPI
       memoCategory: MemoCategoryAPI

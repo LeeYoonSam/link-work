@@ -13,10 +13,11 @@ describe('parseInternalLink — 신규 항목 링크', () => {
     expect(parseInternalLink(href)).toEqual(expected)
   })
 
-  it('project/1/task/9 는 프로젝트 보드 화면으로 간다', () => {
+  it('project/1/task/9 는 프로젝트 페이지 티켓 탭으로 간다', () => {
     expect(parseInternalLink('linkwork://project/1/task/9')).toEqual({
       kind: 'view',
-      view: 'projects'
+      view: 'projects',
+      tab: 'tickets'
     })
   })
 
@@ -78,15 +79,30 @@ describe('parseInternalLink — 신규 항목 링크', () => {
 })
 
 describe('parseInternalLink — 레거시 링크', () => {
-  it('project/1 은 프로젝트 보드 화면으로 간다', () => {
+  it('project/1 은 프로젝트 페이지 티켓 탭으로 간다', () => {
     expect(parseInternalLink('linkwork://project/1')).toEqual({
       kind: 'view',
-      view: 'projects'
+      view: 'projects',
+      tab: 'tickets'
     })
   })
 
-  it('document/2', () => {
-    expect(parseInternalLink('linkwork://document/2')).toEqual({ kind: 'document', id: 2 })
+  // 문서·릴리스 메뉴는 프로젝트 페이지의 탭으로 옮겼다 (plan4 D5)
+  it('document/2 는 프로젝트 페이지 문서 탭으로 간다', () => {
+    expect(parseInternalLink('linkwork://document/2')).toEqual({ kind: 'view', view: 'projects', tab: 'docs' })
+    expect(parseInternalLink('linkwork://document/x')).toBeNull()
+  })
+
+  it('view/releases 는 프로젝트 페이지 릴리스 탭으로 간다', () => {
+    expect(parseInternalLink('linkwork://view/releases')).toEqual({ kind: 'view', view: 'projects', tab: 'releases' })
+  })
+
+  it('view/documents 는 프로젝트 페이지 문서 탭으로 간다', () => {
+    expect(parseInternalLink('linkwork://view/documents')).toEqual({ kind: 'view', view: 'projects', tab: 'docs' })
+  })
+
+  it('view/projects 는 티켓 탭으로 간다', () => {
+    expect(parseInternalLink('linkwork://view/projects')).toEqual({ kind: 'view', view: 'projects', tab: 'tickets' })
   })
 
   it('view/todos', () => {

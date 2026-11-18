@@ -1,13 +1,13 @@
-import { useEffect } from 'react'
 import { useNavigationStore } from '../../stores/navigationStore'
 import { formatElapsed, useRecorderStore } from '../../stores/recorderStore'
 import { useMorningSyncStore, type MorningSyncPartName } from '../../stores/morningSyncStore'
 import MenuIcon from '../icons/MenuIcon'
 import { NAV_FOOTER, NAV_GROUPS, type ViewId } from './navConfig'
 
-// 아침 자동 동기화의 새 항목 배지를 다는 메뉴다
+// 아침 자동 동기화의 새 항목 배지를 다는 메뉴다. 릴리스는 프로젝트 페이지의 탭이라 프로젝트 메뉴에 단다.
+// 본 것으로 치는 처리는 여기서 하지 않는다. 릴리스 탭이 열릴 때 한다(티켓 탭만 봐도 지워지면 안 된다)
 const MORNING_BADGE_PART: Partial<Record<ViewId, MorningSyncPartName>> = {
-  releases: 'release'
+  projects: 'release'
 }
 
 export default function Sidebar(): React.ReactNode {
@@ -17,18 +17,10 @@ export default function Sidebar(): React.ReactNode {
   const elapsedSec = useRecorderStore((s) => Math.floor(s.elapsedMs / 1000))
   const isRecording = recorderState === 'recording' || recorderState === 'paused'
   const unseenRelease = useMorningSyncStore((s) => s.unseenCount('release'))
-  const markSeen = useMorningSyncStore((s) => s.markSeen)
 
   const unseen: Record<MorningSyncPartName, number> = {
     release: unseenRelease
   }
-
-  // 화면을 열면 새 항목을 본 것으로 친다. 링크·알림으로 열어도 같다
-  useEffect(() => {
-    const part = MORNING_BADGE_PART[view]
-    if (part && unseen[part] > 0) markSeen(part)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, unseenRelease])
 
   return (
     <aside className="w-56 bg-gray-900 text-white flex flex-col h-screen">
@@ -58,7 +50,7 @@ export default function Sidebar(): React.ReactNode {
                 >
                   <MenuIcon name={item.icon} size={18} dimmed={view !== item.id} />
                   {item.label}
-                  {badge > 0 && view !== item.id ? (
+                  {badge > 0 ? (
                     <span
                       className="ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-blue-500 text-white text-[11px] font-semibold leading-[18px] text-center tabular-nums"
                       title={`아침 자동 동기화로 새 항목 ${badge}개가 생겼어요`}

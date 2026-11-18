@@ -1,8 +1,18 @@
 import { useId } from 'react'
 import type { JiraEpicAiSummary } from '../../types'
 import { ClampedText, button, taskTag, typo } from '../ui'
-import { ExternalLinkIcon, IssueTypeIcon, JiraStatusBadge, PriorityMarks, SegmentedBar, rollupText } from './BoardBits'
-import { clockTime, isOverdue, shortDate, statusVisual, type DetailTarget } from './boardModel'
+import {
+  ExternalLinkIcon,
+  FixVersionChips,
+  IssueTypeIcon,
+  JiraStatusBadge,
+  PriorityMarks,
+  SegmentedBar,
+  rollupText
+} from './BoardBits'
+import { DocLinkLine } from './DocBits'
+import { relatedDocs } from './docsModel'
+import { isOverdue, shortDateTime, shortDate, statusVisual, type DetailTarget } from './boardModel'
 
 export interface IssueDetailPanelProps {
   target: DetailTarget | null
@@ -12,7 +22,16 @@ export interface IssueDetailPanelProps {
   aiError?: string
   onSummarize: (epicKey: string) => void
   onOpenJira: (key: string) => void
+  /** fixVersion 칩 → 릴리스 탭 */
+  onOpenRelease?: (versionId: string) => void
+  /** 관련 문서 열기(jiraBoard.openLink) */
+  onOpenLink?: (url: string) => void
+  /** "문서 탭에서 모두 보기" — 검색어(에픽·이슈 키)로 문서 탭을 연다 */
+  onShowAllDocs?: (query: string) => void
 }
+
+/** 상세에 바로 보이는 관련 문서 수. 나머지는 문서 탭에서 본다 */
+const RELATED_LIMIT = 6
 
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }): React.ReactNode {
   return (
@@ -23,12 +42,6 @@ function MetaRow({ label, children }: { label: string; children: React.ReactNode
   )
 }
 
-const dateTime = (iso: string): string => {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  return `${d.getMonth() + 1}/${d.getDate()} ${clockTime(iso)}`
-}
-
 /** 선택한 행의 상세. 넓은 창에서는 오른쪽 패널, 좁은 창에서는 행 아래 인라인으로 같은 내용을 쓴다 */
 export default function IssueDetailPanel({
   target,
@@ -37,7 +50,10 @@ export default function IssueDetailPanel({
   aiLoading = false,
   aiError,
   onSummarize,
-  onOpenJira
+  onOpenJira,
+  onOpenRelease,
+  onOpenLink,
+  onShowAllDocs
 }: IssueDetailPanelProps): React.ReactNode {
   // 넓은 창 패널과 좁은 창 인라인이 함께 마운트될 수 있어 제목 id 를 고유하게 만든다
   const titleId = useId()
@@ -48,6 +64,8 @@ export default function IssueDetailPanel({
   const jiraKey = issue?.key ?? group?.epicKey ?? null
   const title = issue?.summary ?? group?.title ?? ''
   const isEpic = issue?.level === 'epic'
+  const related = relatedDocs(target, RELATED_LIMIT)
+  const docsQuery = group?.epicKey ?? issue?.key ?? null
   const rollup = group?.rollup ?? (target.node && target.node.rollup.total > 0 ? target.node.rollup : null)
 
   return (
@@ -94,8 +112,19 @@ export default function IssueDetailPanel({
               {target.parentSummary ?? ''}
             </MetaRow>
           ) : null}
-          <MetaRow label="업데이트">{dateTime(issue.updated)}</MetaRow>
-          {issue.resolvedAt ? <MetaRow label="완료">{dateTime(issue.resolvedAt)}</MetaRow> : null}
+          <MetaRow label="업데이트">{shortDateTime(issue.updated)}</MetaRow>
+          {issue.resolvedAt ? <MetaRow label="완료">{shortDateTime(issue.resolvedAt)}</MetaRow> : null}
+          {issue.fixVersions?.length > 0 ? (
+            <MetaRow label="릴리스">
+              <span className="inline-flex flex-wrap gap-1">
+                {onOpenRelease ? (
+                  <FixVersionChips versions={issue.fixVersions} onOpen={onOpenRelease} />
+                ) : (
+                  issue.fixVersions.map((v) => v.name).join(', ')
+                )}
+              </span>
+            </MetaRow>
+          ) : null}
           {issue.labels.length > 0 ? <MetaRow label="레이블">{issue.labels.join(', ')}</MetaRow> : null}
           {!issue.inScope ? (
             <MetaRow label="범위">
@@ -127,7 +156,7 @@ export default function IssueDetailPanel({
                   <li key={i}>{b}</li>
                 ))}
               </ul>
-              <p className={typo.metaFaint}>AI 요약 · {dateTime(aiSummary.generatedAt)}</p>
+              <p className={typo.metaFaint}>AI 요약 · {shortDateTime(aiSummary.generatedAt)}</p>
             </div>
           ) : !aiLoading && !aiError ? (
             <p className={typo.metaFaint}>버튼을 누르면 하위 티켓 상태로 진행 상황을 요약해요</p>
@@ -181,6 +210,27 @@ export default function IssueDetailPanel({
               숨김
               {target.hiddenPastDone > 0 ? ' — 툴바의 "이전 완료 보기"로 펼쳐요' : ''}
             </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {related.total > 0 && onOpenLink ? (
+        <div className="space-y-1.5">
+          <p className={typo.microLabel}>
+            관련 문서 {related.total}
+            {group ? <span className="normal-case tracking-normal"> · 하위 티켓 포함</span> : null}
+          </p>
+          <ul className="space-y-2">
+            {related.items.map((e) => (
+              <li key={e.url}>
+                <DocLinkLine entry={e} onOpen={onOpenLink} compact />
+              </li>
+            ))}
+          </ul>
+          {related.total > related.items.length && onShowAllDocs && docsQuery ? (
+            <button type="button" onClick={() => onShowAllDocs(docsQuery)} className="text-xs text-blue-600 hover:text-blue-700">
+              문서 탭에서 모두 보기 ({related.total})
+            </button>
           ) : null}
         </div>
       ) : null}

@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ReleaseNoteSummary, SyncAllResult } from '../../types'
+import type { ReleaseChangeSyncResult, ReleaseNoteSummary, SyncAllResult } from '../../types'
 
-// 사이드바 Releases 화면의 분기와 검색을 마크업으로 잠근다.
+// 프로젝트 페이지 릴리스 탭의 분기와 검색을 마크업으로 잠근다.
 // 릴리스 한 건의 표시 규칙은 ReleaseNoteRow.test.tsx가 담당한다.
 
 const note = (over: Partial<ReleaseNoteSummary> = {}): ReleaseNoteSummary => ({
@@ -30,6 +30,9 @@ interface MockState {
   syncAllRunning: boolean
   syncAllResult: SyncAllResult | null
   syncAllError: string
+  changeSyncRunning: boolean
+  changeSyncResult: ReleaseChangeSyncResult | null
+  changeSyncError: string
 }
 
 const BASE: MockState = {
@@ -38,12 +41,18 @@ const BASE: MockState = {
   allLoading: false,
   syncAllRunning: false,
   syncAllResult: null,
-  syncAllError: ''
+  syncAllError: '',
+  changeSyncRunning: false,
+  changeSyncResult: null,
+  changeSyncError: ''
 }
 const noop = async (): Promise<void> => {}
 let state: MockState = BASE
 
-vi.mock('../../stores/releaseNoteStore', () => ({
+vi.mock('../../stores/releaseNoteStore', async () => ({
+  describeChangeSync: (
+    await vi.importActual<typeof import('../../stores/releaseNoteStore')>('../../stores/releaseNoteStore')
+  ).describeChangeSync,
   useReleaseNoteStore: () => ({
     ...state,
     notes: [],
@@ -58,7 +67,9 @@ vi.mock('../../stores/releaseNoteStore', () => ({
     fetchDetail: async () => null,
     syncNote: async () => ({ success: true }),
     syncAll: noop,
-    clearSyncAllResult: () => {}
+    clearSyncAllResult: () => {},
+    syncChanges: noop,
+    clearChangeSyncError: () => {}
   })
 }))
 
@@ -245,5 +256,74 @@ describe('ReleasesView 포커스', () => {
 
   it('요청이 없으면 아무 행도 강조하지 않는다', () => {
     expect(renderView({ jiraStatus: CONNECTED, allNotes: NOTES })).not.toContain(FOCUS_RING_CLASS)
+  })
+})
+
+describe('ReleasesView 변경분 자동 갱신', () => {
+  // 새로고침 버튼 <button …>새로고침</button> 의 여는 태그를 뽑는다 (주석 노드가 끼어도 찾는다)
+  const refreshButtons = (html: string): string[] =>
+    [...html.matchAll(/<button([^>]*)>(?:<!--[^>]*-->)?\s*새로고침<\/button>/g)].map((m) => m[1])
+
+  it('새로고침이 주 버튼이고 전체 동기화는 보조 버튼이다', () => {
+    const html = renderView({ jiraStatus: CONNECTED, allNotes: [note()] })
+    const refresh = refreshButtons(html)
+    expect(refresh).toHaveLength(1)
+    expect(isDisabled(refresh[0])).toBe(false)
+    const all = syncAllButtons(html)
+    expect(all).toHaveLength(1)
+    expect(html.indexOf('전체 동기화')).toBeLessThan(html.indexOf('새로고침'))
+    // 주 버튼만 파란 채움이다
+    expect(refresh[0]).toContain('bg-blue-600')
+    expect(all[0]).not.toContain('bg-blue-600')
+  })
+
+  it('갱신 중이면 상태 줄에 갱신 중…을 보이고 두 버튼을 모두 잠근다. 목록은 그대로다', () => {
+    const html = renderView({ jiraStatus: CONNECTED, allNotes: [note()], changeSyncRunning: true })
+    expect(html).toContain('갱신 중…')
+    expect(html).toContain('v1.2.0')
+    for (const b of [...refreshButtons(html), ...syncAllButtons(html)]) expect(isDisabled(b)).toBe(true)
+  })
+
+  it('전체 동기화 중이면 새로고침도 잠근다', () => {
+    const html = renderView({ jiraStatus: CONNECTED, allNotes: [note()], syncAllRunning: true })
+    for (const b of refreshButtons(html)) expect(isDisabled(b)).toBe(true)
+  })
+
+  it('미연결이거나 기본 프로젝트가 없으면 새로고침을 잠근다', () => {
+    for (const status of [{ ...CONNECTED, connected: false }, { ...CONNECTED, defaultProjectKey: null }]) {
+      for (const b of refreshButtons(renderView({ jiraStatus: status }))) expect(isDisabled(b)).toBe(true)
+    }
+  })
+
+  it('변경분 결과를 상태 줄 한 곳에 보인다', () => {
+    const html = renderView({
+      jiraStatus: CONNECTED,
+      allNotes: [note()],
+      changeSyncResult: {
+        mode: 'incremental',
+        changed: [{ noteId: 1, version: 'v1.2.0', upserted: 4, removed: 1 }],
+        linked: 1,
+        metaUpdated: 0
+      }
+    })
+    expect(html.split('릴리스 1개에서 5건 갱신 · 신규 릴리스 1개').length - 1).toBeGreaterThanOrEqual(1)
+    expect(html).not.toContain('갱신 중…')
+  })
+
+  it('변경이 없으면 결과 줄을 만들지 않는다', () => {
+    const html = renderView({
+      jiraStatus: CONNECTED,
+      allNotes: [note()],
+      changeSyncResult: { mode: 'incremental', changed: [], linked: 0, metaUpdated: 0 }
+    })
+    expect(html).not.toContain('건 갱신')
+    expect(html).not.toContain('변경 없음')
+  })
+
+  it('갱신 실패는 목록을 가리지 않고 닫을 수 있는 한 줄로 알린다', () => {
+    const html = renderView({ jiraStatus: CONNECTED, allNotes: [note()], changeSyncError: 'Jira 토큰이 만료됐어요' })
+    expect(html).toContain('변경분 갱신 실패 — Jira 토큰이 만료됐어요')
+    expect(html).toContain('title="닫기"')
+    expect(html).toContain('v1.2.0')
   })
 })

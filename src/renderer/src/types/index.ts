@@ -31,36 +31,6 @@ export interface CalendarAPI {
   saveSettings: (clientId: string, clientSecret: string) => Promise<{ success: boolean }>
 }
 
-export interface Document {
-  id: number
-  name: string
-  url: string
-  type: 'link' | 'file'
-  description: string | null
-  project_id: number | null
-  sort_order: number
-  created_at: string
-  updated_at: string
-}
-
-export interface DocumentInput {
-  name: string
-  url: string
-  type: 'link' | 'file'
-  description?: string
-  sort_order?: number
-}
-
-export interface DocumentAPI {
-  create: (input: DocumentInput) => Promise<{ id: number }>
-  list: () => Promise<Document[]>
-  listAll: () => Promise<Document[]>
-  update: (id: number, input: Partial<DocumentInput>) => Promise<Document>
-  delete: (id: number) => Promise<{ success: boolean }>
-  reorder: (items: { id: number; sort_order: number }[]) => Promise<{ success: boolean }>
-  open: (url: string, type: 'link' | 'file') => Promise<{ success: boolean }>
-}
-
 export type VariableViewType = 'general' | 'secret'
 
 export interface Variable {
@@ -804,6 +774,24 @@ export interface ReleaseNoteAPI {
   ) => Promise<{ success: boolean; itemCount?: number; truncated?: boolean; error?: string }>
   /** 기본 Jira 프로젝트의 릴리스 전체를 가져와 동기화한다. 릴리스 수만큼 느리다 */
   syncAll: () => Promise<{ success: boolean; result?: SyncAllResult; error?: string }>
+  /** 마지막 확인 이후 바뀐 이슈만 반영한다. force=false 면 10분 안 재호출은 생략한다 */
+  syncChanges: (
+    force?: boolean
+  ) => Promise<{ success: true; result: ReleaseChangeSyncResult } | { success: false; error: string }>
+}
+
+/** 변경분 동기화 결과. main 의 release-note-sync.ts 와 같은 모양이다 */
+export interface ReleaseChangeSyncResult {
+  /** skipped = 10분 이내라 Jira를 부르지 않음. full = 전체 동기화로 넘어감 */
+  mode: 'incremental' | 'full' | 'skipped'
+  /** 항목이 바뀐 릴리스 */
+  changed: Array<{ noteId: number; version: string; upserted: number; removed: number }>
+  /** 새로 목록에 들어온 릴리스 수 */
+  linked: number
+  /** 이름·출시 여부·날짜 등 메타가 바뀐 릴리스 수 */
+  metaUpdated: number
+  /** mode가 'full'일 때 전체 동기화 결과 */
+  full?: SyncAllResult
 }
 
 export interface JiraAPI {
@@ -871,6 +859,31 @@ export interface JiraBoardIssue {
   labels: string[]
   /** 설명 본문 평문 발췌. 최대 600자, 없으면 null */
   excerpt: string | null
+  /** 이 이슈의 fixVersion. 릴리스 탭의 jira_version_id 와 대응한다 */
+  fixVersions: { id: string; name: string }[]
+  /** 연결 문서. 같은 이슈 안에서 url 중복 없음(앞 종류가 남는다). 순서: web → attachment → description → issue */
+  links: JiraIssueLink[]
+}
+
+/** web=웹링크(remotelink), attachment=첨부, description=본문 안 링크, issue=연결 이슈 */
+export type JiraIssueLinkKind = 'web' | 'attachment' | 'description' | 'issue'
+
+export interface JiraIssueLink {
+  kind: JiraIssueLinkKind
+  title: string
+  /** http(s) URL. issue면 그 이슈의 Jira browse URL, attachment면 첨부 content URL */
+  url: string
+  /** 출처 추정 라벨: 'Confluence' | 'Figma' | 'Google 문서' | 'Notion 문서' | 'Jira' | '첨부' | 호스트명 등.
+   *  Jira 이슈 URL·연결 이슈는 'Jira', 첨부는 '첨부'다 */
+  source: string
+  /** kind === 'issue': 연결된 이슈 키, 관계 이름(예: 관심, 선행 작업), 그 이슈의 상태 이름. title 은 'KEY 요약' */
+  issueKey?: string
+  relation?: string
+  issueStatus?: string
+  /** kind === 'attachment' */
+  mimeType?: string | null
+  size?: number | null
+  createdAt?: string | null
 }
 
 export interface JiraBoardSnapshot {
@@ -882,8 +895,20 @@ export interface JiraBoardSnapshot {
   truncated: boolean
   /** 최근 완료로 포함한 기간(일) */
   recentDoneDays: number
-  /** ISO */
+  /** 마지막 동기화(전체·증분) 시작 시각. ISO */
   fetchedAt: string
+  /** 마지막 전체 동기화 시각(ISO). 없으면 null */
+  lastFullSyncAt: string | null
+}
+
+/** auto 는 저장 상태를 보고 full / incremental / 생략을 고른다 */
+export type JiraBoardSyncMode = 'auto' | 'incremental' | 'full'
+
+export interface JiraBoardSyncInfo {
+  /** 실제로 돈 방식. 'cache' = Jira를 부르지 않고 저장본을 돌려줌 */
+  mode: 'full' | 'incremental' | 'cache'
+  /** 이번에 새로 저장하거나 덮어쓴 이슈 수 (cache면 0) */
+  changed: number
 }
 
 export interface JiraEpicAiSummary {
@@ -898,17 +923,24 @@ export interface JiraEpicAiSummary {
 
 export interface JiraBoardAPI {
   // 네트워크가 얽혀 있어 throw 대신 결과 객체로 감싼다 — 오류 문구를 그대로 표시해야 한다
-  /** force=true 면 main 캐시를 무시하고 다시 가져온다 */
-  fetch: (
-    force?: boolean
-  ) => Promise<
-    | { success: true; snapshot: JiraBoardSnapshot }
+  /** 로컬 DB 에 저장된 스냅샷만 읽는다. Jira 를 부르지 않는다. 저장본이 없으면 null */
+  cached: () => Promise<
+    | { success: true; snapshot: JiraBoardSnapshot | null }
     | { success: false; error: string; code?: 'not_connected' | 'no_default_project' }
   >
-  /** 사용자가 버튼을 눌렀을 때만 부른다. 캐시된 스냅샷의 에픽 키만 받는다 */
+  /** Jira 와 동기화하고 저장본을 갱신한다. 기본 'auto' */
+  fetch: (
+    mode?: JiraBoardSyncMode
+  ) => Promise<
+    | { success: true; snapshot: JiraBoardSnapshot; sync: JiraBoardSyncInfo }
+    | { success: false; error: string; code?: 'not_connected' | 'no_default_project' }
+  >
+  /** 사용자가 버튼을 눌렀을 때만 부른다. 저장된 스냅샷의 에픽 키만 받는다 */
   summarizeEpic: (
     epicKey: string
   ) => Promise<{ success: true; summary: JiraEpicAiSummary } | { success: false; error: string }>
+  /** 저장된 스냅샷의 어떤 이슈 links 에 든 http(s) URL 만 기본 브라우저로 연다 */
+  openLink: (url: string) => Promise<{ success: true } | { success: false; error: string }>
 }
 
 // ── 아침 자동 동기화 (docs/ASSISTANT.md A54) ──

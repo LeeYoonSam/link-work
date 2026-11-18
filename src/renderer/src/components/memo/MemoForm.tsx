@@ -7,14 +7,22 @@ import { SectionTitle, button } from '../ui'
 interface MemoFormProps {
   onClose: () => void
   editingMemo?: Memo | null
+  // 새 메모의 기본 분류. 레일에서 특정 분류를 보고 있을 때 넘긴다
+  defaultCategoryId?: number | null
 }
 
 type Mode = 'write' | 'preview'
 
-export default function MemoForm({ onClose, editingMemo }: MemoFormProps): React.ReactNode {
+export default function MemoForm({
+  onClose,
+  editingMemo,
+  defaultCategoryId = null
+}: MemoFormProps): React.ReactNode {
   const { createMemo, updateMemo, categories, fetchCategories } = useMemoStore()
   const [content, setContent] = useState(editingMemo?.content || '')
-  const [categoryId, setCategoryId] = useState<number | null>(editingMemo?.category_id ?? null)
+  const [categoryId, setCategoryId] = useState<number | null>(
+    editingMemo ? editingMemo.category_id : defaultCategoryId
+  )
   const [mode, setMode] = useState<Mode>('write')
 
   useEffect(() => {
@@ -46,7 +54,7 @@ export default function MemoForm({ onClose, editingMemo }: MemoFormProps): React
       >
         <div className="flex items-center justify-between px-6 pt-5 pb-3">
           <SectionTitle variant="page">
-            {editingMemo ? 'Edit Memo' : 'New Memo'}
+            {editingMemo ? '메모 편집' : '새 메모'}
           </SectionTitle>
           <div className="flex bg-gray-100 rounded-md p-0.5">
             <button
@@ -58,7 +66,7 @@ export default function MemoForm({ onClose, editingMemo }: MemoFormProps): React
                   : 'text-gray-500 hover:text-gray-700'
               }`}
             >
-              Write
+              쓰기
             </button>
             <button
               type="button"
@@ -69,14 +77,14 @@ export default function MemoForm({ onClose, editingMemo }: MemoFormProps): React
                   : 'text-gray-500 hover:text-gray-700'
               }`}
             >
-              Preview
+              미리보기
             </button>
           </div>
         </div>
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
           <div className="px-6 pb-2">
             <label className="flex items-center gap-2 text-xs text-gray-600">
-              <span className="font-medium">카테고리</span>
+              <span className="font-medium">분류</span>
               <select
                 value={categoryId ?? ''}
                 onChange={(e) =>
@@ -122,13 +130,13 @@ export default function MemoForm({ onClose, editingMemo }: MemoFormProps): React
               onClick={onClose}
               className={`px-4 py-2 text-sm ${button.subtle}`}
             >
-              Cancel
+              취소
             </button>
             <button
               type="submit"
               className={`px-4 py-2 text-sm ${button.primary}`}
             >
-              {editingMemo ? 'Save' : 'Add'}
+              {editingMemo ? '저장' : '추가'}
             </button>
           </div>
         </form>

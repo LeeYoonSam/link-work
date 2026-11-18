@@ -73,8 +73,20 @@ export const GROUP_FILE_DIRS: Record<BackupGroupId, readonly BackupFileDir[]> = 
  * 그룹에 속하지 않는 테이블.
  * - app_settings: 키 단위로 work/settings/secret 에 나뉜다(classifySettingKey).
  * - auth_tokens: 기기 종속 시크릿. 백업에서 늘 뺀다.
+ * - jira_board_issues·jira_board_sync: 프로젝트 보드 캐시(CACHE_TABLES). Jira에서 다시 받는다.
  */
-export const NON_GROUP_TABLES: readonly string[] = ['app_settings', 'auth_tokens']
+export const NON_GROUP_TABLES: readonly string[] = [
+  'app_settings',
+  'auth_tokens',
+  'jira_board_issues',
+  'jira_board_sync'
+]
+
+/**
+ * 원본에서 다시 받을 수 있는 캐시 테이블. 백업 사본에서 행을 지운다(테이블은 남긴다).
+ * 복원 뒤 캐시가 비어 있으면 화면이 전체 동기화를 한다.
+ */
+export const CACHE_TABLES: readonly string[] = ['jira_board_issues', 'jira_board_sync']
 
 /** 부분 백업에서 빠진 부모 테이블의 (id, created_at) 만 담는 테이블. 내용은 넣지 않는다. */
 export const BACKUP_REFS_TABLE = 'linkwork_backup_refs'
@@ -189,7 +201,8 @@ export const CREDENTIAL_BUNDLES: readonly CredentialBundle[] = [
     label: 'Jira',
     identityKeys: ['jira_site_url', 'jira_email'],
     credentialKeys: ['jira_api_token', 'jira_token_expires_at', 'jira_account_name'],
-    credentialTables: []
+    // 프로젝트 보드 캐시는 계정마다 볼 수 있는 이슈가 다르다. 계정이 바뀌면 함께 지운다
+    credentialTables: ['jira_board_issues', 'jira_board_sync']
   },
   {
     id: 'bitbucket',

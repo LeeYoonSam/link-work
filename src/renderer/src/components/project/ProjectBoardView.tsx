@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Badge, Card, EmptyState, typo } from '../ui'
 import { useJiraBoardStore } from '../../stores/jiraBoardStore'
 import { useNavigationStore } from '../../stores/navigationStore'
@@ -7,6 +7,7 @@ import BoardToolbar from './BoardToolbar'
 import IssueTree from './IssueTree'
 import IssueDetailPanel from './IssueDetailPanel'
 import { ConnectPrompt, ErrorBanner, TruncatedNotice } from './BoardStates'
+import { openBoardLink, openDocsFor, openReleaseForVersion } from './projectNav'
 import {
   autoExpandIds,
   buildIssueForest,
@@ -52,6 +53,11 @@ export default function ProjectBoardView(): React.ReactNode {
     aiLoading,
     aiErrors,
     load,
+    sync,
+    lastSync,
+    lastSyncRequested,
+    revealNotice,
+    dismissRevealNotice,
     summarizeEpic,
     setFilter,
     clearFilter,
@@ -63,6 +69,13 @@ export default function ProjectBoardView(): React.ReactNode {
   } = useJiraBoardStore()
   const setView = useNavigationStore((s) => s.setView)
   const searchRef = useRef<HTMLInputElement | null>(null)
+  const [linkError, setLinkError] = useState<string | null>(null)
+  const openLink = (url: string): void => {
+    void openBoardLink(url).then(setLinkError)
+  }
+  const openRelease = (versionId: string): void => {
+    void openReleaseForVersion(versionId)
+  }
 
   useEffect(() => {
     void load()
@@ -120,7 +133,7 @@ export default function ProjectBoardView(): React.ReactNode {
     if (error && !loading) {
       return (
         <div className="space-y-4">
-          <ErrorBanner error={error} lastSuccessAt={null} retrying={loading} onRetry={() => void load(true)} />
+          <ErrorBanner error={error} lastSuccessAt={null} retrying={loading} onRetry={() => void load()} />
         </div>
       )
     }
@@ -142,6 +155,9 @@ export default function ProjectBoardView(): React.ReactNode {
         aiError={epicKey ? aiErrors[epicKey] : undefined}
         onSummarize={(k) => void summarizeEpic(k)}
         onOpenJira={openJira}
+        onOpenRelease={openRelease}
+        onOpenLink={openLink}
+        onShowAllDocs={openDocsFor}
       />
     )
   }
@@ -163,11 +179,27 @@ export default function ProjectBoardView(): React.ReactNode {
           error={error}
           lastSuccessAt={snapshot.fetchedAt}
           retrying={loading}
-          onRetry={() => void load(true)}
+          onRetry={() => void sync('incremental')}
           onDismiss={dismissError}
         />
       ) : null}
       {snapshot.truncated ? <TruncatedNotice /> : null}
+      {revealNotice ? (
+        <div role="status" className="flex items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-800">
+          <span className="min-w-0 break-words">{revealNotice}</span>
+          <button type="button" onClick={dismissRevealNotice} className="text-blue-600 hover:text-blue-800">
+            닫기
+          </button>
+        </div>
+      ) : null}
+      {linkError ? (
+        <div role="alert" className="flex items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+          <span className="min-w-0 break-words">링크를 열지 못했어요 — {linkError}</span>
+          <button type="button" onClick={() => setLinkError(null)} className="text-red-500 hover:text-red-700">
+            닫기
+          </button>
+        </div>
+      ) : null}
 
       <BoardSummaryTiles tiles={tiles} />
 
@@ -179,13 +211,17 @@ export default function ProjectBoardView(): React.ReactNode {
         recentDoneDays={snapshot.recentDoneDays}
         loading={loading}
         fetchedAt={snapshot.fetchedAt}
+        lastFullSyncAt={snapshot.lastFullSyncAt}
+        lastSync={lastSync}
+        lastSyncRequested={lastSyncRequested}
         searchRef={searchRef}
         onFilterChange={setFilter}
         onClearFilter={clearFilter}
         onSortChange={setSort}
         onExpandAll={() => setAllExpanded(allIds, true)}
         onCollapseAll={() => setAllExpanded(allIds, false)}
-        onRefresh={() => void load(true)}
+        onRefresh={() => void sync('incremental')}
+        onFullSync={() => void sync('full')}
       />
 
       {forest && forest.groups.length === 0 ? (
@@ -214,6 +250,7 @@ export default function ProjectBoardView(): React.ReactNode {
               onSelect={select}
               onToggle={setExpanded}
               onOpenJira={openJira}
+              onOpenRelease={openRelease}
               renderInlineDetail={renderDetail}
             />
           </Card>

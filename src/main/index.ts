@@ -4,7 +4,6 @@ import { stat, open, readFile } from 'fs/promises'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initDatabase, closeDatabase, getDatabase } from './db/database'
 import { registerCalendarIpc } from './ipc/calendar.ipc'
-import { registerDocumentIpc } from './ipc/document.ipc'
 import { registerVariableIpc } from './ipc/variable.ipc'
 import { registerMemoIpc } from './ipc/memo.ipc'
 import { registerMemoCategoryIpc } from './ipc/memo-category.ipc'
@@ -346,7 +345,6 @@ app.whenReady().then(() => {
 
   initDatabase()
   registerCalendarIpc()
-  registerDocumentIpc()
   registerVariableIpc()
   registerMemoIpc()
   registerMemoCategoryIpc()

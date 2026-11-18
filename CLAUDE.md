@@ -1,7 +1,7 @@
 # LinkWork 프로젝트 지침
 
 ## 프로젝트 개요
-LinkWork는 개인 업무(오늘 계획·할 일·Jira 티켓 보드·릴리스 노트)와 회의 일정·기록을 관리하는 macOS 데스크톱 앱이다.
+LinkWork는 개인 업무(오늘 계획·할 일·Jira 프로젝트 화면 — 티켓 보드·릴리스 노트·연결 문서)와 회의 일정·기록을 관리하는 macOS 데스크톱 앱이다.
 기술 스택: Electron + React 19 + TypeScript + electron-vite + Tailwind 4 + better-sqlite3 + zustand.
 메인 프로세스(Node)와 렌더러(Web)가 분리되어 있어 타입체크·빌드도 두 영역으로 나뉜다.
 
@@ -44,5 +44,6 @@ LinkWork는 개인 업무(오늘 계획·할 일·Jira 티켓 보드·릴리스 
 - [docs/AI_GUARDRAILS.md](docs/AI_GUARDRAILS.md) — AI 가드레일 정책
 - [docs/MEETING_RECORDING.md](docs/MEETING_RECORDING.md) — 회의 녹음/기록 파이프라인
 - [docs/DATA_BACKUP.md](docs/DATA_BACKUP.md) — 데이터 백업·복원(새 PC 이전) 형식과 절차
-- [docs/PROJECT_BOARD.md](docs/PROJECT_BOARD.md) — 프로젝트 메뉴의 Jira 티켓 계층 보드: 조회 규칙·타입·IPC 계약·표시 규칙·가드레일
+- [docs/PROJECT_BOARD.md](docs/PROJECT_BOARD.md) — 프로젝트 화면(티켓·릴리스·문서 탭): 티켓 수집·로컬 저장·증분 동기화·연결 문서 수집·IPC 계약·표시 규칙·가드레일
+- [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md) — 릴리스 노트(프로젝트 화면의 릴리스 탭): Jira 릴리스 동기화·변경분 동기화 규칙
 - [docs/SETTINGS.md](docs/SETTINGS.md) — 통합 설정 화면 섹션·진입 경로·연동 카드 상태·토큰 팝업·`settings:verifyIntegration` IPC 계약

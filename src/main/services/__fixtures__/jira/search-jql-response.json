@@ -20,6 +20,17 @@
         "duedate": "2026-10-20",
         "updated": "2026-10-15T09:30:00.000+0900",
         "resolutiondate": null,
+        "fixVersions": [{ "id": "10042", "name": "4.2.0" }],
+        "attachment": [
+          {
+            "filename": "화면.png",
+            "content": "https://acme.atlassian.net/rest/api/3/attachment/content/501",
+            "mimeType": "image/png",
+            "size": 2048,
+            "created": "2026-10-14T10:00:00.000+0900"
+          },
+          { "filename": "악성", "content": "javascript:alert(1)" }
+        ],
         "labels": ["android"],
         "description": {
           "type": "doc",
