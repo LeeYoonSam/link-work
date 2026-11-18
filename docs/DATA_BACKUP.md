@@ -1,7 +1,7 @@
 # 데이터 백업 · 복원 (내보내기 / 가져오기)
 
 > 새 PC로 옮기거나 데이터를 보관할 때 앱 데이터 중 **고른 항목(그룹)** 을 **zip 파일 하나**로 내보내고, 다른 기기에서 그 파일을 골라 **고른 항목만** 복원한다.
-> 진입: 사이드바 하단 **"데이터 백업 · 복원"** → 모달.
+> 진입: 사이드바 하단 **"설정"** → **데이터** → [백업·복원 열기] → 모달.
 
 ## 1. 무엇이 어디에 있나
 
@@ -145,7 +145,7 @@ LinkWork-backup-YYYYMMDD-HHmmss.zip
 - 서비스: `src/main/services/backup-service.ts` — `BACKUP_FORMAT_VERSION`(=2), `validateManifest`(v1 → 전체 그룹), `planFileCopies`, `stripSecrets`, `exportBackup(zipPath, {groups?})`, `inspectBackup`, `importBackup(zipPath, {groups?}) → { restoredDbBackupPath, groups, warnings }`, `collectGroupStats(db, userDataDir)` (경로는 `BackupPaths {userDataDir, dbPath}`로 주입 가능 — 테스트는 임시 디렉터리 + node:sqlite shim)
 - IPC: `backup:stats` → `{success, groups?: BackupGroupStat[], error?}` / `backup:export(groups)` / `backup:pick` / `backup:import(path, groups)` → `{success, groups?, warnings?, restartPending?, error?}` / `backup:restart`(restartPending 뒤 수동 재시작) / 이벤트 `backup:progress` (`BackupProgress {phase:'db'|'files'|'done'|'error', progress, message?}`). groups 가 비었거나 모르는 id 면 `{success:false, error}`.
   - `BackupGroupStat { id, tables: Record<string, number>, files: {count, bytes} }` — settings 는 `tables.app_settings` 에 settings 로 분류되는 키 수.
-- 렌더러: `window.api.backup` (`BackupAPI`: `stats` / `exportToFile(groups)` / `pickBackup` / `importBackup(path, groups)` / `restart` / `onProgress`), `stores/backupStore.ts`, `components/layout/backupGroups.ts`(라벨·대표 테이블, `confirmKey`, `canExport`), `components/layout/BackupModal.tsx`, 사이드바 하단 버튼
+- 렌더러: `window.api.backup` (`BackupAPI`: `stats` / `exportToFile(groups)` / `pickBackup` / `importBackup(path, groups)` / `restart` / `onProgress`), `stores/backupStore.ts`, `components/layout/backupGroups.ts`(라벨·대표 테이블, `confirmKey`, `canExport`), `components/layout/BackupModal.tsx`, 설정 > 데이터(`components/settings/sections/DataSection.tsx`)
 
 ## 5. 새 PC 이전 절차
 
