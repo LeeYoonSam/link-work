@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { format } from 'date-fns'
 import type { Memo } from '../../types'
 import MarkdownContent from './MarkdownContent'
+import { formatDbTime } from './memoText'
 import { StarIcon, XIcon } from '../ui'
 
 interface MemoViewerProps {
@@ -57,11 +57,11 @@ export default function MemoViewer({ memo, onClose, onEdit }: MemoViewerProps): 
           <div className="flex items-center gap-2 min-w-0">
             {isImportant ? <StarIcon size={16} filled className="text-amber-400 flex-shrink-0" /> : null}
             <span className="text-xs text-gray-500">
-              {format(new Date(memo.created_at), 'yyyy-MM-dd HH:mm:ss')}
+              작성 {formatDbTime(memo.created_at, 'yyyy-MM-dd HH:mm:ss')}
             </span>
             {edited ? (
               <span className="text-xs text-gray-400">
-                (edited {format(new Date(memo.updated_at), 'yyyy-MM-dd HH:mm:ss')})
+                (수정 {formatDbTime(memo.updated_at, 'yyyy-MM-dd HH:mm:ss')})
               </span>
             ) : null}
           </div>
@@ -78,13 +78,13 @@ export default function MemoViewer({ memo, onClose, onEdit }: MemoViewerProps): 
                 onClick={() => onEdit(memo)}
                 className="px-3 py-1.5 text-xs text-gray-600 bg-gray-100 rounded-md hover:bg-gray-200"
               >
-                Edit
+                편집
               </button>
             ) : null}
             <button
               onClick={onClose}
               className="p-1 text-gray-400 hover:text-gray-600 rounded"
-              aria-label="Close"
+              aria-label="닫기"
             >
               <XIcon size={16} />
             </button>
