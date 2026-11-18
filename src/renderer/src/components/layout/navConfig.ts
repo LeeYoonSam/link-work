@@ -1,6 +1,7 @@
 // 사이드바 메뉴·화면 제목·화면 ID 의 단일 출처다.
 // 순수 모듈이다. React·스토어·window 를 쓰지 않는다.
 import type { MenuIconName } from '../icons/MenuIcon'
+import type { ProjectsTab } from '../../stores/navigationStore'
 
 // 앱 화면 ID. 'today' 가 유일한 홈이다. 'dashboard' 는 없앴다
 export const VIEW_IDS = [
@@ -9,11 +10,9 @@ export const VIEW_IDS = [
   'projects',
   'todos',
   'calendar',
-  'releases',
   'reports',
   'recordings',
   'notes',
-  'documents',
   'memos',
   'variables',
   'settings'
@@ -28,11 +27,9 @@ export const VIEW_LABELS: Record<ViewId, string> = {
   projects: '프로젝트',
   todos: '할 일',
   calendar: '캘린더',
-  releases: '릴리스',
   reports: '주간 보고',
   recordings: '녹음',
   notes: '회의록',
-  documents: '문서',
   memos: '메모',
   variables: '변수',
   settings: '설정'
@@ -68,14 +65,13 @@ export const NAV_GROUPS: NavGroup[] = [
       item('projects', 'projects'),
       item('todos', 'todos'),
       item('calendar', 'calendar'),
-      item('releases', 'releases'),
       item('reports', 'reports')
     ]
   },
   { title: '회의', items: [item('recordings', 'recordings'), item('notes', 'notes')] },
   {
     title: '자료',
-    items: [item('documents', 'documents'), item('memos', 'memos'), item('variables', 'variables')]
+    items: [item('memos', 'memos'), item('variables', 'variables')]
   }
 ]
 
@@ -94,5 +90,19 @@ export function normalizeView(value: unknown): ViewId | null {
   if (typeof value !== 'string') return null
   if (VIEW_ID_SET.has(value)) return value as ViewId
   // 자기 소유 키만 읽는다. 이유: 'constructor' 같은 키가 Object.prototype 멤버를 돌려준다
-  return Object.hasOwn(VIEW_ALIASES, value) ? VIEW_ALIASES[value] : null
+  if (Object.hasOwn(VIEW_ALIASES, value)) return VIEW_ALIASES[value]
+  return Object.hasOwn(VIEW_TAB_ALIASES, value) ? 'projects' : null
+}
+
+// 프로젝트 페이지의 탭으로 들어간 옛 화면 ID. 화면은 'projects' 이고 이 탭을 연다.
+// 이유: 옛 AI 대화의 linkwork://view/releases 같은 링크가 죽지 않게 한다
+const VIEW_TAB_ALIASES: Record<string, ProjectsTab> = {
+  releases: 'releases',
+  documents: 'docs'
+}
+
+// 옛 화면 ID 가 가리키던 프로젝트 탭. 탭 별칭이 아니면 null 이다
+export function projectsTabAlias(value: unknown): ProjectsTab | null {
+  if (typeof value !== 'string') return null
+  return Object.hasOwn(VIEW_TAB_ALIASES, value) ? VIEW_TAB_ALIASES[value] : null
 }

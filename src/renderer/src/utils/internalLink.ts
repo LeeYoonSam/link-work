@@ -1,10 +1,11 @@
 // linkwork:// 앱 내 링크를 해석한다.
 // 순수 모듈이다. React·스토어·window 를 쓰지 않는다.
-import { normalizeView, type ViewId } from '../components/layout/navConfig'
+import { normalizeView, projectsTabAlias, type ViewId } from '../components/layout/navConfig'
+import type { ProjectsTab } from '../stores/navigationStore'
 
 export type InternalLinkTarget =
-  | { kind: 'view'; view: ViewId }
-  | { kind: 'document'; id: number }
+  // tab 은 view 가 'projects' 일 때 열 탭이다. 없으면 마지막으로 본 탭을 그대로 둔다
+  | { kind: 'view'; view: ViewId; tab?: ProjectsTab }
   | { kind: 'memo' | 'todo' | 'variable' | 'release' | 'recording' | 'note'; id: number }
   | { kind: 'calendar'; date: string; eventId: string | null }
   | {
@@ -61,24 +62,31 @@ export function parseInternalLink(href: string): InternalLinkTarget | null {
 
   if (kind === 'view') {
     if (rest.length !== 1) return null
+    // 릴리스·문서는 메뉴에서 프로젝트 페이지의 탭으로 옮겼다. 옛 view 이름은 그 탭을 연다
+    const tab = projectsTabAlias(rest[0])
+    if (tab) return { kind: 'view', view: 'projects', tab }
     const view = normalizeView(rest[0])
-    return view ? { kind: 'view', view } : null
+    if (!view) return null
+    // 링크로 프로젝트 페이지를 가리키면 티켓 탭이다. 이유: AI 가 티켓 안내에 이 링크를 쓴다.
+    // 마지막 탭 기억은 사이드바 메뉴 클릭에만 적용한다
+    return view === 'projects' ? { kind: 'view', view, tab: 'tickets' } : { kind: 'view', view }
   }
 
   // 옛 프로젝트·작업 링크는 프로젝트 보드로 보낸다. 이유: 대화 기록의 링크가 죽지 않게 한다
   if (kind === 'project') {
     const id = parseId(rest[0])
     if (id === null) return null
-    if (rest.length === 1) return { kind: 'view', view: 'projects' }
+    if (rest.length === 1) return { kind: 'view', view: 'projects', tab: 'tickets' }
     if (rest.length === 3 && rest[1] === 'task' && parseId(rest[2]) !== null) {
-      return { kind: 'view', view: 'projects' }
+      return { kind: 'view', view: 'projects', tab: 'tickets' }
     }
     return null
   }
 
+  // 문서 메뉴는 없어졌다. 옛 문서 링크는 프로젝트 페이지의 문서 탭으로 보낸다
   if (kind === 'document') {
     const id = rest.length === 1 ? parseId(rest[0]) : null
-    return id === null ? null : { kind: 'document', id }
+    return id === null ? null : { kind: 'view', view: 'projects', tab: 'docs' }
   }
 
   if (SIMPLE_KINDS.has(kind)) {

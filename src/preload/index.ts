@@ -22,17 +22,6 @@ const api = {
     saveSettings: (clientId: string, clientSecret: string) =>
       ipcRenderer.invoke('calendar:saveSettings', clientId, clientSecret)
   },
-  document: {
-    create: (input: Record<string, unknown>) => ipcRenderer.invoke('document:create', input),
-    list: () => ipcRenderer.invoke('document:list'),
-    listAll: () => ipcRenderer.invoke('document:listAll'),
-    update: (id: number, input: Record<string, unknown>) =>
-      ipcRenderer.invoke('document:update', id, input),
-    delete: (id: number) => ipcRenderer.invoke('document:delete', id),
-    reorder: (items: { id: number; sort_order: number }[]) =>
-      ipcRenderer.invoke('document:reorder', items),
-    open: (url: string, type: string) => ipcRenderer.invoke('document:open', url, type)
-  },
   variable: {
     create: (input: Record<string, unknown>) => ipcRenderer.invoke('variable:create', input),
     list: () => ipcRenderer.invoke('variable:list'),
@@ -240,7 +229,9 @@ const api = {
     list: (deployVersion?: string) => ipcRenderer.invoke('releaseNote:list', deployVersion),
     get: (id: number) => ipcRenderer.invoke('releaseNote:get', id),
     sync: (id: number) => ipcRenderer.invoke('releaseNote:sync', id),
-    syncAll: () => ipcRenderer.invoke('releaseNote:syncAll')
+    syncAll: () => ipcRenderer.invoke('releaseNote:syncAll'),
+    // 바뀐 이슈만 반영한다. force=false 면 10분 안 재호출은 main 이 생략한다
+    syncChanges: (force?: boolean) => ipcRenderer.invoke('releaseNote:syncChanges', force)
   },
   jira: {
     status: () => ipcRenderer.invoke('jira:status'),
@@ -256,12 +247,16 @@ const api = {
     verifyIntegration: (id: 'google' | 'jira' | 'bitbucket' | 'notion') =>
       ipcRenderer.invoke('settings:verifyIntegration', id)
   },
-  // Jira 티켓 계층 보드 (docs/PROJECT_BOARD.md). Jira는 GET만 하고 DB에 쓰지 않는다
+  // Jira 티켓 계층 보드 (docs/PROJECT_BOARD.md). Jira는 GET만 하고 DB는 보드 캐시 테이블에만 쓴다
   jiraBoard: {
-    // force=true 면 main 캐시를 무시하고 다시 가져온다
-    fetch: (force?: boolean) => ipcRenderer.invoke('jiraBoard:fetch', force),
+    // 로컬 DB 에 저장된 스냅샷만 읽는다. Jira 를 부르지 않는다
+    cached: () => ipcRenderer.invoke('jiraBoard:cached'),
+    // mode: 'auto'(기본) | 'incremental' | 'full'. 값 검증은 main 이 한다
+    fetch: (mode?: 'auto' | 'incremental' | 'full') => ipcRenderer.invoke('jiraBoard:fetch', mode),
     // 에픽 AI 요약. 사용자가 버튼을 눌렀을 때만 부른다
-    summarizeEpic: (epicKey: string) => ipcRenderer.invoke('jiraBoard:summarizeEpic', epicKey)
+    summarizeEpic: (epicKey: string) => ipcRenderer.invoke('jiraBoard:summarizeEpic', epicKey),
+    // 저장된 스냅샷의 links 에 든 http(s) URL 만 연다. 검증은 main 이 한다
+    openLink: (url: string) => ipcRenderer.invoke('jiraBoard:openLink', url)
   },
   // 아침 자동 동기화(A54) 상태. 읽기 전용이다
   morningSync: {

@@ -40,7 +40,7 @@ export const BACKUP_GROUPS: readonly BackupGroupDef[] = [
   {
     id: 'work',
     label: '오늘·업무',
-    menus: '오늘, 프로젝트, 할 일, 릴리스, 주간 보고',
+    menus: '오늘, 프로젝트(릴리스 탭 포함), 할 일, 주간 보고',
     counts: [
       { table: 'projects', label: '프로젝트' },
       { table: 'todos', label: '할 일' }
@@ -61,7 +61,7 @@ export const BACKUP_GROUPS: readonly BackupGroupDef[] = [
   {
     id: 'library',
     label: '자료',
-    menus: '문서, 메모, 변수',
+    menus: '메모, 변수, 예전 문서 메뉴의 문서',
     counts: [
       { table: 'documents', label: '문서' },
       { table: 'memos', label: '메모' },

@@ -120,7 +120,7 @@ export default function JiraDefaultProjectSelect({
       {error ? <p className="mt-1 text-[11px] text-red-600 break-all">{error}</p> : null}
       {!loading && !error && selected === '' ? (
         <p className="mt-1 text-[11px] text-amber-700">
-          선택하지 않으면 릴리스 화면에서 전체 동기화를 쓸 수 없습니다.
+          선택하지 않으면 프로젝트 페이지의 릴리스 탭에서 전체 동기화를 쓸 수 없습니다.
         </p>
       ) : null}
     </div>

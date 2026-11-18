@@ -49,10 +49,14 @@ import {
   listMyRecentlyUpdatedIssues,
   listOpenProjectIssues,
   listRecentlyDoneProjectIssues,
+  listRemoteLinks,
+  listUpdatedProjectIssues,
+  listUpdatedReleaseIssues,
   MAX_ISSUES,
   MAX_MY_ISSUES,
   MAX_RECENT_DAYS,
   MAX_SEARCH_ISSUES,
+  MAX_UPDATED_MINUTES,
   saveJiraCredentials,
   setDefaultJiraProjectKey,
   verifyStoredJira
@@ -641,7 +645,8 @@ describe('이슈 검색 (프로젝트 보드·비서)', () => {
     // 번역된 상태 이름("할 일")은 JQL에서 조용히 0건이 된다. 카테고리만 쓴다.
     expect(params.get('jql')).toBe('project = PROJ AND statusCategory != Done ORDER BY key DESC')
     expect(params.get('fields')).toBe(
-      'summary,status,issuetype,priority,parent,assignee,duedate,updated,resolutiondate,labels,description'
+      'summary,status,issuetype,priority,parent,assignee,duedate,updated,resolutiondate,labels,description,' +
+        'fixVersions,attachment,issuelinks'
     )
   })
 
@@ -658,6 +663,21 @@ describe('이슈 검색 (프로젝트 보드·비서)', () => {
         '잘못된 조회 기간'
       )
     }
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('증분(incremental) JQL은 상대 시간 분 단위로 조회하고 기간을 검증한다', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ issues: [] }))
+    await listUpdatedProjectIssues('PROJ', 25)
+    expect(new URL(calledUrls()[0]).searchParams.get('jql')).toBe(
+      'project = PROJ AND updated >= "-25m" ORDER BY updated DESC'
+    )
+
+    fetchMock.mockClear()
+    for (const bad of [0, -5, 2.5, MAX_UPDATED_MINUTES + 1, Number.NaN]) {
+      await expect(listUpdatedProjectIssues('PROJ', bad), String(bad)).rejects.toThrow('잘못된 조회 기간')
+    }
+    await expect(listUpdatedProjectIssues('PROJ OR x', 5)).rejects.toThrow('잘못된 Jira 프로젝트 키입니다.')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -683,7 +703,23 @@ describe('이슈 검색 (프로젝트 보드·비서)', () => {
       updated: '2026-10-15T09:30:00.000+0900',
       resolvedAt: null,
       labels: ['android'],
-      description: searchFixture.issues[0].fields.description
+      description: searchFixture.issues[0].fields.description,
+      fixVersions: [{ id: '10042', name: '4.2.0' }],
+      // http(s)가 아닌 첨부는 버린다
+      attachments: [
+        {
+          filename: '화면.png',
+          url: 'https://acme.atlassian.net/rest/api/3/attachment/content/501',
+          mimeType: 'image/png',
+          size: 2048,
+          createdAt: '2026-10-14T10:00:00.000+0900'
+        }
+      ],
+      // 바깥 방향은 outward, 안쪽 방향은 inward 표시 이름을 관계로 쓴다
+      issueLinks: [
+        { relation: 'blocks', key: 'PROJ-1870', summary: '알림센터 오픈', status: null },
+        { relation: 'relates to', key: 'PROJ-1700', summary: '알림 기획', status: null }
+      ]
     })
     expect(issues[1]).toMatchObject({
       key: 'PROJ-1855',
@@ -695,7 +731,10 @@ describe('이슈 검색 (프로젝트 보드·비서)', () => {
       assigneeAccountId: null,
       assigneeName: null,
       updated: '',
-      description: null
+      description: null,
+      fixVersions: [],
+      attachments: [],
+      issueLinks: []
     })
   })
 
@@ -742,6 +781,59 @@ describe('이슈 검색 (프로젝트 보드·비서)', () => {
     expect(truncated).toBe(true)
   })
 
+  it('웹링크는 http(s)만 남기고 제목이 없으면 URL을 이름으로 쓴다', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse([
+        { object: { url: 'https://www.figma.com/design/abc', title: '디자인' } },
+        { object: { url: 'https://example.com/doc', title: '  ' } },
+        { object: { url: 'javascript:alert(1)', title: 'x' } },
+        { object: {} },
+        null
+      ])
+    )
+    const links = await listRemoteLinks('PROJ-1855')
+    expect(calledUrls()[0]).toBe('https://acme.atlassian.net/rest/api/3/issue/PROJ-1855/remotelink')
+    expect(links).toEqual([
+      { url: 'https://www.figma.com/design/abc', title: '디자인' },
+      { url: 'https://example.com/doc', title: 'https://example.com/doc' }
+    ])
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ not: 'array' }))
+    expect(await listRemoteLinks('PROJ-1')).toEqual([])
+
+    fetchMock.mockClear()
+    await expect(listRemoteLinks('PROJ-1) OR x')).rejects.toThrow('잘못된 Jira 이슈 키입니다.')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('연결 이슈는 형식이 틀린 키를 버리고 상태 이름을 담는다', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        issues: [
+          {
+            key: 'PROJ-1',
+            fields: {
+              issuelinks: [
+                {
+                  type: { name: 'Blocks', inward: '후행 작업', outward: '선행 작업' },
+                  inwardIssue: { key: 'PROJ-2', fields: { summary: '앞', status: { name: '진행 중' } } }
+                },
+                { type: { name: 'Relates' }, outwardIssue: { key: 'bad key' } },
+                { type: null, outwardIssue: { key: 'PROJ-3' } },
+                null
+              ]
+            }
+          }
+        ]
+      })
+    )
+    const { issues } = await listIssuesByKeys(['PROJ-1'])
+    expect(issues[0].issueLinks).toEqual([
+      { relation: '후행 작업', key: 'PROJ-2', summary: '앞', status: '진행 중' },
+      { relation: '연결', key: 'PROJ-3', summary: '', status: null }
+    ])
+  })
+
   it('myself의 accountId를 돌려준다', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ accountId: 'acc-me', displayName: '홍길동' }))
     expect(await getJiraMyAccountId()).toBe('acc-me')
@@ -751,11 +843,82 @@ describe('이슈 검색 (프로젝트 보드·비서)', () => {
     fetchMock.mockImplementation(async () => jsonResponse({ issues: [] }))
     await listOpenProjectIssues('PROJ')
     await listRecentlyDoneProjectIssues('PROJ', 14)
+    await listUpdatedProjectIssues('PROJ', 30)
     await listIssuesByKeys(['PROJ-1'])
     await listChildIssues(['PROJ-1'])
+    fetchMock.mockResolvedValueOnce(jsonResponse([]))
+    await listRemoteLinks('PROJ-1')
     for (const call of fetchMock.mock.calls) {
       expect(call[1]?.method).toBe('GET')
     }
+  })
+})
+
+describe('릴리스 변경분 조회 listUpdatedReleaseIssues', () => {
+  beforeEach(connect)
+
+  it('상대 시간 JQL과 릴리스 필드(fixVersions 포함)로 조회하고 fixVersion ID를 문자열로 모은다', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        issues: [
+          {
+            key: 'PROJ-1',
+            fields: {
+              summary: '로그인',
+              issuetype: { name: 'Story' },
+              status: { name: '완료' },
+              resolution: { name: '해결됨' },
+              parent: { key: 'PROJ-9' },
+              fixVersions: [{ id: '10042', name: 'v1.2.0' }, { id: 10043 }]
+            }
+          },
+          { key: 'PROJ-2', fields: { summary: '버전 없음', fixVersions: [] } },
+          { key: 'PROJ-3', fields: { summary: '필드 없음' } },
+          { fields: { summary: '키 없음' } }
+        ]
+      })
+    )
+
+    const { issues, truncated } = await listUpdatedReleaseIssues('PROJ', 40)
+
+    const params = new URL(calledUrls()[0]).searchParams
+    expect(params.get('jql')).toBe('project = PROJ AND updated >= "-40m" ORDER BY updated DESC')
+    expect(params.get('fields')).toBe('summary,issuetype,status,resolution,parent,fixVersions')
+    expect(truncated).toBe(false)
+    expect(issues).toEqual([
+      {
+        key: 'PROJ-1',
+        issueType: 'Story',
+        status: '완료',
+        resolution: '해결됨',
+        summary: '로그인',
+        parentKey: 'PROJ-9',
+        fixVersionIds: ['10042', '10043']
+      },
+      { key: 'PROJ-2', issueType: null, status: null, resolution: null, summary: '버전 없음', parentKey: null, fixVersionIds: [] },
+      { key: 'PROJ-3', issueType: null, status: null, resolution: null, summary: '필드 없음', parentKey: null, fixVersionIds: [] }
+    ])
+  })
+
+  it('기간·프로젝트 키를 네트워크 전에 검증한다', async () => {
+    await expect(listUpdatedReleaseIssues('PROJ', 0)).rejects.toThrow('잘못된 조회 기간')
+    await expect(listUpdatedReleaseIssues('proj', 5)).rejects.toThrow('잘못된 Jira 프로젝트 키입니다.')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('MAX_ISSUES 상한에서 멈추고 truncated를 알린다', async () => {
+    for (let page = 0; page < 6; page++) {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({
+          issues: Array.from({ length: 100 }, (_, i) => ({ key: `PROJ-${page * 100 + i + 1}`, fields: {} })),
+          nextPageToken: `t${page + 1}`
+        })
+      )
+    }
+    const { issues, truncated } = await listUpdatedReleaseIssues('PROJ', 30)
+    expect(issues).toHaveLength(MAX_ISSUES)
+    expect(truncated).toBe(true)
+    for (const call of fetchMock.mock.calls) expect(call[1]?.method).toBe('GET')
   })
 })
 

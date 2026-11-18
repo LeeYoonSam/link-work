@@ -26,12 +26,25 @@ const issue = (over: Partial<JiraBoardIssue> = {}): JiraBoardIssue => ({
   resolvedAt: null,
   labels: [],
   excerpt: null,
+  fixVersions: [],
+  links: [],
   ...over
 })
 
 const ISSUES: JiraBoardIssue[] = [
   issue({ key: 'PROJ-120', level: 'epic', issueType: '에픽', summary: '결제 개편', assigneeAccountId: 'other' }),
-  issue({ key: 'PROJ-131', parentKey: 'PROJ-120', summary: '결제수단 API', status: 'In Review', priority: 'High' }),
+  issue({
+    key: 'PROJ-131',
+    parentKey: 'PROJ-120',
+    summary: '결제수단 API',
+    status: 'In Review',
+    priority: 'High',
+    fixVersions: [{ id: '10042', name: '4.164.0' }],
+    links: [
+      { kind: 'web', title: 'API 설계서', url: 'https://wiki/api', source: 'Confluence' },
+      { kind: 'issue', title: '결제 서버', url: 'https://x/browse/PAY-1', source: 'Jira', issueKey: 'PAY-1', relation: '선행 작업', issueStatus: '진행 중' }
+    ]
+  }),
   issue({ key: 'PROJ-132', parentKey: 'PROJ-120', summary: '영수증 메일', status: '완료', statusCategory: 'done' }),
   issue({ key: 'PROJ-133', parentKey: 'PROJ-120', summary: '백로그 일', status: '백로그', statusCategory: 'new', inScope: false }),
   issue({ key: 'PROJ-141', parentKey: 'PROJ-131', level: 'subtask', issueType: '하위 작업', summary: '재현 스크립트' }),
@@ -45,6 +58,7 @@ const snapshot = (over: Partial<JiraBoardSnapshot> = {}): JiraBoardSnapshot => (
   truncated: false,
   recentDoneDays: 14,
   fetchedAt: '2026-11-18T01:42:00.000Z',
+  lastFullSyncAt: '2026-11-18T00:10:00.000Z',
   ...over
 })
 
@@ -52,6 +66,7 @@ const noop = (): void => {}
 const BASE: Partial<JiraBoardState> = {
   snapshot: null,
   loading: false,
+  lastSync: null,
   error: null,
   errorCode: null,
   filter: EMPTY_FILTER,
@@ -68,6 +83,7 @@ vi.mock('../../stores/jiraBoardStore', () => ({
   useJiraBoardStore: () => ({
     ...state,
     load: async () => {},
+    sync: async () => {},
     summarizeEpic: async () => {},
     setFilter: noop,
     clearFilter: noop,
@@ -158,6 +174,33 @@ describe('ProjectBoardView 상태 분기', () => {
   })
 })
 
+describe('ProjectBoardView 저장본·동기화 표시', () => {
+  it('저장본을 띄운 채 동기화 중이면 첫 로딩 문구 없이 트리와 갱신 중만 보인다', () => {
+    const html = render({ snapshot: snapshot(), loading: true })
+    expect(html).not.toContain('Jira 티켓을 불러오는 중…')
+    expect(html).toContain('role="treegrid"')
+    expect(html).toContain('갱신 중…')
+    expect(html).not.toMatch(/마지막 동기화 \d/)
+  })
+
+  it('동기화 결과를 마지막 동기화 시각 옆에 한 줄로 알린다', () => {
+    const at = (sync: JiraBoardState['lastSync']): string => render({ snapshot: snapshot(), lastSync: sync })
+    expect(at({ mode: 'incremental', changed: 3 })).toContain(' · 3건 갱신')
+    expect(at({ mode: 'incremental', changed: 0 })).toContain(' · 변경 없음')
+    expect(at({ mode: 'full', changed: 120 })).toContain(' · 전체 동기화')
+    // 저장본만 돌려준 경우와 결과가 없을 때는 알리지 않는다
+    expect(at({ mode: 'cache', changed: 0 })).not.toContain('data-sync-result')
+    expect(at(null)).not.toContain('data-sync-result')
+    expect(at(null)).toMatch(/마지막 동기화 \d{2}:\d{2}/)
+  })
+
+  it('새로고침 버튼과 전체 다시 받기 메뉴 트리거가 있다', () => {
+    const html = render({ snapshot: snapshot() })
+    expect(html).toContain('새로고침')
+    expect(html).toContain('aria-label="동기화 옵션"')
+  })
+})
+
 describe('ProjectBoardView 트리', () => {
   it('에픽은 기본 펼침, 하위작업은 기본 접힘이고 aria 속성을 단다', () => {
     const html = render({ snapshot: snapshot() })
@@ -210,6 +253,42 @@ describe('ProjectBoardView 트리', () => {
     expect(html).toMatch(/id="board-row-PROJ-120"[^>]*>\s*<div role="gridcell" class="min-w-0 opacity-60"/)
     expect(rowTag(html, 'PROJ-90')).toBeUndefined()
     expect(html).toContain('내 담당만')
+  })
+})
+
+describe('ProjectBoardView 릴리스 연계·관련 문서', () => {
+  it('티켓 행에 fixVersion 칩을 보이고, 트리 안에서는 탭 정지점을 만들지 않는다', () => {
+    const html = render({ snapshot: snapshot() })
+    const chip = html.match(/<button[^>]*data-fix-version="10042"[^>]*>/)?.[0]
+    expect(chip).toBeDefined()
+    expect(chip).toContain('tabindex="-1"')
+    expect(html).toContain('4.164.0')
+  })
+
+  it('툴바에 릴리스 필터가 있고, 적용하면 칩으로 보인다', () => {
+    expect(render({ snapshot: snapshot() })).toContain('>릴리스')
+    const html = render({ snapshot: snapshot(), filter: { ...EMPTY_FILTER, releases: ['4.164.0'] } })
+    expect(html).toContain('릴리스 4.164.0')
+    expect(rowTag(html, 'PROJ-90')).toBeUndefined()
+  })
+
+  it('상세에 릴리스 칩과 관련 문서(문서 먼저, 연결 이슈는 관계·상태와 함께)를 보인다', () => {
+    const html = render({ snapshot: snapshot(), selectedKey: 'PROJ-131' })
+    expect(html).toContain('관련 문서 2')
+    expect(html).toContain('API 설계서')
+    expect(html).toContain('선행 작업')
+    expect(html.indexOf('API 설계서')).toBeLessThan(html.indexOf('결제 서버'))
+    expect(html).toMatch(/data-fix-version="10042"(?![^>]*tabindex="-1")/)
+  })
+
+  it('에픽 상세의 관련 문서는 자손 것을 합친다', () => {
+    const html = render({ snapshot: snapshot(), selectedKey: 'PROJ-120' })
+    expect(html).toContain('관련 문서 2')
+    expect(html).toContain('하위 티켓 포함')
+  })
+
+  it('관련 문서가 없으면 절을 그리지 않는다', () => {
+    expect(render({ snapshot: snapshot(), selectedKey: 'PROJ-90' })).not.toContain('관련 문서')
   })
 })
 

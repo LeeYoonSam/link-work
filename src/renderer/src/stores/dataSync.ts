@@ -6,7 +6,6 @@ import { useNavigationStore } from './navigationStore'
 import { useTodoStore } from './todoStore'
 import { useMemoStore } from './memoStore'
 import { useVariableStore } from './variableStore'
-import { useDocumentStore } from './documentStore'
 import { useAssistantStore } from './assistantStore'
 import { useMorningSyncStore } from './morningSyncStore'
 
@@ -40,8 +39,6 @@ export async function refreshEntity(entity: string): Promise<void> {
     add(() => memoStore.fetchImportantMemos())
   } else if (entity === 'variable') {
     add(() => useVariableStore.getState().fetchVariables())
-  } else if (entity === 'document') {
-    add(() => useDocumentStore.getState().fetchAllDocuments())
   } else if (entity === 'sync_status') {
     // 아침 자동 동기화가 끝났다. 배지·상태 줄과 오늘 화면 변경 내역을 다시 읽는다
     add(() => useMorningSyncStore.getState().load())

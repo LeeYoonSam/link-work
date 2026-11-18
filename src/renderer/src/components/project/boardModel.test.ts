@@ -21,6 +21,10 @@ import {
   detailTarget,
   flattenVisible,
   isFilterActive,
+  isRevealable,
+  revealFilter,
+  syncResultText,
+  NO_RELEASE,
   isTreeRowTarget,
   issueTypeKind,
   matchesFilter,
@@ -64,6 +68,8 @@ const issue = (over: Partial<JiraBoardIssue> = {}): JiraBoardIssue => ({
   resolvedAt: null,
   labels: [],
   excerpt: null,
+  fixVersions: [],
+  links: [],
   ...over
 })
 const epic = (key: string, over: Partial<JiraBoardIssue> = {}): JiraBoardIssue =>
@@ -745,5 +751,77 @@ describe('최근 완료 / 이전 완료', () => {
     expect(epicT.children.map((c) => c.issue.key)).toEqual(['PROJ-2', 'PROJ-3', 'PROJ-7'])
     expect(epicT).toMatchObject({ hiddenBacklog: 1, hiddenPastDone: 2 })
     expect(detailTarget(f, 'PROJ-7')).toMatchObject({ hiddenPastDone: 1 })
+  })
+})
+
+describe('릴리스(fixVersion) 필터와 노출 판정', () => {
+  const v = (id: string, name: string) => ({ id, name })
+  const a = issue({ key: 'R-1', fixVersions: [v('10', '4.164.0')] })
+  const b = issue({ key: 'R-2', fixVersions: [v('9', '4.9.0'), v('10', '4.164.0')] })
+  const c = issue({ key: 'R-3', fixVersions: [] })
+  const f = (releases: string[]): BoardFilter => ({ ...EMPTY_FILTER, releases })
+
+  it('고른 릴리스 중 하나라도 있으면 맞는다. "릴리스 없음"은 fixVersion 이 없는 이슈', () => {
+    expect([a, b, c].filter((i) => matchesFilter(i, f(['4.164.0']), ME)).map((i) => i.key)).toEqual(['R-1', 'R-2'])
+    expect([a, b, c].filter((i) => matchesFilter(i, f(['4.9.0']), ME)).map((i) => i.key)).toEqual(['R-2'])
+    expect([a, b, c].filter((i) => matchesFilter(i, f([NO_RELEASE]), ME)).map((i) => i.key)).toEqual(['R-3'])
+    expect([a, b, c].filter((i) => matchesFilter(i, f([NO_RELEASE, '4.9.0']), ME)).map((i) => i.key)).toEqual(['R-2', 'R-3'])
+    expect(isFilterActive(f(['4.9.0']), ME)).toBe(true)
+  })
+
+  it('deriveFacets 는 등장한 릴리스를 버전 큰 순으로, 릴리스 없음 후보 여부를 준다', () => {
+    const facets = deriveFacets([a, b, c])
+    expect(facets.releases).toEqual(['4.164.0', '4.9.0'])
+    expect(facets.hasNoRelease).toBe(true)
+    expect(deriveFacets([a]).hasNoRelease).toBe(false)
+  })
+
+  it('isRevealable: 스냅샷에 있고 범위 안이거나 범위 안 자손이 있어야 한다', () => {
+    const issues = [
+      epic('E-1', { inScope: false }),
+      child('E-2', 'E-1'),
+      child('E-3', null, { inScope: false }),
+      epic('E-4', { inScope: false }),
+      child('E-5', 'E-4', { inScope: false }),
+      sub('E-6', 'E-5')
+    ]
+    expect(isRevealable(issues, 'E-2')).toBe(true)
+    expect(isRevealable(issues, 'E-1')).toBe(true)
+    expect(isRevealable(issues, 'E-3')).toBe(false)
+    expect(isRevealable(issues, 'E-4')).toBe(true)
+    expect(isRevealable(issues, 'NOPE-1')).toBe(false)
+  })
+})
+
+describe('revealFilter — 보드에서 보기가 푸는 조건', () => {
+  const target = issue({ key: 'PROJ-42', summary: '결제', assigneeAccountId: 'other', issueType: '작업' })
+  it('그 이슈를 가리는 조건만 끄고 나머지는 둔다', () => {
+    const f: BoardFilter = { ...EMPTY_FILTER, mineOnly: true, types: ['작업'], hideDone: true, query: '결제' }
+    const r = revealFilter(target, f, ME)
+    expect(r.filter).toEqual({ ...f, mineOnly: false })
+    expect(r.cleared).toEqual(['내 담당만'])
+  })
+  it('여러 조건이 가리면 모두 끈다', () => {
+    const f: BoardFilter = { ...EMPTY_FILTER, mineOnly: true, query: '없는말', categories: ['done'] }
+    const r = revealFilter(target, f, ME)
+    expect(r.filter).toEqual(EMPTY_FILTER)
+    expect(r.cleared).toEqual(['검색', '상태 분류', '내 담당만'])
+    expect(matchesFilter(target, r.filter, ME)).toBe(true)
+  })
+})
+
+describe('syncResultText', () => {
+  it('실제로 돈 방식을 말한다', () => {
+    expect(syncResultText({ mode: 'incremental', changed: 3 })).toBe('3건 갱신')
+    expect(syncResultText({ mode: 'incremental', changed: 0 })).toBe('변경 없음')
+    expect(syncResultText({ mode: 'full', changed: 9 }, 'full')).toBe('전체 동기화')
+    expect(syncResultText({ mode: 'cache', changed: 0 }, 'auto')).toBeNull()
+    expect(syncResultText(null)).toBeNull()
+  })
+  it('전체 다시 받기를 요청했는데 전체가 안 돌았으면 그 사실을 붙인다', () => {
+    expect(syncResultText({ mode: 'incremental', changed: 3 }, 'full')).toBe(
+      '3건 갱신 · 전체 다시 받기가 끝나지 않았어요. 다시 시도해 주세요'
+    )
+    expect(syncResultText({ mode: 'cache', changed: 0 }, 'full')).toBe('전체 다시 받기가 끝나지 않았어요. 다시 시도해 주세요')
   })
 })

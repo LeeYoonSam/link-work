@@ -39,6 +39,8 @@ const issue = (over: Partial<JiraBoardIssue>): JiraBoardIssue => ({
   resolvedAt: null,
   labels: [],
   excerpt: null,
+  fixVersions: [],
+  links: [],
   ...over
 })
 

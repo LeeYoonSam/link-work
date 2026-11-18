@@ -115,6 +115,7 @@ import {
   inspectBackup,
   isSafeEntryName,
   planFileCopies,
+  stripCaches,
   stripSecrets,
   validateManifest,
   type BackupPaths,
@@ -393,6 +394,27 @@ describe('stripSecrets', () => {
     const db = openDb(join(dir, 'old.db'))
     db.exec('CREATE TABLE projects (id INTEGER PRIMARY KEY)')
     expect(stripSecrets(db as unknown as DatabaseLike)).toEqual([])
+    db.close()
+  })
+})
+
+describe('stripCaches', () => {
+  it('프로젝트 보드 캐시 행을 지우고 테이블은 남긴다. 테이블이 없으면 넘어간다', async () => {
+    const dir = await makeTempDir('lw-cache-')
+    const db = openDb(join(dir, 'x.db'))
+    db.exec(`
+      CREATE TABLE jira_board_issues (project_key TEXT, issue_key TEXT, data TEXT, updated TEXT, synced_at TEXT);
+      CREATE TABLE jira_board_sync (project_key TEXT PRIMARY KEY, recent_done_days INTEGER NOT NULL);
+      INSERT INTO jira_board_issues VALUES ('PROJ', 'PROJ-1', '{}', 'x', 'x');
+      INSERT INTO jira_board_sync VALUES ('PROJ', 14);
+    `)
+    stripCaches(db as unknown as DatabaseLike)
+    for (const t of ['jira_board_issues', 'jira_board_sync']) {
+      expect(db.prepare(`SELECT COUNT(*) AS c FROM ${t}`).all()).toEqual([{ c: 0 }])
+    }
+    const old = openDb(join(dir, 'old.db'))
+    expect(() => stripCaches(old as unknown as DatabaseLike)).not.toThrow()
+    old.close()
     db.close()
   })
 })

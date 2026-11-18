@@ -10,15 +10,12 @@ import { useFocusStore } from '../stores/focusStore'
 function stubApi(): Record<string, ReturnType<typeof vi.fn>> {
   const fns = {
     recordingGet: vi.fn(async (id: number) => ({ id })),
-    notesList: vi.fn(async () => []),
-    documentListAll: vi.fn(async () => [{ id: 2, url: '/tmp/a.pdf', type: 'file' }]),
-    documentOpen: vi.fn(async () => undefined)
+    notesList: vi.fn(async () => [])
   }
   vi.stubGlobal('window', {
     api: {
       recording: { get: fns.recordingGet },
-      meetingNotes: { list: fns.notesList },
-      document: { listAll: fns.documentListAll, open: fns.documentOpen }
+      meetingNotes: { list: fns.notesList }
     }
   })
   return fns
@@ -30,7 +27,7 @@ describe('openInternalLink', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     api = stubApi()
-    useNavigationStore.setState({ view: 'ai' })
+    useNavigationStore.setState({ view: 'ai', projectsTab: 'tickets' })
     useTodoStore.setState({ filterTagId: 5, selectedTodoId: null })
     useRecordingStore.setState({ kindFilter: 'meeting' as never, current: null })
     useMeetingNotesStore.setState({
@@ -61,16 +58,42 @@ describe('openInternalLink', () => {
     expect(useFocusStore.getState().request).toBeNull()
   })
 
-  it('project/1/task/9: 포커스 요청 없이 프로젝트 보드로 간다', async () => {
+  it('project/1/task/9: 포커스 요청 없이 프로젝트 페이지 티켓 탭으로 간다', async () => {
+    useNavigationStore.setState({ projectsTab: 'releases' })
     await openInternalLink('linkwork://project/1/task/9')
     expect(useFocusStore.getState().request).toBeNull()
-    expect(useNavigationStore.getState().view).toBe('projects')
+    expect(useNavigationStore.getState()).toMatchObject({ view: 'projects', projectsTab: 'tickets' })
   })
 
-  it('project/1: 포커스 요청 없이 프로젝트 보드로 간다', async () => {
+  it('project/1: 포커스 요청 없이 프로젝트 페이지 티켓 탭으로 간다', async () => {
     await openInternalLink('linkwork://project/1')
     expect(useFocusStore.getState().request).toBeNull()
-    expect(useNavigationStore.getState().view).toBe('projects')
+    expect(useNavigationStore.getState()).toMatchObject({ view: 'projects', projectsTab: 'tickets' })
+  })
+
+  it('release/7: 포커스를 요청하고 프로젝트 페이지 릴리스 탭을 연다', async () => {
+    await openInternalLink('linkwork://release/7')
+    expect(useFocusStore.getState().request).toMatchObject({ entity: 'release', id: 7 })
+    expect(useNavigationStore.getState()).toMatchObject({ view: 'projects', projectsTab: 'releases' })
+  })
+
+  it('view/releases: 프로젝트 페이지 릴리스 탭을 연다', async () => {
+    await openInternalLink('linkwork://view/releases')
+    expect(useNavigationStore.getState()).toMatchObject({ view: 'projects', projectsTab: 'releases' })
+  })
+
+  it('view/documents 와 document/2: 프로젝트 페이지 문서 탭을 연다', async () => {
+    await openInternalLink('linkwork://view/documents')
+    expect(useNavigationStore.getState()).toMatchObject({ view: 'projects', projectsTab: 'docs' })
+    useNavigationStore.setState({ view: 'ai', projectsTab: 'tickets' })
+    await openInternalLink('linkwork://document/2')
+    expect(useNavigationStore.getState()).toMatchObject({ view: 'projects', projectsTab: 'docs' })
+  })
+
+  it('view/projects: 마지막으로 본 탭과 무관하게 티켓 탭을 연다', async () => {
+    useNavigationStore.setState({ projectsTab: 'releases' })
+    await openInternalLink('linkwork://view/projects')
+    expect(useNavigationStore.getState()).toMatchObject({ view: 'projects', projectsTab: 'tickets' })
   })
 
   it('recording: 종류 필터를 풀고 회의를 열고 포커스를 요청한다', async () => {
@@ -109,12 +132,6 @@ describe('openInternalLink', () => {
       eventId: 'abc'
     })
     expect(useNavigationStore.getState().view).toBe('calendar')
-  })
-
-  it('document: 문서를 바로 연다', async () => {
-    await openInternalLink('linkwork://document/2')
-    expect(api.documentOpen).toHaveBeenCalledWith('/tmp/a.pdf', 'file')
-    expect(useNavigationStore.getState().view).toBe('ai')
   })
 
   it.each(['linkwork://unknown/1', 'linkwork://memo/abc', 'https://example.com', 'linkwork://view/x'])(

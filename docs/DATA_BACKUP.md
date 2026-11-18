@@ -26,11 +26,15 @@
 | `work` | 오늘·업무 (오늘, 프로젝트, 할 일, 릴리스, 주간 보고) | projects, tasks, todos, todo_tags, todo_tag_map, todo_history, release_notes, release_note_items, activity_log, daily_plans, plan_items, assistant_events, assistant_exclusions | `project_sync_created_keys` | 없음 |
 | `meetings` | 회의 (녹음, 회의록, 용어집·구성원) | meetings, meeting_speakers, meeting_segments, meeting_cuts, meeting_summaries, meeting_attendees, meeting_members, stt_glossary | 없음 | `recordings/` |
 | `library` | 자료 (문서, 메모, 변수) | documents, memos, memo_categories, variables | 없음 | 없음 |
+
+> 문서 메뉴는 2026-11-18 에 없앴다. `documents` 테이블은 남아 있어 기존 데이터는 계속 `library` 그룹으로 백업·복원된다. 화면 라벨의 "문서"는 이 테이블을 가리킨다.
 | `ai` | AI 대화 | ai_chats, ai_messages, ai_audit_log | 없음 | `ai-attachments/` |
 | `settings` | 설정·연동 | (없음 — `app_settings` 를 키 단위로) | `assistant_*`, `ai_model`, `ai_model_labels`, `google_client_id`, `jira_site_url`, `jira_email`, `jira_token_expires_at`, `jira_account_name`, `jira_default_project_key`, `bitbucket_email`, 그리고 분류되지 않은 모든 키(기본값) | 없음 |
-| (백업 제외) | — | auth_tokens | 시크릿 4개(위 표) | models/, Electron 캐시 |
+| (백업 제외) | — | auth_tokens, jira_board_issues, jira_board_sync | 시크릿 4개(위 표) | models/, Electron 캐시 |
 
 - **오늘(비서)이 업무와 같은 그룹인 이유**: 계획 항목(`plan_items.candidate_id`)이 `todo:<id>` 로 할 일을 가리키고(옛 행은 `task:<id>` 로 작업을 가리킨다), 화면의 "원본 완료"가 그 id 로 할 일 완료를 직접 호출한다. 따로 복원하면 엉뚱한 할 일이 완료될 수 있다.
+- `jira_board_issues`·`jira_board_sync` 는 프로젝트 보드의 Jira 캐시다(docs/PROJECT_BOARD.md §3). Jira 에서 다시 받을 수 있어 백업하지 않는다(`NON_GROUP_TABLES`, `CACHE_TABLES`).
+  내보낼 때 사본에서 두 테이블의 행을 지운다(`stripCaches`). 복원은 이 기기의 캐시를 그대로 두되, 복원으로 Jira 계정이 바뀌면 함께 지운다(아래 연동 묶음 규칙). 캐시가 비면 다음 화면 진입 때 보드가 전체 동기화를 한다.
 - `meeting_members`·`stt_glossary` 는 회의 그룹이다. `meeting_attendees` 가 `meeting_members` 를 FK 로 가리키고, 둘 다 회의 인식 보조다.
 - **새 테이블을 만들면 반드시 한 그룹(또는 백업 제외)에 넣는다.** 빠지면 테스트 G1 이 실패한다. 그룹을 추가·변경하면 `formatVersion` 을 올린다.
 
@@ -91,7 +95,7 @@ LinkWork-backup-YYYYMMDD-HHmmss.zip
 1. 그룹 검증(빈 배열·모르는 id 는 거부) → 저장 위치 선택(시스템 저장 다이얼로그) → `LinkWork-backup-<시각>.zip`
 2. 라이브 DB에 `VACUUM INTO`(임시 파일, WAL 안전 일관 스냅샷) → 사본을 연다.
 3. 사본에서 **`PRAGMA foreign_keys=OFF` 를 먼저** 건다 — 켠 채로 projects 를 지우면 사본 안의 `meetings.project_id` 가 SET NULL 로 지워진다.
-4. `stripSecrets`(`SECRET_TABLES`, `SECRET_SETTING_KEYS`) → `filterSnapshotGroups`: 빠진 그룹의 테이블을 DELETE(스키마는 남김), 빠진 그룹의 `app_settings` 키 삭제, 필요하면 `linkwork_backup_refs` 채우기 → `VACUUM` → 행 수 집계 → zip 엔트리로 기록
+4. `stripSecrets`(`SECRET_TABLES`, `SECRET_SETTING_KEYS`) → `stripCaches`(`CACHE_TABLES`: 보드 캐시 행 삭제) → `filterSnapshotGroups`: 빠진 그룹의 테이블을 DELETE(스키마는 남김), 빠진 그룹의 `app_settings` 키 삭제, 필요하면 `linkwork_backup_refs` 채우기 → `VACUUM` → 행 수 집계 → zip 엔트리로 기록
 5. 고른 그룹의 폴더(`recordings/`·`ai-attachments/`)만 스트리밍으로 zip에 추가(바이트 누적 진행률) → `manifest.json`을 마지막 엔트리로 기록
 6. 실패 시 만들다 만 zip을 삭제하고 오류 표시
 
@@ -125,7 +129,7 @@ LinkWork-backup-YYYYMMDD-HHmmss.zip
 
 | 묶음 | 식별 키 | 자격(이 기기 값) |
 |---|---|---|
-| jira | `jira_site_url`, `jira_email` | `jira_api_token`, `jira_token_expires_at`, `jira_account_name` |
+| jira | `jira_site_url`, `jira_email` | `jira_api_token`, `jira_token_expires_at`, `jira_account_name`, `jira_board_issues`·`jira_board_sync` 테이블(보드 캐시. 계정마다 볼 수 있는 이슈가 다르다) |
 | bitbucket | `bitbucket_email` | `bitbucket_api_token` |
 | google | `google_client_id` | `google_client_secret`, `auth_tokens` 테이블 |
 | notion | (없음) | `notion_token` — 늘 유지 |
@@ -142,7 +146,7 @@ LinkWork-backup-YYYYMMDD-HHmmss.zip
 - 스키마: `src/main/db/schema.ts` — `applySchema(db)`(DDL·마이그레이션 전부, electron 무관). `initDatabase` 와 복원 전 백업 사본 준비가 같은 함수를 쓴다.
 - 그룹: `src/main/services/backup-groups.ts` — `BackupGroupId`, `BACKUP_GROUP_IDS`, `GROUP_TABLES`, `GROUP_FILE_DIRS`, `classifySettingKey(key): 'work'|'settings'|'secret'`, `isBackupGroupId`, `normalizeGroups`, `CROSS_GROUP_REFS`, `CREDENTIAL_BUNDLES`, `BACKUP_REFS_TABLE`, `SECRET_TABLES`, `SECRET_SETTING_KEYS`
 - DB 병합: `src/main/services/backup-restore-db.ts` — `prepareBackupDb(backupDbPath, liveDbPath)`, `filterSnapshotGroups(copy, groups)`, `mergeBackupIntoLive(liveDbPath, backupDbPath, groups) → { warnings, nulledRefs }`
-- 서비스: `src/main/services/backup-service.ts` — `BACKUP_FORMAT_VERSION`(=2), `validateManifest`(v1 → 전체 그룹), `planFileCopies`, `stripSecrets`, `exportBackup(zipPath, {groups?})`, `inspectBackup`, `importBackup(zipPath, {groups?}) → { restoredDbBackupPath, groups, warnings }`, `collectGroupStats(db, userDataDir)` (경로는 `BackupPaths {userDataDir, dbPath}`로 주입 가능 — 테스트는 임시 디렉터리 + node:sqlite shim)
+- 서비스: `src/main/services/backup-service.ts` — `BACKUP_FORMAT_VERSION`(=2), `validateManifest`(v1 → 전체 그룹), `planFileCopies`, `stripSecrets`, `stripCaches`, `exportBackup(zipPath, {groups?})`, `inspectBackup`, `importBackup(zipPath, {groups?}) → { restoredDbBackupPath, groups, warnings }`, `collectGroupStats(db, userDataDir)` (경로는 `BackupPaths {userDataDir, dbPath}`로 주입 가능 — 테스트는 임시 디렉터리 + node:sqlite shim)
 - IPC: `backup:stats` → `{success, groups?: BackupGroupStat[], error?}` / `backup:export(groups)` / `backup:pick` / `backup:import(path, groups)` → `{success, groups?, warnings?, restartPending?, error?}` / `backup:restart`(restartPending 뒤 수동 재시작) / 이벤트 `backup:progress` (`BackupProgress {phase:'db'|'files'|'done'|'error', progress, message?}`). groups 가 비었거나 모르는 id 면 `{success:false, error}`.
   - `BackupGroupStat { id, tables: Record<string, number>, files: {count, bytes} }` — settings 는 `tables.app_settings` 에 settings 로 분류되는 키 수.
 - 렌더러: `window.api.backup` (`BackupAPI`: `stats` / `exportToFile(groups)` / `pickBackup` / `importBackup(path, groups)` / `restart` / `onProgress`), `stores/backupStore.ts`, `components/layout/backupGroups.ts`(라벨·대표 테이블, `confirmKey`, `canExport`), `components/layout/BackupModal.tsx`, 설정 > 데이터(`components/settings/sections/DataSection.tsx`)

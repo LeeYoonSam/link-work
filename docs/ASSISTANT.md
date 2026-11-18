@@ -4850,8 +4850,8 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 ### K.1 메뉴 통합
 - Dashboard 를 지운다. `today` 가 유일한 홈이다. 뷰 상태(지금은 `navigationStore.view`, 2026-11-18 전에는 `projectStore.view`)의 초기값은 `today` 다.
 - 렌더러 `components/layout/navConfig.ts` 가 화면 ID·레이블·사이드바 그룹의 유일 정의처다. 이 파일은 순수 모듈이다.
-  - `VIEW_IDS`·`ViewId`: 화면 ID 12개다. `dashboard` 는 없다.
-  - `VIEW_LABELS`: 화면 제목이다. 사이드바와 Header 가 같은 레이블을 쓴다. Header 의 빈 제목 3개(today·notes·releases)가 이 표로 채워진다.
+  - `VIEW_IDS`·`ViewId`: 화면 ID 12개다. `dashboard` 는 없다. 2026-11-18(프로젝트 페이지 통합) 뒤로 `releases`·`documents` 가 빠져 11개다. 두 옛 이름은 프로젝트 화면의 릴리스 탭·문서 탭으로 가는 별칭이다.
+  - `VIEW_LABELS`: 화면 제목이다. 사이드바와 Header 가 같은 레이블을 쓴다. Header 의 빈 제목 3개(today·notes·releases)가 이 표로 채워진다. releases 는 지금 화면 ID 가 아니다.
   - `NAV_GROUPS`: 사이드바 그룹이다. 그룹 안에 그룹을 두지 않는다.
   - `normalizeView(value)`: `dashboard` 를 `today` 로 바꾼다. 모르는 값이면 null 이다. 트레이·알림·AI 링크·`linkwork://` 의 화면 이름이 이 함수를 거친다.
 - 레이블은 한국어로 통일한다. `Reports` 는 `주간 보고` 다.
@@ -4860,9 +4860,9 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 | 그룹 제목 | 메뉴 (화면 ID) |
 |-----------|----------------|
 | 제목 없음 | 오늘 (`today`), AI 대화 (`ai`) |
-| 업무 | 프로젝트 (`projects`, 2026-11-18 부터 Jira 티켓 보드), 할 일 (`todos`), 캘린더 (`calendar`), 릴리스 (`releases`), 주간 보고 (`reports`) |
+| 업무 | 프로젝트 (`projects`. 2026-11-18 부터 티켓·릴리스·문서 탭을 가진 Jira 페이지), 할 일 (`todos`), 캘린더 (`calendar`), 주간 보고 (`reports`). 릴리스 (`releases`)는 2026-11-18 에 프로젝트 화면의 탭으로 옮겼다 |
 | 회의 | 녹음 (`recordings`), 회의록 (`notes`) |
-| 자료 | 문서 (`documents`), 메모 (`memos`), 변수 (`variables`) |
+| 자료 | 메모 (`memos`), 변수 (`variables`). 문서 (`documents`)는 2026-11-18 에 없앴다. Jira 티켓의 연결 문서는 프로젝트 화면의 문서 탭이 모아 보여 준다 |
 
 ### K.2 홈(오늘) 화면
 - 일정 불변식: 계획이 있으면 `Timeline` 을 그린다. 계획이 없으면 `HomeSchedule` 을 그린다. 일정 카드는 화면에 항상 1개다.
@@ -4874,6 +4874,7 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 
 ### K.3 아침 자동 동기화 (A54)
 매일 아침 1회, main 이 릴리스 노트 전체 동기화를 실행한다. 수동 버튼은 그대로 있다. 릴리스 쪽 규칙은 RELEASE_NOTES.md §4.6 이다. 프로젝트 싱크업 파트는 부록 N 에서 지웠다.
+아침 전체 동기화는 끝까지 돌면 릴리스 변경분 동기화의 기준 시각(`release_sync_checked_at`)을 갱신하고(끝까지 돌면 항상 시작 시각으로 옮기고, 다시 받지 못한 릴리스는 건너뛴 구간을 따로 메우거나 미동기화로 표시한다), 변경분 조회가 못 잡는 삭제·이동된 이슈를 정리한다(RELEASE_NOTES.md §4.7).
 
 구조:
 - `assistant-scheduler.ts` 는 `runTick` 끝에서 `SchedulerDeps.onTick(wake, now)` 를 await 없이 부른다. 앞 단계가 실패해도 부른다. 동기 throw 와 reject 를 모두 삼킨다.
@@ -4918,7 +4919,7 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 - `morningSync:status` 는 실행 중이 아닌 `running` 을 `failed` 로 보여 준다. 이유: 앱이 동기화 중에 꺼졌다.
 
 결과 표시:
-- 사이드바 릴리스 메뉴에 새 항목 수 배지를 단다. 사용자가 그 메뉴를 열면 배지가 사라진다.
+- 사이드바 프로젝트 메뉴와 프로젝트 화면의 릴리스 탭 라벨에 새 릴리스 수 배지를 단다. 사용자가 릴리스 탭을 열면 배지가 사라진다. 티켓 탭만 보면 남는다(2026-11-18 전에는 사이드바 릴리스 메뉴였다).
 - `ReleasesView` 상단 상태 줄이 마지막 동기화 시각, 실패 표시, 새 항목 수를 보여 준다.
 - 오늘 화면 변경 내역(`ChangeLog`) 맨 위에 아침 동기화 1줄이 있다.
 

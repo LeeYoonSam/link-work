@@ -138,6 +138,11 @@ describe('buildSystemPrompt — 앱 내 링크', () => {
       expect(prompt).toContain('linkwork://todo/{id}')
       expect(prompt).toContain('linkwork://release/{id}')
       expect(prompt).not.toContain('linkwork://project/')
+      expect(prompt).not.toContain('linkwork://document/')
+      // 릴리스·문서는 메뉴가 아니라 프로젝트 화면의 탭이다. 링크는 옛 view 이름을 별칭으로 쓴다
+      expect(prompt).not.toMatch(/releases\(릴리스\)|documents\(문서\)/)
+      expect(prompt).toContain('linkwork://view/releases')
+      expect(prompt).toContain('linkwork://view/documents')
       expect(prompt).toContain('linkwork://note/{id}')
       expect(prompt).toContain('메뉴 링크는 목록 전체를 안내할 때만 쓰세요')
     }

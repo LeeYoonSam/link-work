@@ -154,3 +154,40 @@ export function SegmentedBar({
     </Tooltip>
   )
 }
+
+/**
+ * fixVersion 칩. 누르면 릴리스 탭의 그 릴리스로 간다.
+ * 트리 행 안에서는 행이 포커스를 가지므로 tabbable=false 로 탭 정지점을 만들지 않는다(상세 패널에서는 true).
+ */
+export function FixVersionChips({
+  versions,
+  onOpen,
+  tabbable = true
+}: {
+  versions: { id: string; name: string }[]
+  onOpen: (versionId: string) => void
+  tabbable?: boolean
+}): React.ReactNode {
+  if (!versions || versions.length === 0) return null
+  return (
+    <>
+      {versions.map((v) => (
+        <button
+          key={v.id}
+          type="button"
+          tabIndex={tabbable ? undefined : -1}
+          title={`릴리스 ${v.name} 보기`}
+          aria-label={`릴리스 ${v.name} 보기`}
+          data-fix-version={v.id}
+          onClick={(e) => {
+            e.stopPropagation()
+            onOpen(v.id)
+          }}
+          className="inline-flex items-center rounded px-1.5 text-[11px] font-mono bg-slate-100 text-slate-600 hover:bg-slate-200"
+        >
+          {v.name}
+        </button>
+      ))}
+    </>
+  )
+}

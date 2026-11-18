@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { ChevronDownIcon, ClampedText, taskTag, typo } from '../ui'
-import { ExternalLinkIcon, IssueTypeIcon, JiraStatusBadge, PriorityMarks, SegmentedBar, rollupText } from './BoardBits'
+import { ExternalLinkIcon, FixVersionChips, IssueTypeIcon, JiraStatusBadge, PriorityMarks, SegmentedBar, rollupText } from './BoardBits'
 import {
   assigneeSummary,
   isOverdue,
@@ -33,6 +33,8 @@ export interface IssueTreeProps {
   onSelect: (id: string) => void
   onToggle: (id: string, expanded: boolean) => void
   onOpenJira: (key: string) => void
+  /** fixVersion 칩 → 릴리스 탭 */
+  onOpenRelease?: (versionId: string) => void
   /** 좁은 창에서 선택 행 아래에 그릴 상세 */
   renderInlineDetail?: (id: string) => ReactNode
 }
@@ -143,7 +145,13 @@ function GroupRowBody({ row, today, onToggle, onOpenJira }: { row: VisibleRow; t
   )
 }
 
-function IssueRowBody({ row, today, onToggle, onOpenJira }: { row: VisibleRow; today: string } & Pick<IssueTreeProps, 'onToggle' | 'onOpenJira'>): ReactNode {
+function IssueRowBody({
+  row,
+  today,
+  onToggle,
+  onOpenJira,
+  onOpenRelease
+}: { row: VisibleRow; today: string } & Pick<IssueTreeProps, 'onToggle' | 'onOpenJira' | 'onOpenRelease'>): ReactNode {
   const n = row.node!
   const i = n.issue
   const done = i.statusCategory === 'done'
@@ -169,6 +177,7 @@ function IssueRowBody({ row, today, onToggle, onOpenJira }: { row: VisibleRow; t
           {n.rollup.total > 0 ? <span>하위 {n.rollup.done}/{n.rollup.total}</span> : null}
           {n.pastDoneCount > 0 ? <span className="text-gray-400">이전 완료 {n.pastDoneCount}건</span> : null}
           {orphanParent ? <span className="font-mono text-gray-400">상위 {orphanParent}</span> : null}
+          {onOpenRelease ? <FixVersionChips versions={i.fixVersions} onOpen={onOpenRelease} tabbable={false} /> : null}
         </div>
       </div>
       <div role="gridcell" className="pt-0.5">
@@ -191,6 +200,7 @@ export default function IssueTree({
   onSelect,
   onToggle,
   onOpenJira,
+  onOpenRelease,
   renderInlineDetail
 }: IssueTreeProps): ReactNode {
   const [focusedId, setFocusedId] = useState<string | null>(null)
@@ -207,6 +217,12 @@ export default function IssueTree({
     el?.focus()
     el?.scrollIntoView?.({ block: 'nearest' })
   }, [activeId, rows])
+
+  // 다른 탭에서 "보드에서 보기"로 들어오면 선택 행이 화면 밖일 수 있다. 선택이 바뀔 때만 스크롤한다(행 목록 변화로는 끌어오지 않는다)
+  useEffect(() => {
+    if (!selectedId) return
+    rowRefs.current.get(selectedId)?.scrollIntoView?.({ block: 'nearest' })
+  }, [selectedId])
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
     // 행 안의 버튼·인라인 상세에서 온 키는 건드리지 않는다(버튼의 Enter 가 그대로 동작해야 한다)
@@ -258,7 +274,7 @@ export default function IssueTree({
             {r.kind === 'group' ? (
               <GroupRowBody row={r} today={today} onToggle={onToggle} onOpenJira={onOpenJira} />
             ) : (
-              <IssueRowBody row={r} today={today} onToggle={onToggle} onOpenJira={onOpenJira} />
+              <IssueRowBody row={r} today={today} onToggle={onToggle} onOpenJira={onOpenJira} onOpenRelease={onOpenRelease} />
             )}
             {/* 좁은 창 인라인 상세. 별도 행으로 두면 트리 항목이 아닌 행이 끼어 계층이 어긋나므로
                 선택한 행의 두 열을 가로지르는 칸으로 붙인다 */}

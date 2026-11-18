@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useReleaseNoteStore } from '../../stores/releaseNoteStore'
+import { describeChangeSync, useReleaseNoteStore } from '../../stores/releaseNoteStore'
 import { useMorningSyncStore } from '../../stores/morningSyncStore'
 import { useFocusRequest, useFocusStore } from '../../stores/focusStore'
 import { useFlash } from '../../hooks/useFocusFlash'
@@ -10,7 +10,7 @@ import JiraTokenWarning from './JiraTokenWarning'
 import ReleaseNoteRow from './ReleaseNoteRow'
 import SyncAllSummary from './SyncAllSummary'
 import { morningStatusLine, parseMorningPart } from '../today/ChangeLog'
-import { Badge, Card, EmptyState, SearchIcon, XIcon, button } from '../ui'
+import { Badge, Card, EmptyState, IconButton, SearchIcon, XIcon, button } from '../ui'
 
 // 검색 — 버전 이름과 Jira 프로젝트 키를 한 상자에서 찾는다.
 // 공백으로 나눈 토큰을 모두 만족(AND)해야 통과한다: "PROJ 4.16"처럼 좁혀 가는 게 자연스럽다.
@@ -27,7 +27,8 @@ export function filterReleaseNotes(
   })
 }
 
-// 사이드바 Releases — 기본 Jira 프로젝트의 릴리스를 버전 내림차순으로 늘어놓는다.
+// 프로젝트 페이지의 릴리스 탭 — 기본 Jira 프로젝트의 릴리스를 버전 내림차순으로 늘어놓는다.
+// 화면 제목은 Header('프로젝트')와 탭 바가 맡는다. 그래서 여기에는 제목을 두지 않는다.
 // LinkWork 프로젝트로 묶지 않는다: 릴리스 노트는 Jira 릴리스의 미러라 릴리스 하나당 한 줄이면
 // 충분하고, 프로젝트로 묶으면 같은 배포 버전을 쓰는 프로젝트 수만큼 같은 버전이 중복으로 뜬다.
 // 릴리스가 0건이어도 전체 동기화 버튼이 보여야 한다 — 버튼이 행 안에만 있으면 막다른 상태가 된다.
@@ -39,10 +40,15 @@ export default function ReleasesView(): React.ReactNode {
     syncAllRunning,
     syncAllResult,
     syncAllError,
+    changeSyncRunning,
+    changeSyncResult,
+    changeSyncError,
     fetchJiraStatus,
     fetchAllReleaseNotes,
     syncAll,
-    clearSyncAllResult
+    clearSyncAllResult,
+    syncChanges,
+    clearChangeSyncError
   } = useReleaseNoteStore()
   const [showSettings, setShowSettings] = useState(false)
   const [query, setQuery] = useState('')
@@ -64,7 +70,8 @@ export default function ReleasesView(): React.ReactNode {
     void loadMorning()
   }, [])
 
-  // 이 화면이 열려 있으면 아침 동기화의 새 항목을 본 것으로 표시한다. 사이드바 배지가 사라진다
+  // 릴리스 탭이 열려 있으면 아침 동기화의 새 항목을 본 것으로 표시한다. 사이드바·탭 배지가 사라진다.
+  // 탭은 선택한 것만 마운트하므로 티켓·문서 탭만 볼 때는 지워지지 않는다
   useEffect(() => {
     if (morningStatus) markMorningSeen('release')
   }, [morningStatus])
@@ -95,14 +102,29 @@ export default function ReleasesView(): React.ReactNode {
   const connected = jiraStatus?.connected === true
   const defaultProjectKey = jiraStatus?.defaultProjectKey ?? null
   const canSyncAll = connected && defaultProjectKey !== null
+  // 변경분 동기화와 전체 동기화는 동시에 돌지 않는다. 한쪽이 돌면 두 버튼을 모두 잠근다
+  const syncBusy = syncAllRunning || changeSyncRunning
+
+  // 화면에 들어오면 DB 목록을 먼저 그린 뒤 Jira 변경분을 자동으로 반영한다 (RELEASE_NOTES).
+  // 연결 상태를 읽은 뒤에야 부를 수 있어 canSyncAll 을 기다린다. 10분 이내 재진입은 main 이 건너뛴다
+  useEffect(() => {
+    if (canSyncAll) void syncChanges(false)
+  }, [canSyncAll])
+
+  // 상태 줄은 한 자리만 쓴다: 갱신 중 > 방금 변경분 결과 > 아침 동기화 상태
+  const changeLine = describeChangeSync(changeSyncResult)
+  const statusLine = changeSyncRunning ? '갱신 중…' : (changeLine ?? morningLine)
+  const statusTone =
+    !changeSyncRunning && !changeLine && morningPart?.status === 'failed'
+      ? 'text-red-600'
+      : 'text-gray-500'
   const searching = query.trim().length > 0
   const visibleNotes = filterReleaseNotes(allNotes, query)
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <div className="flex items-center gap-2">
-          <h2 className="text-lg font-bold text-gray-900">Releases</h2>
           <Badge
             color={connected ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}
             size="xs"
@@ -118,15 +140,15 @@ export default function ReleasesView(): React.ReactNode {
           )}
         </div>
         <div className="flex items-center gap-2 min-w-0">
-          {/* 아침 동기화 상태 1줄. 실패면 빨간 글자다. 긴 사유는 말줄임하고 title 로 보인다 */}
-          {morningLine ? (
+          {/* 상태 1줄. 갱신 중·변경분 결과·아침 동기화 상태 중 하나만 보인다.
+              아침 동기화 실패면 빨간 글자다. 긴 사유는 말줄임하고 title 로 보인다 */}
+          {statusLine ? (
             <span
-              className={`max-w-[18rem] truncate text-[11px] ${
-                morningPart?.status === 'failed' ? 'text-red-600' : 'text-gray-500'
-              }`}
-              title={morningLine}
+              className={`max-w-[18rem] truncate text-[11px] ${statusTone}`}
+              title={statusLine}
+              aria-live="polite"
             >
-              {morningLine}
+              {statusLine}
             </span>
           ) : null}
           <button
@@ -135,10 +157,10 @@ export default function ReleasesView(): React.ReactNode {
           >
             Jira 연동 설정
           </button>
-          {/* 연결된 릴리스가 0건이어도 이 버튼은 보여야 한다 */}
+          {/* 연결된 릴리스가 0건이어도 이 버튼은 보여야 한다. 릴리스를 모두 다시 받는 보조 수단이다 */}
           <button
             onClick={() => void syncAll()}
-            disabled={!canSyncAll || syncAllRunning}
+            disabled={!canSyncAll || syncBusy}
             title={
               !connected
                 ? 'Jira 연동 설정을 먼저 완료하세요'
@@ -146,9 +168,25 @@ export default function ReleasesView(): React.ReactNode {
                   ? '기본 Jira 프로젝트를 먼저 선택하세요'
                   : '기본 Jira 프로젝트의 릴리스를 모두 가져와 동기화합니다'
             }
-            className={`px-4 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed ${button.primary}`}
+            className={`px-4 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed ${button.subtle}`}
           >
             {syncAllRunning ? '동기화 중…' : '전체 동기화'}
+          </button>
+          {/* 주 버튼. 마지막 동기화 이후 바뀐 이슈만 가져온다. 10분 생략 없이 바로 확인한다 */}
+          <button
+            onClick={() => void syncChanges(true)}
+            disabled={!canSyncAll || syncBusy}
+            title={
+              !connected
+                ? 'Jira 연동 설정을 먼저 완료하세요'
+                : !defaultProjectKey
+                  ? '기본 Jira 프로젝트를 먼저 선택하세요'
+                  : '마지막 동기화 이후 Jira에서 바뀐 이슈만 가져옵니다'
+            }
+            className={`px-4 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed ${button.primary}`}
+          >
+            {/* 진행 표시는 상태 줄 한 곳에서만 한다 */}
+            새로고침
           </button>
         </div>
       </div>
@@ -171,6 +209,16 @@ export default function ReleasesView(): React.ReactNode {
       {syncAllError && (
         <div className="mb-4 px-3 py-2 rounded-md border border-red-200 bg-red-50 text-xs text-red-600 break-all">
           전체 동기화 실패 — {syncAllError}
+        </div>
+      )}
+
+      {/* 자동 갱신 실패는 화면을 막지 않는다. 목록은 DB 값 그대로 두고 한 줄로 알린다 */}
+      {changeSyncError && (
+        <div className="mb-4 px-3 py-2 rounded-md border border-red-200 bg-red-50 text-xs text-red-600 flex items-start gap-2">
+          <span className="flex-1 min-w-0 break-all">변경분 갱신 실패 — {changeSyncError}</span>
+          <IconButton title="닫기" onClick={clearChangeSyncError}>
+            <XIcon size={12} />
+          </IconButton>
         </div>
       )}
 
@@ -212,7 +260,7 @@ export default function ReleasesView(): React.ReactNode {
           </p>
           <button
             onClick={() => void syncAll()}
-            disabled={!canSyncAll || syncAllRunning}
+            disabled={!canSyncAll || syncBusy}
             className={`mt-3 px-3 py-1.5 text-xs disabled:opacity-40 disabled:cursor-not-allowed ${button.primary}`}
           >
             {syncAllRunning ? '동기화 중…' : '전체 동기화'}

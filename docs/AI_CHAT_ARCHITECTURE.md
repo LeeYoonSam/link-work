@@ -5,10 +5,10 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 
 ## 1. 개요
 
-- 사용자가 자연어로 질문하면 AI가 LinkWork의 실제 데이터(TODO/메모/문서/변수/
+- 사용자가 자연어로 질문하면 AI가 LinkWork의 실제 데이터(TODO/메모/변수/
   활동로그/릴리스 노트/개인 비서/Google 캘린더)와 연결된 외부 지식(Notion, Atlassian(Jira),
   Bitbucket, 웹 페이지)을 도구로 조회해서 답하는 로컬 전용 채팅 기능.
-- 응답은 마크다운으로 렌더링되며, `linkwork://` 링크를 통해 앱 내 화면 이동·문서 열기
+- 응답은 마크다운으로 렌더링되며, `linkwork://` 링크를 통해 앱 내 화면 이동·항목 강조
   같은 액션을 수행할 수 있다.
 - 채팅 목록/히스토리는 SQLite에 영속화되고, 채팅 재진입 시 AI 세션도 이어진다.
 
@@ -71,7 +71,7 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 |---|---|
 | `src/main/services/ai-agent.ts` | 쿼리 실행 엔진. 시스템 프롬프트, 스트리밍 중계, 취소, 세션 resume, 진행상태 보관, 동시 실행 상한, 도구 게이트(canUseTool) |
 | `src/main/services/ai-tools.ts` | LinkWork 조회 도구 + 외부 지식 도구(Notion/웹) 정의 (zod 스키마 + SQL) |
-| `src/main/services/ai-write-tools.ts` | 쓰기 도구 8종 (생성 4종 `create_todo`/`create_memo`/`create_variable`/`create_document` + 수정 4종, HITL 승인 — 가드레일 문서 7절) |
+| `src/main/services/ai-write-tools.ts` | 쓰기 도구 6종 (생성 3종 `create_todo`/`create_memo`/`create_variable` + 수정 3종, HITL 승인 — 가드레일 문서 7절) |
 | `src/main/services/ai-audit.ts` | 감사 로그 기록 헬퍼 |
 | `src/main/services/ai-model.ts` | 모델 패밀리 레지스트리(`AI_MODEL_FAMILIES`), AI 대화 모델 선택 저장(`ai_model`), 동적 라벨 캐시(`ai_model_labels`). 개인 비서용 고정 ID 매핑(`resolveAiModelId`)도 둔다 |
 | `src/main/services/notion.ts` | Notion 연동 (토큰 safeStorage 저장, 검색/페이지/DB 조회 API) |
@@ -179,7 +179,7 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 모두 읽기 전용이며 전체 이름은 `mcp__linkwork__<이름>`. LinkWork 데이터 도구는
 읽기 전용 DB 커넥션을 사용한다.
 
-### 8.1 LinkWork 데이터 (11종)
+### 8.1 LinkWork 데이터 (10종)
 
 | 도구 | 용도 |
 |---|---|
@@ -187,7 +187,6 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 | `get_todo` | TODO 상세 (notes 전문 + 알람 설정 — 수정 전 확인용) |
 | `search_memos` | 메모 검색 (내용/카테고리/중요/보관 필터, 1000자 truncate) |
 | `get_memo` | 메모 전문 조회 (수정 전 확인용) |
-| `list_documents` | 문서 목록 (이름/설명 검색) |
 | `list_variables` | 변수 목록 (secret 값은 마스킹) |
 | `get_activity_log` | 기간별 활동 이력 — "이번주 작업 정리" 용 |
 | `get_calendar_events` | Google 캘린더 일정 (기간 지정, 미연동 시 안내 반환) |
@@ -266,17 +265,17 @@ AI 채팅과 오늘 화면은 같은 처리기 `utils/openInternalLink.ts` 를 �
 
 | 링크 | 동작 |
 |---|---|
-| `linkwork://project/…` (옛 프로젝트·작업 링크) | 프로젝트 메뉴(Jira 티켓 보드)를 연다. 옛 대화의 링크가 죽지 않게 남긴 동작이다 |
-| `linkwork://document/{id}` | 해당 문서 URL을 바로 열기 (없으면 Documents 메뉴로) |
+| `linkwork://project/…` (옛 프로젝트·작업 링크) | 프로젝트 화면의 티켓 탭을 연다. 옛 대화의 링크가 죽지 않게 남긴 동작이다 |
+| `linkwork://document/{id}` (옛 문서 링크) | 프로젝트 화면의 문서 탭을 연다. 문서 메뉴를 없앤 뒤 옛 대화의 링크가 죽지 않게 남긴 동작이다 |
 | `linkwork://memo/{id}` | 메모 카드를 강조하고 메모 보기 창을 연다. 보관 메모면 보관함을 연다 |
 | `linkwork://todo/{id}` | 할 일 항목을 강조한다. 태그 필터를 푼다 |
 | `linkwork://variable/{id}` | 변수 행을 강조한다. secret 값은 공개하지 않는다 |
-| `linkwork://release/{id}` | 검색어를 비우고 릴리스 행을 강조하고 펼친다 |
+| `linkwork://release/{id}` | 프로젝트 화면의 릴리스 탭을 열고, 검색어를 비우고 릴리스 행을 강조하고 펼친다 |
 | `linkwork://recording/{id}` | 종류 필터를 풀고 녹음 상세를 열고 카드를 강조 |
 | `linkwork://note/{meetingId}` | 회의록 필터를 풀고 회의록을 열고 목록 행을 강조 |
 | `linkwork://calendar/{YYYY-MM-DD}[/{eventId}]` | 그 날짜의 주로 이동해 날짜 카드와 일정을 강조 |
 | `linkwork://today/item/{id}`, `linkwork://today/meeting/{eventId}`, `linkwork://today/{inbox\|briefing\|timeline}` | 오늘 화면의 해당 위치로 스크롤 |
-| `linkwork://view/{name}` | 메뉴 이동 (today/projects/todos/…). `dashboard` 는 today 의 별칭이다 |
+| `linkwork://view/{name}` | 메뉴 이동 (today/projects/todos/…). `dashboard` 는 today 의 별칭이다. `projects` 는 프로젝트 화면의 티켓 탭을 연다. `releases`·`documents` 는 릴리스 탭·문서 탭으로 가는 별칭이다 |
 | 일반 `https://` | 외부 브라우저로 열기 (기존 동작) |
 
 링크 규칙은 다음과 같다.

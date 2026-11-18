@@ -2,7 +2,7 @@ import { isAbsolute, posix } from 'path'
 import { fileURLToPath } from 'url'
 
 /**
- * document:open이 shell로 넘기기 전에 렌더러가 보낸 url/path를 검사한다.
+ * 렌더러가 보낸 url/path를 shell로 넘기기 전에 검사한다(jiraBoard:openLink 등).
  * 렌더러가 오염되거나 DB에 악성 값이 들어와도 임의 스킴 실행·앱 실행으로 이어지지 않게 하는 마지막 관문.
  *
  * - 링크(type !== 'file'): `http:` / `https:` / `mailto:`만 shell.openExternal로 연다.

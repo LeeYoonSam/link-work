@@ -407,6 +407,9 @@ export function ancestorIds(forest: BoardForest, id: string): string[] {
 
 // ─── 필터 ─────────────────────────────────────────────────
 
+/** 릴리스 필터의 "릴리스 없음" 값. 실제 버전 이름과 겹치지 않게 공백으로 시작한다 */
+export const NO_RELEASE = ' none'
+
 export interface BoardFilter {
   query: string
   /** 비면 전체 */
@@ -415,6 +418,8 @@ export interface BoardFilter {
   statuses: string[]
   /** 이슈 유형 표시 이름. 비면 전체 */
   types: string[]
+  /** fixVersion 이름. NO_RELEASE 는 "릴리스 없음". 비면 전체 */
+  releases: string[]
   mineOnly: boolean
   /** 완료(최근 완료 포함)를 모두 숨긴다 */
   hideDone: boolean
@@ -430,6 +435,7 @@ export const DEFAULT_FILTER: BoardFilter = {
   categories: [],
   statuses: [],
   types: [],
+  releases: [],
   mineOnly: true,
   hideDone: false,
   showPastDone: false
@@ -444,6 +450,7 @@ export function isFilterActive(f: BoardFilter, myAccountId: string | null): bool
     f.categories.length > 0 ||
     f.statuses.length > 0 ||
     f.types.length > 0 ||
+    f.releases.length > 0 ||
     f.hideDone ||
     (f.mineOnly && !!myAccountId)
   )
@@ -470,6 +477,12 @@ export function matchesFilter(
   if (f.categories.length > 0 && !f.categories.includes(cat)) return false
   if (f.statuses.length > 0 && !f.statuses.includes(issue.status)) return false
   if (f.types.length > 0 && !f.types.includes(issue.issueType)) return false
+  if (f.releases.length > 0) {
+    const names = (issue.fixVersions ?? []).map((v) => v.name)
+    const hit =
+      names.length === 0 ? f.releases.includes(NO_RELEASE) : names.some((n) => f.releases.includes(n))
+    if (!hit) return false
+  }
   if (f.hideDone && cat === 'done') return false
   if (f.mineOnly && myAccountId && issue.assigneeAccountId !== myAccountId) return false
   return true
@@ -860,21 +873,32 @@ export interface BoardFacets {
   /** 실제로 등장한 세부 상태명. 카테고리 순(진행 → 할 일 → 완료) 다음 이름 순 */
   statuses: { name: string; category: StatusCategory }[]
   types: string[]
+  /** 등장한 fixVersion 이름. 버전 번호가 큰 것(최근) 먼저 */
+  releases: string[]
+  /** fixVersion 이 없는 범위 안 이슈가 있는가("릴리스 없음" 후보) */
+  hasNoRelease: boolean
 }
 
 export function deriveFacets(issues: JiraBoardIssue[]): BoardFacets {
   const statuses = new Map<string, StatusCategory>()
   const types = new Set<string>()
+  const releases = new Set<string>()
+  let hasNoRelease = false
   for (const i of issues) {
     if (!i.inScope) continue
     if (!statuses.has(i.status)) statuses.set(i.status, normalizeCategory(i.statusCategory))
     types.add(i.issueType)
+    const fv = i.fixVersions ?? []
+    if (fv.length === 0) hasNoRelease = true
+    for (const v of fv) releases.add(v.name)
   }
   return {
     statuses: [...statuses]
       .map(([name, category]) => ({ name, category }))
       .sort((a, b) => CATEGORY_ORDER[a.category] - CATEGORY_ORDER[b.category] || a.name.localeCompare(b.name)),
-    types: [...types].sort((a, b) => a.localeCompare(b))
+    types: [...types].sort((a, b) => a.localeCompare(b)),
+    releases: [...releases].sort((a, b) => b.localeCompare(a, undefined, { numeric: true })),
+    hasNoRelease
   }
 }
 
@@ -977,4 +1001,78 @@ export function clockTime(iso: string): string {
 export function localDate(now: Date): string {
   const p = (n: number): string => String(n).padStart(2, '0')
   return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`
+}
+
+/**
+ * 동기화 결과 한 줄. 실제로 돈 방식(sync.mode)을 그대로 말한다.
+ * 저장본만 돌려준 경우(cache)는 알릴 것이 없어 null 이다. 단 전체 다시 받기를 요청했는데 전체가 돌지 않았으면
+ * 그 사실을 붙인다 — "3건 갱신"만 보이면 전체를 받은 줄 안다.
+ */
+export function syncResultText(
+  sync: { mode: 'full' | 'incremental' | 'cache'; changed: number } | null,
+  requested: 'auto' | 'incremental' | 'full' | null = null
+): string | null {
+  if (!sync) return null
+  const missedFull = requested === 'full' && sync.mode !== 'full'
+  const base =
+    sync.mode === 'full'
+      ? '전체 동기화'
+      : sync.mode === 'incremental'
+        ? sync.changed > 0
+          ? `${sync.changed}건 갱신`
+          : '변경 없음'
+        : null
+  if (missedFull) return `${base ? `${base} · ` : ''}전체 다시 받기가 끝나지 않았어요. 다시 시도해 주세요`
+  return base
+}
+
+/** ISO → 'M/D HH:mm'(로컬). 잘못된 값은 빈 문자열 */
+export function shortDateTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${d.getMonth() + 1}/${d.getDate()} ${clockTime(iso)}`
+}
+
+/**
+ * 보드 트리에 보일 수 있는 이슈인가(보드에서 보기·문서 탭 키 칩의 노출 조건).
+ * 스냅샷에 있고 범위 안이거나 범위 안 자손이 있어야 한다 — 백로그 잎은 트리에 그려지지 않는다.
+ */
+export function isRevealable(issues: JiraBoardIssue[], key: string): boolean {
+  const issue = issues.find((i) => i.key === key)
+  if (!issue) return false
+  if (issue.inScope) return true
+  const kids = issues.filter((i) => i.parentKey === key && i.key !== key)
+  return kids.some((k) => k.inScope || issues.some((g) => g.parentKey === k.key && g.key !== k.key && g.inScope))
+}
+
+const FILTER_LABELS: Record<'query' | 'categories' | 'statuses' | 'types' | 'releases' | 'mineOnly' | 'hideDone', string> = {
+  query: '검색',
+  categories: '상태 분류',
+  statuses: '세부 상태',
+  types: '유형',
+  releases: '릴리스',
+  mineOnly: '내 담당만',
+  hideDone: '완료 모두 숨김'
+}
+
+/**
+ * 그 이슈를 가리는 조건만 푼 필터. 조건마다 "그 조건 하나만 켰을 때 이 이슈가 떨어지는가"를 보고
+ * 떨어지는 조건만 끈다 — "보드에서 보기" 한 번에 무관한 조건까지 날아가지 않게 한다.
+ */
+export function revealFilter(
+  issue: JiraBoardIssue,
+  f: BoardFilter,
+  myAccountId: string | null
+): { filter: BoardFilter; cleared: string[] } {
+  const next: BoardFilter = { ...f }
+  const cleared: string[] = []
+  const only = (patch: Partial<BoardFilter>): boolean =>
+    matchesFilter(issue, { ...EMPTY_FILTER, ...patch }, myAccountId)
+  const keys = Object.keys(FILTER_LABELS) as (keyof typeof FILTER_LABELS)[]
+  for (const k of keys) {
+    if (only({ [k]: f[k] } as Partial<BoardFilter>)) continue
+    ;(next as unknown as Record<string, unknown>)[k] = EMPTY_FILTER[k]
+    cleared.push(FILTER_LABELS[k])
+  }
+  return { filter: next, cleared }
 }

@@ -72,10 +72,27 @@ vi.mock('../../stores/releaseNoteStore', () => ({
   })
 }))
 
+// 보드 store 는 impl-board 소유다. 스냅샷 유무와 revealIssue 만 흉내 낸다
+const board = {
+  keys: new Set<string>(),
+  revealIssue: vi.fn((key: string) => board.keys.has(key))
+}
+vi.mock('../../stores/jiraBoardStore', () => ({
+  useBoardHasIssue: (key: string) => board.keys.has(key),
+  useJiraBoardStore: { getState: () => ({ revealIssue: board.revealIssue }) }
+}))
+
+const { useNavigationStore } = await import('../../stores/navigationStore')
 const { FOCUS_RING_CLASS } = await import('../../hooks/useFocusFlash')
 const mod = await import('./ReleaseNoteRow')
 const ReleaseNoteRow = mod.default
-const { ReleaseNoteItemList, groupReleaseNoteItems, releaseItemStatusTone } = mod
+const {
+  ReleaseNoteItemList,
+  RevealOnBoardButton,
+  groupReleaseNoteItems,
+  releaseItemStatusTone,
+  releaseSyncStatusText
+} = mod
 
 const renderRow = (over: Partial<ReleaseNoteSummary>, mock: Partial<MockState> = {}): string => {
   state = { ...BASE, ...mock }
@@ -165,9 +182,17 @@ describe('ReleaseNoteRow 상태 표시', () => {
   })
 
   it('한 번도 동기화하지 않았으면 0건이 아니라 미동기화로 구분한다', () => {
-    const html = renderRow({ last_synced_at: null })
+    const html = renderRow({ last_synced_at: null, item_count: 0 })
     expect(html).toContain('아직 동기화하지 않았습니다')
     expect(html).not.toContain('가져온 이슈')
+  })
+
+  // 전체 동기화가 다시 받지 못한 릴리스는 항목을 남긴 채 last_synced_at 만 비운다
+  it('동기화 시각이 비었어도 이슈가 있으면 미동기화가 아니라 최신이 아닐 수 있음을 알린다', () => {
+    const html = renderRow({ last_synced_at: null, item_count: 12 })
+    expect(html).toContain('가져온 이슈: 12건 · 최신이 아닐 수 있습니다. 동기화로 다시 받으세요')
+    expect(html).not.toContain('아직 동기화하지 않았습니다')
+    expect(html).not.toContain('마지막 동기화')
   })
 
   it('last_sync_error는 붉은 톤으로 드러낸다', () => {
@@ -287,5 +312,54 @@ describe('ReleaseNoteRow 포커스', () => {
     const tag = rootTag(html)
     expect(tag).not.toContain('id="release-7"')
     expect(html).not.toContain(FOCUS_RING_CLASS)
+  })
+})
+
+describe('보드에서 보기 (plan4 3절)', () => {
+  const ITEMS = [item(1, 'PROJ-1', 'Story', '검색홈 개편'), item(2, 'PROJ-2', 'Story', '보드에 없음')]
+
+  it('보드 스냅샷에 있는 이슈에만 버튼을 단다', () => {
+    board.keys = new Set(['PROJ-1'])
+    const html = renderToStaticMarkup(
+      <ReleaseNoteItemList items={ITEMS} itemAction={(key) => <RevealOnBoardButton issueKey={key} />} />
+    )
+    expect(html.split('보드에서 보기').length - 1).toBe(1)
+    expect(html).toContain('title="프로젝트 티켓 탭에서 PROJ-1 보기"')
+    expect(html).not.toContain('PROJ-2 보기')
+  })
+
+  it('itemAction 이 없으면 버튼을 그리지 않는다', () => {
+    board.keys = new Set(['PROJ-1'])
+    expect(renderToStaticMarkup(<ReleaseNoteItemList items={ITEMS} />)).not.toContain('보드에서 보기')
+  })
+
+  it('누르면 보드에서 그 이슈를 드러내고 티켓 탭을 연다', () => {
+    board.keys = new Set(['PROJ-1'])
+    useNavigationStore.setState({ view: 'projects', projectsTab: 'releases' })
+    const el = RevealOnBoardButton({ issueKey: 'PROJ-1' }) as React.ReactElement<{ onClick: () => void }>
+    el.props.onClick()
+    expect(board.revealIssue).toHaveBeenCalledWith('PROJ-1')
+    expect(useNavigationStore.getState()).toMatchObject({ view: 'projects', projectsTab: 'tickets' })
+  })
+
+  it('revealIssue 가 실패하면 탭을 바꾸지 않는다', () => {
+    board.keys = new Set(['PROJ-1'])
+    board.revealIssue.mockReturnValueOnce(false)
+    useNavigationStore.setState({ view: 'projects', projectsTab: 'releases' })
+    const el = RevealOnBoardButton({ issueKey: 'PROJ-1' }) as React.ReactElement<{ onClick: () => void }>
+    el.props.onClick()
+    expect(useNavigationStore.getState().projectsTab).toBe('releases')
+  })
+})
+
+describe('releaseSyncStatusText', () => {
+  it('동기화 시각·항목 수에 따라 세 문구로 나눈다', () => {
+    expect(releaseSyncStatusText({ last_synced_at: '2026-08-19 10:30:00', item_count: 0 })).toBe(
+      '가져온 이슈: 0건 · 마지막 동기화 2026-08-19 10:30'
+    )
+    expect(releaseSyncStatusText({ last_synced_at: null, item_count: 3 })).toBe(
+      '가져온 이슈: 3건 · 최신이 아닐 수 있습니다. 동기화로 다시 받으세요'
+    )
+    expect(releaseSyncStatusText({ last_synced_at: null, item_count: 0 })).toBe('아직 동기화하지 않았습니다')
   })
 })

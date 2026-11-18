@@ -9,9 +9,11 @@ import {
 } from '../services/jira'
 import type { JiraCredentialsInput } from '../services/jira'
 import {
+  clearReleaseSyncCheckpoint,
   getReleaseNote,
   listReleaseNotes,
   syncAllReleases,
+  syncReleaseChanges,
   syncReleaseNote
 } from '../services/release-note-sync'
 import { clearJiraBoardCache } from '../services/jira-board'
@@ -42,6 +44,16 @@ export function registerReleaseNoteIpc(): void {
     }
   })
 
+  // 변경분 동기화. 화면 진입(force=false, 10분 이내면 생략)과 새로고침 버튼(force=true)이 부른다.
+  // renderer 값은 신뢰하지 않는다 — true 일 때만 강제한다.
+  ipcMain.handle('releaseNote:syncChanges', async (_event, force: unknown) => {
+    try {
+      return { success: true, result: await syncReleaseChanges({ force: force === true }) }
+    } catch (err) {
+      return { success: false, error: toMessage(err) }
+    }
+  })
+
   ipcMain.handle('releaseNote:syncAll', async () => {
     try {
       return { success: true, result: await syncAllReleases() }
@@ -53,12 +65,14 @@ export function registerReleaseNoteIpc(): void {
   ipcMain.handle('jira:status', () => getJiraStatus())
 
   ipcMain.handle('jira:saveCredentials', async (_event, input: JiraCredentialsInput) => {
-    // 계정·사이트가 바뀌면 이전 연결로 받은 프로젝트 보드 스냅샷은 더 이상 유효하지 않다.
-    clearJiraBoardCache()
     try {
       const { accountName } = await saveJiraCredentials(input)
-      // 저장을 기다리는 사이 옛 자격 증명으로 시작한 조회가 캐시를 채웠을 수 있다. 한 번 더 비운다
+      // 계정·사이트가 바뀌면 볼 수 있는 이슈가 다르다. 프로젝트 보드 저장본을 모두 지운다.
+      // 저장 성공 뒤에만 지운다 — 실패하면 기존 자격 증명이 그대로라 저장본도 유효하다.
+      // 저장을 기다리는 사이 시작된 동기화는 비우기의 세대 가드로 저장하지 못한다.
       clearJiraBoardCache()
+      // 릴리스 변경분 기준도 다른 계정 기준이 된다. 다음 번은 전체 동기화로 넘어간다
+      clearReleaseSyncCheckpoint()
       return { success: true, accountName }
     } catch (err) {
       return { success: false, error: toMessage(err) }
@@ -67,7 +81,9 @@ export function registerReleaseNoteIpc(): void {
 
   ipcMain.handle('jira:disconnect', () => {
     disconnectJira()
+    // 다른 계정으로 다시 연결할 수 있다. 이전 계정의 보드 저장본·릴리스 변경분 기준을 남기지 않는다
     clearJiraBoardCache()
+    clearReleaseSyncCheckpoint()
     return { success: true }
   })
 
@@ -81,9 +97,10 @@ export function registerReleaseNoteIpc(): void {
 
   ipcMain.handle('jira:setDefaultProject', (_event, projectKey: string | null) => {
     try {
+      // 프로젝트 보드 저장본은 프로젝트 키로 나뉘어 있어 지우지 않는다(같은 계정의 데이터다)
       setDefaultJiraProjectKey(projectKey)
-      // 프로젝트 보드는 기본 프로젝트 기준으로 받은 것이라 키가 바뀌면 버린다.
-      clearJiraBoardCache()
+      // 릴리스 변경분 기준은 프로젝트 하나에 대한 값이다. 다음 번은 전체 동기화로 넘어간다
+      clearReleaseSyncCheckpoint()
       return { success: true }
     } catch (err) {
       return { success: false, error: toMessage(err) }

@@ -44,7 +44,6 @@ export const LINKWORK_TOOL_NAMES = [
   'get_todo',
   'search_memos',
   'get_memo',
-  'list_documents',
   'list_variables',
   'get_activity_log',
   'get_calendar_events',
@@ -244,34 +243,6 @@ const getMemo = tool(
   }
 )
 
-const listDocuments = tool(
-  'list_documents',
-  '문서(링크/파일) 목록을 조회한다. 각 문서의 id, 이름, URL, 종류, 설명을 반환한다. search로 이름/설명 검색이 가능하다.',
-  {
-    search: searchTerm('문서 이름/설명 부분 검색어')
-  },
-  async (args) => {
-    const db = getAiReadOnlyDatabase()
-    const conditions: string[] = []
-    const params: unknown[] = []
-    if (args.search) {
-      conditions.push("(d.name LIKE ? OR IFNULL(d.description, '') LIKE ?)")
-      params.push(`%${args.search}%`, `%${args.search}%`)
-    }
-    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-    const rows = db
-      .prepare(
-        `SELECT d.id, d.name, d.url, d.type, d.description
-         FROM documents d
-         ${where}
-         ORDER BY d.sort_order, d.id
-         LIMIT 200`
-      )
-      .all(...params)
-    return jsonResult(rows)
-  }
-)
-
 const listVariables = tool(
   'list_variables',
   '변수(Variables) 목록을 조회한다. secret 타입 변수의 값은 마스킹되어 반환된다.',
@@ -439,9 +410,14 @@ const getActivityLog = tool(
           `이슈가 ${note.item_count}건이라 앞의 ${RELEASE_NOTE_ITEM_LIMIT}건만 반환했습니다.`
         )
       }
-      if (!note.last_synced_at) {
+      // 전체 동기화가 다시 받지 못한 릴리스는 항목을 남긴 채 last_synced_at 을 비운다. 항목 유무로 안내를 가른다
+      if (!note.last_synced_at && note.item_count > 0) {
         hints.push(
-          '아직 한 번도 동기화하지 않은 릴리스입니다. 릴리스 화면에서 동기화해야 Jira 이슈가 채워집니다.'
+          '이 릴리스의 이슈 목록은 최신이 아닐 수 있습니다. 프로젝트 화면의 릴리스 탭에서 이 릴리스를 동기화하면 다시 받습니다.'
+        )
+      } else if (!note.last_synced_at) {
+        hints.push(
+          '아직 한 번도 동기화하지 않은 릴리스입니다. 프로젝트 화면의 릴리스 탭에서 동기화해야 Jira 이슈가 채워집니다.'
         )
       }
       return jsonResult({
@@ -581,7 +557,6 @@ const getActivityLog = tool(
       getTodo,
       searchMemos,
       getMemo,
-      listDocuments,
       listVariables,
       getActivityLog,
       getCalendarEvents,

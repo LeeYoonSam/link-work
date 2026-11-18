@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
-import type { ReactNode, RefObject } from 'react'
-import { ChevronDownIcon, SearchIcon, XIcon, button, typo } from '../ui'
-import { RefreshIcon } from './BoardBits'
+import type { RefObject } from 'react'
+import { SearchIcon, XIcon, button, typo } from '../ui'
+import { CheckItem, FilterPopover, SyncControls, toggleIn } from './BoardControls'
 import {
   CATEGORY_LABELS,
+  NO_RELEASE,
   SORT_LABELS,
-  clockTime,
   type BoardFacets,
   type BoardFilter,
   type BoardSort,
@@ -13,76 +12,6 @@ import {
 } from './boardModel'
 
 const CATEGORIES: StatusCategory[] = ['indeterminate', 'new', 'done']
-
-// 여러 값을 고르는 작은 팝오버. 공용 DropdownMenu 는 고르면 닫혀 다중 선택에 맞지 않는다
-function FilterPopover({
-  label,
-  count,
-  children
-}: {
-  label: string
-  count: number
-  children: ReactNode
-}): React.ReactNode {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement | null>(null)
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-sm ${
-          count > 0 ? 'bg-blue-50 text-blue-700 rounded-md' : button.subtle
-        }`}
-      >
-        {label}
-        {count > 0 ? <span className="tabular-nums">{count}</span> : null}
-        <ChevronDownIcon size={14} />
-      </button>
-      {open ? (
-        <div className="absolute left-0 z-20 mt-1 w-56 max-h-80 overflow-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg">
-          {children}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function CheckItem({
-  checked,
-  onChange,
-  children
-}: {
-  checked: boolean
-  onChange: (v: boolean) => void
-  children: ReactNode
-}): React.ReactNode {
-  return (
-    <label className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span className="min-w-0 truncate">{children}</span>
-    </label>
-  )
-}
-
-const toggleIn = <T,>(list: T[], v: T, on: boolean): T[] =>
-  on ? (list.includes(v) ? list : [...list, v]) : list.filter((x) => x !== v)
 
 export interface BoardToolbarProps {
   filter: BoardFilter
@@ -92,14 +21,23 @@ export interface BoardToolbarProps {
   /** 최근 완료로 보는 기간(일). 완료 토글 설명에 쓴다 */
   recentDoneDays: number
   loading: boolean
+  /** 마지막 동기화 시각(스냅샷 fetchedAt) */
   fetchedAt: string | null
+  /** 마지막 전체 동기화 시각. 시각 툴팁에 보인다 */
+  lastFullSyncAt: string | null
+  /** 마지막 동기화 결과. cache 면 표시하지 않는다 */
+  lastSync: { mode: 'full' | 'incremental' | 'cache'; changed: number } | null
+  lastSyncRequested: 'auto' | 'incremental' | 'full' | null
   searchRef: RefObject<HTMLInputElement | null>
   onFilterChange: (patch: Partial<BoardFilter>) => void
   onClearFilter: () => void
   onSortChange: (sort: BoardSort) => void
   onExpandAll: () => void
   onCollapseAll: () => void
+  /** 새로고침 = 바뀐 티켓만(incremental) */
   onRefresh: () => void
+  /** 전체 다시 받기(full) */
+  onFullSync: () => void
 }
 
 export default function BoardToolbar(p: BoardToolbarProps): React.ReactNode {
@@ -118,6 +56,13 @@ export default function BoardToolbar(p: BoardToolbarProps): React.ReactNode {
   }
   for (const t of f.types) {
     chips.push({ key: `t:${t}`, label: t, remove: () => p.onFilterChange({ types: f.types.filter((x) => x !== t) }) })
+  }
+  for (const r of f.releases) {
+    chips.push({
+      key: `r:${r}`,
+      label: r === NO_RELEASE ? '릴리스 없음' : `릴리스 ${r}`,
+      remove: () => p.onFilterChange({ releases: f.releases.filter((x) => x !== r) })
+    })
   }
   if (f.mineOnly && p.myAccountId) chips.push({ key: 'mine', label: '내 담당만', remove: () => p.onFilterChange({ mineOnly: false }) })
   if (f.hideDone) chips.push({ key: 'done', label: '완료 모두 숨김', remove: () => p.onFilterChange({ hideDone: false }) })
@@ -175,6 +120,24 @@ export default function BoardToolbar(p: BoardToolbarProps): React.ReactNode {
           {facets.types.map((t) => (
             <CheckItem key={t} checked={f.types.includes(t)} onChange={(on) => p.onFilterChange({ types: toggleIn(f.types, t, on) })}>
               {t}
+            </CheckItem>
+          ))}
+        </FilterPopover>
+        <FilterPopover label="릴리스" count={f.releases.length}>
+          {facets.releases.length === 0 && !facets.hasNoRelease ? (
+            <p className={`px-3 py-1.5 ${typo.metaFaint}`}>릴리스가 없어요</p>
+          ) : null}
+          {facets.hasNoRelease ? (
+            <CheckItem
+              checked={f.releases.includes(NO_RELEASE)}
+              onChange={(on) => p.onFilterChange({ releases: toggleIn(f.releases, NO_RELEASE, on) })}
+            >
+              릴리스 없음
+            </CheckItem>
+          ) : null}
+          {facets.releases.map((r) => (
+            <CheckItem key={r} checked={f.releases.includes(r)} onChange={(on) => p.onFilterChange({ releases: toggleIn(f.releases, r, on) })}>
+              {r}
             </CheckItem>
           ))}
         </FilterPopover>
@@ -243,18 +206,15 @@ export default function BoardToolbar(p: BoardToolbarProps): React.ReactNode {
           </button>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <span className={typo.metaFaint} aria-live="polite">
-            {p.loading ? '갱신 중…' : p.fetchedAt ? `마지막 동기화 ${clockTime(p.fetchedAt)}` : ''}
-          </span>
-          <button
-            type="button"
-            onClick={p.onRefresh}
-            disabled={p.loading}
-            className={`inline-flex items-center gap-1 px-2.5 py-1 text-sm ${button.subtle} disabled:opacity-50`}
-          >
-            <RefreshIcon size={14} />
-            새로고침
-          </button>
+          <SyncControls
+            loading={p.loading}
+            fetchedAt={p.fetchedAt}
+            lastFullSyncAt={p.lastFullSyncAt}
+            lastSync={p.lastSync}
+            lastSyncRequested={p.lastSyncRequested}
+            onRefresh={p.onRefresh}
+            onFullSync={p.onFullSync}
+          />
         </div>
       </div>
 

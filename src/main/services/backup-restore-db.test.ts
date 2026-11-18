@@ -615,6 +615,36 @@ describe('mergeBackupIntoLive', () => {
     expect({ ...after3, project_sync_created_keys: '' }).toEqual({ ...before3, project_sync_created_keys: '' })
   })
 
+  it('M17 설정 복원으로 Jira 계정이 바뀌면 프로젝트 보드 캐시를 지우고, 같으면 둔다', () => {
+    const seedCache = (path: string): void => {
+      const db = new Database(path)
+      db.prepare(
+        "INSERT INTO jira_board_issues (project_key, issue_key, data, updated, synced_at) VALUES ('PROJ', 'PROJ-1', '{}', 'u', 's')"
+      ).run()
+      db.prepare("INSERT INTO jira_board_sync (project_key, recent_done_days) VALUES ('PROJ', 14)").run()
+      db.close()
+    }
+    const count = (path: string): number =>
+      Number(rows(path, 'SELECT COUNT(*) AS c FROM jira_board_issues')[0].c) +
+      Number(rows(path, 'SELECT COUNT(*) AS c FROM jira_board_sync')[0].c)
+
+    const same = createDb(LIVE)
+    seedCache(same)
+    restore(same, makeBackup(same, [...BACKUP_GROUP_IDS]), ['settings'])
+    expect(count(same)).toBe(2)
+
+    const other = createDb(LIVE)
+    seedCache(other)
+    restore(other, makeBackup(createDb(OTHER), [...BACKUP_GROUP_IDS]), ['settings'])
+    expect(count(other)).toBe(0)
+
+    // 업무만 복원하면 연동 판정을 하지 않아 캐시를 건드리지 않는다
+    const work = createDb(LIVE)
+    seedCache(work)
+    restore(work, makeBackup(createDb(OTHER), [...BACKUP_GROUP_IDS]), ['work'])
+    expect(count(work)).toBe(2)
+  })
+
   it('M13 선택 그룹과 X1~X3 자식 테이블의 foreign_key_check 위반 0건', () => {
     const fkChildren = CROSS_GROUP_REFS.filter((r) => r.kind === 'fk').map((r) => r.childTable)
     const combos: BackupGroupId[][] = [

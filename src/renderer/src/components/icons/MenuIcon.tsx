@@ -4,7 +4,6 @@ export type MenuIconName =
   | 'today'
   | 'projects'
   | 'todos'
-  | 'documents'
   | 'variables'
   | 'memos'
   | 'calendar'
@@ -12,7 +11,6 @@ export type MenuIconName =
   | 'ai'
   | 'recordings'
   | 'notes'
-  | 'releases'
   | 'settings'
 
 const PATHS: Record<MenuIconName, React.ReactNode> = {
@@ -57,22 +55,6 @@ const PATHS: Record<MenuIconName, React.ReactNode> = {
         strokeLinejoin="round"
       />
       <path d="M5 6.4l2.2-1.2" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
-    </>
-  ),
-  documents: (
-    <>
-      <path
-        d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"
-        fill="#F8F9FA"
-        stroke={INK}
-        strokeWidth="1.9"
-        strokeLinejoin="round"
-      />
-      <path d="M14 2v5h6" fill="#CED4DA" stroke={INK} strokeWidth="1.9" strokeLinejoin="round" />
-      <g stroke="#4DABF7" strokeWidth="2" strokeLinecap="round">
-        <path d="M15.5 13H8" />
-        <path d="M13 17H8" />
-      </g>
     </>
   ),
   variables: (
@@ -181,19 +163,6 @@ const PATHS: Record<MenuIconName, React.ReactNode> = {
         <path d="M7.8 14.5h8" />
         <path d="M7.8 18h5" />
       </g>
-    </>
-  ),
-  releases: (
-    <>
-      <path
-        d="M12.59 2.59A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.7 8.7a2.43 2.43 0 0 0 3.42 0l6.58-6.58a2.43 2.43 0 0 0 0-3.42Z"
-        fill="#4DABF7"
-        stroke={INK}
-        strokeWidth="1.9"
-        strokeLinejoin="round"
-      />
-      <circle cx="7.4" cy="7.4" r="1.9" fill="#fff" stroke={INK} strokeWidth="1.7" />
-      <path d="M13.2 11.8l3.4 3.4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" />
     </>
   ),
   // 톱니바퀴. 사이드바 하단의 설정 항목

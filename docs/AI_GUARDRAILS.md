@@ -68,7 +68,7 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
 
 - 도구 인자: 검색어 `max(200)`, 날짜 `YYYY-MM-DD` 정규식 — zod 스키마 레벨에서 거부
 - SQL은 전부 prepared statement + 바인딩 파라미터 (문자열 조립 금지)
-- 조회 결과 LIMIT (todos/documents 200, memos 100, activity_log 500,
+- 조회 결과 LIMIT (todos 200, memos 100, activity_log 500,
   release_notes/release_note_items 200) + 본문 truncate
 - 사용자 메시지 4,000자 상한 (`ai.ipc.ts`)
 - 동시 실행 쿼리 최대 3개 (`MAX_CONCURRENT_QUERIES`), 채팅당 1개
@@ -116,7 +116,7 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
    사용자는 입력창 아래 모드 선택에서 채팅마다 readonly·ask·plan 으로 바꿀 수 있다
 6. 이 문서에 도구별 위험도와 승인 흐름을 먼저 추가한 뒤 구현
 
-### 7.1 현재 구현 — 생성(create) 4종 + 수정(update) 4종
+### 7.1 현재 구현 — 생성(create) 3종 + 수정(update) 3종
 
 `src/main/services/ai-write-tools.ts`. **생성과 수정만 지원**하며 delete 도구는 없다
 (삭제 요청 시 해당 메뉴로 안내. 단 메모 보관/TODO 완료 같은 **가역적 상태 변경**은
@@ -128,11 +128,11 @@ zod 스키마가 도구 호출 레벨에서 강제한다.
 | `create_todo` | todos 1건 (+ 미존재 태그 생성, 최대 5개) | 낮 | `todo_history` 스냅샷 기록 |
 | `create_memo` | memos 1건 (+ 미존재 카테고리 생성) | 낮 | |
 | `create_variable` | variables 1건 | 중 | 동일 key 존재 시 거부(중복/덮어쓰기 방지). secret 생성 가능하나 조회는 항상 마스킹 |
-| `create_document` | documents 1건 (type=link) | 낮 | url은 **http/https만 허용**(javascript:/file: 등 차단 — 셸로 열리는 값이므로). 같은 url의 문서가 이미 있으면 거부(중복 링크 방지). 프로젝트 연결 인자는 없다(새 문서의 `project_id`는 NULL). 여러 문서는 문서마다 별도 호출 |
 | `update_todo` | todos 1건 부분 수정 (+ 태그 전체 교체, 완료/복원) | 낮 | `todo_history` 스냅샷(실제 완료 전이 시에만 complete/restore). notes 전체 교체. due_date 시각 포함 시 알람(due_reminder) 동기화 |
 | `update_memo` | memos 1건 부분 수정 (+ 카테고리 변경/해제, 보관/해제) | 중 | content는 전체 교체 — 수정 전 `get_memo`로 전문 확인 필수 |
 | `update_variable` | variables 1건 부분 수정 | 중 | key 변경 시 중복 검사. **secret→general 전환은 거부**(마스킹 우회 방지, §5). secret 값 수정 가능하나 승인 카드의 현재 값은 마스킹 |
-| `update_document` | documents 1건 부분 수정 | 낮 | url 변경 시 http/https 검증. 바꿀 수 있는 필드는 name·url·description뿐이다 |
+
+문서 생성·수정 도구는 문서 메뉴와 함께 없앴다. `documents` 테이블과 활동 로그의 과거 기록은 남지만 AI 는 읽지도 쓰지도 않는다. Jira 티켓에 연결된 문서는 프로젝트 화면의 문서 탭이 보여 준다([PROJECT_BOARD.md](PROJECT_BOARD.md)).
 
 수정 도구 공통 규칙:
 
@@ -341,7 +341,7 @@ Jira 릴리스(버전)에 묶인 이슈를 앱이 미리 동기화해 둔 결과
   받아 둔 값만 읽으므로, AI 대화가 네트워크 지연·레이트 리밋·토큰 만료 상태에 끌려가지
   않는다. 대신 내용이 최신이 아닐 수 있어 도구가 `last_synced_at`/`last_sync_error`를 함께
   반환하고, 한 번도 동기화하지 않은 릴리스는 안내 힌트(`hints`)를 붙인다.
-- **쓰기 도구는 없다.** 릴리스 동기화는 앱 UI(릴리스 화면)
+- **쓰기 도구는 없다.** 릴리스 동기화는 앱 UI(프로젝트 화면의 릴리스 탭)
   에서 사용자가 직접 실행하는 경로뿐이다 — AI가 Jira 데이터를 가져오거나 되쓰는 통로는
   만들지 않는다.
 - **Jira 이슈 제목·상태·버전 설명은 신뢰할 수 없는 외부 입력**이다 (6절·8.2와 동일 취급).
@@ -406,13 +406,13 @@ Bitbucket Cloud 비공개 저장소의 파일 내용과 폴더 목록을 읽는 
 ### 8.8 프로젝트 보드 에픽 AI 요약 (`jiraBoard:summarizeEpic`) — 버튼으로만
 
 AI 대화 도구가 아니라 프로젝트 보드 상세 패널의 [AI 요약] 버튼이 부르는 헤드리스 호출이다
-(설계: [PROJECT_BOARD.md](PROJECT_BOARD.md) §3.1).
+(설계: [PROJECT_BOARD.md](PROJECT_BOARD.md) §5.1).
 
 - **사용자가 버튼을 눌렀을 때만 실행한다.** 보드를 열거나 새로고침할 때 자동으로 만들지 않는다.
-- 입력은 main 이 캐시한 보드 스냅샷의 에픽과 자손(키·제목·상태·담당·기한·발췌)뿐이다. 스냅샷에 없는 키나 에픽이 아닌 키는 거부한다.
+- 입력은 로컬 DB 에 저장된 현재 기본 프로젝트의 보드 스냅샷(`jira_board_issues`)의 에픽과 자손(키·제목·상태·담당·기한·발췌)뿐이다. 요약 때 Jira 를 다시 부르지 않는다. 스냅샷에 없는 키나 에픽이 아닌 키는 거부한다.
 - `runHeadlessJson`(`ai-headless.ts`)으로 `{ headline, bullets }` JSON 만 받는다. **도구 권한을 주지 않는다.**
   Jira 제목·설명은 신뢰할 수 없는 외부 입력이라(6절), 그 안의 지시문이 도구 호출로 이어지지 않게 한다.
-- 결과는 main 메모리에만 캐시한다. DB 에 쓰지 않고, Jira 에 되쓰지 않는다.
+- 요약 결과는 main 메모리에만 캐시한다. DB 에 쓰지 않고, Jira 에 되쓰지 않는다.
 - 화면은 요약에 "AI 요약 · 시각"을 붙여 Jira 원문과 섞이지 않게 한다.
 
 ## 9. 비용 가드레일 (과금 차단)

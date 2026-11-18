@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // better-sqlite3는 electron-builder가 Electron ABI로 빌드해 두므로 vitest가 도는 Node에서는
 // 네이티브 모듈을 로드할 수 없다(NODE_MODULE_VERSION 불일치). Node용으로 재빌드하면 앱이 깨지기
@@ -63,7 +63,9 @@ const jira = vi.hoisted(() => ({
   listIssuesByFixVersion: vi.fn(),
   getJiraIssueUrl: vi.fn(),
   listJiraVersions: vi.fn(),
-  getDefaultJiraProjectKey: vi.fn()
+  getDefaultJiraProjectKey: vi.fn(),
+  listUpdatedReleaseIssues: vi.fn(),
+  MAX_UPDATED_MINUTES: 7 * 24 * 60 + 10
 }))
 vi.mock('./jira', () => jira)
 
@@ -73,13 +75,17 @@ import {
   initDatabase,
   migrateReleaseNotesDropProject
 } from '../db/database'
-import type { JiraIssueSummary, JiraVersionSummary } from './jira'
+import type { JiraIssueSummary, JiraReleaseChangeIssue, JiraVersionSummary } from './jira'
 import {
   MAX_ISSUE_FETCH_PER_SYNC,
+  RELEASE_SYNC_CHECKED_KEY,
+  clearReleaseSyncCheckpoint,
   getReleaseNote,
   linkReleaseNote,
   listReleaseNotes,
+  planReleaseChanges,
   syncAllReleases,
+  syncReleaseChanges,
   syncReleaseNote
 } from './release-note-sync'
 
@@ -158,6 +164,7 @@ beforeEach(() => {
   jira.listIssuesByFixVersion.mockReset()
   jira.listJiraVersions.mockReset()
   jira.getDefaultJiraProjectKey.mockReset()
+  jira.listUpdatedReleaseIssues.mockReset()
 })
 
 describe('linkReleaseNote', () => {
@@ -613,6 +620,579 @@ describe('syncAllReleases — Jira 릴리스 전체를 가져온다', () => {
 
     expect(jira.listJiraVersions).toHaveBeenCalledTimes(2)
     expect(next.linked).toBe(1)
+  })
+})
+
+// ── 변경분 동기화 (syncReleaseChanges) ──
+
+function changeOf(
+  key: string,
+  fixVersionIds: string[],
+  overrides: Partial<JiraIssueSummary> = {}
+): JiraReleaseChangeIssue {
+  return { ...issueOf(key), ...overrides, fixVersionIds }
+}
+
+describe('planReleaseChanges — 변경분 계획(순수)', () => {
+  const target = (noteId: number, versionId: string, keys: string[]) => ({
+    noteId,
+    versionId,
+    items: keys.map((k) => ({
+      issue_key: k,
+      issue_type: 'Story',
+      status: '완료',
+      resolution: '해결됨',
+      summary: `${k} 요약`,
+      parent_key: null
+    }))
+  })
+
+  it('값이 같은 항목은 넣지 않고, 바뀌었거나 없는 항목만 upsert 한다', () => {
+    const plans = planReleaseChanges(
+      [changeOf('A-1', ['100']), changeOf('A-2', ['100'], { status: '진행 중' }), changeOf('A-3', ['100'])],
+      [target(1, '100', ['A-1', 'A-2'])]
+    )
+    expect(plans).toEqual([
+      { noteId: 1, upserts: [issueOf('A-2', { status: '진행 중' }), issueOf('A-3')], removes: [] }
+    ])
+  })
+
+  it('다른 버전으로 옮기면 원래 릴리스에서 지우고 새 릴리스에 넣는다. fixVersion 이 비면 지운다', () => {
+    const plans = planReleaseChanges(
+      [changeOf('A-1', ['200']), changeOf('A-2', [])],
+      [target(1, '100', ['A-1', 'A-2']), target(2, '200', [])]
+    )
+    expect(plans).toEqual([
+      { noteId: 1, upserts: [], removes: ['A-1', 'A-2'] },
+      { noteId: 2, upserts: [issueOf('A-1')], removes: [] }
+    ])
+  })
+
+  it('같은 키가 여러 번 오면 처음 것(최근 갱신)만 쓰고, 바뀐 것이 없으면 빈 배열이다', () => {
+    expect(
+      planReleaseChanges(
+        [changeOf('A-9', ['100'], { summary: '최신' }), changeOf('A-9', ['100'], { summary: '옛' })],
+        [target(1, '100', [])]
+      )[0].upserts.map((i) => i.summary)
+    ).toEqual(['최신'])
+    expect(planReleaseChanges([changeOf('Z-1', ['999'])], [target(1, '100', ['A-1'])])).toEqual([])
+  })
+})
+
+describe('syncReleaseChanges — 변경분 동기화', () => {
+  const V_A = versionOf({ id: '100', name: '4.2.0', releaseDate: '2026-11-20' })
+  const V_B = versionOf({ id: '101', name: '4.1.0', releaseDate: '2026-11-10' })
+  const T0 = new Date('2026-11-18T01:00:00.000Z')
+  const itemsByVersion: Record<string, JiraIssueSummary[]> = {}
+
+  function setNow(at: Date | number): void {
+    vi.setSystemTime(at)
+  }
+
+  /** 기준 시각(ISO). 값은 { projectKey, at } JSON 이다. 다른 프로젝트 것이면 undefined */
+  function checkedAt(projectKey = 'PROJ'): string | undefined {
+    const row = getDatabase()
+      .prepare('SELECT value FROM app_settings WHERE key = ?')
+      .get(RELEASE_SYNC_CHECKED_KEY) as { value: string } | undefined
+    if (!row) return undefined
+    const v = JSON.parse(row.value) as { projectKey: string; at: string }
+    return v.projectKey === projectKey ? v.at : undefined
+  }
+
+  function setCheckedAt(value: string): void {
+    getDatabase()
+      .prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)")
+      .run(RELEASE_SYNC_CHECKED_KEY, value)
+  }
+
+  function noteRow(versionId: string): { last_sync_error: string | null; last_synced_at: string | null } {
+    return getDatabase()
+      .prepare('SELECT last_sync_error, last_synced_at FROM release_notes WHERE jira_version_id = ?')
+      .get(versionId) as { last_sync_error: string | null; last_synced_at: string | null }
+  }
+
+  function noteOf(versionId: string): ReturnType<typeof getReleaseNote> {
+    const row = getDatabase()
+      .prepare('SELECT id FROM release_notes WHERE jira_version_id = ?')
+      .get(versionId) as { id: number } | undefined
+    return row ? getReleaseNote(row.id) : null
+  }
+
+  function itemKeys(versionId: string): string[] {
+    return noteOf(versionId)!.items.map((i) => i.issue_key)
+  }
+
+  function logCount(): number {
+    return (
+      getDatabase()
+        .prepare("SELECT COUNT(*) AS c FROM activity_log WHERE entity_name LIKE 'Jira 변경분 동기화%'")
+        .get() as { c: number }
+    ).c
+  }
+
+  /** 두 릴리스를 전체 동기화로 받아 둔다(기준 시각 = T0) */
+  async function seedSynced(versions: JiraVersionSummary[] = [V_A, V_B]): Promise<void> {
+    itemsByVersion['100'] = [issueOf('A-1'), issueOf('A-2')]
+    itemsByVersion['101'] = [issueOf('B-1')]
+    jira.getDefaultJiraProjectKey.mockReturnValue('PROJ')
+    jira.listJiraVersions.mockResolvedValue(versions)
+    jira.getJiraVersion.mockImplementation(async (id: string) => versions.find((v) => v.id === id))
+    jira.listIssuesByFixVersion.mockImplementation(async (id: string) => ({
+      issues: itemsByVersion[id] ?? [],
+      truncated: false
+    }))
+    jira.listUpdatedReleaseIssues.mockResolvedValue({ issues: [], truncated: false })
+    setNow(T0)
+    await syncAllReleases()
+    jira.listJiraVersions.mockClear()
+    jira.listIssuesByFixVersion.mockClear()
+    jira.getJiraVersion.mockClear()
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('변경분: 전체 동기화가 기준 시각(시작 시각)을 저장하고, 10분 이내면 Jira 없이 생략한다 (force 는 생략하지 않는다)', async () => {
+    await seedSynced()
+    expect(checkedAt()).toBe(T0.toISOString())
+
+    setNow(T0.getTime() + 9 * 60_000)
+    expect(await syncReleaseChanges()).toEqual({ mode: 'skipped', changed: [], linked: 0, metaUpdated: 0 })
+    expect(jira.listJiraVersions).not.toHaveBeenCalled()
+    expect(jira.listUpdatedReleaseIssues).not.toHaveBeenCalled()
+
+    const forced = await syncReleaseChanges({ force: true })
+    expect(forced.mode).toBe('incremental')
+    expect(jira.listUpdatedReleaseIssues).toHaveBeenCalledWith('PROJ', 19)
+  })
+
+  it('변경분: 기준 시각이 없으면 전체 동기화로 넘어간다', async () => {
+    await seedSynced()
+    clearReleaseSyncCheckpoint()
+    setNow(T0.getTime() + 60 * 60_000)
+
+    const r = await syncReleaseChanges()
+
+    expect(r.mode).toBe('full')
+    expect(r.full?.synced).toHaveLength(2)
+    expect(jira.listUpdatedReleaseIssues).not.toHaveBeenCalled()
+    expect(checkedAt()).toBe(new Date(T0.getTime() + 60 * 60_000).toISOString())
+  })
+
+  it('변경분: 기준 시각이 7일보다 오래되면 전체 동기화로 넘어간다', async () => {
+    await seedSynced()
+    setNow(T0.getTime() + 7 * 24 * 60 * 60_000 + 60_000)
+    expect((await syncReleaseChanges()).mode).toBe('full')
+    expect(jira.listUpdatedReleaseIssues).not.toHaveBeenCalled()
+  })
+
+  it('변경분: 바뀐 이슈 조회가 상한에 걸리면 전체 동기화로 넘어간다', async () => {
+    await seedSynced()
+    setNow(T0.getTime() + 30 * 60_000)
+    jira.listUpdatedReleaseIssues.mockResolvedValue({ issues: [changeOf('A-1', ['100'])], truncated: true })
+    const r = await syncReleaseChanges()
+    expect(r.mode).toBe('full')
+    expect(jira.listIssuesByFixVersion).toHaveBeenCalled()
+  })
+
+  it('변경분 조회가 실패하면 전체로 넘어가지 않고 throw 하며 DB 와 기준 시각은 그대로다', async () => {
+    await seedSynced()
+    const before = noteOf('100')
+    setNow(T0.getTime() + 30 * 60_000)
+    jira.listUpdatedReleaseIssues.mockRejectedValue(new Error('Jira API 오류 (500)'))
+
+    await expect(syncReleaseChanges()).rejects.toThrow('500')
+
+    expect(noteOf('100')).toEqual(before)
+    expect(checkedAt()).toBe(T0.toISOString())
+    expect(jira.listIssuesByFixVersion).not.toHaveBeenCalled()
+  })
+
+  it('변경분 upsert: 바뀐 항목은 갱신하고 새 항목은 sort_order 최댓값 + 1 로 붙이며 기준 시각을 옮긴다', async () => {
+    await seedSynced()
+    const start = T0.getTime() + 15 * 60_000 + 1
+    setNow(start)
+    jira.listUpdatedReleaseIssues.mockResolvedValue({
+      issues: [changeOf('A-1', ['100'], { status: '진행 중', summary: '새 요약' }), changeOf('A-3', ['100'])],
+      truncated: false
+    })
+
+    const r = await syncReleaseChanges()
+
+    // 15분 0.001초 → ceil 16분 + 여유 10분
+    expect(jira.listUpdatedReleaseIssues).toHaveBeenCalledWith('PROJ', 26)
+    expect(r).toEqual({
+      mode: 'incremental',
+      changed: [{ noteId: noteOf('100')!.id, version: '4.2.0', upserted: 2, removed: 0 }],
+      linked: 0,
+      metaUpdated: 0
+    })
+    const items = noteOf('100')!.items
+    expect(items.map((i) => [i.issue_key, i.status, i.summary, i.sort_order])).toEqual([
+      ['A-1', '진행 중', '새 요약', 0],
+      ['A-2', '완료', 'A-2 요약', 1],
+      ['A-3', '완료', 'A-3 요약', 2]
+    ])
+    expect(checkedAt()).toBe(new Date(start).toISOString())
+    // 버전 목록 1회 + 바뀐 이슈 1회. 릴리스별 이슈 재조회는 없다
+    expect(jira.listJiraVersions).toHaveBeenCalledTimes(1)
+    expect(jira.listIssuesByFixVersion).not.toHaveBeenCalled()
+  })
+
+  it('변경분: 다른 버전으로 옮긴 이슈는 원래 릴리스에서 지우고 새 릴리스에 넣는다', async () => {
+    await seedSynced()
+    setNow(T0.getTime() + 20 * 60_000)
+    jira.listUpdatedReleaseIssues.mockResolvedValue({ issues: [changeOf('A-2', ['101'])], truncated: false })
+
+    const r = await syncReleaseChanges()
+
+    expect(itemKeys('100')).toEqual(['A-1'])
+    expect(itemKeys('101')).toEqual(['B-1', 'A-2'])
+    expect(r.changed.map((c) => [c.version, c.upserted, c.removed])).toEqual([
+      ['4.2.0', 0, 1],
+      ['4.1.0', 1, 0]
+    ])
+  })
+
+  it('변경분: fixVersion 이 비워진 이슈는 항목에서 지운다', async () => {
+    await seedSynced()
+    setNow(T0.getTime() + 20 * 60_000)
+    jira.listUpdatedReleaseIssues.mockResolvedValue({ issues: [changeOf('B-1', [])], truncated: false })
+    await syncReleaseChanges()
+    expect(itemKeys('101')).toEqual([])
+    expect(itemKeys('100')).toEqual(['A-1', 'A-2'])
+  })
+
+  it('변경분: 이슈를 아직 받지 않은 릴리스는 건드리지 않고, 받아 둔 릴리스는 변경이 없어도 최신으로 표시한다 (직전 실패 릴리스는 제외)', async () => {
+    const V_C = versionOf({ id: '102', name: '4.0.0' })
+    await seedSynced([V_A, V_B])
+    const pending = linkReleaseNote('PROJ', V_C).id
+    jira.listJiraVersions.mockResolvedValue([V_A, V_B, V_C])
+    const db = getDatabase()
+    db.prepare("UPDATE release_notes SET last_synced_at = '2000-01-01 00:00:00' WHERE jira_version_id = '100'").run()
+    db.prepare("UPDATE release_notes SET last_synced_at = '2000-01-01 00:00:00', last_sync_error = '옛 오류' WHERE jira_version_id = '101'").run()
+    setNow(T0.getTime() + 20 * 60_000)
+    jira.listUpdatedReleaseIssues.mockResolvedValue({ issues: [changeOf('C-1', ['102'])], truncated: false })
+
+    const r = await syncReleaseChanges()
+
+    expect(getReleaseNote(pending)!.items).toEqual([])
+    expect(getReleaseNote(pending)!.last_synced_at).toBeNull()
+    expect(r.changed).toEqual([])
+    expect(noteOf('100')!.last_synced_at).not.toBe('2000-01-01 00:00:00')
+    // 직전 동기화가 실패한 릴리스는 오류와 시각을 그대로 둔다(행 동기화·전체 동기화가 정리)
+    expect(noteRow('101')).toEqual({ last_sync_error: '옛 오류', last_synced_at: '2000-01-01 00:00:00' })
+  })
+
+  it('변경분: 목록에 없던 버전은 연결해 그 릴리스만 전체로 받는다. 보관 버전은 가져오지 않는다', async () => {
+    await seedSynced()
+    const V_NEW = versionOf({ id: '103', name: '4.3.0' })
+    const V_OLD = versionOf({ id: '104', name: '3.0.0', archived: true })
+    itemsByVersion['103'] = [issueOf('N-1')]
+    jira.listJiraVersions.mockResolvedValue([V_NEW, V_A, V_B, V_OLD])
+    jira.getJiraVersion.mockImplementation(async (id: string) => [V_NEW, V_A, V_B, V_OLD].find((v) => v.id === id))
+    setNow(T0.getTime() + 20 * 60_000)
+
+    const r = await syncReleaseChanges()
+
+    expect(r.linked).toBe(1)
+    expect(itemKeys('103')).toEqual(['N-1'])
+    expect(noteOf('104')).toBeNull()
+    expect(jira.listIssuesByFixVersion.mock.calls).toEqual([['103']])
+  })
+
+  it('변경분: 이미 있는 릴리스의 메타만 바뀌면 메타만 갱신하고 이슈는 다시 받지 않는다', async () => {
+    await seedSynced()
+    jira.listJiraVersions.mockResolvedValue([{ ...V_A, name: '4.2.0 (hotfix)', released: true }, V_B])
+    setNow(T0.getTime() + 20 * 60_000)
+
+    const r = await syncReleaseChanges()
+
+    expect(r).toMatchObject({ mode: 'incremental', metaUpdated: 1, changed: [], linked: 0 })
+    const a = noteOf('100')!
+    expect([a.version_name, a.released]).toEqual(['4.2.0 (hotfix)', 1])
+    expect(a.items.map((i) => i.issue_key)).toEqual(['A-1', 'A-2'])
+    expect(jira.listIssuesByFixVersion).not.toHaveBeenCalled()
+    expect(jira.getJiraVersion).not.toHaveBeenCalled()
+  })
+
+  it('변경분: 변경이 없으면 활동 로그를 남기지 않고, 변경이 있으면 1건만 남긴다', async () => {
+    await seedSynced()
+    setNow(T0.getTime() + 20 * 60_000)
+    await syncReleaseChanges()
+    expect(logCount()).toBe(0)
+
+    setNow(T0.getTime() + 40 * 60_000)
+    jira.listUpdatedReleaseIssues.mockResolvedValue({
+      issues: [changeOf('A-1', ['100'], { status: '보류' }), changeOf('B-1', [])],
+      truncated: false
+    })
+    await syncReleaseChanges()
+    expect(logCount()).toBe(1)
+    const log = getDatabase()
+      .prepare("SELECT details FROM activity_log WHERE entity_name LIKE 'Jira 변경분 동기화%'")
+      .get() as { details: string }
+    expect(log.details).toContain('릴리스 2개')
+    expect(log.details).toContain('항목 갱신 1건')
+    expect(log.details).toContain('삭제 1건')
+  })
+
+  it('변경분과 전체 동기화는 겹치지 않는다 — 전체가 도는 중이면 그 결과를 함께 쓴다', async () => {
+    await seedSynced()
+    clearReleaseSyncCheckpoint()
+    setNow(T0.getTime() + 60_000)
+    const full = syncAllReleases()
+    const changes = syncReleaseChanges({ force: true })
+    const [f, c] = await Promise.all([full, changes])
+    expect(c).toEqual({ mode: 'full', changed: [], linked: f.linked, metaUpdated: 0, full: f })
+    expect(jira.listJiraVersions).toHaveBeenCalledTimes(1)
+    expect(jira.listUpdatedReleaseIssues).not.toHaveBeenCalled()
+  })
+
+  it('변경분 동기화가 도는 중에 전체 동기화를 부르면 끝난 뒤에 시작한다', async () => {
+    await seedSynced()
+    setNow(T0.getTime() + 20 * 60_000)
+    let release: () => void = () => undefined
+    jira.listUpdatedReleaseIssues.mockImplementation(
+      () => new Promise((r) => (release = () => r({ issues: [], truncated: false })))
+    )
+    const changes = syncReleaseChanges()
+    const full = syncAllReleases()
+    await vi.waitFor(() => expect(jira.listUpdatedReleaseIssues).toHaveBeenCalledTimes(1))
+    // 변경분이 버전 목록 1회를 썼고 전체는 아직 시작하지 않았다
+    expect(jira.listJiraVersions).toHaveBeenCalledTimes(1)
+    release()
+    await changes
+    await full
+    expect(jira.listJiraVersions).toHaveBeenCalledTimes(2)
+  })
+
+  /** 이미 받아 둔 릴리스 40개(상한)를 만든다. 가장 낮은 버전 id 는 '300' */
+  function fortyVersions(): JiraVersionSummary[] {
+    return Array.from({ length: MAX_ISSUE_FETCH_PER_SYNC }, (_, i) =>
+      versionOf({ id: String(300 + MAX_ISSUE_FETCH_PER_SYNC - 1 - i), name: `9.${MAX_ISSUE_FETCH_PER_SYNC - i}.0` })
+    )
+  }
+  const LOWEST = '300'
+  const HIGHER = versionOf({ id: '999', name: '99.0.0' })
+
+  /** 받아 둔 40개 위에 더 높은 버전을 끼워 가장 낮은 릴리스를 상한 밖(metaOnly)으로 민다 */
+  async function seedFortyThenPushLowestOut(): Promise<void> {
+    const forty = fortyVersions()
+    itemsByVersion[LOWEST] = [issueOf('L-1')]
+    await seedSynced(forty)
+    jira.listJiraVersions.mockResolvedValue([HIGHER, ...forty])
+    jira.getJiraVersion.mockImplementation(async (id: string) => [HIGHER, ...forty].find((v) => v.id === id))
+  }
+
+  it('변경분 R1: 이미 받아 둔 릴리스가 전체 동기화에서 실패하면 건너뛴 구간을 따로 메우고 기준 시각은 옮긴다. 변경분은 그 릴리스의 오류를 지우지 않는다', async () => {
+    await seedSynced()
+    jira.listIssuesByFixVersion.mockImplementation(async (id: string) => {
+      if (id === '101') throw new Error('timeout')
+      return { issues: itemsByVersion[id] ?? [], truncated: false }
+    })
+    const fullAt = T0.getTime() + 24 * 60 * 60_000
+    setNow(fullAt)
+    jira.listUpdatedReleaseIssues.mockResolvedValue({
+      issues: [changeOf('B-2', ['101'])],
+      truncated: false
+    })
+    const full = await syncAllReleases()
+
+    expect(full.failed.map((f) => f.version)).toEqual(['4.1.0'])
+    // 구간(T0 ~ 이번 시작) 조회 1회. 하루 + 여유 10분
+    expect(jira.listUpdatedReleaseIssues).toHaveBeenCalledTimes(1)
+    expect(jira.listUpdatedReleaseIssues).toHaveBeenCalledWith('PROJ', 24 * 60 + 10)
+    expect(itemKeys('101')).toEqual(['B-1', 'B-2'])
+    // 실패 릴리스는 오류가 남아 "최신"으로 보이지 않는다
+    expect(noteRow('101').last_sync_error).toBe('timeout')
+    // 기준 시각은 항상 이번 시작 시각으로 옮긴다
+    expect(checkedAt()).toBe(new Date(fullAt).toISOString())
+
+    const bBefore = noteRow('101')
+    setNow(fullAt + 11 * 60_000)
+    jira.listUpdatedReleaseIssues.mockResolvedValue({ issues: [], truncated: false })
+    const r = await syncReleaseChanges()
+    expect(r.mode).toBe('incremental')
+    expect(noteRow('101')).toEqual(bBefore)
+    expect(noteRow('100').last_sync_error).toBeNull()
+  })
+
+  it('변경분 (b): 기준 시각 1일 전 + 받아 둔 릴리스가 보류(metaOnly)되면 구간 조회 1회로 그 릴리스의 변경을 반영하고 최신으로 둔다', async () => {
+    await seedFortyThenPushLowestOut()
+    const fullAt = T0.getTime() + 24 * 60 * 60_000
+    setNow(fullAt)
+    jira.listUpdatedReleaseIssues.mockResolvedValue({
+      issues: [changeOf('L-1', [LOWEST], { status: '보류' }), changeOf('L-2', [LOWEST]), changeOf('X-9', ['301'])],
+      truncated: false
+    })
+    getDatabase().prepare("UPDATE release_notes SET last_synced_at = '2000-01-01 00:00:00' WHERE jira_version_id = ?").run(LOWEST)
+
+    const full = await syncAllReleases()
+
+    expect(full.metaOnly.map((m) => m.version)).toEqual(['9.1.0'])
+    expect(jira.listUpdatedReleaseIssues).toHaveBeenCalledTimes(1)
+    expect(jira.listUpdatedReleaseIssues).toHaveBeenCalledWith('PROJ', 24 * 60 + 10)
+    const lowest = noteOf(LOWEST)!
+    expect(lowest.items.map((i) => [i.issue_key, i.status])).toEqual([
+      ['L-1', '보류'],
+      ['L-2', '완료']
+    ])
+    expect(lowest.last_synced_at).not.toBe('2000-01-01 00:00:00')
+    // 구간 조회는 보류된 릴리스에만 적용한다(301 은 이번에 전체로 다시 받았다)
+    expect(itemKeys('301')).not.toContain('X-9')
+    expect(checkedAt()).toBe(new Date(fullAt).toISOString())
+  })
+
+  it('변경분 (c): 구간 조회가 실패하면 그 릴리스를 변경분 대상에서 빼고(최신 아님) 항목은 남긴다', async () => {
+    await seedFortyThenPushLowestOut()
+    setNow(T0.getTime() + 60 * 60_000)
+    jira.listUpdatedReleaseIssues.mockRejectedValueOnce(new Error('Jira API 오류 (500)'))
+    await syncAllReleases()
+
+    const lowest = noteOf(LOWEST)!
+    expect(lowest.last_synced_at).toBeNull()
+    expect(lowest.last_sync_error).toBeNull()
+    expect(lowest.items.map((i) => i.issue_key)).toEqual(['L-1'])
+
+    // 다음 변경분은 그 릴리스를 건드리지 않는다
+    setNow(T0.getTime() + 60 * 60_000 + 11 * 60_000)
+    jira.listUpdatedReleaseIssues.mockResolvedValue({ issues: [changeOf('L-9', [LOWEST])], truncated: false })
+    await syncReleaseChanges()
+    expect(itemKeys(LOWEST)).toEqual(['L-1'])
+    expect(noteOf(LOWEST)!.last_synced_at).toBeNull()
+  })
+
+  it('변경분 (c): 옛 기준 시각이 없으면 구간 조회 없이 그 릴리스를 변경분 대상에서 뺀다', async () => {
+    await seedFortyThenPushLowestOut()
+    clearReleaseSyncCheckpoint()
+    setNow(T0.getTime() + 60 * 60_000)
+    await syncAllReleases()
+    expect(jira.listUpdatedReleaseIssues).not.toHaveBeenCalled()
+    expect(noteOf(LOWEST)!.last_synced_at).toBeNull()
+    expect(itemKeys(LOWEST)).toEqual(['L-1'])
+    expect(checkedAt()).toBe(new Date(T0.getTime() + 60 * 60_000).toISOString())
+  })
+
+  it('변경분 (a): 기준 시각 8일 전 + 받아 둔 41번째 릴리스가 있어도 고착되지 않는다 — 두 번째 호출은 full 이 아니다', async () => {
+    await seedFortyThenPushLowestOut()
+    const start = T0.getTime() + 8 * 24 * 60 * 60_000
+    setNow(start)
+    const first = await syncReleaseChanges()
+    expect(first.mode).toBe('full')
+    // 8일 전 기준은 메울 수 없다 → 최신 아님으로 드러낸다(항목은 남는다)
+    expect(noteOf(LOWEST)!.last_synced_at).toBeNull()
+    expect(itemKeys(LOWEST)).toEqual(['L-1'])
+
+    setNow(start + 5 * 60_000)
+    expect((await syncReleaseChanges()).mode).toBe('skipped')
+    expect((await syncReleaseChanges({ force: true })).mode).toBe('incremental')
+  })
+
+  it('변경분 (d): 계속 실패하는 버전이 있어도 고착되지 않는다', async () => {
+    await seedSynced()
+    jira.listIssuesByFixVersion.mockImplementation(async (id: string) => {
+      if (id === '101') throw new Error('권한 없음')
+      return { issues: itemsByVersion[id] ?? [], truncated: false }
+    })
+    const start = T0.getTime() + 8 * 24 * 60 * 60_000
+    setNow(start)
+    expect((await syncReleaseChanges()).mode).toBe('full')
+    expect(noteRow('101').last_sync_error).toBe('권한 없음')
+    setNow(start + 11 * 60_000)
+    expect((await syncReleaseChanges()).mode).toBe('incremental')
+    setNow(start + 22 * 60_000)
+    expect((await syncReleaseChanges()).mode).toBe('incremental')
+  })
+
+  it('변경분 (e): 기다린 변경분이 전체로 넘어가 끝났으면 전체 동기화는 그 결과를 그대로 쓴다', async () => {
+    await seedSynced()
+    setNow(T0.getTime() + 30 * 60_000)
+    let release: () => void = () => undefined
+    jira.listUpdatedReleaseIssues.mockImplementationOnce(
+      () => new Promise((r) => (release = () => r({ issues: [], truncated: true })))
+    )
+    const changes = syncReleaseChanges()
+    await vi.waitFor(() => expect(jira.listUpdatedReleaseIssues).toHaveBeenCalledTimes(1))
+    const full = syncAllReleases()
+    release()
+    const [c, f] = await Promise.all([changes, full])
+
+    expect(c.mode).toBe('full')
+    expect(f).toBe(c.full)
+    // 변경분의 버전 목록 1회 + 전체 1회. 전체가 두 번 돌지 않는다
+    expect(jira.listJiraVersions).toHaveBeenCalledTimes(2)
+  })
+
+  it('변경분: 기준 시각이 없으면 전체 동기화가 실패를 담아도 시작 시각을 기준으로 둔다', async () => {
+    jira.getDefaultJiraProjectKey.mockReturnValue('PROJ')
+    jira.listJiraVersions.mockResolvedValue([V_A])
+    jira.getJiraVersion.mockRejectedValue(new Error('403'))
+    jira.listIssuesByFixVersion.mockResolvedValue({ issues: [], truncated: false })
+    setNow(T0)
+    const full = await syncAllReleases()
+    expect(full.failed).toHaveLength(1)
+    expect(checkedAt()).toBe(T0.toISOString())
+  })
+
+  it('변경분: 기준 시각이 다른 프로젝트 것이거나 옛 형식이면 없는 것으로 보고 전체로 넘어간다', async () => {
+    await seedSynced()
+    setNow(T0.getTime() + 30 * 60_000)
+    setCheckedAt(JSON.stringify({ projectKey: 'OTHER', at: T0.toISOString() }))
+    expect((await syncReleaseChanges()).mode).toBe('full')
+
+    setNow(T0.getTime() + 60 * 60_000)
+    setCheckedAt(T0.toISOString())
+    expect((await syncReleaseChanges()).mode).toBe('full')
+    expect(jira.listUpdatedReleaseIssues).not.toHaveBeenCalled()
+  })
+
+  it('변경분: 기준 시각을 지운 뒤 끝난 옛 동기화는 기준 시각을 되살리지 않는다', async () => {
+    await seedSynced()
+    clearReleaseSyncCheckpoint()
+    setNow(T0.getTime() + 60_000)
+    let release: () => void = () => undefined
+    jira.listJiraVersions.mockImplementationOnce(() => new Promise((r) => (release = () => r([V_A, V_B]))))
+    const run = syncAllReleases()
+    await vi.waitFor(() => expect(jira.listJiraVersions).toHaveBeenCalledTimes(1))
+    clearReleaseSyncCheckpoint()
+    release()
+    await run
+    expect(checkedAt()).toBeUndefined()
+  })
+
+  it('변경분 R2: 변경분이 전체로 넘어간 동안 들어온 전체 동기화는 같은 실행을 함께 쓴다', async () => {
+    jira.getDefaultJiraProjectKey.mockReturnValue('PROJ')
+    let release: () => void = () => undefined
+    jira.listJiraVersions.mockImplementation(() => new Promise((r) => (release = () => r([V_A]))))
+    jira.getJiraVersion.mockResolvedValue(V_A)
+    jira.listIssuesByFixVersion.mockResolvedValue({ issues: [], truncated: false })
+    setNow(T0)
+
+    const changes = syncReleaseChanges() // 기준 없음 → 전체
+    const full = syncAllReleases()
+    await vi.waitFor(() => expect(jira.listJiraVersions).toHaveBeenCalledTimes(1))
+    release()
+    const [c, f] = await Promise.all([changes, full])
+
+    expect(c.mode).toBe('full')
+    expect(c.full).toBe(f)
+    expect(jira.listJiraVersions).toHaveBeenCalledTimes(1)
+    expect(jira.getJiraVersion).toHaveBeenCalledTimes(1)
+  })
+
+  it('변경분 R3: 기준 시각이 미래면(시계가 뒤로 감) 조회 기간을 믿지 않고 전체로 넘어간다', async () => {
+    await seedSynced()
+    setCheckedAt(JSON.stringify({ projectKey: 'PROJ', at: new Date(T0.getTime() + 60 * 60_000).toISOString() }))
+    setNow(T0)
+    const r = await syncReleaseChanges({ force: true })
+    expect(r.mode).toBe('full')
+    expect(jira.listUpdatedReleaseIssues).not.toHaveBeenCalled()
   })
 })
 

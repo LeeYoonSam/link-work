@@ -1,9 +1,8 @@
 import { useEffect, useRef } from 'react'
 import Sidebar from './components/layout/Sidebar'
 import Header from './components/layout/Header'
-import ProjectBoardView from './components/project/ProjectBoardView'
+import ProjectsPage from './components/project/ProjectsPage'
 import CalendarView from './components/calendar/CalendarView'
-import DocumentList from './components/document/DocumentList'
 import VariableList from './components/variable/VariableList'
 import MemoView from './components/memo/MemoView'
 import TodoView from './components/todo/TodoView'
@@ -12,7 +11,6 @@ import TrayPanel from './components/tray/TrayPanel'
 import AiChatView from './components/ai/AiChatView'
 import RecordingView from './components/recording/RecordingView'
 import MeetingNotesView from './components/notes/MeetingNotesView'
-import ReleasesView from './components/release/ReleasesView'
 import TodayView from './components/today/TodayView'
 import SettingsView from './components/settings/SettingsView'
 import { useNavigationStore } from './stores/navigationStore'
@@ -97,11 +95,9 @@ function App(): React.ReactNode {
       case 'today':
         return <TodayView />
       case 'projects':
-        return <ProjectBoardView />
+        return <ProjectsPage />
       case 'todos':
         return <TodoView />
-      case 'documents':
-        return <DocumentList />
       case 'variables':
         return <VariableList />
       case 'memos':
@@ -116,8 +112,6 @@ function App(): React.ReactNode {
         return <RecordingView />
       case 'notes':
         return <MeetingNotesView />
-      case 'releases':
-        return <ReleasesView />
       case 'settings':
         return <SettingsView />
       default:
