@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { format } from 'date-fns'
 import type { Memo } from '../../types'
 
 // 홈('오늘' 화면)의 중요 메모 구역을 마크업으로 잠근다 (메뉴 통합 D1).
@@ -40,8 +41,18 @@ describe('HomeMemos 중요 메모', () => {
     expect(html).toContain('id="home-overview"')
     expect(html).toContain('중요 메모')
     expect(html).toContain('배포 동결 기간 확인')
-    expect(html).toContain('11/2 09:15')
+    // created_at 은 datetime('now') 로 저장한 UTC 다. 로컬 시각으로 바꿔 보인다(한국이면 18:15)
+    expect(html).toContain(format(new Date(Date.UTC(2026, 10, 2, 9, 15, 0)), 'M/d HH:mm'))
     expect(html).not.toMatch(/\d{4}-\d{2}-\d{2}/)
+  })
+
+  it('UTC 저장 시각을 로컬로 읽지 않는다 (9시간 어긋남 회귀 방지)', () => {
+    state.importantMemos = [memo({ id: 1, content: '시각 확인', created_at: '2026-11-02 23:30:00' })]
+    const html = render()
+    expect(html).toContain(format(new Date(Date.UTC(2026, 10, 2, 23, 30, 0)), 'M/d HH:mm'))
+    // 로컬로 잘못 읽은 값은 UTC 가 아닌 시간대에서만 달라진다
+    const wrong = format(new Date('2026-11-02T23:30:00'), 'M/d HH:mm')
+    if (new Date('2026-11-02T23:30:00').getTimezoneOffset() !== 0) expect(html).not.toContain(wrong)
   })
 
   it('중요 메모가 0건이면 아무것도 그리지 않는다', () => {
