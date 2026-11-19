@@ -18,7 +18,7 @@ export const GOOGLE_CONNECT_STEPS: string[] = [
   '처음이면 "API 및 서비스 > 라이브러리"에서 Google Calendar API 를 사용 설정하고 OAuth 동의 화면을 만듭니다. 회사 계정은 "내부", 개인 계정은 "외부"로 하고 테스트 사용자에 본인을 추가합니다.',
   '"사용자 인증 정보 만들기 > OAuth 클라이언트 ID"에서 유형을 "웹 애플리케이션"으로 고릅니다.',
   '만들어진 Client ID 와 Client Secret 을 아래에 붙여 넣고 [저장 후 Google 로그인]을 누릅니다.',
-  '로그인 창에서 일정을 가져올 Google 계정을 고르고 캘린더 읽기를 허용합니다. 그 계정의 기본 캘린더만 읽습니다.'
+  '로그인 창에서 일정을 가져올 Google 계정을 고르고 캘린더 읽기를 허용합니다. 처음에는 그 계정의 기본 캘린더만 읽습니다. 연결 후 카드의 "가져올 캘린더"에서 다른 캘린더를 더 고를 수 있습니다.'
 ]
 
 export interface GoogleCalendarConnectDialogProps {

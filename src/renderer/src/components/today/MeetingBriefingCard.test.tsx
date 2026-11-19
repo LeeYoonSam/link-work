@@ -1,20 +1,20 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { AssistantEvent, MeetingBriefingPayload, TimelineEntry } from '../../types'
-import MeetingBriefingCard, {
+import type { AssistantEvent, MeetingBriefingPayload } from '../../types'
+import {
+  MeetingBriefingBody,
   briefingBadge,
+  briefingsByMeetingId,
   dropLeadingTitle,
   meetingBriefings,
-  meetingKey,
   meetingStarted,
   nearestUpcomingEventId,
   parseMeetingPayload,
-  splitBriefingsByTimeline,
   type MeetingBriefingRow
 } from './MeetingBriefingCard'
 
-// 회의 전 브리핑 카드 (docs/ASSISTANT.md 부록 I.10.1·I.11.11).
-// 자동 클릭 검증은 불가하다. renderToStaticMarkup 으로 4가지 상태를 그린다
+// 회의 전 브리핑 조각 (docs/ASSISTANT.md 부록 I.10.1·I.11.11, 부록 O).
+// 대시보드에서는 일정 카드의 회의 행 아래에 본문(MeetingBriefingBody)만 펼친다
 
 const basePayload = (over: Partial<MeetingBriefingPayload> = {}): MeetingBriefingPayload => ({
   meeting: {
@@ -59,62 +59,45 @@ const rowOf = (p: MeetingBriefingPayload, id = 7): MeetingBriefingRow => ({
 })
 
 const render = (
-  rows: MeetingBriefingRow[],
-  opts: {
-    now?: string
-    regeneratingIds?: number[]
-    canRegenerate?: boolean
-    title?: string
-    expandedEventId?: number | null
-  } = {}
+  row: MeetingBriefingRow,
+  opts: { regenerating?: boolean; canRegenerate?: boolean } = {}
 ): string =>
   renderToStaticMarkup(
-    <MeetingBriefingCard
-      rows={rows}
-      now={opts.now ?? '2026-11-02 10:50:00'}
-      regeneratingIds={opts.regeneratingIds ?? []}
+    <MeetingBriefingBody
+      row={row}
+      regenerating={opts.regenerating ?? false}
       canRegenerate={opts.canRegenerate ?? true}
       onRegenerate={() => {}}
-      title={opts.title}
-      expandedEventId={opts.expandedEventId}
     />
   )
 
-describe('MeetingBriefingCard 4상태 렌더링', () => {
-  it('규칙만: 규칙 브리핑 배지와 규칙 본문을 보이고 행 루트 id 는 meeting-briefing-<eventId> 다', () => {
-    const html = render([rowOf(basePayload())])
-    expect(html).toContain('id="meeting-briefing-7"')
-    expect(html).toContain('회의 브리핑')
-    expect(html).toContain('11:00')
-    expect(html).toContain('결제 주간 회의')
+describe('MeetingBriefingBody 4상태 렌더링', () => {
+  it('규칙만: 규칙 브리핑 배지와 규칙 본문(첫 줄 제목 제외)을 보인다', () => {
+    const html = render(rowOf(basePayload()))
     expect(html).toContain('규칙 브리핑')
     expect(html).not.toContain('AI 브리핑')
     expect(html).toContain('환불 정책 확정')
+    expect(html).not.toContain('<h1')
     expect(html).toContain('다시 만들기')
     expect(html).not.toContain('만드는 중')
   })
 
   it('pending: AI 브리핑 만드는 중… 을 보이고 규칙 본문을 그대로 둔다', () => {
-    const html = render([rowOf(basePayload({ llmStatus: 'pending' }))])
-    expect(html).toContain('meeting-briefing-7')
+    const html = render(rowOf(basePayload({ llmStatus: 'pending' })))
     expect(html).toContain('AI 브리핑 만드는 중…')
     expect(html).toContain('규칙 브리핑')
     expect(html).toContain('환불 정책 확정')
   })
 
   it('failed: amber 경고에 오류를 보이고 규칙 본문을 그대로 둔다', () => {
-    const html = render([
-      rowOf(basePayload({ llmStatus: 'failed', llmError: '응답 형식이 맞지 않습니다' }))
-    ])
-    expect(html).toContain('meeting-briefing-7')
+    const html = render(rowOf(basePayload({ llmStatus: 'failed', llmError: '응답 형식이 맞지 않습니다' })))
     expect(html).toContain('AI 브리핑을 마치지 못했어요. 응답 형식이 맞지 않습니다')
     expect(html).toContain('bg-amber-50')
-    expect(html).toContain('규칙 브리핑')
     expect(html).toContain('환불 정책 확정')
   })
 
   it('done: AI 브리핑 배지와 LLM 본문을 보인다', () => {
-    const html = render([
+    const html = render(
       rowOf(
         basePayload({
           llmStatus: 'done',
@@ -123,78 +106,22 @@ describe('MeetingBriefingCard 4상태 렌더링', () => {
           llmAt: '2026-11-02 10:45:30'
         })
       )
-    ])
-    expect(html).toContain('meeting-briefing-7')
+    )
     expect(html).toContain('AI 브리핑')
     expect(html).not.toContain('규칙 브리핑')
     expect(html).toContain('환불 API 일정 확인')
     expect(html).not.toContain('환불 정책 확정')
   })
-})
 
-describe('MeetingBriefingCard 동작', () => {
-  it('행이 없으면 카드를 그리지 않는다', () => {
-    expect(render([])).toBe('')
-  })
-
-  it('회의 시작이 지났으면 기본으로 접힌다', () => {
-    const html = render([rowOf(basePayload())], { now: '2026-11-02 11:30:00' })
-    expect(html).toContain('meeting-briefing-7')
-    expect(html).toContain('펼치기')
-    expect(html).not.toContain('환불 정책 확정')
-  })
-
-  it('날짜를 넘는 회의: 23:50 에 다음 날 00:30 회의는 시작 전이라 펼친다', () => {
-    const p = basePayload({
-      meeting: { id: 'cal-1', title: '결제 주간 회의', startAt: '2026-11-03 00:30:00', endAt: '2026-11-03 01:00:00' }
-    })
-    const html = render([rowOf(p)], { now: '2026-11-02 23:50:00' })
-    expect(html).toContain('접기')
-    expect(html).toContain('환불 정책 확정')
-  })
-
-  it('A53 시작 전 회의 중 가장 가까운 1건만 펼치고 나머지와 지난 회의는 접는다', () => {
-    const at = (id: string, startAt: string): MeetingBriefingPayload =>
-      basePayload({ meeting: { id, title: `회의 ${id}`, startAt, endAt: startAt } })
-    const rows = [
-      rowOf(at('a', '2026-11-02 10:00:00'), 1),
-      rowOf(at('b', '2026-11-02 14:00:00'), 2),
-      rowOf(at('c', '2026-11-02 11:00:00'), 3)
-    ]
-    const html = render(rows, { now: '2026-11-02 10:50:00' })
-    const row = (id: number): string => {
-      const start = html.indexOf(`id="meeting-briefing-${id}"`)
-      const next = html.indexOf('id="meeting-briefing-', start + 1)
-      return html.slice(start, next === -1 ? undefined : next)
-    }
-    // 1 은 시작이 지났다. 3 이 가장 가깝다. 2 는 그다음이다
-    expect(row(1)).toContain('펼치기')
-    expect(row(1)).not.toContain('환불 정책 확정')
-    expect(row(3)).toContain('접기')
-    expect(row(3)).toContain('환불 정책 확정')
-    expect(row(2)).toContain('펼치기')
-    expect(row(2)).not.toContain('환불 정책 확정')
-  })
-
-  it('다시 만들기: canRegenerate 가 false 면 숨긴다', () => {
-    expect(render([rowOf(basePayload())], { canRegenerate: false })).not.toContain('다시 만들기')
-  })
-
-  it('다시 만들기: 다시 만드는 중인 행의 버튼만 비활성이다', () => {
-    const html = render([rowOf(basePayload(), 7), rowOf(basePayload(), 8)], { regeneratingIds: [8] })
-    const row = (id: number): string => {
-      const start = html.indexOf(`id="meeting-briefing-${id}"`)
-      const next = html.indexOf('id="meeting-briefing-', start + 1)
-      return html.slice(start, next === -1 ? undefined : next)
-    }
-    const disabledBtn = /<button[^>]*disabled=""[^>]*>다시 만들기<\/button>/
-    expect(row(7)).toContain('다시 만들기')
-    expect(row(7)).not.toMatch(disabledBtn)
-    expect(row(8)).toMatch(disabledBtn)
+  it('다시 만들기: canRegenerate 가 false 면 숨기고, 다시 만드는 중이면 비활성이다', () => {
+    expect(render(rowOf(basePayload()), { canRegenerate: false })).not.toContain('다시 만들기')
+    expect(render(rowOf(basePayload()), { regenerating: true })).toMatch(
+      /<button[^>]*disabled=""[^>]*>다시 만들기<\/button>/
+    )
   })
 })
 
-describe('MeetingBriefingCard 순수 헬퍼', () => {
+describe('회의 브리핑 순수 헬퍼', () => {
   it('meetingBriefings: meeting_briefing 의 sent·late·failed 만 scheduled_at 오름차순으로 고른다', () => {
     const rows = meetingBriefings([
       event({ id: 1, scheduled_at: '2026-11-02 14:45:00' }),
@@ -263,117 +190,18 @@ describe('dropLeadingTitle', () => {
   })
 
   it('펼친 규칙 브리핑에는 h1 이 없고 h2 소제목은 작게 그린다', () => {
-    const html = render([rowOf(basePayload())])
+    const html = render(rowOf(basePayload()))
     expect(html).not.toContain('<h1')
     expect(html).toContain('<h2')
     expect(html).toContain('[&amp;_h2]:text-xs')
   })
-})
 
-describe('2차 개편: 시간표 짝짓기와 제목 줄바꿈 (부록 L.8, 완료 조건 6)', () => {
-  const at = (id: number, title: string, startAt: string): MeetingBriefingRow =>
-    rowOf(basePayload({ meeting: { id: `cal-${id}`, title, startAt, endAt: startAt } }), id)
-  const meeting = (start: string, title: string): TimelineEntry => ({
-    kind: 'meeting',
-    start,
-    end: start,
-    title
-  })
-  const block: TimelineEntry = {
-    kind: 'block',
-    start: '09:00',
-    end: '10:00',
-    minutes: 60,
-    state: 'past',
-    itemId: null,
-    reason: null,
-    continued: false
-  }
-
-  it('meetingKey: HH:mm 과 제목을 | 로 잇는다', () => {
-    expect(meetingKey('11:00', '결제 주간 회의')).toBe('11:00|결제 주간 회의')
-  })
-
-  it('splitBriefingsByTimeline: 시작 HH:mm 과 제목이 같으면 짝이고 나머지는 unmatched 다', () => {
-    const rows = [
-      at(1, '결제 주간 회의', '2026-11-02 11:00:00'),
-      // 제목은 같고 시각이 다르다
-      at(2, '결제 주간 회의', '2026-11-02 15:00:00'),
-      // 시각은 같고 제목이 다르다
-      at(3, '디자인 리뷰', '2026-11-02 11:00:00'),
-      at(4, '디자인 리뷰', '2026-11-02 14:00:00'),
-      // 시간표에 없는 회의다
-      at(5, '외부 미팅', '2026-11-02 13:00:00')
-    ]
-    const entries = [
-      block,
-      meeting('11:00', '결제 주간 회의'),
-      meeting('14:00', '디자인 리뷰'),
-      meeting('16:00', '브리핑 없는 회의')
-    ]
-    const { matched, unmatched } = splitBriefingsByTimeline(rows, entries)
-    expect([...matched.keys()].sort()).toEqual(['11:00|결제 주간 회의', '14:00|디자인 리뷰'])
-    expect(matched.get(meetingKey('11:00', '결제 주간 회의'))?.event.id).toBe(1)
-    expect(matched.get(meetingKey('14:00', '디자인 리뷰'))?.event.id).toBe(4)
-    // 입력 순서를 유지한다
-    expect(unmatched.map((r) => r.event.id)).toEqual([2, 3, 5])
-  })
-
-  it('splitBriefingsByTimeline: 한 키에는 1건만 짝짓고 startAt 이 빈 행은 unmatched 다', () => {
-    const rows = [
-      at(1, '결제 주간 회의', '2026-11-02 11:00:00'),
-      at(2, '결제 주간 회의', '2026-11-02 11:00:00'),
-      at(3, '결제 주간 회의', '')
-    ]
-    const { matched, unmatched } = splitBriefingsByTimeline(rows, [meeting('11:00', '결제 주간 회의')])
-    expect(matched.size).toBe(1)
-    expect(matched.get('11:00|결제 주간 회의')?.event.id).toBe(1)
-    expect(unmatched.map((r) => r.event.id)).toEqual([2, 3])
-  })
-
-  it('splitBriefingsByTimeline: 시간표가 비면 모두 unmatched 다', () => {
-    const rows = [at(1, '결제 주간 회의', '2026-11-02 11:00:00')]
-    const { matched, unmatched } = splitBriefingsByTimeline(rows, [])
-    expect(matched.size).toBe(0)
-    expect(unmatched).toEqual(rows)
-  })
-
-  it('카드의 회의 제목은 truncate 하지 않고 줄바꿈한다 (V7)', () => {
-    const long = '[결제] 환불 정책 확정과 다음 분기 정산 일정 조율을 위한 주간 회의'
-    const html = render([at(7, long, '2026-11-02 11:00:00')], { now: '2026-11-02 11:30:00' })
-    expect(html).toContain(long)
-    expect(html).not.toContain('truncate')
-    expect(html).toContain('break-words')
-  })
-
-  it('title prop: 기본은 회의 브리핑이고 주면 그 제목을 쓴다', () => {
-    const rows = [rowOf(basePayload())]
-    expect(render(rows)).toContain('>회의 브리핑<')
-    const other = render(rows, { title: '기타 회의 브리핑' })
-    expect(other).toContain('>기타 회의 브리핑<')
-    expect(other).not.toContain('>회의 브리핑<')
-  })
-
-  it('expandedEventId: 주면 nearest 를 다시 계산하지 않고 그 id 만 펼친다. null 이면 모두 접는다', () => {
-    const rows = [at(1, '가까운 회의', '2026-11-02 11:00:00'), at(2, '나중 회의', '2026-11-02 14:00:00')]
-    const row = (html: string, id: number): string => {
-      const start = html.indexOf(`id="meeting-briefing-${id}"`)
-      const next = html.indexOf('id="meeting-briefing-', start + 1)
-      return html.slice(start, next === -1 ? undefined : next)
-    }
-    // 기본: 가장 가까운 1 만 펼친다
-    const base = render(rows)
-    expect(row(base, 1)).toContain('접기')
-    expect(row(base, 2)).toContain('펼치기')
-    // 2 를 주면 2 만 펼친다
-    const forced = render(rows, { expandedEventId: 2 })
-    expect(row(forced, 1)).toContain('펼치기')
-    expect(row(forced, 1)).not.toContain('환불 정책 확정')
-    expect(row(forced, 2)).toContain('접기')
-    expect(row(forced, 2)).toContain('환불 정책 확정')
-    // null 이면 펼친 행이 없다. 이유: 펼칠 1건이 시간표에 있다
-    const none = render(rows, { expandedEventId: null })
-    expect(none).not.toContain('>접기<')
-    expect(none).not.toContain('환불 정책 확정')
+  it('briefingsByMeetingId: 캘린더 일정 id 로 묶고 같은 id 는 뒤 행이 남는다', () => {
+    const p = (id: string): MeetingBriefingPayload =>
+      basePayload({ meeting: { id, title: id, startAt: '2026-11-02 11:00:00', endAt: '' } })
+    const map = briefingsByMeetingId([rowOf(p('cal-a'), 1), rowOf(p('cal-b'), 2), rowOf(p('cal-a'), 3)])
+    expect(map.get('cal-a')?.event.id).toBe(3)
+    expect(map.get('cal-b')?.event.id).toBe(2)
+    expect(map.size).toBe(2)
   })
 })

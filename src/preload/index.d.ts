@@ -1,5 +1,5 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
-import type { CalendarAPI, TrayAPI, VariableAPI, MemoAPI, MemoCategoryAPI, ReportAPI, TodoAPI, TodoTagAPI, AiAPI, ExportAPI, ReleaseNoteAPI, JiraAPI, JiraBoardAPI, MorningSyncAPI, MeetingNotesAPI, AssistantAPI, AssistantNavigateEvent, AssistantResult } from '../renderer/src/types'
+import type { CalendarAPI, TrayAPI, VariableAPI, MemoAPI, MemoCategoryAPI, ReportAPI, TodoAPI, TodoTagAPI, AiAPI, ExportAPI, ReleaseNoteAPI, JiraAPI, JiraBoardAPI, MorningSyncAPI, MeetingNotesAPI, TodayAPI, AssistantAPI, AssistantNavigateEvent, AssistantResult } from '../renderer/src/types'
 
 // takePendingNavigate 는 오래된 preload 에 없을 수 있다. 그래서 선택 속성으로 둔다
 type AssistantBridge = AssistantAPI & {
@@ -26,6 +26,7 @@ declare global {
       morningSync: MorningSyncAPI
       meetingNotes: MeetingNotesAPI
       assistant: AssistantBridge
+      today: TodayAPI
     }
   }
 }

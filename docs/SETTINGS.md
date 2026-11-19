@@ -1,7 +1,7 @@
 # 설정 화면
 
 흩어져 있던 설정(연동 4개, AI, 비서, 회의 녹음 보조, 백업)을 한 화면에 모은다.
-저장 키와 기존 IPC 는 바꾸지 않았다. 새 IPC 는 연결 테스트용 1개뿐이다.
+저장 키와 기존 IPC 는 바꾸지 않았다. 새 IPC 는 연결 테스트용 1개(`settings:verifyIntegration`)와 가져올 캘린더용 3개(`calendar:listCalendars`·`calendar:setSelectedCalendars`·`calendar:range`, [가져올 캘린더](#가져올-캘린더))다.
 
 ## 진입 경로
 
@@ -32,9 +32,9 @@
 
 | 섹션 | 한 줄 설명 | 내용 |
 |---|---|---|
-| 연동 | 캘린더, Jira, Bitbucket, Notion을 연결합니다 | 카드 4개(Google 캘린더, Jira + 기본 프로젝트 select, Bitbucket, Notion). 위쪽에 [모두 다시 확인]. Jira 가 연결돼 있으면 기본 프로젝트 목록을 화면에 들어올 때 한 번 가져온다 |
+| 연동 | 캘린더, Jira, Bitbucket, Notion을 연결합니다 | 카드 4개(Google 캘린더 + 가져올 캘린더 체크 목록, Jira + 기본 프로젝트 select, Bitbucket, Notion). 위쪽에 [모두 다시 확인]. Google·Jira 가 연결돼 있으면 캘린더 목록·기본 프로젝트 목록을 화면에 들어올 때 한 번 가져온다 |
 | AI | Claude Code 상태와 AI 모델 | Claude Code 상태(`ai:status`, [다시 확인]), AI 대화 모델(`ai:setModel`), 비서 AI 브리핑 사용과 비서 요약 모델(`llmEnabled`, `llmModel`) |
-| 비서 | 하루 경계, 알림, 자동 동기화 | 동작 / 시간 / 알림과 주기 3개 그룹. 토글·select 는 바로 저장, 숫자·시각은 blur 때 검증 후 저장(`assistant:saveSettings` 부분 patch). 저장에 실패한 칸은 화면 값을 실제 저장값으로 되돌린다. 같은 칸을 연달아 바꾸면 마지막 요청의 결과만 화면에 반영한다
+| 비서 | 하루 경계, 알림, 자동 동기화 | 동작(비서 사용, 로그인 시 실행, 첫 화면) / 시간(날짜 경계, 아침 자동 동기화와 시각) / 알림(회의 전 브리핑, 회의 전 알림 분) 3개 그룹. 하루 계획용 칸 8개는 오늘 대시보드 개편 때 뺐다([기존 설정 UI 처리](#기존-설정-ui-처리)). 토글·select 는 바로 저장, 숫자·시각은 blur 때 검증 후 저장(`assistant:saveSettings` 부분 patch). 저장에 실패한 칸은 화면 값을 실제 저장값으로 되돌린다. 같은 칸을 연달아 바꾸면 마지막 요청의 결과만 화면에 반영한다
 | 회의 녹음 | 전사 정확도를 높이는 용어집과 구성원 | `RecognitionAidsPanel`. 녹음 화면에도 같은 패널이 남아 있다 |
 | 데이터 | 백업과 복원(새 PC 이전) | 설명과 [백업·복원 열기]. `layout/BackupModal` 을 수정 없이 띄운다 |
 
@@ -44,6 +44,7 @@
 |---|---|---|---|
 | Google OAuth Client ID / Secret | 연동 > Google 캘린더 팝업 | `app_settings.google_client_id`(평문), `google_client_secret`(safeStorage) | `calendar:saveSettings`, `calendar:status` |
 | Google 계정 연결(OAuth 토큰) | 연동 > Google 캘린더 | `auth_tokens`(provider='google', safeStorage). 범위 `calendar.readonly`, 콜백 `http://localhost:8945/callback` | `calendar:auth`, `calendar:disconnect` |
+| 가져올 캘린더 | 연동 > Google 캘린더 카드(연결됨일 때) | `google_calendar_ids`(JSON `string[]`). 없거나 깨지면 `['primary']`. 기본 캘린더는 항상 `'primary'` 로 저장 | `calendar:listCalendars`, `calendar:setSelectedCalendars` |
 | Jira 사이트 URL, 이메일, API 토큰, 만료일 | 연동 > Jira 팝업 | `jira_site_url`, `jira_email`, `jira_api_token`(safeStorage), `jira_token_expires_at`, `jira_account_name` | `jira:status`, `jira:saveCredentials`(저장 전 `/myself` 검증), `jira:disconnect` |
 | Jira 기본 프로젝트(릴리스 동기화·프로젝트 보드·비서 Jira 범위가 쓴다) | 연동 > Jira 카드 | `jira_default_project_key` | `jira:listProjects`, `jira:setDefaultProject` |
 | Bitbucket 이메일, API token | 연동 > Bitbucket 팝업 | `bitbucket_email`(평문), `bitbucket_api_token`(safeStorage) | `ai:bitbucketStatus`, `ai:bitbucketSaveToken`(`/user` 검증), `ai:bitbucketDisconnect` |
@@ -71,7 +72,7 @@
 | 연결 안 됨 | 그 밖. Google 은 `hasCredentials && !connected` | 회색 | [연결]. Google 은 [Google 로그인] 으로 바로 `calendar:auth` |
 
 "마지막 확인"은 이번 세션의 [연결 테스트]·[모두 다시 확인] 결과의 `checkedAt` 이다. 렌더러 스토어 메모리에만 두고 DB 키를 늘리지 않는다.
-설정 화면에 들어올 때는 기존 status IPC 만 `Promise.allSettled` 로 병렬 조회하고, 연결 검증 호출은 버튼을 눌렀을 때만 한다(예외: Jira 가 연결돼 있으면 기본 프로젝트 목록을 한 번 가져온다). 한 연동의 상태 조회가 실패해도 나머지는 채우고, 실패한 항목만 오류 문구를 단다.
+설정 화면에 들어올 때는 기존 status IPC 만 `Promise.allSettled` 로 병렬 조회하고, 연결 검증 호출은 버튼을 눌렀을 때만 한다(예외: Jira 가 연결돼 있으면 기본 프로젝트 목록을, Google 이 연결돼 있으면 캘린더 목록을 한 번 가져온다). 한 연동의 상태 조회가 실패해도 나머지는 채우고, 실패한 항목만 오류 문구를 단다.
 
 ## 토큰 등록 팝업 구성
 
@@ -82,7 +83,7 @@
    - Bitbucket: `read:repository:bitbucket`(필수, 저장소 파일 읽기), `read:pullrequest:bitbucket`(권장, PR 링크 읽기), `read:user:bitbucket`(권장, 연결 계정 이름 표시). 쓰기 범위는 필요 없다
    - Jira: Atlassian API token. 범위 없음, 계정 권한 그대로 읽기만 사용. 만료일은 발급할 때 정한 날짜
    - Notion: 내부 통합의 "콘텐츠 읽기" 권한, 페이지 ⋯ → 연결에서 통합 추가. claude.ai 커넥터 대안 안내
-   - Google: `calendar.readonly`. redirect URI `http://localhost:8945/callback` 과 [복사]. 연결 순서를 번호 목록 6단계로 안내한다(프로젝트 선택 → Calendar API·동의 화면 → OAuth 클라이언트 '웹 애플리케이션' → 리디렉션 URI 등록 → ID·Secret 입력 → 계정 선택, 기본 캘린더만 읽음)
+   - Google: `calendar.readonly`. redirect URI `http://localhost:8945/callback` 과 [복사]. 연결 순서를 번호 목록 6단계로 안내한다(프로젝트 선택 → Calendar API·동의 화면 → OAuth 클라이언트 '웹 애플리케이션' → 리디렉션 URI 등록 → ID·Secret 입력 → 계정 선택. 처음에는 기본 캘린더만 읽고, 연결 후 카드의 "가져올 캘린더"에서 더 고른다)
 3. [발급 페이지 열기 ↗]: `https://id.atlassian.com/manage-profile/security/api-tokens`(Jira·Bitbucket), `https://www.notion.so/my-integrations`, `https://console.cloud.google.com/apis/credentials`
 4. 입력 칸. 이메일은 다른 Atlassian 연동(Jira ↔ Bitbucket)에서 미리 채운다. 비밀값은 `type=password`, Enter 로 제출
 5. [확인 후 저장]. 진행 중에는 "확인 중…". 검증은 기존 save IPC 가 한다(실패하면 저장하지 않음). Google 은 `saveSettings` 다음 바로 `auth`
@@ -112,6 +113,34 @@ export type IntegrationVerifyResult =
 
 추가 필드: `JiraConnectionStatus.email: string | null`. Bitbucket 팝업에 이메일을 미리 채우는 데 쓴다. 토큰은 계속 반환하지 않는다.
 
+## 가져올 캘린더
+
+Google 카드가 연결됨일 때 카드 안에 `CalendarPicker`(`components/settings/integrations/CalendarPicker.tsx`)를 그린다.
+
+- 계정이 읽을 수 있는 캘린더(`calendarList.list`, `minAccessRole: 'reader'`, 타임아웃 15초)를 체크박스로 보인다. 기본 캘린더가 맨 앞이고 "기본" 표시가 붙는다. 캘린더 색 점을 함께 그린다.
+- 체크하는 즉시 저장한다(`calendar:setSelectedCalendars`). 최소 1개는 남긴다(마지막 1개는 체크를 끌 수 없다). 목록에 없는 옛 id 는 다음 저장 때 버린다.
+- 저장에 성공하면 메인의 일정 캐시를 비우고, 렌더러는 캘린더 화면의 이번 주 일정을 다시 받는다(`useCalendarStore.refreshEvents`). 실패하면 체크를 되돌리고 원인 문구를 보인다.
+- 안내 2줄: "릴리스·QA 일정은 선택한 캘린더의 종일 일정 제목에서 자동으로 찾습니다." / "기본 캘린더가 아닌 캘린더의 일정은 화면에만 보이고 회의 알림·회의 전 브리핑은 만들지 않습니다." 릴리스 일정용 캘린더를 따로 고르는 설정은 없다.
+- 표시는 전부, 알림성 경로는 기본 캘린더만: 추가로 고른 캘린더(예: Tech)에는 내가 참석하지 않는 회의가 섞인다. 그래서 회의 알림(10·5·1분 전, `notification.ts`), 회의 전 브리핑(`assistant-service.ts`), 오늘 대시보드의 `meeting_soon` 신호·회의 수는 `calendarId` 가 없거나 `'primary'` 인 일정만 쓴다(메인 `isOwnCalendarEvent`, 렌더러는 `calendarId` 로 직접 판정). 캘린더 화면·오늘 일정 카드에는 모든 선택 캘린더의 일정이 보인다.
+- 목록 조회가 실패하면(권한 부족 403 등) "다시 로그인" 안내를 보이고 저장된 선택은 바꾸지 않는다. 저장값이 없으면 기본 캘린더(`'primary'`)만 쓴다.
+
+메인 동작(`google-calendar.ts`): `getTodayEvents`·`getWeekEvents`·`fetchEventsInRange` 가 선택한 캘린더 전부를 `Promise.allSettled` 로 조회해 병합한다. 각 일정에 `calendarId` 를 채우고, 키 `trim(summary)|start|end|allDay` 로 중복을 지운다(먼저 온 것이 남는다. 기본 캘린더를 먼저 조회한다). 결과는 시작 시각 순이다(종일 일정은 그날 0시). 일부 캘린더만 실패하면 성공분만 쓰고 `console.error` 로 남긴다. 전부 실패하면 기존 실패 동작(오늘·주 조회는 캐시 반환, `fetchEventsInRange` 는 throw)을 따른다.
+
+```ts
+interface CalendarListEntry { id: string; summary: string; primary: boolean; color: string | null }
+type Fail = { success: false; error: string }
+
+// preload: window.api.calendar.listCalendars / setSelectedCalendars / range
+'calendar:listCalendars'        () => { success: true; calendars: CalendarListEntry[]; selectedIds: string[] } | Fail
+'calendar:setSelectedCalendars' (ids: string[]) => { success: true; selectedIds: string[] } | Fail
+'calendar:range'                (fromISO: string, toISO: string, force?: boolean)
+                                  => { success: true; events: CalendarEvent[]; fetchedAt: string } | Fail
+```
+
+- `calendar:listCalendars`: 기본 캘린더 항목의 `id` 는 실제 id 대신 `'primary'` 다. 그래서 `selectedIds` 와 그대로 비교할 수 있다.
+- `calendar:setSelectedCalendars`: 빈 배열·문자열이 아닌 값·빈 문자열은 거절(Fail)한다. 중복은 지우고 저장한 값을 돌려준다.
+- `calendar:range`: 오늘 대시보드가 쓴다(오늘 0시 ~ +21일). 형식 오류·역순·45일 초과·미연결·전부 실패는 Fail. 5분 캐시(키 `from|to`), `force` 면 캐시를 무시한다. `fetchedAt` 은 실제로 받은 시각(ISO)이다.
+
 ## 기존 설정 UI 처리
 
 | 기존 | 처리 |
@@ -123,6 +152,7 @@ export type IntegrationVerifyResult =
 | `project/JiraTokenWarning.tsx` | 유지, 문구 끝에 [설정 열기] |
 | `today/AssistantSettingsModal.tsx` | 삭제. 순수 헬퍼는 `settings/assistantSettingsForm.ts` 로 옮김 |
 | 사이드바 "데이터 백업 · 복원" | 삭제. 설정 > 데이터로 옮김 |
+| 비서 섹션의 하루 계획용 칸 8개(오늘 대시보드 개편, 2026-11-19): 시작 알림(`startNudge`), 최신화 알림(`refreshNotify`), 하루 계획 항목 수(`planSize`), 근무 종료 시각(`workEnd`), 완료하면 원본도 완료(`completeOriginOnDone`), 캘린더 확인 주기(`refreshCalendarMin`), Jira 확인 주기(`refreshJiraMin`), Jira 범위(`jiraScope`) | 화면에서만 삭제. `AssistantSettings` 타입과 `assistant_*` 저장 키는 남기고 `assistant:saveSettings` 는 옛 키도 계속 받는다. "알림과 주기" 그룹은 "알림" 으로 이름을 바꿨다. 키 삭제는 후속 과제 |
 | 녹음 화면의 용어집·구성원 패널 | 유지(설정에도 같은 컴포넌트) |
 
 ## 알려진 한계

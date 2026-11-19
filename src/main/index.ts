@@ -20,6 +20,7 @@ import { registerBackupIpc } from './ipc/backup.ipc'
 import { registerJiraBoardIpc } from './ipc/jira-board.ipc'
 import { registerMorningSyncIpc } from './ipc/morning-sync.ipc'
 import { registerAssistantIpc } from './ipc/assistant.ipc'
+import { registerTodayIpc } from './ipc/today.ipc'
 import { registerSettingsIpc } from './ipc/settings.ipc'
 import { cancelAllAiQueries } from './services/ai-agent'
 import { cancelAllHeadless } from './services/ai-headless'
@@ -361,6 +362,7 @@ app.whenReady().then(() => {
   registerJiraBoardIpc()
   registerMorningSyncIpc()
   registerAssistantIpc()
+  registerTodayIpc()
   registerSettingsIpc()
   ipcMain.on('recorder:state', (event, payload) => {
     if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents) {

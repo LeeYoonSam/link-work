@@ -145,6 +145,11 @@ describe('buildSystemPrompt — 앱 내 링크', () => {
       expect(prompt).toContain('linkwork://view/documents')
       expect(prompt).toContain('linkwork://note/{id}')
       expect(prompt).toContain('메뉴 링크는 목록 전체를 안내할 때만 쓰세요')
+      // 부록 O: 오늘 화면은 읽기용 대시보드다. 계획 항목 링크와 하루 시작 안내를 하지 않는다
+      expect(prompt).not.toContain('linkwork://today/item/')
+      expect(prompt).not.toContain('오늘 계획')
+      expect(prompt).toContain('읽기용 대시보드')
+      expect(prompt).toContain('get_today_plan 은 대시보드 전환 전 날짜의 과거 계획')
     }
   })
 

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { CommandOp } from '../main/services/assistant-types'
+import type { TodayBriefingInput } from '../main/services/today-briefing'
 
 const api = {
   tray: {
@@ -20,7 +20,18 @@ const api = {
     disconnect: () => ipcRenderer.invoke('calendar:disconnect'),
     status: () => ipcRenderer.invoke('calendar:status'),
     saveSettings: (clientId: string, clientSecret: string) =>
-      ipcRenderer.invoke('calendar:saveSettings', clientId, clientSecret)
+      ipcRenderer.invoke('calendar:saveSettings', clientId, clientSecret),
+    // 가져올 캘린더 목록과 현재 선택(app_settings 'google_calendar_ids')
+    listCalendars: () => ipcRenderer.invoke('calendar:listCalendars'),
+    setSelectedCalendars: (ids: string[]) => ipcRenderer.invoke('calendar:setSelectedCalendars', ids),
+    // 임의 구간(최대 45일) 일정. force 면 5분 캐시를 무시한다
+    range: (fromISO: string, toISO: string, force?: boolean) =>
+      ipcRenderer.invoke('calendar:range', fromISO, toISO, force)
+  },
+  // 오늘 대시보드 브리핑 — 규칙 신호를 LLM 이 다듬는다. 실패·꺼짐이면 규칙 문구로 돌려준다
+  today: {
+    getBriefing: (input: TodayBriefingInput, force?: boolean) =>
+      ipcRenderer.invoke('today:getBriefing', input, force)
   },
   variable: {
     create: (input: Record<string, unknown>) => ipcRenderer.invoke('variable:create', input),
@@ -281,31 +292,9 @@ const api = {
       return () => ipcRenderer.removeListener('backup:progress', handler)
     }
   },
-  // 개인 비서 — 오늘 계획·브리핑·최신화. 응답은 { success, error } 로 감싼다(getSettings 제외)
+  // 개인 비서 — 오늘 데이터·회의 브리핑·설정. 응답은 { success, error } 로 감싼다(getSettings 제외)
   assistant: {
     getToday: () => ipcRenderer.invoke('assistant:getToday'),
-    startDay: () => ipcRenderer.invoke('assistant:startDay'),
-    closeDay: (note?: string) => ipcRenderer.invoke('assistant:closeDay', note),
-    reopenDay: () => ipcRenderer.invoke('assistant:reopenDay'),
-    saveWrapup: (note: string, date: string) => ipcRenderer.invoke('assistant:saveWrapup', note, date),
-    skipWrapup: (date: string) => ipcRenderer.invoke('assistant:skipWrapup', date),
-    refresh: () => ipcRenderer.invoke('assistant:refresh'),
-    refreshBriefing: () => ipcRenderer.invoke('assistant:refreshBriefing'),
-    generateRecovery: () => ipcRenderer.invoke('assistant:generateRecovery'),
-    listCandidates: () => ipcRenderer.invoke('assistant:listCandidates'),
-    addItem: (candidateId: string) => ipcRenderer.invoke('assistant:addItem', candidateId),
-    acceptSuggestion: (itemId: number) => ipcRenderer.invoke('assistant:acceptSuggestion', itemId),
-    dismissSuggestion: (itemId: number) => ipcRenderer.invoke('assistant:dismissSuggestion', itemId),
-    setItemStatus: (itemId: number, status: string, note?: string) =>
-      ipcRenderer.invoke('assistant:setItemStatus', itemId, status, note),
-    focusItem: (itemId: number) => ipcRenderer.invoke('assistant:focusItem', itemId),
-    // 계속 제외 (부록 M.5.6)
-    excludeItem: (itemId: number) => ipcRenderer.invoke('assistant:excludeItem', itemId),
-    removeExclusion: (candidateId: string) => ipcRenderer.invoke('assistant:removeExclusion', candidateId),
-    // 명령 입력 (부록 G.9). 조작 형식 검증은 서비스가 한다
-    interpretCommand: (text: string, scopeItemId?: number) =>
-      ipcRenderer.invoke('assistant:interpretCommand', text, scopeItemId),
-    applyCommand: (ops: CommandOp[], text: string) => ipcRenderer.invoke('assistant:applyCommand', ops, text),
     // 회의 브리핑 AI 본문 다시 만들기 (부록 I.11.10)
     regenerateMeetingBriefing: (eventId: number) => ipcRenderer.invoke('assistant:regenerateMeetingBriefing', eventId),
     getSettings: () => ipcRenderer.invoke('assistant:getSettings'),

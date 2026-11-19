@@ -102,7 +102,7 @@ export interface PlanItemUpdate {
 }
 
 // 'checkin' 은 제거된 작업 경계 체크인의 과거 행이다 (부록 L). 새 행을 만들지 않는다
-export type AssistantEventKind = 'start_nudge' | 'plan_update' | 'checkin' | 'meeting_briefing' | 'command' | 'morning_sync'
+export type AssistantEventKind = 'start_nudge' | 'plan_update' | 'checkin' | 'meeting_briefing' | 'command' | 'morning_sync' | 'today_briefing'
 export type AssistantEventStatus = 'sent' | 'late' | 'skipped' | 'failed' | 'logged'
 export interface AssistantEvent {
   id: number; event_key: string; kind: AssistantEventKind; plan_date: string; scheduled_at: string
@@ -120,16 +120,6 @@ export type VanishedResolution =
   | { kind: 'done' }
   | { kind: 'dropped'; note: string }
   | { kind: 'replace'; candidate: Candidate }
-export interface RefreshDiff {
-  calendarAdded: CalendarRef[]; calendarChanged: CalendarRef[]; calendarRemoved: CalendarRef[]
-  newCandidates: Candidate[]; vanishedCandidateIds: string[]; updatedCandidates: Candidate[]
-}
-export interface RefreshContext {
-  today: string; nowHHmm: string; workEnd: string
-  dayStart: string                 // 타임라인 시작 'HH:mm'. started_at 을 15분 단위로 올린 값
-  resolutions: Record<string, VanishedResolution>
-  exclusions?: Pick<PlanExclusion, 'candidate_id' | 'jira_key'>[]   // 계속 제외. 없으면 빈 배열 (A58)
-}
 export interface RefreshSummary {
   calendarAdded: number; calendarChanged: number; calendarRemoved: number
   suggested: number; urgentSuggestedIds: string[]
@@ -197,35 +187,6 @@ export interface RefreshDecisionInput {
   wake: boolean                // resume·unlock-screen 에서 불렀다
 }
 
-export interface NotifyContext { refreshNotify: boolean; inMeeting: boolean }
-export type PlanUpdateNoticeKind = 'slot' | 'urgent'
-export interface PlanUpdateNotice {
-  kind: PlanUpdateNoticeKind
-  eventKey: string             // 'plan_update:<date>:<HHmm>' | 'plan_update:<date>:urgent:<candidate_id>'
-  refId: string                // '<HHmm>' | 'urgent:<candidate_id>'
-  title: string
-  body: string
-  focus: NonNullable<AssistantNavigateEvent['focus']>
-}
-export interface SentPlanUpdateNotice extends PlanUpdateNotice { eventId: number }
-export interface NoticeInput {
-  diff: RefreshDiff; summary: RefreshSummary; after: DayTimeline; items: PlanItem[]   // items 는 갱신 후 항목
-  today: string; nowHHmm: string; ctx: NotifyContext
-}
-export type PlanUpdateRecord = RefreshSummary & { notified: PlanUpdateNoticeKind[] }   // 변경 기록 행 payload
-export interface AutoRefreshOutcome { today: TodayPayload; notices: SentPlanUpdateNotice[] }
-
-export interface TrayPlanItem { id: number; title: string; rank: number | null; status: PlanItemStatus; isFocus: boolean }
-export interface TrayAssistant {
-  logicalDate: string
-  status: 'none' | 'active' | 'closed'
-  startedAt: string | null     // 'HH:mm'
-  items: TrayPlanItem[]        // 활성 항목 rank 순 상위 3건
-  activeCount: number; doneCount: number
-  suggestedCount: number; urgentSuggestedCount: number
-  freeMinutesLeft: number
-}
-
 // ── MVP3 (부록 F) ──
 export type RecoveryTriggerReason = 'gap' | 'monday' | 'manual'
 
@@ -285,45 +246,7 @@ export interface RecoverySection { key: RecoverySectionKey; title: string; lines
 
 export interface RecoveryState { inFlight: boolean; error: string | null }
 
-// ── 명령 입력 (부록 G) ──
-export type CommandStatus = 'planned' | 'in_progress' | 'done' | 'deferred' | 'dropped'
-export type CommandOp =
-  | { kind: 'set_status'; itemId: number; status: CommandStatus; note: string | null }
-  | { kind: 'focus'; itemId: number }
-  | { kind: 'accept_suggestion'; itemId: number }
-  | { kind: 'dismiss_suggestion'; itemId: number }
-  | { kind: 'add_candidate'; candidateId: string }
-  | { kind: 'add_manual'; title: string; dueDate: string | null }
-  | { kind: 'regenerate_briefing'; instruction: string | null }
-  | { kind: 'unsupported'; reason: string }
-
-export interface CommandItemRef {
-  itemId: number; candidateId: string; title: string; status: PlanItemStatus
-  jiraKey: string | null; dueDate: string | null; rank: number | null
-}
-export interface CommandCandidateRef {
-  candidateId: string; title: string; source: CandidateSource; jiraKey: string | null; dueDate: string | null
-}
-export interface CommandContext {
-  today: string
-  scopeItemId: number | null
-  items: CommandItemRef[]           // dismissed 제외. scope 모드면 범위 항목 1건
-  candidates: CommandCandidateRef[] // 계획 항목이 아닌 후보. scope 모드면 빈 배열. 최대 50건
-  briefingInstruction: string | null
-}
-
-export interface CommandPreviewOp { op: CommandOp; label: string; executable: boolean }
-export interface CommandInterpretation {
-  text: string                      // 공백 정리한 명령 원문
-  scopeItemId: number | null
-  ops: CommandPreviewOp[]
-  source: 'llm' | 'rules'
-  error: string | null              // LLM 실패 사유. 성공이거나 LLM 을 건너뛰면 null
-  dropped: number                   // 검증에서 뺀 조작 수
-}
-export interface CommandOpResult { op: CommandOp; label: string; ok: boolean; error: string | null }
-export interface CommandApplyOutcome { today: TodayPayload; results: CommandOpResult[]; applied: number; failed: number }
-export interface CommandLlmInput { ctx: CommandContext; text: string }
+// 명령 입력(부록 G)·최신화 알림·트레이 계획 요약 타입은 부록 O(오늘 대시보드 개편)에서 기능과 함께 제거됐다
 
 // ── MVP5 (부록 I) ──
 export interface MeetingRef { id: string; title: string; startAt: string; endAt: string }   // 'YYYY-MM-DD HH:mm:ss'. 종일 제외

@@ -1,5 +1,5 @@
 import { Notification } from 'electron'
-import { getTodayEvents, CalendarEvent } from './google-calendar'
+import { getTodayEvents, isOwnCalendarEvent, CalendarEvent } from './google-calendar'
 import { getDatabase } from '../db/database'
 import { differenceInMinutes } from 'date-fns'
 
@@ -54,24 +54,31 @@ function sendTodoNotification(
   sentNotifications.add(key)
 }
 
+/**
+ * 지금 보낼 회의 알림(10·5·1분 전). 순수 함수.
+ * 기본 캘린더 일정만 대상이다(isOwnCalendarEvent). 추가로 고른 캘린더(Tech 등)의 일정은
+ * 내가 참석하지 않는 회의일 수 있어 화면에만 보이고 알림은 보내지 않는다.
+ */
+export function dueEventNotifications(
+  events: CalendarEvent[],
+  now: Date
+): { event: CalendarEvent; minutesBefore: number }[] {
+  const out: { event: CalendarEvent; minutesBefore: number }[] = []
+  for (const event of events) {
+    if (event.allDay || !isOwnCalendarEvent(event)) continue
+    const minutesUntil = differenceInMinutes(new Date(event.start), now)
+    if (minutesUntil <= 10 && minutesUntil >= 5) out.push({ event, minutesBefore: 10 })
+    else if (minutesUntil < 5 && minutesUntil >= 1) out.push({ event, minutesBefore: 5 })
+    else if (minutesUntil < 1 && minutesUntil >= -1) out.push({ event, minutesBefore: 1 })
+  }
+  return out
+}
+
 async function checkUpcomingEvents(): Promise<void> {
   try {
     const events = await getTodayEvents()
-    const now = new Date()
-
-    for (const event of events) {
-      if (event.allDay) continue
-
-      const eventStart = new Date(event.start)
-      const minutesUntil = differenceInMinutes(eventStart, now)
-
-      if (minutesUntil <= 10 && minutesUntil >= 5) {
-        sendEventNotification(event, 10)
-      } else if (minutesUntil < 5 && minutesUntil >= 1) {
-        sendEventNotification(event, 5)
-      } else if (minutesUntil < 1 && minutesUntil >= -1) {
-        sendEventNotification(event, 1)
-      }
+    for (const { event, minutesBefore } of dueEventNotifications(events, new Date())) {
+      sendEventNotification(event, minutesBefore)
     }
   } catch (e) {
     console.error('[notification] event check failed', e)

@@ -1,19 +1,11 @@
-import { useState } from 'react'
-import type {
-  AssistantEvent,
-  MeetingBriefingPayload,
-  MeetingLlmStatus,
-  TimelineEntry
-} from '../../types'
+import type { AssistantEvent, MeetingBriefingPayload, MeetingLlmStatus } from '../../types'
 import MarkdownContent from '../memo/MarkdownContent'
-import { AlertTriangleIcon, Badge, Card, SectionTitle, button } from '../ui'
-import { hhmmOf } from './PlanItemRow'
+import { AlertTriangleIcon, Badge, button } from '../ui'
 import { openInternalLink } from '../../utils/openInternalLink'
 
-// 회의 전 브리핑 카드 (docs/ASSISTANT.md 부록 I.10.1).
-// 계획이 없어도 보인다. 이유: 브리핑은 근무 중 여부와 무관하다.
-// 2차 개편(부록 L.8)에서 시간표에 짝이 있는 브리핑은 시간표 회의 행에 붙는다.
-// 이 카드는 짝이 없는 브리핑과 계획 없음 화면에만 보인다.
+// 회의 전 브리핑의 읽기·표시 조각 (docs/ASSISTANT.md 부록 I.10.1, 부록 O).
+// 오늘 대시보드에서는 일정 카드(ScheduleCard)의 회의 행 아래에 인라인으로 펼친다.
+// 짝짓기는 payload.meeting.id === CalendarEvent.id 다. 별도 카드는 두지 않는다.
 
 export interface MeetingBriefingRow {
   event: AssistantEvent
@@ -103,31 +95,12 @@ export function nearestUpcomingEventId(rows: MeetingBriefingRow[], now: string):
   return best ? best.event.id : null
 }
 
-// 시간표 회의 행과 회의 브리핑을 짝짓는 키다 (부록 L.8 V4). hhmm 은 'HH:mm' 이다
-export function meetingKey(hhmm: string, title: string): string {
-  return `${hhmm}|${title}`
-}
-
-// 회의 브리핑을 시간표 회의 행과 짝짓는다 (부록 L.8 V4).
-// 시간표 회의 항목에는 id 가 없다. 그래서 시작 HH:mm 과 제목이 같으면 짝이다.
-// 한 키에는 브리핑 1건만 짝짓는다. 나머지 행과 시간표에 없는 회의의 행은 unmatched 다
-export function splitBriefingsByTimeline(
-  rows: MeetingBriefingRow[],
-  entries: TimelineEntry[]
-): { matched: Map<string, MeetingBriefingRow>; unmatched: MeetingBriefingRow[] } {
-  const keys = new Set<string>()
-  for (const e of entries) {
-    if (e.kind === 'meeting') keys.add(meetingKey(hhmmOf(e.start) || e.start, e.title))
-  }
-  const matched = new Map<string, MeetingBriefingRow>()
-  const unmatched: MeetingBriefingRow[] = []
-  for (const row of rows) {
-    const start = hhmmOf(row.payload.meeting.startAt)
-    const key = meetingKey(start, row.payload.meeting.title)
-    if (start !== '' && keys.has(key) && !matched.has(key)) matched.set(key, row)
-    else unmatched.push(row)
-  }
-  return { matched, unmatched }
+// 회의 브리핑을 캘린더 일정 id 로 묶는다. 같은 일정에 여러 행이 있으면 scheduled_at 이 늦은 것이 남는다.
+// rows 는 meetingBriefings() 의 결과(오름차순)다
+export function briefingsByMeetingId(rows: MeetingBriefingRow[]): Map<string, MeetingBriefingRow> {
+  const map = new Map<string, MeetingBriefingRow>()
+  for (const row of rows) map.set(row.payload.meeting.id, row)
+  return map
 }
 
 // 규칙 브리핑의 첫 줄 '# 제목 시각' 은 행 머리와 같은 정보라 감춘다
@@ -168,7 +141,7 @@ function RegenerateButton({
   )
 }
 
-function KindBadge({ status }: { status: MeetingLlmStatus }): React.ReactNode {
+export function KindBadge({ status }: { status: MeetingLlmStatus }): React.ReactNode {
   return (
     <Badge color={status === 'done' ? 'bg-purple-50 text-purple-600' : 'bg-slate-100 text-slate-600'}>
       {briefingBadge(status)}
@@ -200,8 +173,8 @@ function BriefingContent({ payload }: { payload: MeetingBriefingPayload }): Reac
   )
 }
 
-// 시간표 회의 행 아래에 펼치는 브리핑 본문이다 (부록 L.8 V3).
-// 회의 시각·제목은 시간표 행에 있어 다시 쓰지 않는다. 배지·다시 만들기·안내·본문을 그린다
+// 일정 카드의 회의 행 아래에 펼치는 브리핑 본문이다 (부록 O).
+// 회의 시각·제목은 일정 행에 있어 다시 쓰지 않는다. 배지·다시 만들기·안내·본문을 그린다
 export function MeetingBriefingBody({
   row,
   regenerating,
@@ -222,109 +195,5 @@ export function MeetingBriefingBody({
       </div>
       <BriefingContent payload={payload} />
     </div>
-  )
-}
-
-interface RowProps extends RegenerateProps {
-  row: MeetingBriefingRow
-  // 기본으로 펼칠 행이면 true
-  expandedByDefault: boolean
-}
-
-function MeetingBriefingItem({
-  row,
-  expandedByDefault,
-  regenerating,
-  canRegenerate,
-  onRegenerate
-}: RowProps): React.ReactNode {
-  const { event, payload } = row
-  // 기본은 가장 가까운 시작 전 회의 1건만 펼친다. 지난 브리핑은 참고용이라 접힌다
-  const [collapsed, setCollapsed] = useState(() => !expandedByDefault)
-
-  return (
-    <div id={`meeting-briefing-${event.id}`} className="py-3 first:pt-0 last:pb-0">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-start gap-2 min-w-0">
-          <span className="text-sm text-gray-500 tabular-nums shrink-0 pt-0.5">
-            {hhmmOf(payload.meeting.startAt)}
-          </span>
-          {/* 제목은 자르지 않고 줄바꿈한다 (부록 L.8 V7) */}
-          <span className="min-w-0 break-words text-base font-medium text-gray-900">
-            {payload.meeting.title}
-          </span>
-          <span className="shrink-0">
-            <KindBadge status={payload.llmStatus} />
-          </span>
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={() => setCollapsed((c) => !c)}
-            className={`px-3 py-1.5 text-sm ${button.ghost}`}
-          >
-            {collapsed ? '펼치기' : '접기'}
-          </button>
-          <RegenerateButton
-            eventId={event.id}
-            regenerating={regenerating}
-            canRegenerate={canRegenerate}
-            onRegenerate={onRegenerate}
-          />
-        </div>
-      </div>
-
-      {!collapsed ? (
-        <div className="mt-2">
-          <BriefingContent payload={payload} />
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-interface MeetingBriefingCardProps {
-  rows: MeetingBriefingRow[]
-  // 'YYYY-MM-DD HH:mm:ss'. 회의 시작이 지났는지 판정한다
-  now: string
-  // 다시 만드는 중인 이벤트 id. 그 행의 버튼만 비활성이다
-  regeneratingIds: number[]
-  // aiAvailable && settings.llmEnabled
-  canRegenerate: boolean
-  onRegenerate: (eventId: number) => void
-  // 카드 제목. 짝 없는 묶음은 '기타 회의 브리핑' 이다 (부록 L.8 V4)
-  title?: string
-  // 기본으로 펼칠 이벤트 id. 주면 카드가 nearest 를 다시 계산하지 않는다.
-  // 이유: 시간표와 이 카드를 합쳐 화면 전체에서 1건만 펼친다 (부록 L.8)
-  expandedEventId?: number | null
-}
-
-export default function MeetingBriefingCard({
-  rows,
-  now,
-  title = '회의 브리핑',
-  expandedEventId,
-  regeneratingIds,
-  canRegenerate,
-  onRegenerate
-}: MeetingBriefingCardProps): React.ReactNode {
-  if (rows.length === 0) return null
-  const nearest = expandedEventId !== undefined ? expandedEventId : nearestUpcomingEventId(rows, now)
-  return (
-    <Card>
-      <SectionTitle variant="page">{title}</SectionTitle>
-      <div className="mt-4 divide-y divide-gray-100">
-        {rows.map((row) => (
-          <MeetingBriefingItem
-            key={row.event.id}
-            row={row}
-            expandedByDefault={row.event.id === nearest}
-            regenerating={regeneratingIds.includes(row.event.id)}
-            canRegenerate={canRegenerate}
-            onRegenerate={onRegenerate}
-          />
-        ))}
-      </div>
-    </Card>
   )
 }

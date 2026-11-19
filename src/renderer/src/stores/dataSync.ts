@@ -8,6 +8,7 @@ import { useMemoStore } from './memoStore'
 import { useVariableStore } from './variableStore'
 import { useAssistantStore } from './assistantStore'
 import { useMorningSyncStore } from './morningSyncStore'
+import { useTodayStore } from './todayStore'
 
 // focus 재로드 최소 간격이다
 export const FOCUS_RELOAD_MS = 30_000
@@ -40,16 +41,17 @@ export async function refreshEntity(entity: string): Promise<void> {
   } else if (entity === 'variable') {
     add(() => useVariableStore.getState().fetchVariables())
   } else if (entity === 'sync_status') {
-    // 아침 자동 동기화가 끝났다. 배지·상태 줄과 오늘 화면 변경 내역을 다시 읽는다
+    // 아침 자동 동기화가 끝났다. 배지·상태 줄을 다시 읽는다.
+    // 릴리스가 바뀌었을 수 있어 오늘 대시보드가 열려 있으면 다시 읽는다(캐시 허용)
     add(() => useMorningSyncStore.getState().load())
-    add(() => useAssistantStore.getState().load())
+    if (useNavigationStore.getState().view === 'today') add(() => useTodayStore.getState().load())
   }
 
   await Promise.allSettled(jobs)
 }
 
-// focus 때 다시 읽는다. 오늘 화면은 열려 있을 때만 다시 읽는다.
-// 이유: getToday 는 수집을 부를 수 있어 목록 조회보다 무겁다
+// focus 때 다시 읽는다. 오늘 대시보드는 열려 있을 때만 다시 읽는다.
+// 이유: 대시보드는 캘린더·Jira·릴리스를 한꺼번에 읽어 목록 조회보다 무겁다
 async function reloadOnFocus(): Promise<void> {
   const view = useNavigationStore.getState().view
   const jobs: Promise<void>[] = [
@@ -60,8 +62,9 @@ async function reloadOnFocus(): Promise<void> {
       .catch(() => undefined)
   ]
   if (view === 'today') {
+    // 캐시를 허용한다. 강제 갱신은 화면의 ↻ 만 한다
     jobs.push(
-      useAssistantStore
+      useTodayStore
         .getState()
         .load()
         .catch(() => undefined)

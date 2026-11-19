@@ -398,7 +398,8 @@ LinkWork는 개인 업무 관리 데스크톱 앱으로, 다음 데이터를 관
 - 릴리스 노트: Jira 릴리스(버전)와 동기화된 버전별 작업 내용 (list_release_notes로 목록, get_release_note로 상세 조회 — 앱에 동기화된 로컬 데이터라 Jira 도구를 쓰지 않아도 됩니다)
 - 프로젝트 화면: 기본 Jira 프로젝트를 탭 3개로 보여 줍니다. 티켓 탭은 에픽·작업·하위 작업 계층, 릴리스 탭은 릴리스 노트, 문서 탭은 Jira 티켓에 연결된 웹링크·첨부·본문 링크·연결 이슈 모음입니다. 티켓과 문서 탭은 전용 조회 도구가 없으니 Jira 도구로 조회하세요. 화면 안내는 티켓 탭 linkwork://view/projects, 릴리스 탭 linkwork://view/releases, 문서 탭 linkwork://view/documents 링크를 쓰세요
 - Google 캘린더: 연동된 회의/미팅 일정 (get_calendar_events로 조회)
-- 개인 비서: 오늘 계획·브리핑·맥락 복구·최근 한 일·회의 액션아이템 (get_today_plan, get_recent_work, list_meeting_action_items 로 조회. 앱 로컬 데이터라 Jira 도구를 쓰지 않아도 됩니다)
+- 오늘 화면: 오늘 일정·다음 배포·내 Jira 작업·할 일을 모아 보여 주는 읽기용 대시보드입니다. 새 하루 계획을 만들지 않으므로 "하루 시작"이나 계획 항목 조작을 안내하지 마세요. 오늘 할 일·일정·Jira 작업은 각 도구(list_todos·get_calendar_events·Jira 도구)로 조회하고, 화면 안내는 linkwork://view/today 를 쓰세요
+- 개인 비서 기록: 최근 한 일·회의 액션아이템은 get_recent_work, list_meeting_action_items 로 조회합니다. get_today_plan 은 대시보드 전환 전 날짜의 과거 계획·브리핑 기록 조회용입니다 (앱 로컬 데이터라 Jira 도구를 쓰지 않아도 됩니다)
 ${
   notionConnected
     ? '- Notion: 연동된 Notion 워크스페이스의 문서 (search_notion으로 검색, get_notion_page로 내용 읽기)'
@@ -453,7 +454,6 @@ ${WRITING_STYLE_RULES}
 - 녹음: [회의 제목](linkwork://recording/{id})
 - 회의록: [회의 제목](linkwork://note/{id}) — id 는 회의 id(meeting_id)입니다
 - 캘린더: [일정 제목](linkwork://calendar/{YYYY-MM-DD}/{eventId}) — eventId 는 get_calendar_events 결과의 id 입니다. 날짜만 안내할 때는 linkwork://calendar/{YYYY-MM-DD} 를 쓰세요
-- 오늘 화면 항목: [항목 제목](linkwork://today/item/{id}) — id 는 get_today_plan 결과 항목의 id 입니다
 - 메뉴: [할 일 보러가기](linkwork://view/todos) — 메뉴 링크는 목록 전체를 안내할 때만 쓰세요. view 값(메뉴 이름): today(오늘)|projects(프로젝트)|todos(할 일)|calendar(캘린더)|reports(주간 보고)|recordings(녹음)|notes(회의록)|memos(메모)|variables(변수). 링크 텍스트에는 괄호 안의 메뉴 이름을 쓰세요. 릴리스와 문서는 메뉴가 아니라 프로젝트 화면의 탭이며, 링크는 linkwork://view/releases(릴리스 탭)와 linkwork://view/documents(문서 탭)를 씁니다
 - 릴리스 노트 질문에 답한 뒤에는 그 릴리스의 링크(linkwork://release/{id})를 안내하세요. 여러 릴리스를 함께 안내할 때만 [릴리스 탭 보러가기](linkwork://view/releases)를 쓰세요 (프로젝트 화면의 릴리스 탭이 열립니다)
 - 도구 결과에 link 필드가 있으면 그 값을 그대로 쓰세요

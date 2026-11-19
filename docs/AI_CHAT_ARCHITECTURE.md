@@ -190,7 +190,7 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 | `list_variables` | 변수 목록 (secret 값은 마스킹) |
 | `get_activity_log` | 기간별 활동 이력 — "이번주 작업 정리" 용 |
 | `get_calendar_events` | Google 캘린더 일정 (기간 지정, 미연동 시 안내 반환) |
-| `get_today_plan` | 개인 비서의 날짜별 계획·브리핑·맥락 복구 본문·계획 항목·제안 항목. 정의는 `ai-assistant-tools.ts` |
+| `get_today_plan` | 개인 비서의 날짜별 **과거** 계획 기록(브리핑·맥락 복구 본문·계획 항목·제안 항목). 2026-11-19 오늘 대시보드 개편으로 하루 시작이 없어져 새 계획은 생기지 않는다(이름·스키마는 유지). 정의는 `ai-assistant-tools.ts` |
 | `get_recent_work` | 최근 1~14일의 마지막 근무·남은 작업·한 일·회의 정리. Jira 는 보지 않는다 |
 | `list_meeting_action_items` | 회의 요약 액션아이템과 연결된 할 일의 완료 여부 (완료 여부·기간 필터, 200건) |
 

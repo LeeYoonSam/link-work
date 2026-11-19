@@ -87,7 +87,7 @@ export interface MeetingActionItemView {
 export function buildAssistantTools(tool: SdkTool): SdkMcpToolDefinition<any>[] {
   const getTodayPlan = tool(
     'get_today_plan',
-    '비서의 오늘 계획을 조회한다. "오늘 뭐 해야 하지", "지금 남은 작업" 같은 질문에 쓴다. 브리핑과 맥락 복구 본문도 돌려준다.',
+    '비서의 과거 하루 계획 기록을 조회한다(오늘 화면이 대시보드로 바뀐 2026-11-19 이후에는 새 계획이 생기지 않는다). 지난 날의 계획·브리핑·맥락 복구 본문을 볼 때 쓴다.',
     {
       date: z
         .string()
@@ -105,7 +105,7 @@ export function buildAssistantTools(tool: SdkTool): SdkMcpToolDefinition<any>[] 
           plan: null,
           items: [],
           suggested: [],
-          hint: '이 날짜의 계획이 없다. 오늘이면 오늘 화면에서 하루 시작을 누른다.'
+          hint: '이 날짜의 계획이 없다. 오늘 화면은 대시보드로 바뀌어 새 계획을 만들지 않는다. 오늘 할 일·일정·Jira 작업은 다른 도구로 조회한다.'
         })
       }
       const all = listPlanItems(db, plan.id)

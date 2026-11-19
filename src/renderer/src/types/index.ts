@@ -15,12 +15,24 @@ export interface CalendarEvent {
   allDay: boolean
   location?: string
   htmlLink?: string
+  // 일정이 온 Google 캘린더 id. 기본 캘린더는 'primary' 다
+  calendarId?: string
 }
 
 export interface CalendarStatus {
   connected: boolean
   hasCredentials: boolean
 }
+
+// Google 캘린더 목록 항목 (calendarList.list)
+export interface CalendarListEntry {
+  id: string
+  summary: string
+  primary: boolean
+  color: string | null
+}
+
+export type Fail = { success: false; error: string }
 
 export interface CalendarAPI {
   auth: () => Promise<{ success: boolean; error?: string }>
@@ -29,6 +41,74 @@ export interface CalendarAPI {
   disconnect: () => Promise<{ success: boolean }>
   status: () => Promise<CalendarStatus>
   saveSettings: (clientId: string, clientSecret: string) => Promise<{ success: boolean }>
+  // 가져올 캘린더 (docs/SETTINGS.md). 저장값이 없으면 ['primary']
+  listCalendars: () => Promise<
+    { success: true; calendars: CalendarListEntry[]; selectedIds: string[] } | Fail
+  >
+  setSelectedCalendars: (ids: string[]) => Promise<{ success: true; selectedIds: string[] } | Fail>
+  // 선택한 캘린더 전부의 일정을 범위로 받는다. 범위는 45일 이하
+  range: (
+    fromISO: string,
+    toISO: string,
+    force?: boolean
+  ) => Promise<{ success: true; events: CalendarEvent[]; fetchedAt: string } | Fail>
+}
+
+// ── 오늘 대시보드 브리핑 (docs/ASSISTANT.md 부록 O) ──
+export type SignalKind =
+  | 'release_risk'
+  | 'release_day'
+  | 'overdue'
+  | 'due_today'
+  | 'meeting_soon'
+  | 'qa_start'
+export type SignalSeverity = 'critical' | 'warn' | 'info'
+
+export interface TodayBriefingInput {
+  // YYYY-MM-DD
+  date: string
+  ruleHeadline: string
+  signals: { id: string; kind: SignalKind; severity: SignalSeverity; text: string; refs: string[] }[]
+  facts: {
+    // 미연결 영역을 "없음"으로 말하지 않으려고 넘긴다
+    calendarConnected: boolean
+    jiraConnected: boolean
+    meetingCount: number
+    overdueCount: number
+    dueTodayCount: number
+    // start 'HH:mm'
+    nextMeeting: { title: string; start: string } | null
+    release: {
+      version: string | null
+      date: string
+      dDay: number
+      qaStart: string | null
+      linked: boolean
+      mine: { total: number; done: number; review: number; progress: number; todo: number }
+    } | null
+  }
+}
+
+export interface TodayBriefing {
+  date: string
+  headline: string
+  // 표시 순서. id 는 입력 id 의 순열
+  signals: { id: string; text: string }[]
+  source: 'llm' | 'rules'
+  model: string | null
+  generatedAt: string
+  inputHash: string
+  error: string | null
+}
+
+export interface TodayAPI {
+  getBriefing: (
+    input: TodayBriefingInput,
+    force?: boolean
+  ) => Promise<
+    // retryAfterMs: 10분 제한에 걸려 규칙 브리핑을 돌려줬다. 그 뒤 같은 입력으로 다시 요청한다
+    { success: true; briefing: TodayBriefing; retryAfterMs?: number } | Fail
+  >
 }
 
 export type VariableViewType = 'general' | 'secret'
@@ -1087,33 +1167,8 @@ export interface BackupAPI {
 
 // 'manual' 은 명령으로 만든 임시 항목이다 (부록 G.6)
 export type CandidateSource = 'jira' | 'task' | 'todo' | 'action_item' | 'manual'
-export type CandidatePriority = 'high' | 'medium' | 'low'
 // 업무 유형 (부록 J.2·J.9.13)
 export type WorkType = 'qa' | 'sus' | 'trd' | 'prd' | 'etc'
-
-export interface Candidate {
-  id: string
-  source: CandidateSource
-  title: string
-  jiraKey: string | null
-  projectId: number | null
-  projectName: string | null
-  dueDate: string | null
-  dueTime: string | null
-  inProgress: boolean
-  priority: CandidatePriority | null
-  jiraPriority: string | null
-  lastTouchedAt: string | null
-  link: string | null
-  // Jira 부모 키. jira·task(머지) 만 (부록 J)
-  parentKey: string | null
-  // Jira 부모 요약 또는 WBS 프로젝트 이름
-  groupName: string | null
-  workType: WorkType
-  workVersion: string | null
-  // 계속 제외한 후보다. listCandidates 만 채운다 (부록 M.5.1)
-  excluded?: boolean
-}
 
 // 계속 제외 기록 (부록 M.5.1). jira·task 출처만 있다
 export interface PlanExclusion {
@@ -1231,6 +1286,7 @@ export type AssistantEventKind =
   | 'meeting_briefing'
   | 'command'
   | 'morning_sync'
+  | 'today_briefing'
 export type AssistantEventStatus = 'sent' | 'late' | 'skipped' | 'failed' | 'logged'
 export interface AssistantEvent {
   id: number
@@ -1245,22 +1301,6 @@ export interface AssistantEvent {
   response: string | null
   responded_at: string | null
   created_at: string
-}
-
-// plan_update 이벤트 payload 의 변경 요약
-export interface RefreshSummary {
-  calendarAdded: number
-  calendarChanged: number
-  calendarRemoved: number
-  suggested: number
-  urgentSuggestedIds: string[]
-  completed: number
-  dropped: number
-  replaced: number
-  timelineChanged: boolean
-  currentOrNextChanged: boolean
-  // 변경 기록 행에서만 있다. INSERT 에 성공한 알림 종류 (부록 E.3.3)
-  notified?: Array<'slot' | 'urgent'>
 }
 
 export interface AssistantSettings {
@@ -1326,68 +1366,6 @@ export interface AssistantNavigateEvent {
   }
 }
 
-// 트레이 오늘 계획 섹션 (부록 E.6.1 과 같은 모양)
-export interface TrayPlanItem {
-  id: number
-  title: string
-  rank: number | null
-  status: PlanItemStatus
-  isFocus: boolean
-}
-export interface TrayAssistant {
-  logicalDate: string
-  status: 'none' | 'active' | 'closed'
-  // 'HH:mm'
-  startedAt: string | null
-  // 활성 항목 rank 순 상위 3건
-  items: TrayPlanItem[]
-  activeCount: number
-  doneCount: number
-  suggestedCount: number
-  urgentSuggestedCount: number
-  freeMinutesLeft: number
-}
-
-// ── 명령 입력 (부록 G.3.1·G.3.4 복제) ──
-export type CommandStatus = 'planned' | 'in_progress' | 'done' | 'deferred' | 'dropped'
-export type CommandOp =
-  | { kind: 'set_status'; itemId: number; status: CommandStatus; note: string | null }
-  | { kind: 'focus'; itemId: number }
-  | { kind: 'accept_suggestion'; itemId: number }
-  | { kind: 'dismiss_suggestion'; itemId: number }
-  | { kind: 'add_candidate'; candidateId: string }
-  | { kind: 'add_manual'; title: string; dueDate: string | null }
-  | { kind: 'regenerate_briefing'; instruction: string | null }
-  | { kind: 'unsupported'; reason: string }
-export interface CommandPreviewOp {
-  op: CommandOp
-  label: string
-  executable: boolean
-}
-export interface CommandInterpretation {
-  // 공백 정리한 명령 원문
-  text: string
-  scopeItemId: number | null
-  ops: CommandPreviewOp[]
-  source: 'llm' | 'rules'
-  // LLM 실패 사유. 성공이거나 LLM 을 건너뛰면 null
-  error: string | null
-  // 검증에서 뺀 조작 수
-  dropped: number
-}
-export interface CommandOpResult {
-  op: CommandOp
-  label: string
-  ok: boolean
-  error: string | null
-}
-export interface CommandApplyOutcome {
-  today: TodayPayload
-  results: CommandOpResult[]
-  applied: number
-  failed: number
-}
-
 // ── 회의 전 브리핑 (부록 I.11.1 복제) ──
 // 시각은 'YYYY-MM-DD HH:mm:ss' 다. 종일 일정은 없다
 export interface MeetingRef {
@@ -1415,41 +1393,14 @@ export type AssistantResult<T> = ({ success: true } & T) | { success: false; err
 export type TodayResult = AssistantResult<{ today: TodayPayload }>
 
 export interface AssistantAPI {
+  // 오늘 대시보드 개편(부록 O)으로 계획 조작 채널 18개를 지웠다. 회의 브리핑·설정·이동만 남는다
   getToday: () => Promise<TodayResult>
-  startDay: () => Promise<TodayResult>
-  closeDay: (note?: string) => Promise<TodayResult>
-  reopenDay: () => Promise<TodayResult>
-  saveWrapup: (note: string, date: string) => Promise<AssistantResult<{ plan: DailyPlan }>>
-  // 어제 메모를 건너뛴 것을 기록한다. 이후 missingWrapupDate 가 null 이 된다
-  skipWrapup: (date: string) => Promise<TodayResult>
-  refresh: () => Promise<TodayResult>
-  refreshBriefing: () => Promise<TodayResult>
-  // 맥락 복구 본문을 만든다 (부록 F.7)
-  generateRecovery: () => Promise<TodayResult>
-  listCandidates: () => Promise<AssistantResult<{ candidates: Candidate[] }>>
-  addItem: (candidateId: string) => Promise<TodayResult>
-  acceptSuggestion: (itemId: number) => Promise<TodayResult>
-  dismissSuggestion: (itemId: number) => Promise<TodayResult>
-  setItemStatus: (itemId: number, status: PlanItemStatus, note?: string) => Promise<TodayResult>
-  focusItem: (itemId: number) => Promise<TodayResult>
-  // 계속 제외 (부록 M.5.6). jira·task 항목만 된다
-  excludeItem: (itemId: number) => Promise<TodayResult>
-  removeExclusion: (candidateId: string) => Promise<TodayResult>
   getSettings: () => Promise<AssistantSettings>
   saveSettings: (
     patch: Partial<AssistantSettings>
   ) => Promise<AssistantResult<{ settings: AssistantSettings }>>
   onNavigate: (cb: (p: AssistantNavigateEvent) => void) => () => void
   onChanged: (cb: (p: AssistantChangedEvent) => void) => () => void
-  // 명령 입력 (부록 G.9). 해석은 DB 를 쓰지 않는다
-  interpretCommand: (
-    text: string,
-    scopeItemId?: number
-  ) => Promise<AssistantResult<{ interpretation: CommandInterpretation }>>
-  applyCommand: (
-    ops: CommandOp[],
-    text: string
-  ) => Promise<AssistantResult<Omit<CommandApplyOutcome, never>>>
   // 회의 브리핑의 AI 본문을 다시 만든다 (부록 I.11.10). 결과를 기다린다
   regenerateMeetingBriefing: (eventId: number) => Promise<TodayResult>
 }

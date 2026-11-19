@@ -1,7 +1,7 @@
 # LinkWork 프로젝트 지침
 
 ## 프로젝트 개요
-LinkWork는 개인 업무(오늘 계획·할 일·Jira 프로젝트 화면 — 티켓 보드·릴리스 노트·연결 문서)와 회의 일정·기록을 관리하는 macOS 데스크톱 앱이다.
+LinkWork는 개인 업무(오늘 대시보드·할 일·Jira 프로젝트 화면 — 티켓 보드·릴리스 노트·연결 문서)와 회의 일정·기록을 관리하는 macOS 데스크톱 앱이다.
 기술 스택: Electron + React 19 + TypeScript + electron-vite + Tailwind 4 + better-sqlite3 + zustand.
 메인 프로세스(Node)와 렌더러(Web)가 분리되어 있어 타입체크·빌드도 두 영역으로 나뉜다.
 

@@ -169,14 +169,14 @@ describe('도구 목록', () => {
 })
 
 describe('get_today_plan', () => {
-  it('계획이 없으면 plan null 과 하루 시작 안내를 돌려준다', async () => {
+  it('계획이 없으면 plan null 과 대시보드 전환 안내를 돌려준다', async () => {
     const r = await call('get_today_plan')
     expect(r).toEqual({
       date: TODAY,
       plan: null,
       items: [],
       suggested: [],
-      hint: '이 날짜의 계획이 없다. 오늘이면 오늘 화면에서 하루 시작을 누른다.'
+      hint: '이 날짜의 계획이 없다. 오늘 화면은 대시보드로 바뀌어 새 계획을 만들지 않는다. 오늘 할 일·일정·Jira 작업은 다른 도구로 조회한다.'
     })
   })
 

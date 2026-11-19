@@ -13,6 +13,7 @@ import {
 import GoogleCalendarConnectDialog from '../integrations/GoogleCalendarConnectDialog'
 import JiraConnectDialog from '../integrations/JiraConnectDialog'
 import JiraDefaultProjectSelect from '../integrations/JiraDefaultProjectSelect'
+import CalendarPicker from '../integrations/CalendarPicker'
 import BitbucketConnectDialog from '../integrations/BitbucketConnectDialog'
 import NotionConnectDialog from '../integrations/NotionConnectDialog'
 
@@ -124,6 +125,7 @@ export default function IntegrationsSection(): React.ReactNode {
             statusError={statusErrors[id] ?? null}
             onAction={(a) => void handleAction(id, a)}
           >
+            {id === 'google' && statuses.google?.connected ? <CalendarPicker connected /> : null}
             {id === 'jira' && statuses.jira?.connected ? (
               <JiraDefaultProjectSelect status={statuses.jira} onChanged={() => void refreshStatuses()} />
             ) : null}

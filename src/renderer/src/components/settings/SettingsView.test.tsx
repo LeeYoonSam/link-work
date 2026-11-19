@@ -65,8 +65,10 @@ describe('SettingsView', () => {
     expect(html).toMatch(/data-section="assistant" aria-current="page"/)
     // 비서 섹션 내용: 즉시 저장 안내와 그룹 3개
     expect(html).toContain('바꾸는 즉시 저장됩니다')
-    for (const g of ['동작', '시간', '알림과 주기']) expect(html).toContain(g)
-    expect(html).toContain('캘린더 확인 주기 (분)')
+    for (const g of ['동작', '시간', '알림']) expect(html).toContain(g)
+    expect(html).toContain('회의 전 알림(분)')
+    // 부록 O: 하루 계획용 칸은 없다
+    expect(html).not.toContain('캘린더 확인 주기 (분)')
   })
 
   it('연동 섹션은 Google·Jira·Bitbucket·Notion 카드 4개를 그린다', () => {

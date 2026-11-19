@@ -2,48 +2,35 @@
 // 예전 오늘 화면의 비서 설정 모달에서 옮겨 왔다. React·window 를 쓰지 않는다.
 import type { AssistantSettings } from '../../types'
 
-// 설정 화면이 노출하는 비서 설정 키
+// 설정 화면이 노출하는 비서 설정 키.
+// 부록 O(오늘 대시보드 개편, 2026-11-19): 하루 계획 기능이 없어져 startNudge·refreshNotify·planSize·workEnd·
+// completeOriginOnDone·refreshCalendarMin·refreshJiraMin·jiraScope 칸은 화면에서 뺐다.
+// AssistantSettings 타입과 저장 키는 그대로 두고, 저장된 값도 지우지 않는다.
 export type FormSettingKey =
   | 'enabled'
   | 'dayRollover'
-  | 'startNudge'
-  | 'workEnd'
-  | 'planSize'
   | 'llmEnabled'
   | 'llmModel'
-  | 'jiraScope'
   | 'openAtLogin'
   | 'startView'
-  | 'refreshCalendarMin'
-  | 'refreshJiraMin'
-  | 'refreshNotify'
   | 'meetingBriefingEnabled'
   | 'meetingLeadMin'
   | 'morningSyncEnabled'
   | 'morningSyncTime'
-  | 'completeOriginOnDone'
 
 export type FormSettings = Pick<AssistantSettings, FormSettingKey>
 
 export const FORM_SETTING_KEYS: FormSettingKey[] = [
   'enabled',
   'dayRollover',
-  'startNudge',
-  'workEnd',
-  'planSize',
   'llmEnabled',
   'llmModel',
-  'jiraScope',
   'openAtLogin',
   'startView',
-  'refreshCalendarMin',
-  'refreshJiraMin',
-  'refreshNotify',
   'meetingBriefingEnabled',
   'meetingLeadMin',
   'morningSyncEnabled',
-  'morningSyncTime',
-  'completeOriginOnDone'
+  'morningSyncTime'
 ]
 
 // 첫 화면으로 고를 수 있는 값. 홈은 '오늘' 하나다 (메뉴 통합 D1·D5)
@@ -61,7 +48,6 @@ export function formStartView(v: unknown): AssistantSettings['startView'] {
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
 
-const isRefreshMin = (v: number): boolean => Number.isInteger(v) && v >= 1 && v <= 240
 const isIntIn = (v: number, min: number, max: number): boolean =>
   Number.isInteger(v) && v >= min && v <= max
 
@@ -76,12 +62,7 @@ export function numberInputValue(v: number): number | '' {
 }
 
 // 숫자 설정 키와 빈 칸 오류 문구에 쓸 이름
-const NUMBER_FIELDS: Array<[keyof FormSettings, string]> = [
-  ['planSize', '하루 계획 항목 수'],
-  ['refreshCalendarMin', '캘린더 확인 주기'],
-  ['refreshJiraMin', 'Jira 확인 주기'],
-  ['meetingLeadMin', '회의 전 알림']
-]
+const NUMBER_FIELDS: Array<[keyof FormSettings, string]> = [['meetingLeadMin', '회의 전 알림']]
 
 // 폼 값 검증. 문제가 있으면 사용자용 문구를 돌려준다
 export function validateSettings(s: FormSettings): string | null {
@@ -90,12 +71,7 @@ export function validateSettings(s: FormSettings): string | null {
     if (typeof v !== 'number' || Number.isNaN(v)) return `${label}을(를) 입력하세요`
   }
   if (!HHMM.test(s.dayRollover)) return '날짜 경계는 HH:mm 형식이어야 합니다'
-  if (!HHMM.test(s.workEnd)) return '근무 종료 시각은 HH:mm 형식이어야 합니다'
   if (!HHMM.test(s.morningSyncTime)) return '아침 자동 동기화 시각은 HH:mm 형식이어야 합니다'
-  if (!Number.isInteger(s.planSize) || s.planSize < 1 || s.planSize > 20)
-    return '계획 항목 수는 1~20 사이여야 합니다'
-  if (!isRefreshMin(s.refreshCalendarMin)) return '캘린더 확인 주기는 1~240분 사이여야 합니다'
-  if (!isRefreshMin(s.refreshJiraMin)) return 'Jira 확인 주기는 1~240분 사이여야 합니다'
   // 회의 전 브리핑 시각 (부록 I.10.4)
   if (!isIntIn(s.meetingLeadMin, 1, 120)) return '회의 전 알림은 1~120분 사이여야 합니다'
   return null
@@ -122,8 +98,6 @@ export function toFormSettings(settings: AssistantSettings): FormSettings {
   // 아침 자동 동기화 기본값 켬·08:00 (D9)
   init.morningSyncEnabled ??= true
   init.morningSyncTime ??= '08:00'
-  // 원본 자동 완료의 기본값은 끔이다 (D10)
-  init.completeOriginOnDone ??= false
   return init as FormSettings
 }
 
@@ -151,15 +125,7 @@ export const PLACEHOLDER_SETTINGS: AssistantSettings = {
 }
 
 // 즉시 저장할 키(토글·select)와 blur 때 검증 후 저장할 키(숫자·시각)
-export const BLUR_SAVE_KEYS: FormSettingKey[] = [
-  'dayRollover',
-  'workEnd',
-  'morningSyncTime',
-  'planSize',
-  'refreshCalendarMin',
-  'refreshJiraMin',
-  'meetingLeadMin'
-]
+export const BLUR_SAVE_KEYS: FormSettingKey[] = ['dayRollover', 'morningSyncTime', 'meetingLeadMin']
 
 // 한 칸만 바꾼 값을 저장된 값 위에서 검증한다. 다른 칸의 저장 전 값은 보지 않는다
 export function validateField<K extends FormSettingKey>(

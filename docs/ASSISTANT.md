@@ -36,6 +36,7 @@
 - 체크인 제거·홈 개편 (2026-11-05): 작업 경계 체크인을 지운다. 오늘 화면을 요약 타일과 2열 배치로 바꾼다. 내용은 부록 L 이다. 부록 L 이 J.8 과 A53 을 대체한다.
 - 후보 분리·계속 제외·오늘 카드 통합 (2026-11-09): 하루 시작이 액션아이템을 넣지 않는다. 계속 제외를 저장한다. 시간표와 오늘 할 일을 카드 1개로 합친다. 오늘 화면 정렬·강조 규칙을 정한다. 내용은 부록 M 이다. 부록 M 이 L.2 의 주열 순서와 L.8 3차 조정의 카드 순서를 대체한다. 규칙 A57~A59 는 M.6 에 있다.
 - 프로젝트 메뉴 개편 (2026-11-18): 로컬 프로젝트·WBS 작업·프로젝트 싱크업을 지우고 프로젝트 메뉴를 Jira 티켓 보드로 바꿨다. 비서의 작업 후보, 활성 프로젝트 읽기, 회의 브리핑의 관련 프로젝트·관련 항목, 맥락 복구의 프로젝트·작업 유형, 아침 동기화의 프로젝트 파트, 오늘 화면의 진행 중 프로젝트, 트레이의 Active Projects 를 지웠다. 내용은 부록 N 이다. 본문·부록의 현재 동작 서술은 이 개편에 맞춰 고쳤다. 날짜가 붙은 결정 기록·완료 조건·팀 구성은 당시 기록으로 남겼다.
+- 오늘 대시보드 개편 (2026-11-19): 오늘 화면을 계획 화면에서 읽는 대시보드로 바꿨다. 하루 시작·퇴근·계획 항목 조작·후보·명령 입력·맥락 복구 카드·변경 내역·집중 블록과 그 IPC 18개, 트레이 계획 섹션을 지웠다. 신호는 규칙이 만들고 LLM 은 헤드라인과 신호 순서·문구만 다듬는다. 내용은 부록 O 다. 부록 O 가 §12.2·§13·부록 B·E.4·G·J.8·L·M 의 화면·IPC 서술을 대체한다.
 
 ---
 
@@ -721,6 +722,8 @@ JQL:
 - 창이 없거나 창이 로딩 중이면, 스케줄러가 navigate 를 '보관 신호'로 저장한다. 창이 없으면, 스케줄러가 `createWindow()` 를 호출한다. 렌더러는 마운트할 때 `assistant:takePendingNavigate` 로 보관 신호를 가져간다. 보관 신호는 60초 뒤 만료된다. 이유: `did-finish-load` 시점에 렌더러의 구독이 아직 없을 수 있다 (부록 D.4).
 
 ### 12.2 오늘 화면 (MVP1)
+
+> 오늘 대시보드 개편(2026-11-19)으로 이 절은 **부록 O 로 대체됨**. 아래는 당시 기록이다.
 - 뷰 유니온에 `'today'` 를 추가한다. 지금 뷰 상태는 `stores/navigationStore.ts` 의 `view` 다(2026-11-18 전에는 `projectStore.view`).
 - Sidebar 에 `오늘` 항목을 Dashboard 바로 아래에 둔다. 메뉴 통합 뒤에는 부록 K.1 이 이 항목을 대체한다. '오늘' 이 맨 위 홈이고 Dashboard 는 없다.
 - `App.tsx` 에 `case 'today'` 를 추가한다.
@@ -761,6 +764,8 @@ JQL:
 ---
 
 ## 13. IPC 계약
+
+> 오늘 대시보드 개편(2026-11-19)으로 이 절은 **부록 O 로 대체됨**. 아래는 당시 기록이다.
 
 preload 네임스페이스는 `assistant` 다. 채널은 `assistant:<동작>` 이다. 응답은 `{ success, error }` 로 감싼다. 이유: Jira 호출이 실패할 수 있다.
 
@@ -1390,6 +1395,8 @@ IPC 채널 15개와 push 2개:
 
 ## 부록 B. 블록 타임라인 개정 (3판)
 
+> 오늘 대시보드 개편(2026-11-19)으로 이 절은 **부록 O 로 대체됨**. 아래는 당시 기록이다.
+
 ### B.1 배경
 1판·2판은 빈 시간에 항목당 고정 60분을 순서대로 채웠다. 사용자의 작업은 여러 날 걸리거나 소요 시간이 정해져 있지 않다. 그래서 고정 60분과 끝 시각은 실제보다 정확해 보이는 거짓 정보다. 3판은 작업에 시간을 붙이지 않는다. 비서는 회의 사이 빈 시간을 블록으로 보여 주고, 블록마다 할 작업을 제안한다.
 
@@ -1773,6 +1780,8 @@ MVP2 에서 빠지는 것:
 - `notified` 는 INSERT 에 성공한 알림 종류를 중복 없이 담는다. 예: urgent 3건이면 `['urgent']` 다.
 
 ### E.4 트레이
+
+> 오늘 대시보드 개편(2026-11-19)으로 이 절은 **부록 O 로 대체됨**. 아래는 당시 기록이다.
 
 #### E.4.1 `getTrayData` 의 assistant 필드
 - `TrayData.assistant: TrayAssistant | null` 을 추가한다. 타입은 E.6 에 있다.
@@ -2631,6 +2640,8 @@ export function recoveryButtonLabel(hasText: boolean): string   // '만들기' |
 ---
 
 ## 부록 G. 명령 입력
+
+> 오늘 대시보드 개편(2026-11-19)으로 이 절은 **부록 O 로 대체됨**. 아래는 당시 기록이다.
 
 ### G.1 범위
 
@@ -4512,6 +4523,8 @@ export const ASSISTANT_SPEECH_JSON_NOTE =
 
 ### J.8 오늘 화면 배치 (A53)
 
+> 오늘 대시보드 개편(2026-11-19)으로 이 절은 **부록 O 로 대체됨**. 아래는 당시 기록이다.
+
 부록 L 이 대체한다. 아래 순서는 기록으로만 남긴다.
 
 최종 순서 (근무 중):
@@ -4992,6 +5005,8 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 
 ## 부록 L. 체크인 제거·홈 개편 (2026-11-05)
 
+> 오늘 대시보드 개편(2026-11-19)으로 이 절은 **부록 O 로 대체됨**. 아래는 당시 기록이다.
+
 사용자 피드백: 체크인 카드는 쓰지 않는다. 예전 대시보드는 큼직하고 읽기 쉬웠다. 지금 홈은 글자가 작고 목록이 줄줄이 보인다. 그래서 체크인을 지우고 홈 배치와 글자 크기를 바꾼다. 이 부록이 J.8 과 A53 을 대체한다.
 
 ### L.1 체크인 제거 범위
@@ -5114,6 +5129,8 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 - 3차 조정 (2026-11-05, 사용자 피드백): V5 의 2열 그리드를 없앴다. 모든 홈 카드는 가로 전체 폭을 쓰고 세로로 쌓인다. 순서는 오늘 할 일, 새로 들어온 일, 시간표다. 홈 카드의 말줄임(truncate)과 중요 메모 높이 제한을 없앴다. 글은 줄바꿈으로 끝까지 보인다. 캘린더와 함께 쓰는 DayScheduleCard 는 바꾸지 않았다.
 
 ## 부록 M. 후보 분리·계속 제외·오늘 카드 통합 (2026-11-09)
+
+> 오늘 대시보드 개편(2026-11-19)으로 이 절은 **부록 O 로 대체됨**. 아래는 당시 기록이다.
 
 사용자 피드백 4가지를 반영한다.
 1. 하루 시작 뒤 고르지 않은 액션아이템이 오늘 할 일에 들어간다. 액션아이템은 회의록에서 추측한 일이다. 그래서 기본은 후보에만 둔다. 사용자가 추가할 때만 오늘 할 일에 들어간다.
@@ -5468,3 +5485,126 @@ Jira 티켓 계층 보드다([PROJECT_BOARD.md](PROJECT_BOARD.md)). 비서는 �
 - A2 는 그대로다. 비서 main 코드는 projects·tasks·todos·meetings 를 쓰지 않는다. 이제 projects·tasks 를 읽지도 않는다.
 - A54 는 파트가 `release` 하나인 상태로 그대로 적용한다.
 
+---
+
+## 부록 O. 오늘 대시보드 개편 (2026-11-19)
+
+### O.1 목적
+
+- 오늘 화면은 "오늘 챙겨야 할 것을 한눈에 읽는 대시보드"다. 계획을 만들거나 조작하지 않는다.
+- 화면에서 직접 하는 동작은 할 일 체크·빠른 추가, 이동 링크, 회의 브리핑 펼침, 새로고침(↻)뿐이다.
+- 하루 시작·퇴근·퇴근 메모, 계획 항목 행(완료·제외·진행 중·미룸·지금 집중), 요약 타일, 후보 카드, 맥락 복구 카드, 자연어 명령 입력, 변경 내역, 빈 시간 블록 표시를 지웠다.
+
+### O.2 화면 구성
+
+넓은 창(본문 컨테이너 폭 1000px 이상, Tailwind 컨테이너 쿼리 `@min-[1000px]`):
+
+```
+11월 19일 (목)                                   동기화 09:12 · ↻
+오늘 QA 시작, 배포 D-5. 진행 중 2건이 아직 QA 전이에요.          ← 헤드라인 1줄
+┌ 지금 챙길 것 (신호 최대 3행 / 0건이면 요약 1줄) ─────────────────────┐
+└──────────────────────────────────────────────────────────────────────┘
+┌ 일정(좁은 열) ┐ ┌ 다음 배포 4.177.0  D-5 · 11/24(화) ─────────────────┐
+│               │ │ 개발 ─● QA ─ ○ 배포, 내 작업 막대, 행, 외 n건 →      │
+│               │ └─────────────────────────────────────────────────────┘
+│               │ ┌ 내 Jira 작업 ──────────┐ ┌ 할 일 ─────────────────┐
+└───────────────┘ └────────────────────────┘ └────────────────────────┘
+중요 메모(있을 때만)
+```
+
+- 좁은 창은 단일 열이다. DOM 순서 = 헤더·신호 → 다음 배포 → 내 Jira 작업 → 할 일 → 일정 → 중요 메모. 넓은 창은 같은 DOM 을 격자로 옮겨 일정을 왼쪽 열에 둔다.
+- 카드 높이는 내용에 맞춘다. 행 수에 상한을 두고 나머지는 "외 n건 →"(해당 메뉴로 이동)로 보인다. 위험 행·마감 지난 행은 상한에서 빼고 늘 보인다.
+- 정보 위계: 헤드라인(xl) > 신호(sm medium) > 카드 제목(sm semibold) > 행(sm) > 메타(xs).
+- severity 는 색과 모양을 함께 쓴다: critical 빨강 마름모(◆), warn 앰버 삼각형(▲), info 파랑 원(●). 라벨(긴급·주의·참고)을 보조기술에 준다.
+- 신호에 올라간 이슈·할 일은 아래 카드 행에 앰버 점 표식만 붙인다.
+- 파일: `components/today/TodayView.tsx`(데이터 연결·배치), `SignalPanel.tsx`, `ReleaseCard.tsx`, `JiraWorkCard.tsx`, `TodoCard.tsx`, `ScheduleCard.tsx`, `MeetingBriefingCard.tsx`(브리핑 읽기·본문 조각), `todayTokens.ts`(위계·강조 상수).
+
+| 카드 | 내용 | 이동 |
+|---|---|---|
+| 지금 챙길 것 | 신호 ≤ 3행. 근거 칩. meeting_soon 행은 화면이 "n분 뒤"를 붙인다. 숨은 신호가 있으면 "외 n건". 닫기 없음 | issue → 프로젝트 화면의 그 이슈(`revealInTickets`, 실패 시 티켓 탭) / todo → 할 일 화면의 그 항목 / meeting → 일정 행 스크롤 / release → 릴리스 탭의 그 릴리스 |
+| 다음 배포 | 버전·D-day·날짜, 단계 선(개발─QA─배포, 오늘 위치), 내 작업 막대(완료·리뷰·진행·할 일), 행(위험 행 전부 + 상한 3) | 이슈 키 → 그 이슈, "외 n건 →" → 릴리스 탭(`openReleaseForVersion`) |
+| 내 Jira 작업 | 지남 → 오늘 마감 → 진행 중 → 리뷰·QA, 상한 7. 상태 배지는 프로젝트 화면의 `JiraStatusBadge` | 키 → 그 이슈, "외 n건 →" → 티켓 탭. 미연결이면 설정 > 연동 |
+| 할 일 | 지남 → 오늘 → 우선순위, 상한 6. 체크(완료 후 재조회), 빠른 추가(Enter, 빈 값·한글 조합 중 무시), 오늘 완료 수 | 제목 → 할 일 화면의 그 항목, "외 n건 →" → 할 일 화면 |
+| 일정 | 종일 칩, 시간 일정 행(지난 일정 흐림, 진행 중 굵게), "지금 HH:mm" 선, 회의 전 브리핑 인라인 펼침, 내일 1줄 | "캘린더 →", 미연결이면 설정 > 연동 |
+
+- 회의 브리핑 짝짓기: `payload.meeting.id === CalendarEvent.id`. 기본 펼침은 아직 시작 안 한 가장 가까운 회의 중 브리핑이 있는 1건이다. 다시 만들기는 기존 `regenerateMeetingBriefing` 을 쓴다.
+- 알림 클릭 focus 는 `meeting` 만 쓴다. `meeting-briefing-<eventId>` 를 펼치고 스크롤한다. 그 밖의 kind(inbox·item·briefing·timeline)는 무시한다.
+- 화면의 '지금'은 60초마다 다시 읽는다.
+
+### O.3 데이터 흐름
+
+- 조립은 렌더러 순수 모델이다: `todayModel.ts`(`buildTodayDashboard`, `toBriefingInput`, `applyBriefing`, `minutesUntil`), `releaseModel.ts`(다음 배포 판정). 메인 집계 IPC 는 없다.
+- 데이터: `todayStore`(캘린더 범위·브리핑·로딩), `todoStore`, `jiraBoardStore.snapshot`, `releaseNoteStore.allNotes`, `assistantStore.today`(회의 브리핑 이벤트·연결 상태·AI 가능 여부).
+- 캘린더는 `calendar:range` 로 오늘 0시~+21일을 받는다. 릴리스·QA 일정은 선택한 캘린더 전체의 종일 일정 제목 패턴으로 찾는다(`[QA]`/`Release Train`, `App Release(vX.Y.Z)`). 판정 규칙은 docs/RELEASE_NOTES.md 의 '오늘 화면의 다음 배포 판정' 절이다.
+- "오늘" 은 로컬 날짜다(`boardModel.localDate`).
+- 갱신: 화면 진입 때 `todayStore.load()`(캐시 허용). ↻ 는 `todayStore.refresh()`(캘린더 강제, Jira 증분, 릴리스 변경분 강제) 뒤 브리핑도 강제한다. 창 focus 재로드와 아침 자동 동기화 완료는 오늘 화면이 열려 있을 때 `todayStore.load()` 를 부른다(`stores/dataSync.ts`). `assistant:changed` 는 `assistantStore.load()` 를 부른다.
+
+### O.4 신호 규칙
+
+신호는 규칙(순수 함수)이 만들고 근거 ref 도 규칙이 붙인다.
+
+| kind | 조건 | severity |
+|---|---|---|
+| release_risk | Jira 릴리스와 연결됨, 그리고 (QA 시작~배포일 사이인데 포함된 내 이슈가 할 일이거나 리뷰 아닌 진행 중) 또는 (D-1~D-day 인데 미완료). 1건으로 합친다 | D-1 이하 critical, 그 외 warn |
+| release_day | 오늘 = 배포일 | warn |
+| overdue | 내 Jira 마감 지남 1건, 할 일 마감 지남 1건(각각) | warn |
+| meeting_soon | 시작까지 0 < 분 ≤ 60 인 가장 가까운 시간 일정. 문구는 절대 시각("14:00 Tech weekly") | info |
+| due_today | Jira·할 일 오늘 마감 합쳐 1건 | info |
+| qa_start | 오늘 = QA 시작일 | info |
+
+- 정렬: severity → 종류 순(release_risk, release_day, overdue, meeting_soon, due_today, qa_start). 상위 3건만 보이고 나머지는 "외 n건".
+- 0건이면 요약 1줄 "회의 n · 오늘 마감 n · 배포 D-n"(해당 없는 조각은 생략).
+- 거짓 경보 방어: 버전 매칭에 실패하면 release_risk 를 만들지 않고 배포 카드에 "Jira 릴리스와 연결 안 됨"을 보인다. fixVersion 이 없는 진행 중 이슈, 내 계정 id 를 모를 때는 경보를 만들지 않는다.
+
+### O.5 오늘 브리핑 (헤드라인·신호 문구)
+
+- 렌더러가 규칙 신호·사실(`TodayBriefingInput`)을 만들어 `today:getBriefing(input, force?)` 를 부른다. 대시보드가 바뀌면 1초 디바운스, 불러오는 중에는 부르지 않는다. 직렬화한 입력이 직전과 같으면 스토어가 생략한다.
+- 메인(`today-briefing.ts`)은 LLM 으로 headline 과 신호 순서·문구만 다듬는다. 새 사실·새 id·상대 시간을 넣지 못한다. 검증: 모르는 id 버림, 빠진 id 는 규칙 문구로 뒤에 붙임, headline 80자 초과·빈 값이면 규칙 헤드라인, 신호 문구 60자 초과·빈 값이면 규칙 문구.
+- LLM 꺼짐·헤드리스 없음·실패·검증 탈락이면 같은 구조를 `source: 'rules'` 로 돌려준다. 화면은 같은 배치를 규칙 문구로 그린다.
+- 입력 해시가 같고 저장본이 llm 이면 그대로 돌려준다. 다르면 LLM 을 부른다(강제가 아니면 10분에 1회, 진행 중이면 같은 promise 를 공유). LLM 호출은 비서의 직렬 줄(`runLlmSerialized`)을 함께 쓴다.
+- 저장: `assistant_events` 1행(kind `today_briefing`, event_key `today_briefing:<date>`, status `logged`, payload = `TodayBriefing` JSON). 스키마 변경은 없다.
+- 해시·문구에는 상대 시간("40분 뒤")을 넣지 않는다. "n분 뒤"는 화면이 붙인다.
+
+```ts
+type SignalKind = 'release_risk' | 'release_day' | 'overdue' | 'due_today' | 'meeting_soon' | 'qa_start'
+type SignalSeverity = 'critical' | 'warn' | 'info'
+interface TodayBriefingInput {
+  date: string; ruleHeadline: string
+  signals: { id: string; kind: SignalKind; severity: SignalSeverity; text: string; refs: string[] }[]
+  facts: { meetingCount: number; overdueCount: number; dueTodayCount: number
+           nextMeeting: { title: string; start: string } | null
+           release: { version: string | null; date: string; dDay: number; qaStart: string | null; linked: boolean
+                      mine: { total: number; done: number; review: number; progress: number; todo: number } } | null }
+}
+interface TodayBriefing {
+  date: string; headline: string; signals: { id: string; text: string }[]
+  source: 'llm' | 'rules'; model: string | null; generatedAt: string; inputHash: string; error: string | null
+}
+```
+
+### O.6 IPC
+
+| 채널 | 요청 | 응답 |
+|---|---|---|
+| `today:getBriefing` | `(input: TodayBriefingInput, force?: boolean)` | `{ success: true; briefing } \| { success: false; error }` |
+| `calendar:range` | `(fromISO, toISO, force?)` 범위 45일 이하 | `{ success: true; events; fetchedAt } \| Fail` |
+| `calendar:listCalendars` | `()` | `{ success: true; calendars; selectedIds } \| Fail` |
+| `calendar:setSelectedCalendars` | `(ids: string[])` | `{ success: true; selectedIds } \| Fail` |
+
+지운 `assistant:*` 채널(18개): startDay, closeDay, reopenDay, saveWrapup, skipWrapup, refresh, refreshBriefing, generateRecovery, listCandidates, addItem, acceptSuggestion, dismissSuggestion, setItemStatus, focusItem, excludeItem, removeExclusion, interpretCommand, applyCommand.
+남은 `assistant:*`: getToday, getSettings, saveSettings, regenerateMeetingBriefing, takePendingNavigate, 이벤트 navigate·changed.
+
+### O.7 제거 목록
+
+- 렌더러 화면: `components/today/` 의 BriefingCard, CandidatePicker, CandidatesCard, ChangeLog, CommandInput, DayHeader, InboxSection, MoreSection, PlanItemRow, RecoveryCard, SummaryTiles, Timeline(+테스트), homeTypography.test, `components/dashboard/HomeSchedule.tsx`, `TodaySchedule.tsx`(+테스트). 릴리스 화면의 아침 동기화 상태 줄 함수는 `components/release/morningStatus.ts` 로 옮겼다.
+- 렌더러 스토어: `assistantStore` 는 today·loading·error·focus·meetingRegeneratingIds 와 load·setFocus·clearError·saveSettings·regenerateMeetingBriefing·subscribe 만 남긴다.
+- 렌더러 타입: Candidate, CandidatePriority, RefreshSummary, TrayPlanItem, TrayAssistant, Command* 와 AssistantAPI 의 18개 메서드. TodayPayload 모양과 그 하위 타입(DailyPlan, PlanItem, DayTimeline, PlanExclusion 등)은 남긴다.
+- 트레이: 계획 섹션과 하루 시작·퇴근 버튼. 트레이는 오늘 일정 목록과 '오늘 보기'·Refresh 만 보인다. `TrayData` 는 `{ events }` 다.
+- 메인: 위 채널의 서비스 함수, 명령 해석 모듈, 트레이 계획 모듈, 시작 알림·자동 최신화 스케줄, 설정 UI 8칸(startNudge, refreshNotify, planSize, workEnd, completeOriginOnDone, refreshCalendarMin, refreshJiraMin, jiraScope — 저장 키는 유지).
+- 남긴 것: daily_plans·plan_items·assistant_events·assistant_exclusions 테이블, 회의 전 브리핑, 자동 닫기(closeStalePlans), 아침 자동 동기화 틱, 첫 화면 설정, AI 도구 `get_today_plan`(과거 기록 조회용).
+
+### O.8 후속 과제
+
+- 남은 계획 엔진(최신화·슬롯·점수·후보·업무 유형·맥락 복구·일일 브리핑·출처 수집)과 TodayPayload 축소, 쓰지 않는 설정 키 삭제.
+- `AssistantNavigateEvent.focus` 의 옛 kind(inbox·item·briefing·timeline)와 `linkwork://today/...` 링크 정리.
+- 대시보드 실사용 뒤 상한(신호 3·Jira 7·할 일 6·배포 3)과 넓은 창 기준 폭(1000px) 조정.
