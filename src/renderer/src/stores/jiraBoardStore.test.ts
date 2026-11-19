@@ -32,7 +32,9 @@ let api: { jiraBoard: { cached: Fn; fetch: Fn; summarizeEpic: Fn } }
 let storage: Map<string, string>
 
 const { useJiraBoardStore } = await import('./jiraBoardStore')
-const { DEFAULT_FILTER, EMPTY_FILTER } = await import('../components/project/boardModel')
+const { DEFAULT_FILTER, EMPTY_FILTER, CLOSED_SECTION_ID, doneFoldId } = await import(
+  '../components/project/boardModel'
+)
 
 const initial = useJiraBoardStore.getState()
 
@@ -274,6 +276,52 @@ describe('jiraBoardStore.revealIssue — 보드에서 보기', () => {
     const s = useJiraBoardStore.getState()
     expect(s.selectedKey).toBe('PROJ-3')
     expect(s.expanded).toMatchObject({ 'PROJ-1': true, 'PROJ-2': true })
+  })
+
+  describe('닫힘 묶음', () => {
+    // 최근 완료여야 트리에 남는다. reveal 은 실제 오늘 날짜로 판정한다
+    const DONE = { statusCategory: 'done' as const, resolvedAt: new Date().toISOString() }
+    const FOLD_ISSUES = [
+      { ...base, key: 'PROJ-10', level: 'epic' as const, issueType: '에픽' },
+      { ...base, key: 'PROJ-11', parentKey: 'PROJ-10' },
+      { ...base, key: 'PROJ-12', parentKey: 'PROJ-10', ...DONE },
+      { ...base, key: 'PROJ-13', parentKey: 'PROJ-10', ...DONE },
+      { ...base, key: 'PROJ-20', level: 'epic' as const, issueType: '에픽', ...DONE },
+      { ...base, key: 'PROJ-21', parentKey: 'PROJ-20', ...DONE }
+    ]
+    const FOLD = doneFoldId('PROJ-10')
+    beforeEach(() => {
+      useJiraBoardStore.setState({
+        snapshot: snapshot({ issues: FOLD_ISSUES }),
+        filter: { ...EMPTY_FILTER },
+        expanded: { [FOLD]: false, [CLOSED_SECTION_ID]: false }
+      })
+    })
+
+    it('묶음 속에 숨은 이슈면 감싼 묶음을 펼친다', () => {
+      expect(useJiraBoardStore.getState().revealIssue('PROJ-12')).toBe(true)
+      expect(useJiraBoardStore.getState().expanded).toMatchObject({ 'PROJ-10': true, [FOLD]: true })
+    })
+
+    it('닫힌 그룹 섹션 속 이슈면 섹션과 그룹을 펼친다', () => {
+      expect(useJiraBoardStore.getState().revealIssue('PROJ-21')).toBe(true)
+      expect(useJiraBoardStore.getState().expanded).toMatchObject({ 'PROJ-20': true, [CLOSED_SECTION_ID]: true })
+    })
+
+    it('이미 보이는 열린 이슈면 사용자가 접어 둔 묶음·섹션을 건드리지 않는다', () => {
+      expect(useJiraBoardStore.getState().revealIssue('PROJ-11')).toBe(true)
+      expect(useJiraBoardStore.getState().expanded).toEqual({
+        'PROJ-10': true,
+        [FOLD]: false,
+        [CLOSED_SECTION_ID]: false
+      })
+    })
+
+    it('묶음 상태가 저장된 적 없어도 열린 이슈 reveal 은 묶음 id 를 추가하지 않는다', () => {
+      useJiraBoardStore.setState({ expanded: {} })
+      useJiraBoardStore.getState().revealIssue('PROJ-11')
+      expect(useJiraBoardStore.getState().expanded).toEqual({ 'PROJ-10': true })
+    })
   })
 
   it('필터에 가려져 있으면 필터를 푼다(내 담당만·검색)', () => {

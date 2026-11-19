@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { JiraBoardIssue, JiraBoardSnapshot, JiraEpicAiSummary } from '../../types'
 import type { JiraBoardState } from '../../stores/jiraBoardStore'
-import { DEFAULT_FILTER, EMPTY_FILTER } from './boardModel'
+import { CLOSED_SECTION_ID, DEFAULT_FILTER, EMPTY_FILTER, doneFoldId } from './boardModel'
 
 // 프로젝트 화면 루트의 상태 분기와 트리·상세 마크업을 잠근다.
 // zustand v5 는 서버 렌더에서 setState 가 반영되지 않으므로 스토어 훅을 모킹한다.
@@ -342,5 +342,68 @@ describe('ProjectBoardView 선택·상세', () => {
 
   it('에픽이 아닌 행에는 AI 요약 버튼이 없다', () => {
     expect(render({ snapshot: snapshot(), selectedKey: 'PROJ-131' })).not.toContain('>AI 요약</button>')
+  })
+})
+
+describe('ProjectBoardView 닫힘 묶음', () => {
+  const done = { status: '완료', statusCategory: 'done' as const }
+  // 열린 에픽(열린 자식 1 + 닫힌 자식 2)과 닫힌 에픽(닫힌 자식 1)
+  const MIXED: JiraBoardIssue[] = [
+    issue({ key: 'PROJ-200', level: 'epic', issueType: '에픽', summary: '진행 에픽' }),
+    issue({ key: 'PROJ-201', parentKey: 'PROJ-200', summary: '열린 일' }),
+    issue({ key: 'PROJ-202', parentKey: 'PROJ-200', summary: '닫힌 일 A', ...done }),
+    issue({ key: 'PROJ-203', parentKey: 'PROJ-200', summary: '닫힌 일 B', ...done }),
+    issue({ key: 'PROJ-300', level: 'epic', issueType: '에픽', summary: '끝난 에픽', ...done }),
+    issue({ key: 'PROJ-301', parentKey: 'PROJ-300', summary: '끝난 에픽의 일', ...done })
+  ]
+  const mixed = (over: Partial<JiraBoardState> = {}): string => render({ snapshot: snapshot({ issues: MIXED }), ...over })
+
+  it('열린 에픽과 닫힌 에픽이 섞이면 닫힌 상위 티켓 섹션이 열린 그룹 뒤에 접힌 채 온다', () => {
+    const html = mixed()
+    const section = rowTag(html, CLOSED_SECTION_ID)!
+    expect(section).toContain('data-row-kind="fold"')
+    expect(section).toContain('aria-expanded="false"')
+    expect(section).not.toContain('aria-selected')
+    expect(html).toContain('닫힌 상위 티켓 1건')
+    expect(rowTag(html, 'PROJ-300')).toBeUndefined()
+    expect(html.indexOf(`board-row-${CLOSED_SECTION_ID}`)).toBeGreaterThan(html.indexOf('board-row-PROJ-200'))
+  })
+
+  it('섹션을 펼치면 닫힌 에픽이 level 1 로 보인다(에픽 자체는 접힘)', () => {
+    const html = mixed({ expanded: { [CLOSED_SECTION_ID]: true } })
+    expect(rowTag(html, CLOSED_SECTION_ID)).toContain('aria-expanded="true"')
+    const epic = rowTag(html, 'PROJ-300')!
+    expect(epic).toContain('aria-level="1"')
+    expect(epic).toContain('aria-expanded="false"')
+    expect(rowTag(html, 'PROJ-301')).toBeUndefined()
+  })
+
+  it('열린 자식 1 + 닫힌 자식 2 면 닫힘 2건 묶음이 열린 자식 뒤에 오고 닫힌 자식은 접혀 있다', () => {
+    const html = mixed()
+    const fold = rowTag(html, doneFoldId('PROJ-200'))!
+    expect(fold).toContain('aria-level="2"')
+    expect(fold).toContain('aria-expanded="false"')
+    expect(html).toContain('닫힘 2건')
+    expect(rowTag(html, 'PROJ-201')).toBeDefined()
+    expect(rowTag(html, 'PROJ-202')).toBeUndefined()
+    expect(rowTag(html, 'PROJ-203')).toBeUndefined()
+    expect(html.indexOf(`board-row-${doneFoldId('PROJ-200')}`)).toBeGreaterThan(html.indexOf('board-row-PROJ-201'))
+  })
+
+  it('묶음을 펼치면 닫힌 자식이 같은 level 로 보인다', () => {
+    const html = mixed({ expanded: { [doneFoldId('PROJ-200')]: true } })
+    expect(rowTag(html, 'PROJ-202')).toContain('aria-level="2"')
+    expect(rowTag(html, 'PROJ-203')).toBeDefined()
+  })
+
+  it('검색어가 있으면 묶지 않는다', () => {
+    const html = mixed({ filter: { ...EMPTY_FILTER, query: '일' } })
+    expect(html).not.toContain('data-row-kind="fold"')
+    expect(html).not.toContain('닫힘 2건')
+    expect(rowTag(html, 'PROJ-202')).toBeDefined()
+  })
+
+  it('묶음 행이 있어도 탭 정지점은 하나다', () => {
+    expect(mixed().match(/role="row"[^>]*tabindex="0"/g)).toHaveLength(1)
   })
 })

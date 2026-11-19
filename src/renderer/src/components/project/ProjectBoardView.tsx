@@ -20,6 +20,7 @@ import {
   flattenVisible,
   isFilterActive,
   localDate,
+  shouldFoldDone,
   sortGroups,
   summaryTiles,
   type BoardForest
@@ -114,8 +115,8 @@ export default function ProjectBoardView(): React.ReactNode {
   const rows = useMemo(() => {
     if (!filtered) return []
     const auto = autoExpandIds(filtered, filter.query)
-    return flattenVisible(filtered, effectiveExpanded(expanded, auto, filter.query))
-  }, [filtered, expanded, filter.query])
+    return flattenVisible(filtered, effectiveExpanded(expanded, auto, filter.query), { foldDone: shouldFoldDone(filter) })
+  }, [filtered, expanded, filter])
   const tiles = useMemo(
     () => (snapshot ? summaryTiles(snapshot.issues, today, myAccountId, snapshot.recentDoneDays) : []),
     [snapshot, today, myAccountId]

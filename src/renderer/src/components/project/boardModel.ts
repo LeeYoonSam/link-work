@@ -628,10 +628,21 @@ export function sortGroups(groups: EpicGroup[], sort: BoardSort): EpicGroup[] {
 
 // ─── 보이는 행 평탄화 ─────────────────────────────────────────
 
+/** 닫힌 상위 티켓(에픽)을 모은 섹션 행 id */
+export const CLOSED_SECTION_ID = 'fold:closed-groups'
+/** 한 부모 안의 닫힘(done) 자식 묶음 행 id */
+export const doneFoldId = (parentId: string): string => `fold:done:${parentId}`
+
+export interface FoldInfo {
+  /** closedGroups: 닫힌 상위 티켓 섹션, done: 한 부모 안의 닫힘 묶음 */
+  scope: 'closedGroups' | 'done'
+  count: number
+}
+
 export interface VisibleRow {
   id: string
-  kind: 'group' | 'issue'
-  /** aria-level: 그룹 1, 자식 2, 하위작업 3 */
+  kind: 'group' | 'issue' | 'fold'
+  /** aria-level: 그룹 1, 자식 2, 하위작업 3. 묶음 행은 묶인 항목과 같은 레벨 */
   level: 1 | 2 | 3
   posinset: number
   setsize: number
@@ -640,6 +651,13 @@ export interface VisibleRow {
   expanded: boolean
   group?: EpicGroup
   node?: BoardNode
+  /** kind==='fold' 일 때만 */
+  fold?: FoldInfo
+}
+
+export interface FlattenOptions {
+  /** 닫힘 항목을 묶어 기본 접힘으로 보인다 */
+  foldDone: boolean
 }
 
 /** 펼침 기본값: 에픽 그룹은 펼침, 하위작업을 가진 자식은 접힘 */
@@ -651,66 +669,140 @@ export function isExpanded(
   return expanded[id] ?? kind === 'group'
 }
 
-/** 접힌 자식은 빼고 화면 순서대로 늘어놓는다. aria 값도 여기서 정한다 */
+/**
+ * 닫힘 묶음을 쓸 필터인가. 검색어·상태 분류·세부 상태·유형·릴리스 필터가 모두 비어 있을 때만 —
+ * 찾으려고 거른 결과가 묶음 속에 숨지 않게 한다. 내 담당만·완료 숨김·이전 완료 보기는 묶음을 유지한다.
+ */
+export function shouldFoldDone(f: BoardFilter): boolean {
+  return (
+    f.query.trim() === '' &&
+    f.categories.length === 0 &&
+    f.statuses.length === 0 &&
+    f.types.length === 0 &&
+    f.releases.length === 0
+  )
+}
+
+/** 닫힘 묶음 대상: 자신이 완료이고 보이는 하위작업도 모두 완료. 열린 하위작업이 묶음 속에 숨지 않게 한다 */
+const isDoneNode = (n: BoardNode): boolean =>
+  normalizeCategory(n.issue.statusCategory) === 'done' && n.children.every(isDoneNode)
+
+/** 닫힌 그룹: 완료된 에픽이고 자식이 모두 닫힘 묶음 대상이다(자식 0개 포함) */
+const isClosedGroup = (g: EpicGroup): boolean =>
+  g.kind === 'epic' && g.epic?.statusCategory === 'done' && g.children.every(isDoneNode)
+
+/**
+ * 접힌 자식은 빼고 화면 순서대로 늘어놓는다. aria 값도 여기서 정한다.
+ * foldDone 이면 닫힌 그룹은 맨 아래 섹션 행으로, 한 부모 안의 닫힘 자식(2개 이상)은 묶음 행으로 모은다.
+ * 둘 다 기본 접힘이고, 열린 항목이 하나도 없으면 묶지 않는다.
+ */
 export function flattenVisible(
   forest: BoardForest,
-  expanded: Record<string, boolean>
+  expanded: Record<string, boolean>,
+  options: Partial<FlattenOptions> = {}
 ): VisibleRow[] {
+  const foldDone = options.foldDone ?? true
   const rows: VisibleRow[] = []
-  const gs = forest.groups
-  gs.forEach((g, gi) => {
-    const gOpen = g.children.length > 0 && isExpanded(expanded, g.id, 'group')
+
+  const pushFold = (
+    id: string,
+    level: 1 | 2 | 3,
+    posinset: number,
+    parentId: string | null,
+    scope: FoldInfo['scope'],
+    count: number
+  ): boolean => {
+    const open = expanded[id] ?? false
+    rows.push({
+      id,
+      kind: 'fold',
+      level,
+      posinset,
+      setsize: posinset,
+      parentId,
+      hasChildren: true,
+      expanded: open,
+      fold: { scope, count }
+    })
+    return open
+  }
+
+  const emitNode = (n: BoardNode, level: 2 | 3, posinset: number, setsize: number, parentId: string): void => {
+    // 하위작업 행은 자식을 갖지 않는다
+    const hasChildren = level === 2 && n.children.length > 0
+    const open = hasChildren && isExpanded(expanded, n.issue.key, 'issue')
+    rows.push({
+      id: n.issue.key,
+      kind: 'issue',
+      level,
+      posinset,
+      setsize,
+      parentId,
+      hasChildren,
+      expanded: open,
+      node: n
+    })
+    if (open) emitChildren(n.children, n.issue.key, 3)
+  }
+
+  // 한 부모의 자식들. 닫힘이 2개 이상이고 열린 자식이 있으면 열린 것 뒤에 묶음 행을 둔다
+  const emitChildren = (nodes: BoardNode[], parentId: string, level: 2 | 3): void => {
+    const done = foldDone ? nodes.filter(isDoneNode) : []
+    if (done.length < 2 || done.length === nodes.length) {
+      nodes.forEach((n, i) => emitNode(n, level, i + 1, nodes.length, parentId))
+      return
+    }
+    const rest = nodes.filter((n) => !isDoneNode(n))
+    const size = rest.length + 1
+    rest.forEach((n, i) => emitNode(n, level, i + 1, size, parentId))
+    const foldId = doneFoldId(parentId)
+    if (pushFold(foldId, level, size, parentId, 'done', done.length)) {
+      done.forEach((n, i) => emitNode(n, level, i + 1, done.length, foldId))
+    }
+  }
+
+  const emitGroup = (g: EpicGroup, posinset: number, setsize: number, parentId: string | null): void => {
+    const hasChildren = g.children.length > 0
+    // 닫힌 그룹은 기본 접힘
+    const def = foldDone && isClosedGroup(g) ? (expanded[g.id] ?? false) : isExpanded(expanded, g.id, 'group')
+    const open = hasChildren && def
     rows.push({
       id: g.id,
       kind: 'group',
       level: 1,
-      posinset: gi + 1,
-      setsize: gs.length,
-      parentId: null,
-      hasChildren: g.children.length > 0,
-      expanded: gOpen,
+      posinset,
+      setsize,
+      parentId,
+      hasChildren,
+      expanded: open,
       group: g
     })
-    if (!gOpen) return
-    g.children.forEach((c, ci) => {
-      const cOpen = c.children.length > 0 && isExpanded(expanded, c.issue.key, 'issue')
-      rows.push({
-        id: c.issue.key,
-        kind: 'issue',
-        level: 2,
-        posinset: ci + 1,
-        setsize: g.children.length,
-        parentId: g.id,
-        hasChildren: c.children.length > 0,
-        expanded: cOpen,
-        node: c
-      })
-      if (!cOpen) return
-      c.children.forEach((s, si) => {
-        rows.push({
-          id: s.issue.key,
-          kind: 'issue',
-          level: 3,
-          posinset: si + 1,
-          setsize: c.children.length,
-          parentId: c.issue.key,
-          hasChildren: false,
-          expanded: false,
-          node: s
-        })
-      })
-    })
-  })
+    if (open) emitChildren(g.children, g.id, 2)
+  }
+
+  const gs = forest.groups
+  const closed = foldDone ? gs.filter(isClosedGroup) : []
+  if (closed.length === 0 || closed.length === gs.length) {
+    gs.forEach((g, i) => emitGroup(g, i + 1, gs.length, null))
+    return rows
+  }
+  const rest = gs.filter((g) => !isClosedGroup(g))
+  const size = rest.length + 1
+  rest.forEach((g, i) => emitGroup(g, i + 1, size, null))
+  if (pushFold(CLOSED_SECTION_ID, 1, size, null, 'closedGroups', closed.length)) {
+    closed.forEach((g, i) => emitGroup(g, i + 1, closed.length, CLOSED_SECTION_ID))
+  }
   return rows
 }
 
-/** 펼칠 수 있는 모든 행 id (모두 펼치기/접기용) */
+/** 펼칠 수 있는 모든 행 id (모두 펼치기/접기용). 닫힘 묶음·닫힌 그룹 섹션도 함께 여닫는다 */
 export function expandableIds(forest: BoardForest): string[] {
   const ids: string[] = []
   for (const g of forest.groups) {
-    if (g.children.length > 0) ids.push(g.id)
-    for (const c of g.children) if (c.children.length > 0) ids.push(c.issue.key)
+    if (g.children.length > 0) ids.push(g.id, doneFoldId(g.id))
+    for (const c of g.children) if (c.children.length > 0) ids.push(c.issue.key, doneFoldId(c.issue.key))
   }
+  ids.push(CLOSED_SECTION_ID)
   return ids
 }
 
@@ -775,7 +867,7 @@ export function isTreeRowTarget(target: unknown): boolean {
 
 /**
  * treegrid 키 입력을 동작으로 바꾼다. 행에서 온 키가 아니면 null(브라우저 기본 동작에 맡김).
- * Enter 상세 선택, ⌘/Ctrl+Enter·o Jira 열기, 나머지는 nextFocus.
+ * Enter 상세 선택(묶음 행은 여닫기), ⌘/Ctrl+Enter·o Jira 열기, 나머지는 nextFocus.
  */
 export function treeKeyAction(
   rows: VisibleRow[],
@@ -788,6 +880,11 @@ export function treeKeyAction(
     if (e.altKey || (e.key === 'o' && (e.metaKey || e.ctrlKey))) return null
     const current = rows.find((r) => r.id === activeId)
     if (!current) return null
+    // 묶음 행: Enter 는 여닫기, Jira 열기는 없다
+    if (current.kind === 'fold') {
+      if (e.key !== 'Enter' || e.metaKey || e.ctrlKey) return null
+      return { kind: 'move', move: { focusId: current.id, toggle: { id: current.id, expanded: !current.expanded } } }
+    }
     if (e.key === 'o' || e.metaKey || e.ctrlKey) {
       const key = current.group?.epicKey ?? current.node?.issue.key ?? null
       return key ? { kind: 'open', key } : null
@@ -798,8 +895,21 @@ export function treeKeyAction(
   return move ? { kind: 'move', move } : null
 }
 
+/** 행 id 의 그룹 또는 노드 */
+function findRowItem(forest: BoardForest, id: string): { group?: EpicGroup; node?: BoardNode } | null {
+  for (const g of forest.groups) {
+    if (g.id === id) return { group: g }
+    for (const c of g.children) {
+      if (c.issue.key === id) return { node: c }
+      for (const s of c.children) if (s.issue.key === id) return { node: s }
+    }
+  }
+  return null
+}
+
 /**
  * 포커스된 행이 사라졌을 때(부모가 접힘·필터) 남아 있는 가장 가까운 조상으로, 그것도 없으면 첫 행으로 옮긴다.
+ * 닫힘 묶음 대상이면 그것을 감싼 묶음 행을 부모보다 먼저 본다. 닫힌 그룹 안이면 마지막으로 닫힌 그룹 섹션 행을 본다.
  */
 export function resolveFocus(
   rows: VisibleRow[],
@@ -809,7 +919,17 @@ export function resolveFocus(
   if (rows.length === 0) return null
   if (focusId && rows.some((r) => r.id === focusId)) return focusId
   if (focusId) {
-    for (const a of ancestorIds(forest, focusId)) if (rows.some((r) => r.id === a)) return a
+    const candidates: string[] = []
+    const ancestors = ancestorIds(forest, focusId)
+    // 각 조상 바로 아래 항목(대상 → 부모 → …)이 닫힘 대상이면 그 조상의 묶음 행이 먼저다
+    let below = findRowItem(forest, focusId)
+    for (const a of ancestors) {
+      if (below?.node && isDoneNode(below.node)) candidates.push(doneFoldId(a))
+      candidates.push(a)
+      below = findRowItem(forest, a)
+    }
+    if (below?.group && isClosedGroup(below.group)) candidates.push(CLOSED_SECTION_ID)
+    for (const id of candidates) if (rows.some((r) => r.id === id)) return id
   }
   return rows[0].id
 }

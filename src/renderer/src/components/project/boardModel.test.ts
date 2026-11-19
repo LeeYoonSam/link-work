@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import type { JiraBoardIssue } from '../../types'
 import {
+  CLOSED_SECTION_ID,
   DEFAULT_FILTER,
+  doneFoldId,
+  shouldFoldDone,
   EMPTY_FILTER,
   NO_EPIC_ID,
   ORPHAN_SUBTASKS_ID,
@@ -460,8 +463,245 @@ describe('flattenVisible', () => {
     expect(flattenVisible(forest, { 'PROJ-1': false }).map((r) => r.id)).toEqual(['PROJ-1', 'PROJ-6'])
   })
 
-  it('expandableIds 는 자식 있는 행만', () => {
-    expect(expandableIds(forest)).toEqual(['PROJ-1', 'PROJ-2'])
+  it('expandableIds 는 자식 있는 행과 그 닫힘 묶음, 끝에 닫힌 그룹 섹션', () => {
+    expect(expandableIds(forest)).toEqual([
+      'PROJ-1',
+      doneFoldId('PROJ-1'),
+      'PROJ-2',
+      doneFoldId('PROJ-2'),
+      CLOSED_SECTION_ID
+    ])
+  })
+})
+
+describe('flattenVisible — 닫힘 묶음', () => {
+  const DONE = { statusCategory: 'done' as const, status: '완료', resolvedAt: '2026-11-15T00:00:00Z' }
+  // E-1 진행 에픽: 열린 E-11, 닫힘 대상 E-12·E-13(하위작업도 모두 닫힘),
+  //   열린 E-14(하위작업 1 열림 + 2 닫힘), 닫혔지만 열린 하위작업이 있는 E-15
+  // E-2·E-3 닫힌 에픽(자식 모두 닫힘 / 자식 없음), E-4 닫혔지만 열린 자식이 있는 에픽,
+  // E-5 닫힌 에픽인데 닫힌 자식 E-51 아래 열린 하위작업이 있다
+  const forest = buildIssueForest(
+    [
+      epic('E-1'),
+      child('E-11', 'E-1'),
+      child('E-12', 'E-1', DONE),
+      child('E-13', 'E-1', DONE),
+      sub('E-131', 'E-13', DONE),
+      child('E-14', 'E-1'),
+      sub('E-141', 'E-14'),
+      sub('E-142', 'E-14', DONE),
+      sub('E-143', 'E-14', DONE),
+      child('E-15', 'E-1', DONE),
+      sub('E-151', 'E-15'),
+      epic('E-2', DONE),
+      child('E-21', 'E-2', DONE),
+      epic('E-3', DONE),
+      epic('E-4', DONE),
+      child('E-41', 'E-4'),
+      child('E-42', 'E-4', DONE),
+      epic('E-5', DONE),
+      child('E-51', 'E-5', DONE),
+      sub('E-511', 'E-51')
+    ],
+    TODAY
+  )
+  const ids = (rows: { id: string }[]): string[] => rows.map((r) => r.id)
+  const row = (rows: ReturnType<typeof flattenVisible>, id: string) => rows.find((r) => r.id === id)!
+  const fold1 = doneFoldId('E-1')
+
+  it('A: 닫힌 그룹은 열린 그룹 뒤 섹션 행으로 모이고 기본 접힘', () => {
+    const rows = flattenVisible(forest, {})
+    expect(ids(rows)).toEqual([
+      'E-1', 'E-11', 'E-14', 'E-15', fold1,
+      'E-4', 'E-41', 'E-42',
+      'E-5', 'E-51',
+      CLOSED_SECTION_ID
+    ])
+    expect(row(rows, CLOSED_SECTION_ID)).toMatchObject({
+      kind: 'fold',
+      level: 1,
+      parentId: null,
+      hasChildren: true,
+      expanded: false,
+      posinset: 4,
+      setsize: 4,
+      fold: { scope: 'closedGroups', count: 2 }
+    })
+    expect(row(rows, 'E-1')).toMatchObject({ posinset: 1, setsize: 4 })
+    expect(row(rows, 'E-4')).toMatchObject({ posinset: 2, setsize: 4 })
+  })
+
+  it('A: 닫힌 에픽이라도 열린 하위작업을 가진 자식이 있으면 닫힌 그룹이 아니다', () => {
+    const rows = flattenVisible(forest, { 'E-51': true })
+    expect(row(rows, 'E-5')).toMatchObject({ parentId: null, expanded: true })
+    expect(row(rows, 'E-511')).toMatchObject({ level: 3, parentId: 'E-51' })
+  })
+
+  it('A: 섹션을 펼치면 닫힌 그룹이 level 1·섹션 자식으로 나오고, 닫힌 그룹 자체는 기본 접힘', () => {
+    const rows = flattenVisible(forest, { [CLOSED_SECTION_ID]: true })
+    expect(ids(rows).slice(-3)).toEqual([CLOSED_SECTION_ID, 'E-2', 'E-3'])
+    expect(row(rows, 'E-2')).toMatchObject({
+      level: 1,
+      parentId: CLOSED_SECTION_ID,
+      posinset: 1,
+      setsize: 2,
+      hasChildren: true,
+      expanded: false
+    })
+    expect(row(rows, 'E-3')).toMatchObject({ posinset: 2, setsize: 2, hasChildren: false })
+    const opened = flattenVisible(forest, { [CLOSED_SECTION_ID]: true, 'E-2': true })
+    expect(ids(opened).slice(-3)).toEqual(['E-2', 'E-21', 'E-3'])
+    expect(row(opened, 'E-21')).toMatchObject({ level: 2, parentId: 'E-2' })
+  })
+
+  it('A: 모든 그룹이 닫힌 그룹이면 섹션 없이 나열한다(기본 접힘)', () => {
+    const allClosed = buildIssueForest([epic('E-2', DONE), child('E-21', 'E-2', DONE), epic('E-3', DONE)], TODAY)
+    const rows = flattenVisible(allClosed, {})
+    expect(ids(rows)).toEqual(['E-2', 'E-3'])
+    expect(row(rows, 'E-2')).toMatchObject({ parentId: null, posinset: 1, setsize: 2, expanded: false })
+  })
+
+  it('B: 부모 안 닫힘 대상 2개 이상 + 열린 자식이 있으면 묶음 행 뒤로 모은다', () => {
+    const rows = flattenVisible(forest, {})
+    expect(row(rows, fold1)).toMatchObject({
+      kind: 'fold',
+      level: 2,
+      parentId: 'E-1',
+      hasChildren: true,
+      expanded: false,
+      posinset: 4,
+      setsize: 4,
+      fold: { scope: 'done', count: 2 }
+    })
+    expect(row(rows, 'E-11')).toMatchObject({ posinset: 1, setsize: 4 })
+    // 닫혔지만 열린 하위작업이 있는 E-15 는 열린 쪽에 남는다
+    expect(row(rows, 'E-15')).toMatchObject({ parentId: 'E-1', posinset: 3, setsize: 4 })
+    // 닫힘 1개(E-4)는 묶지 않는다
+    expect(row(rows, 'E-42')).toMatchObject({ parentId: 'E-4', posinset: 2, setsize: 2 })
+  })
+
+  it('B: 닫힌 부모 아래 열린 하위작업이 있으면 묶음이 생기지 않는다(닫힘 대상 1개)', () => {
+    const f = buildIssueForest(
+      [
+        epic('E-1'),
+        child('E-11', 'E-1'),
+        child('E-12', 'E-1', DONE),
+        child('E-13', 'E-1', DONE),
+        sub('S-1', 'E-13')
+      ],
+      TODAY
+    )
+    const rows = flattenVisible(f, { 'E-13': true })
+    expect(ids(rows)).toEqual(['E-1', 'E-11', 'E-12', 'E-13', 'S-1'])
+  })
+
+  it('B: 묶음을 펼치면 닫힘 자식이 같은 레벨·묶음 자식으로 나온다', () => {
+    const rows = flattenVisible(forest, { [fold1]: true, 'E-13': true })
+    expect(ids(rows).slice(0, 8)).toEqual(['E-1', 'E-11', 'E-14', 'E-15', fold1, 'E-12', 'E-13', 'E-131'])
+    expect(row(rows, 'E-12')).toMatchObject({ level: 2, parentId: fold1, posinset: 1, setsize: 2 })
+    expect(row(rows, 'E-13')).toMatchObject({ level: 2, parentId: fold1, posinset: 2, setsize: 2, expanded: true })
+    // 하위작업이 모두 닫힘이면 묶지 않는다
+    expect(row(rows, 'E-131')).toMatchObject({ level: 3, parentId: 'E-13' })
+  })
+
+  it('B: 하위작업에도 같은 묶음 규칙을 적용한다', () => {
+    const rows = flattenVisible(forest, { 'E-14': true })
+    expect(ids(rows).slice(0, 5)).toEqual(['E-1', 'E-11', 'E-14', 'E-141', doneFoldId('E-14')])
+    expect(row(rows, doneFoldId('E-14'))).toMatchObject({
+      kind: 'fold',
+      level: 3,
+      parentId: 'E-14',
+      expanded: false,
+      posinset: 2,
+      setsize: 2,
+      fold: { scope: 'done', count: 2 }
+    })
+    const deep = flattenVisible(forest, { 'E-14': true, [doneFoldId('E-14')]: true })
+    expect(row(deep, 'E-143')).toMatchObject({ level: 3, parentId: doneFoldId('E-14'), posinset: 2, setsize: 2 })
+  })
+
+  it('B: 부모의 자식이 모두 닫힘이면 묶지 않는다', () => {
+    const rows = flattenVisible(forest, { [CLOSED_SECTION_ID]: true, 'E-2': true })
+    expect(row(rows, 'E-21')).toMatchObject({ parentId: 'E-2' })
+    expect(rows.some((r) => r.id === doneFoldId('E-2'))).toBe(false)
+  })
+
+  it('C: foldDone:false 면 묶지 않고 기존 순서·기본 펼침 그대로', () => {
+    const rows = flattenVisible(forest, {}, { foldDone: false })
+    expect(rows.some((r) => r.kind === 'fold')).toBe(false)
+    expect(ids(rows)).toEqual([
+      'E-1', 'E-11', 'E-12', 'E-13', 'E-14', 'E-15',
+      'E-2', 'E-21', 'E-3', 'E-4', 'E-41', 'E-42', 'E-5', 'E-51'
+    ])
+    expect(row(rows, 'E-2')).toMatchObject({ parentId: null, posinset: 2, setsize: 5, expanded: true })
+  })
+
+  it('D: expandableIds 는 묶음 id 와 섹션 id 를 포함한다', () => {
+    const all = expandableIds(forest)
+    expect(all).toContain(fold1)
+    expect(all).toContain(doneFoldId('E-14'))
+    expect(all[all.length - 1]).toBe(CLOSED_SECTION_ID)
+  })
+
+  it('E: 묶음 행에서 Enter 는 여닫기, o·⌘Enter 는 없음', () => {
+    const rows = flattenVisible(forest, {})
+    expect(treeKeyAction(rows, fold1, { key: 'Enter' }, true)).toEqual({
+      kind: 'move',
+      move: { focusId: fold1, toggle: { id: fold1, expanded: true } }
+    })
+    expect(treeKeyAction(rows, fold1, { key: 'o' }, true)).toBeNull()
+    expect(treeKeyAction(rows, fold1, { key: 'Enter', metaKey: true }, true)).toBeNull()
+    expect(treeKeyAction(rows, fold1, { key: 'Enter', ctrlKey: true }, true)).toBeNull()
+    const opened = flattenVisible(forest, { [CLOSED_SECTION_ID]: true })
+    expect(treeKeyAction(opened, CLOSED_SECTION_ID, { key: 'Enter' }, true)).toEqual({
+      kind: 'move',
+      move: { focusId: CLOSED_SECTION_ID, toggle: { id: CLOSED_SECTION_ID, expanded: false } }
+    })
+  })
+
+  it('E: 묶음 행에서 →/← 는 펼침·첫 자식, 접기·부모로', () => {
+    const closed = flattenVisible(forest, {})
+    const open = flattenVisible(forest, { [fold1]: true })
+    expect(nextFocus(closed, fold1, 'ArrowRight')).toEqual({ focusId: fold1, toggle: { id: fold1, expanded: true } })
+    expect(nextFocus(open, fold1, 'ArrowRight')).toEqual({ focusId: 'E-12' })
+    expect(nextFocus(open, fold1, 'ArrowLeft')).toEqual({ focusId: fold1, toggle: { id: fold1, expanded: false } })
+    expect(nextFocus(closed, fold1, 'ArrowLeft')).toEqual({ focusId: 'E-1' })
+    expect(nextFocus(open, 'E-12', 'ArrowLeft')).toEqual({ focusId: fold1 })
+    const sec = flattenVisible(forest, { [CLOSED_SECTION_ID]: true })
+    expect(nextFocus(sec, CLOSED_SECTION_ID, 'ArrowRight')).toEqual({ focusId: 'E-2' })
+    expect(nextFocus(sec, 'E-2', 'ArrowLeft')).toEqual({ focusId: CLOSED_SECTION_ID })
+  })
+
+  it('F: 포커스가 접힌 묶음 속으로 사라지면 감싼 묶음 행 → 부모 → … → 섹션 순으로 보이는 것에', () => {
+    const rows = flattenVisible(forest, {})
+    // 닫힘 대상은 감싼 묶음 행으로
+    expect(resolveFocus(rows, 'E-12', forest)).toBe(fold1)
+    expect(resolveFocus(rows, 'E-131', forest)).toBe(fold1)
+    // 열린 이슈의 하위작업은 형제 묶음이 아니라 부모로
+    expect(resolveFocus(rows, 'E-151', forest)).toBe('E-15')
+    expect(resolveFocus(rows, 'E-142', forest)).toBe('E-14')
+    // 하위작업 묶음이 보이면 그 묶음으로
+    const sub14 = flattenVisible(forest, { 'E-14': true })
+    expect(resolveFocus(sub14, 'E-142', forest)).toBe(doneFoldId('E-14'))
+    expect(resolveFocus(sub14, 'E-141', forest)).toBe('E-141')
+    // 묶음까지 접혀 사라지면 부모 그룹으로
+    const groupClosed = flattenVisible(forest, { 'E-1': false })
+    expect(resolveFocus(groupClosed, 'E-12', forest)).toBe('E-1')
+    // 닫힌 그룹 섹션 속이면 섹션 행으로
+    expect(resolveFocus(rows, 'E-21', forest)).toBe(CLOSED_SECTION_ID)
+    expect(resolveFocus(rows, 'E-2', forest)).toBe(CLOSED_SECTION_ID)
+  })
+
+  it('shouldFoldDone 은 검색어·상태 분류·세부 상태·유형·릴리스가 모두 비었을 때만 참', () => {
+    expect(shouldFoldDone(EMPTY_FILTER)).toBe(true)
+    expect(shouldFoldDone(DEFAULT_FILTER)).toBe(true)
+    expect(shouldFoldDone({ ...EMPTY_FILTER, mineOnly: true, hideDone: true, showPastDone: true })).toBe(true)
+    expect(shouldFoldDone({ ...EMPTY_FILTER, query: '  ' })).toBe(true)
+    expect(shouldFoldDone({ ...EMPTY_FILTER, query: '로그인' })).toBe(false)
+    expect(shouldFoldDone({ ...EMPTY_FILTER, categories: ['done'] })).toBe(false)
+    expect(shouldFoldDone({ ...EMPTY_FILTER, statuses: ['완료'] })).toBe(false)
+    expect(shouldFoldDone({ ...EMPTY_FILTER, types: ['작업'] })).toBe(false)
+    expect(shouldFoldDone({ ...EMPTY_FILTER, releases: [NO_RELEASE] })).toBe(false)
   })
 })
 

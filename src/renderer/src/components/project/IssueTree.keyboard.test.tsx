@@ -19,7 +19,7 @@ vi.mock('react', async (importOriginal) => {
 })
 
 const { default: IssueTree } = await import('./IssueTree')
-const { buildIssueForest, flattenVisible } = await import('./boardModel')
+const { buildIssueForest, flattenVisible, doneFoldId } = await import('./boardModel')
 
 const issue = (over: Partial<JiraBoardIssue>): JiraBoardIssue => ({
   key: 'PROJ-1',
@@ -119,5 +119,70 @@ describe('IssueTree 키 가로채기', () => {
     treegridKeyDown()(left.event)
     expect(left.preventDefault).toHaveBeenCalled()
     expect(onSelect).not.toHaveBeenCalled()
+  })
+})
+
+describe('IssueTree 닫힘 묶음 행', () => {
+  // 열린 자식 1 + 닫힌 자식 2 → 에픽 안에 '닫힘 2건' 묶음 행
+  const foldForest = buildIssueForest(
+    [
+      issue({ key: 'PROJ-1', level: 'epic', issueType: '에픽' }),
+      issue({ key: 'PROJ-2', parentKey: 'PROJ-1' }),
+      issue({ key: 'PROJ-3', parentKey: 'PROJ-1', status: '완료', statusCategory: 'done' }),
+      issue({ key: 'PROJ-4', parentKey: 'PROJ-1', status: '완료', statusCategory: 'done' })
+    ],
+    '2026-11-18'
+  )
+  const foldRows = flattenVisible(foldForest, {})
+
+  type RowEl = ReactElement<{ id: string; onClick: () => void; 'data-row-kind': string; 'aria-selected'?: boolean; children: ReactNode }>
+  const renderRows = (selectedId: string | null = null): RowEl[] => {
+    const el = IssueTree({
+      rows: foldRows,
+      forest: foldForest,
+      selectedId,
+      today: '2026-11-18',
+      onSelect,
+      onToggle,
+      onOpenJira,
+      renderInlineDetail: () => <span>상세</span>
+    }) as ReactElement<{ children: RowEl[] }>
+    return el.props.children
+  }
+
+  it('묶음 행을 data-row-kind="fold" 로 그리고 닫힌 자식은 접힌 동안 행이 없다', () => {
+    const rows = renderRows()
+    const fold = rows.find((r) => r.props['data-row-kind'] === 'fold')!
+    expect(fold.props.id).toBe(`board-row-${doneFoldId('PROJ-1')}`)
+    expect(rows.map((r) => r.props.id)).not.toContain('board-row-PROJ-3')
+    expect(rows.map((r) => r.props.id)).not.toContain('board-row-PROJ-4')
+  })
+
+  it('묶음 행 클릭은 선택이 아니라 펼침 토글이다', () => {
+    const fold = renderRows().find((r) => r.props['data-row-kind'] === 'fold')!
+    fold.props.onClick()
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(onToggle).toHaveBeenCalledWith(doneFoldId('PROJ-1'), true)
+  })
+
+  it('묶음 행은 선택 상태가 되지 않고 인라인 상세를 그리지 않는다', () => {
+    const fold = renderRows(doneFoldId('PROJ-1')).find((r) => r.props['data-row-kind'] === 'fold')!
+    expect(fold.props['aria-selected']).toBeUndefined()
+    expect(JSON.stringify(fold.props.children, (_k, v) => (typeof v === 'function' ? undefined : v))).not.toContain('data-inline-detail')
+  })
+
+  it('묶음 행에서 Enter 는 선택 대신 펼침 토글이다', () => {
+    const el = IssueTree({
+      rows: foldRows,
+      forest: foldForest,
+      selectedId: doneFoldId('PROJ-1'),
+      today: '2026-11-18',
+      onSelect,
+      onToggle,
+      onOpenJira
+    }) as ReactElement<{ onKeyDown: (e: unknown) => void }>
+    el.props.onKeyDown(fakeEvent('Enter', 'row').event)
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(onToggle).toHaveBeenCalledWith(doneFoldId('PROJ-1'), true)
   })
 })
