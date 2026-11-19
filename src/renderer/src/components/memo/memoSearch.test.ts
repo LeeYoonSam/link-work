@@ -15,8 +15,7 @@ import {
   selectByRail,
   sortMemos,
   toSegments,
-  tokenizeQuery,
-  validRail
+  tokenizeQuery
 } from './memoSearch'
 
 let nextId = 1
@@ -288,12 +287,6 @@ describe('레일', () => {
     expect(ids('uncategorized')).toEqual([3, 4])
     // 최근 본: 기록 순서 유지, 없는 id 제거, 보관 메모 포함
     expect(ids('recent', [3, 777, 5, 1])).toEqual([3, 5, 1])
-  })
-
-  it('validRail 은 지워진 분류 레일을 전체로 돌린다', () => {
-    expect(validRail(99, categories)).toBe('all')
-    expect(validRail(1, categories)).toBe(1)
-    expect(validRail('recent', categories)).toBe('recent')
   })
 
   it('groupImportantFirst', () => {

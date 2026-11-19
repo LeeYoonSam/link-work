@@ -5,7 +5,6 @@
 import { useNavigationStore } from './navigationStore'
 import { useTodoStore } from './todoStore'
 import { useMemoStore } from './memoStore'
-import { useVariableStore } from './variableStore'
 import { useAssistantStore } from './assistantStore'
 import { useMorningSyncStore } from './morningSyncStore'
 import { useTodayStore } from './todayStore'
@@ -38,8 +37,6 @@ export async function refreshEntity(entity: string): Promise<void> {
     add(() => memoStore.fetchCategories())
     // 홈의 중요 메모 섹션이 이 목록을 그린다
     add(() => memoStore.fetchImportantMemos())
-  } else if (entity === 'variable') {
-    add(() => useVariableStore.getState().fetchVariables())
   } else if (entity === 'sync_status') {
     // 아침 자동 동기화가 끝났다. 배지·상태 줄을 다시 읽는다.
     // 릴리스가 바뀌었을 수 있어 오늘 대시보드가 열려 있으면 다시 읽는다(캐시 허용)

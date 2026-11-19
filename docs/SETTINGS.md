@@ -11,7 +11,6 @@
 | 오늘 > 더 보기 > "비서 설정" | `open('assistant')` |
 | 캘린더 상단 "설정" | `open('integrations')` |
 | 캘린더 미연결 빈 상태 카드 | [연결] 은 `GoogleCalendarConnectDialog` 를 그 자리에서 띄운다. [설정에서 관리] 는 `open('integrations')` |
-| AI 대화 채팅 목록 하단 "Notion 연동", "Bitbucket 연동" | 상태 점과 라벨만 보이고, 누르면 `open('integrations')` |
 | AI 대화 Claude 사용 불가 배너 | [설정 > AI에서 확인] 은 `open('ai')`. [다시 확인] 은 그대로 |
 | Jira 토큰 만료·만료 임박 배너(`JiraTokenWarning`) | 문구 끝 [설정 열기]. 호출부가 `onOpenSettings` 를 주면 그 자리의 Jira 팝업을 열고(프로젝트 화면의 릴리스 탭), 없을 때만 `open('integrations')` |
 | 프로젝트 화면 릴리스 탭의 Jira 설정 | 화면을 옮기지 않는다. `JiraSettingsModal`(래퍼)이 `JiraConnectDialog` 와 기본 프로젝트 select 를 그 자리에서 띄운다 |
@@ -27,15 +26,16 @@
 ## 섹션 구조
 
 왼쪽 섹션 목록(제목과 한 줄 설명), 오른쪽 내용 패널. 섹션 ID 는
-`SettingsSectionId = 'integrations' | 'ai' | 'assistant' | 'recording' | 'data'` 이고 이 순서로 그린다.
+`SettingsSectionId = 'integrations' | 'ai' | 'assistant' | 'recording' | 'mobile' | 'data'` 이고 이 순서로 그린다.
 모르는 값은 `normalizeSettingsSection` 이 `integrations` 로 바꾼다.
 
 | 섹션 | 한 줄 설명 | 내용 |
 |---|---|---|
 | 연동 | 캘린더, Jira, Bitbucket, Notion을 연결합니다 | 카드 4개(Google 캘린더 + 가져올 캘린더 체크 목록, Jira + 기본 프로젝트 select, Bitbucket, Notion). 위쪽에 [모두 다시 확인]. Google·Jira 가 연결돼 있으면 캘린더 목록·기본 프로젝트 목록을 화면에 들어올 때 한 번 가져온다 |
-| AI | Claude Code 상태와 AI 모델 | Claude Code 상태(`ai:status`, [다시 확인]), AI 대화 모델(`ai:setModel`), 비서 AI 브리핑 사용과 비서 요약 모델(`llmEnabled`, `llmModel`) |
+| AI | Claude Code 상태와 AI 모델 | Claude Code 상태(`ai:status`, [다시 확인]), AI 대화 모델(`ai:setModel`), 비서 AI 브리핑 사용과 비서 요약 모델(`llmEnabled`, `llmModel`). 둘 다 회의 전 브리핑의 AI 본문에만 쓴다(오늘 화면 한 줄 브리핑은 규칙 문구만 쓴다) |
 | 비서 | 하루 경계, 알림, 자동 동기화 | 동작(비서 사용, 로그인 시 실행, 첫 화면) / 시간(날짜 경계, 아침 자동 동기화와 시각) / 알림(회의 전 브리핑, 회의 전 알림 분) 3개 그룹. 하루 계획용 칸 8개는 오늘 대시보드 개편 때 뺐다([기존 설정 UI 처리](#기존-설정-ui-처리)). 토글·select 는 바로 저장, 숫자·시각은 blur 때 검증 후 저장(`assistant:saveSettings` 부분 patch). 저장에 실패한 칸은 화면 값을 실제 저장값으로 되돌린다. 같은 칸을 연달아 바꾸면 마지막 요청의 결과만 화면에 반영한다
 | 회의 녹음 | 전사 정확도를 높이는 용어집과 구성원 | `RecognitionAidsPanel`. 녹음 화면에도 같은 패널이 남아 있다 |
+| 모바일 | 같은 Wi-Fi 의 휴대폰에서 오늘·할 일·메모를 봅니다 | 휴대폰 열람 켜기/끄기 토글(처리 중 비활성, 실패 사유는 빨간 문구). 켜져 있고 서버가 돌면 주소가 2개 이상일 때 주소 선택("같은 네트워크" / "어디서나 (Tailscale)", 같은 종류가 여럿이면 `Wi-Fi·유선 (en0 · IP)`), 고른 주소의 QR 이미지, 접속 주소(토큰 부분은 가림)와 [주소 복사](고른 주소의 전체 URL), 사용 안내 3줄, Tailscale 안내(미설치: 설치 3단계와 tailscale.com/download 링크 / 설치됨: 메뉴 막대에서 연결 / 연결됨: 휴대폰도 Tailscale 을 켜고 한 번 더 스캔), [QR 다시 만들기](확인 창 — 이미 연결한 휴대폰은 다시 스캔). LAN 주소가 없으면 "Wi-Fi 주소를 찾지 못했어요". 아래에 주의 문구(잠자기·앱 꺼짐, 같은 네트워크 주소는 HTTP 평문이라 공용 Wi-Fi 금지·Tailscale 주소는 기기 사이 암호화, 방화벽 허용, 회사 Wi-Fi 격리). 고른 주소가 재조회로 사라지면 첫 주소로 돌아간다. 섹션이 보이는 동안 창 focus 때와 10초마다 상태를 다시 읽는다(처리 중이면 생략) — Wi-Fi 가 바뀌면 QR 이 따라 바뀐다. 상태는 `stores/mobileStore.ts` 로 오늘 대시보드 발행기와 함께 쓴다. 자세한 내용은 [MOBILE_VIEW.md](MOBILE_VIEW.md) |
 | 데이터 | 백업과 복원(새 PC 이전) | 설명과 [백업·복원 열기]. `layout/BackupModal` 을 수정 없이 띄운다 |
 
 ## 설정 항목 표
@@ -53,6 +53,7 @@
 | AI 대화 모델 | AI(입력창 아래 select 와 같은 값) | `ai_model`, `ai_model_labels` | `ai:getModel`, `ai:setModel`, `ai:getModelOptions` |
 | 비서 설정(`assistant_*` 키) | 비서, AI(AI 브리핑·요약 모델) | `app_settings.assistant_*` | `assistant:getSettings`, `assistant:saveSettings` |
 | 용어집·구성원 | 회의 녹음 | 인식 보조 테이블 | `recognitionAids:*` |
+| 휴대폰 열람 켜짐, 페어링 토큰 | 모바일 | `mobile_server_enabled`, `mobile_server_token`(safeStorage). 둘 다 백업 제외 | `mobile:getStatus`, `mobile:setEnabled`, `mobile:regenerateToken` |
 | 백업·복원 | 데이터 | zip 파일(비밀값은 사본에서 지움) | `backup:*` |
 
 설정 화면 대상이 아닌 것: 채팅별 쓰기 모드(`ai_chats.write_mode`, 입력창 아래 select), 녹음 세션별 무음 압축, STT 모델(고정).
@@ -145,14 +146,14 @@ type Fail = { success: false; error: string }
 
 | 기존 | 처리 |
 |---|---|
-| AI 대화의 Notion·Bitbucket 모달 | 삭제. 버튼은 상태 점과 라벨만 남기고 설정 > 연동으로 이동 |
+| AI 대화의 Notion·Bitbucket 모달과 상태 버튼 | 모두 삭제. 모달은 설정 > 연동으로 옮겼고, 채팅 목록의 상태 버튼도 2026-11-19 에 없앴다. 미연동이면 AI 가 답변에서 설정 > 연동(`linkwork://view/settings`)으로 안내한다 |
 | AI 대화의 모델·모드 select, Claude 사용 불가 배너 | 유지 |
 | `calendar/CalendarSettings.tsx` | 삭제. 미연결 빈 상태 카드와 `GoogleCalendarConnectDialog` 로 대체 |
 | `project/JiraSettingsModal.tsx` | `JiraConnectDialog` 를 띄우는 얇은 래퍼. 연결돼 있으면 팝업 안에 `JiraDefaultProjectSelect` 와 [연결 해제]가 함께 나온다. props 는 그대로라 호출부 3곳은 바뀌지 않음 |
 | `project/JiraTokenWarning.tsx` | 유지, 문구 끝에 [설정 열기] |
 | `today/AssistantSettingsModal.tsx` | 삭제. 순수 헬퍼는 `settings/assistantSettingsForm.ts` 로 옮김 |
 | 사이드바 "데이터 백업 · 복원" | 삭제. 설정 > 데이터로 옮김 |
-| 비서 섹션의 하루 계획용 칸 8개(오늘 대시보드 개편, 2026-11-19): 시작 알림(`startNudge`), 최신화 알림(`refreshNotify`), 하루 계획 항목 수(`planSize`), 근무 종료 시각(`workEnd`), 완료하면 원본도 완료(`completeOriginOnDone`), 캘린더 확인 주기(`refreshCalendarMin`), Jira 확인 주기(`refreshJiraMin`), Jira 범위(`jiraScope`) | 화면에서만 삭제. `AssistantSettings` 타입과 `assistant_*` 저장 키는 남기고 `assistant:saveSettings` 는 옛 키도 계속 받는다. "알림과 주기" 그룹은 "알림" 으로 이름을 바꿨다. 키 삭제는 후속 과제 |
+| 비서 섹션의 하루 계획용 칸 8개(오늘 대시보드 개편, 2026-11-19): 시작 알림(`startNudge`), 최신화 알림(`refreshNotify`), 하루 계획 항목 수(`planSize`), 근무 종료 시각(`workEnd`), 완료하면 원본도 완료(`completeOriginOnDone`), 캘린더 확인 주기(`refreshCalendarMin`), Jira 확인 주기(`refreshJiraMin`), Jira 범위(`jiraScope`) | 화면에서 삭제. "알림과 주기" 그룹은 "알림" 으로 이름을 바꿨다. 같은 날 후속으로 `AssistantSettings` 타입·기본값·검증에서도 뺐다. `assistant:saveSettings` 는 이제 이 키들을 모르는 키로 거부한다. `app_settings` 의 옛 `assistant_*` 행은 지우지 않고 읽지도 않는다 |
 | 녹음 화면의 용어집·구성원 패널 | 유지(설정에도 같은 컴포넌트) |
 
 ## 알려진 한계

@@ -1,7 +1,7 @@
 // 설정 화면의 섹션 목록 — 왼쪽 목록의 순서·제목·한 줄 설명의 단일 출처다.
 // 순수 모듈이다. React·스토어·window 를 쓰지 않는다.
 
-export const SETTINGS_SECTION_IDS = ['integrations', 'ai', 'assistant', 'recording', 'data'] as const
+export const SETTINGS_SECTION_IDS = ['integrations', 'ai', 'assistant', 'recording', 'mobile', 'data'] as const
 
 export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number]
 
@@ -16,6 +16,7 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
   { id: 'ai', title: 'AI', description: 'Claude Code 상태와 AI 모델' },
   { id: 'assistant', title: '비서', description: '하루 경계, 알림, 자동 동기화' },
   { id: 'recording', title: '회의 녹음', description: '전사 정확도를 높이는 용어집과 구성원' },
+  { id: 'mobile', title: '모바일', description: '같은 Wi-Fi 의 휴대폰에서 오늘·할 일·메모를 봅니다' },
   { id: 'data', title: '데이터', description: '백업과 복원(새 PC 이전)' }
 ]
 

@@ -29,8 +29,11 @@ import Database from 'better-sqlite3'
 import { applySchema } from '../db/schema'
 import {
   BACKUP_GROUP_IDS,
+  BUNDLE_SETTING_KEYS,
+  CACHE_TABLES,
   CREDENTIAL_BUNDLES,
   CROSS_GROUP_REFS,
+  DEVICE_ONLY_SETTING_KEYS,
   GROUP_TABLES,
   NON_GROUP_TABLES,
   SECRET_SETTING_KEYS,
@@ -71,6 +74,14 @@ describe('backup-groups', () => {
     db.close()
   })
 
+  it('G1b 에픽 AI 요약(jira_epic_summaries)은 보드 캐시처럼 백업하지 않고, Jira 계정이 바뀌면 함께 지운다', () => {
+    for (const t of ['jira_board_issues', 'jira_board_sync', 'jira_epic_summaries']) {
+      expect(NON_GROUP_TABLES).toContain(t)
+      expect(CACHE_TABLES).toContain(t)
+      expect(CREDENTIAL_BUNDLES.find((b) => b.id === 'jira')?.credentialTables).toContain(t)
+    }
+  })
+
   it('G2 그룹을 넘는 선언된 FOREIGN KEY 는 모두 CROSS_GROUP_REFS 에 있다', () => {
     const db = freshDb()
     const crossing: string[] = []
@@ -103,9 +114,16 @@ describe('backup-groups', () => {
     db.close()
   })
 
-  it('G3 설정 키 분류: 시크릿 4개는 secret, project_sync_created_keys 는 work, assistant_* 와 미지의 키는 settings', () => {
-    expect(SECRET_SETTING_KEYS).toHaveLength(4)
-    for (const k of ['notion_token', 'jira_api_token', 'google_client_secret', 'bitbucket_api_token']) {
+  it('G3 설정 키 분류: 시크릿 6개(연동 4 + 기기 전용 2)는 secret, project_sync_created_keys 는 work, assistant_* 와 미지의 키는 settings', () => {
+    expect(SECRET_SETTING_KEYS).toHaveLength(6)
+    for (const k of [
+      'notion_token',
+      'jira_api_token',
+      'google_client_secret',
+      'bitbucket_api_token',
+      'mobile_server_token',
+      'mobile_server_enabled'
+    ]) {
       expect(classifySettingKey(k)).toBe('secret')
     }
     expect(classifySettingKey('project_sync_created_keys')).toBe('work')
@@ -128,7 +146,9 @@ describe('backup-groups', () => {
     const bundleSecrets = CREDENTIAL_BUNDLES.flatMap((b) => b.credentialKeys).filter(
       (k) => classifySettingKey(k) === 'secret'
     )
-    expect([...bundleSecrets].sort()).toEqual([...SECRET_SETTING_KEYS].sort())
+    // 연동 묶음의 자격 키 중 시크릿 + 기기 전용 키 = SECRET_SETTING_KEYS
+    expect([...bundleSecrets, ...DEVICE_ONLY_SETTING_KEYS].sort()).toEqual([...SECRET_SETTING_KEYS].sort())
+    for (const k of DEVICE_ONLY_SETTING_KEYS) expect(BUNDLE_SETTING_KEYS).not.toContain(k)
   })
 
   it('G4 normalizeGroups: 중복·순서·빈 배열·모르는 id', () => {

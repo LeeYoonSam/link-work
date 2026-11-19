@@ -77,20 +77,6 @@ export function Badge({
   )
 }
 
-// 상태 도트. color에 tokens의 dot 클래스를 전달한다.
-export function StatusDot({
-  color,
-  size = 'sm',
-  title
-}: {
-  color: string
-  size?: 'sm' | 'md'
-  title?: string
-}): React.ReactNode {
-  const sizeCls = size === 'md' ? 'w-3 h-3' : 'w-2 h-2'
-  return <span className={`inline-block rounded-full flex-shrink-0 ${sizeCls} ${color}`} title={title} />
-}
-
 // 화이트 카드 컨테이너
 export function Card({
   children,

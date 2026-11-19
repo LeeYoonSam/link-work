@@ -1,8 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import type { TodayBriefing, TodayBriefingInput } from '../types'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // 오늘 대시보드 스토어의 불러오기 조율을 고정한다.
-// 기존 스토어는 가짜로 바꾸고 window.api(calendar.range / today.getBriefing)만 흉내 낸다.
+// 기존 스토어는 가짜로 바꾸고 window.api(calendar.range)만 흉내 낸다.
 
 type Fn = ReturnType<typeof vi.fn>
 const fakes = {
@@ -38,33 +37,15 @@ function deferred<T = unknown>(): { promise: Promise<T>; resolve: (v: T) => void
 
 const EVENT = { id: 'e1', summary: '스크럼', start: '2026-11-19T01:00:00.000Z', end: '2026-11-19T01:15:00.000Z', allDay: false }
 
-let api: { calendar: { range: Fn }; today: { getBriefing: Fn } }
+let api: { calendar: { range: Fn } }
 
 const { useTodayStore, resetTodayStoreInternals, calendarRange, CALENDAR_RANGE_DAYS } = await import('./todayStore')
 const initial = useTodayStore.getState()
 
-const briefingInput = (headline = '규칙'): TodayBriefingInput => ({
-  date: '2026-11-19',
-  ruleHeadline: headline,
-  signals: [],
-  facts: { calendarConnected: true, jiraConnected: true, meetingCount: 0, overdueCount: 0, dueTodayCount: 0, nextMeeting: null, release: null }
-})
-const briefing = (headline: string): TodayBriefing => ({
-  date: '2026-11-19',
-  headline,
-  signals: [],
-  source: 'llm',
-  model: 'm',
-  generatedAt: '2026-11-19T02:00:00.000Z',
-  inputHash: 'h',
-  error: null
-})
-
 beforeEach(() => {
   for (const f of Object.values(fakes)) f.mockReset().mockResolvedValue(undefined)
   api = {
-    calendar: { range: vi.fn(async () => ({ success: true, events: [EVENT], fetchedAt: '2026-11-19T02:00:00Z' })) },
-    today: { getBriefing: vi.fn(async (input: TodayBriefingInput) => ({ success: true, briefing: briefing(input.ruleHeadline) })) }
+    calendar: { range: vi.fn(async () => ({ success: true, events: [EVENT], fetchedAt: '2026-11-19T02:00:00Z' })) }
   }
   vi.stubGlobal('window', { api })
   resetTodayStoreInternals()
@@ -138,85 +119,5 @@ describe('load / refresh', () => {
     await p1
     expect(useTodayStore.getState().events.map((e) => e.id)).toEqual(['new'])
     expect(useTodayStore.getState().loading).toBe(false)
-  })
-})
-
-describe('requestBriefing', () => {
-  it('같은 입력이면 다시 부르지 않고, force 면 부른다', async () => {
-    const s = useTodayStore.getState()
-    await s.requestBriefing(briefingInput())
-    await s.requestBriefing(briefingInput())
-    expect(api.today.getBriefing).toHaveBeenCalledTimes(1)
-    expect(useTodayStore.getState().briefing?.headline).toBe('규칙')
-    await s.requestBriefing(briefingInput(), true)
-    expect(api.today.getBriefing).toHaveBeenCalledTimes(2)
-    expect(api.today.getBriefing).toHaveBeenLastCalledWith(briefingInput(), true)
-    await s.requestBriefing(briefingInput('바뀜'))
-    expect(api.today.getBriefing).toHaveBeenCalledTimes(3)
-    expect(useTodayStore.getState().briefingLoading).toBe(false)
-  })
-
-  it('실패하면 직전 브리핑을 두고, 같은 입력으로 다시 시도할 수 있다', async () => {
-    const s = useTodayStore.getState()
-    await s.requestBriefing(briefingInput('a'))
-    api.today.getBriefing.mockResolvedValueOnce({ success: false, error: 'x' })
-    await s.requestBriefing(briefingInput('b'))
-    expect(useTodayStore.getState().briefing?.headline).toBe('a')
-    expect(useTodayStore.getState().briefingLoading).toBe(false)
-    await s.requestBriefing(briefingInput('b'))
-    expect(api.today.getBriefing).toHaveBeenCalledTimes(3)
-    expect(useTodayStore.getState().briefing?.headline).toBe('b')
-  })
-
-  it('늦게 온 옛 브리핑은 새 브리핑을 덮지 않는다', async () => {
-    const first = deferred<unknown>()
-    api.today.getBriefing.mockReturnValueOnce(first.promise)
-    const s = useTodayStore.getState()
-    const p1 = s.requestBriefing(briefingInput('old'))
-    await s.requestBriefing(briefingInput('new'))
-    first.resolve({ success: true, briefing: briefing('old') })
-    await p1
-    expect(useTodayStore.getState().briefing?.headline).toBe('new')
-  })
-})
-
-describe('requestBriefing — 10분 제한 재시도(retryAfterMs)', () => {
-  beforeEach(() => vi.useFakeTimers())
-  afterEach(() => vi.useRealTimers())
-
-  it('retryAfterMs 가 오면 그 입력을 처리됨으로 두지 않고 그 뒤 다시 부른다', async () => {
-    api.today.getBriefing
-      .mockResolvedValueOnce({ success: true, briefing: { ...briefing('규칙'), source: 'rules' }, retryAfterMs: 60_000 })
-      .mockResolvedValueOnce({ success: true, briefing: briefing('LLM') })
-    const s = useTodayStore.getState()
-    await s.requestBriefing(briefingInput())
-    expect(useTodayStore.getState().briefing?.source).toBe('rules')
-    // 예약 중에는 같은 입력을 다시 보내지 않는다
-    await s.requestBriefing(briefingInput())
-    expect(api.today.getBriefing).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(59_999)
-    expect(api.today.getBriefing).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(1)
-    expect(api.today.getBriefing).toHaveBeenCalledTimes(2)
-    expect(api.today.getBriefing).toHaveBeenLastCalledWith(briefingInput(), false)
-    expect(useTodayStore.getState().briefing?.headline).toBe('LLM')
-    // 이제 처리됨이라 같은 입력은 생략한다
-    await s.requestBriefing(briefingInput())
-    expect(api.today.getBriefing).toHaveBeenCalledTimes(2)
-  })
-
-  it('새 입력이 오면 예약된 재시도를 교체한다', async () => {
-    api.today.getBriefing.mockResolvedValueOnce({
-      success: true,
-      briefing: { ...briefing('a'), source: 'rules' },
-      retryAfterMs: 60_000
-    })
-    const s = useTodayStore.getState()
-    await s.requestBriefing(briefingInput('a'))
-    await s.requestBriefing(briefingInput('b'))
-    expect(api.today.getBriefing).toHaveBeenCalledTimes(2)
-    await vi.advanceTimersByTimeAsync(120_000)
-    expect(api.today.getBriefing).toHaveBeenCalledTimes(2)
-    expect(useTodayStore.getState().briefing?.headline).toBe('b')
   })
 })

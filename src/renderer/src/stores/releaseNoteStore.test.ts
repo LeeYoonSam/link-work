@@ -40,7 +40,6 @@ beforeEach(() => {
   useReleaseNoteStore.setState({
     details: {},
     allLoaded: true,
-    deployVersion: null,
     syncAllRunning: false,
     syncAllResult: null,
     syncAllError: '',

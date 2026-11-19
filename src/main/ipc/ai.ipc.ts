@@ -203,7 +203,7 @@ export function registerAiIpc(): void {
     return getAiProgress(chatId)
   })
 
-  // ── Notion 연동 (AI 조회 도구 search_notion / get_notion_page 용) ──
+  // ── Notion 연동 (AI 조회 도구 get_notion_page 용) ──
 
   ipcMain.handle('ai:notionStatus', () => {
     return { connected: isNotionConnected() }

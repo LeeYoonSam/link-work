@@ -8,7 +8,13 @@ vi.mock('../db/database', () => ({
     throw new Error('테스트는 DB를 쓰지 않는다')
   }
 }))
-vi.mock('./ai-headless', () => ({ runHeadlessJson: vi.fn() }))
+// 줄(runLlmSerialized)은 실제 구현을 쓰고 헤드리스 실행만 가짜로 바꾼다
+const headless = vi.hoisted(() => ({ runHeadlessJson: vi.fn() }))
+vi.mock('./ai-agent', () => ({ findClaudeExecutable: () => undefined }))
+vi.mock('./ai-headless', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./ai-headless')>()
+  return { ...actual, runHeadlessJson: headless.runHeadlessJson }
+})
 
 import type Database from 'better-sqlite3'
 import { memoryBoardDb } from './__fixtures__/jira/board-db'
@@ -22,15 +28,19 @@ import {
   isInScope,
   JiraBoardError,
   RECENT_DONE_DAYS,
+  runEpicSummaryJson,
   toBoardIssue,
   type JiraBoardDeps,
   type JiraBoardStorePort
 } from './jira-board'
+import { runLlmSerialized } from './ai-headless'
 import {
   clearStoredBoards,
+  readEpicSummary,
   readStoredBoard,
   replaceStoredBoard,
-  upsertStoredIssues
+  upsertStoredIssues,
+  writeEpicSummary
 } from './jira-board-store'
 
 type Over = Partial<JiraSearchIssue>
@@ -87,7 +97,9 @@ function boardStore(db: Database.Database): JiraBoardStorePort {
     read: (key) => readStoredBoard(db, key),
     replace: (key, issues, meta) => replaceStoredBoard(db, key, issues, meta),
     upsert: (key, issues, meta) => upsertStoredIssues(db, key, issues, meta),
-    clear: () => clearStoredBoards(db)
+    clear: () => clearStoredBoards(db),
+    readSummary: (key, epicKey) => readEpicSummary(db, key, epicKey),
+    writeSummary: (key, fingerprint, summary) => writeEpicSummary(db, key, fingerprint, summary)
   }
 }
 
@@ -1007,11 +1019,157 @@ describe('에픽 AI 요약 (summarizeEpic)', () => {
     expect(deps.listOpen).not.toHaveBeenCalled()
   })
 
-  it('AI 실패는 오류로 돌려주고 캐시하지 않는다', async () => {
+  it('AI 실패는 오류로 돌려주고 저장하지 않는다', async () => {
     const svc = await loaded()
-    deps.runJson.mockResolvedValueOnce({ ok: false, error: '다른 AI 작업이 진행 중입니다.' })
-    expect(await svc.summarizeEpic('PROJ-10')).toEqual({ success: false, error: '다른 AI 작업이 진행 중입니다.' })
+    deps.runJson.mockResolvedValueOnce({ ok: false, error: 'AI 응답 형식이 올바르지 않습니다' })
+    expect(await svc.summarizeEpic('PROJ-10')).toEqual({ success: false, error: 'AI 응답 형식이 올바르지 않습니다' })
+    expect(readEpicSummary(db, 'PROJ', 'PROJ-10')).toBeNull()
     expect(await svc.summarizeEpic('PROJ-10')).toMatchObject({ success: true })
     expect(deps.runJson).toHaveBeenCalledTimes(2)
+  })
+
+  it('요약은 DB 에 저장돼 재시작 뒤에도 지문이 같으면 AI 를 부르지 않고 돌려준다', async () => {
+    const svc = await loaded()
+    const first = await svc.summarizeEpic('PROJ-10')
+    expect(readEpicSummary(db, 'PROJ', 'PROJ-10')?.summary).toEqual(
+      first.success ? first.summary : null
+    )
+
+    deps = fakeDeps()
+    // 같은 로컬 날짜 안에서 시간만 흐른다
+    clock.now = new Date('2026-11-18T01:30:00.000Z')
+    const restarted = createJiraBoardService(deps)
+    expect(await restarted.summarizeEpic('PROJ-10')).toEqual(first)
+    expect(deps.runJson).not.toHaveBeenCalled()
+  })
+
+  it('같은 보드 스냅샷이라도 날짜가 바뀌면 다시 만들어 같은 행을 덮어쓰고, 같은 날이면 저장본을 돌려준다', async () => {
+    const svc = await loaded()
+    const first = await svc.summarizeEpic('PROJ-10')
+    clock.now = new Date('2026-11-18T01:30:00.000Z')
+    expect(await svc.summarizeEpic('PROJ-10')).toEqual(first)
+    expect(deps.runJson).toHaveBeenCalledTimes(1)
+
+    clock.now = new Date('2026-11-19T01:00:00.000Z')
+    deps.runJson.mockResolvedValueOnce({ ok: true, value: { headline: '다음 날', bullets: ['x'] } })
+    expect(await svc.summarizeEpic('PROJ-10')).toMatchObject({ success: true, summary: { headline: '다음 날' } })
+    expect(deps.runJson).toHaveBeenCalledTimes(2)
+    const spec = deps.runJson.mock.calls[1][0] as { prompt: string }
+    expect(spec.prompt).toContain('"today": "2026-11-19"')
+    const rows = db.prepare('SELECT epic_key FROM jira_epic_summaries').all() as { epic_key: string }[]
+    expect(rows.map((r) => r.epic_key)).toEqual(['PROJ-10'])
+
+    // 다음 날 안에서는 다시 저장본이다(재시작해도 같다)
+    deps = fakeDeps()
+    const restarted = createJiraBoardService(deps)
+    expect(await restarted.summarizeEpic('PROJ-10')).toMatchObject({ success: true, summary: { headline: '다음 날' } })
+    expect(deps.runJson).not.toHaveBeenCalled()
+  })
+
+  it('지문이 바뀌면 다시 만들어 같은 행을 덮어쓴다', async () => {
+    const svc = await loaded()
+    await svc.summarizeEpic('PROJ-10')
+    deps.listOpen.mockResolvedValue(
+      result([
+        epic('PROJ-10', { summary: '알림센터 개편' }),
+        issue('PROJ-20', { parentKey: 'PROJ-10', assigneeName: '홍길동', duedate: '2026-12-01' })
+      ])
+    )
+    await svc.sync('full')
+    deps.runJson.mockResolvedValueOnce({ ok: true, value: { headline: '기한 생김', bullets: ['x'] } })
+    expect(await svc.summarizeEpic('PROJ-10')).toMatchObject({ success: true, summary: { headline: '기한 생김' } })
+    const rows = db.prepare('SELECT epic_key FROM jira_epic_summaries').all() as { epic_key: string }[]
+    expect(rows.map((r) => r.epic_key)).toEqual(['PROJ-10'])
+    expect(readEpicSummary(db, 'PROJ', 'PROJ-10')?.summary.headline).toBe('기한 생김')
+  })
+
+  it('깨진 저장 행은 없는 것으로 보고 다시 만든다', async () => {
+    const svc = await loaded()
+    await svc.summarizeEpic('PROJ-10')
+    db.prepare("UPDATE jira_epic_summaries SET data = '{깨짐'").run()
+    deps.runJson.mockResolvedValueOnce({ ok: true, value: { headline: '다시 만듦', bullets: ['x'] } })
+    expect(await svc.summarizeEpic('PROJ-10')).toMatchObject({ success: true, summary: { headline: '다시 만듦' } })
+    expect(deps.runJson).toHaveBeenCalledTimes(2)
+  })
+
+  it('clear(연동 해제·계정 변경)는 저장된 요약도 지운다', async () => {
+    const svc = await loaded()
+    await svc.summarizeEpic('PROJ-10')
+    svc.clear()
+    expect(db.prepare('SELECT COUNT(*) AS n FROM jira_epic_summaries').get()).toEqual({ n: 0 })
+  })
+
+  it('AI 를 기다리는 사이 clear 되면 결과는 돌려주되 저장하지 않는다', async () => {
+    const svc = await loaded()
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    deps.runJson.mockImplementationOnce(async () => {
+      await gate
+      return { ok: true, value: { headline: '늦게 끝남', bullets: ['x'] } }
+    })
+    const pending = svc.summarizeEpic('PROJ-10')
+    await new Promise((r) => setTimeout(r, 0))
+    svc.clear()
+    release()
+    expect(await pending).toMatchObject({ success: true, summary: { headline: '늦게 끝남' } })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM jira_epic_summaries').get()).toEqual({ n: 0 })
+  })
+
+  it('같은 에픽을 겹쳐 누르면 AI 를 한 번만 부르고 결과를 나눈다', async () => {
+    const svc = await loaded()
+    const [a, b] = await Promise.all([svc.summarizeEpic('PROJ-10'), svc.summarizeEpic('PROJ-10')])
+    expect(a).toEqual(b)
+    expect(deps.runJson).toHaveBeenCalledTimes(1)
+  })
+
+  it('전체 동기화로 보드에서 사라진 에픽의 요약은 지운다', async () => {
+    const svc = await loaded()
+    await svc.summarizeEpic('PROJ-10')
+    deps.listOpen.mockResolvedValue(result([issue('PROJ-40')]))
+    await svc.sync('full')
+    expect(readEpicSummary(db, 'PROJ', 'PROJ-10')).toBeNull()
+  })
+})
+
+describe('에픽 AI 요약 실행기 (runEpicSummaryJson) — 헤드리스 LLM 공용 줄', () => {
+  beforeEach(() => {
+    headless.runHeadlessJson.mockReset()
+  })
+
+  it('다른 헤드리스 작업(오늘 브리핑 등)이 줄에 있으면 실패하지 않고 끝난 뒤 실행된다', async () => {
+    const log: string[] = []
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    headless.runHeadlessJson.mockImplementation(async () => {
+      log.push('epic:start')
+      return { ok: true, value: { headline: 'h', bullets: ['b'] } }
+    })
+
+    const earlier = runLlmSerialized(async () => {
+      log.push('today:start')
+      await gate
+      log.push('today:end')
+    })
+    const spec = { systemPrompt: 's', prompt: 'p', model: 'm', schema: {} as never }
+    const epicRun = runEpicSummaryJson(spec)
+    await new Promise((r) => setTimeout(r, 5))
+    expect(log).toEqual(['today:start'])
+    expect(headless.runHeadlessJson).not.toHaveBeenCalled()
+
+    release()
+    await earlier
+    expect(await epicRun).toEqual({ ok: true, value: { headline: 'h', bullets: ['b'] } })
+    expect(log).toEqual(['today:start', 'today:end', 'epic:start'])
+    expect(headless.runHeadlessJson).toHaveBeenCalledWith(spec)
+  })
+
+  it('앞 작업이 실패해도 에픽 요약은 실행된다', async () => {
+    headless.runHeadlessJson.mockResolvedValue({ ok: true, value: 1 })
+    const earlier = runLlmSerialized(async () => {
+      throw new Error('앞 작업 실패')
+    })
+    const epicRun = runEpicSummaryJson({ systemPrompt: 's', prompt: 'p', model: 'm', schema: {} as never })
+    await expect(earlier).rejects.toThrow('앞 작업 실패')
+    expect(await epicRun).toEqual({ ok: true, value: 1 })
   })
 })

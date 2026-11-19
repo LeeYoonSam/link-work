@@ -156,7 +156,3 @@ export function stopNotificationService(): void {
     intervalId = null
   }
 }
-
-export function clearNotificationHistory(): void {
-  sentNotifications.clear()
-}

@@ -7,7 +7,6 @@ import { registerCalendarIpc } from './ipc/calendar.ipc'
 import { registerVariableIpc } from './ipc/variable.ipc'
 import { registerMemoIpc } from './ipc/memo.ipc'
 import { registerMemoCategoryIpc } from './ipc/memo-category.ipc'
-import { registerReportIpc } from './ipc/report.ipc'
 import { registerTodoIpc } from './ipc/todo.ipc'
 import { registerTodoTagIpc } from './ipc/todo-tag.ipc'
 import { registerAiIpc } from './ipc/ai.ipc'
@@ -20,8 +19,9 @@ import { registerBackupIpc } from './ipc/backup.ipc'
 import { registerJiraBoardIpc } from './ipc/jira-board.ipc'
 import { registerMorningSyncIpc } from './ipc/morning-sync.ipc'
 import { registerAssistantIpc } from './ipc/assistant.ipc'
-import { registerTodayIpc } from './ipc/today.ipc'
 import { registerSettingsIpc } from './ipc/settings.ipc'
+import { registerMobileIpc } from './ipc/mobile.ipc'
+import { startMobileServerIfEnabled, stopMobileServer } from './services/mobile/controller'
 import { cancelAllAiQueries } from './services/ai-agent'
 import { cancelAllHeadless } from './services/ai-headless'
 import { startNotificationService, stopNotificationService } from './services/notification'
@@ -29,6 +29,7 @@ import { startAssistantScheduler, stopAssistantScheduler } from './services/assi
 import { runMorningSyncIfDue } from './services/morning-sync'
 import { createTrayWidget, destroyTrayWidget } from './services/tray-widget'
 import { onRendererReload } from './services/recording-recovery'
+import { registerSystemAudioLoopback } from './services/system-audio-loopback'
 import {
   RecordingGuard,
   CLOSE_BUTTONS,
@@ -349,7 +350,6 @@ app.whenReady().then(() => {
   registerVariableIpc()
   registerMemoIpc()
   registerMemoCategoryIpc()
-  registerReportIpc()
   registerTodoIpc()
   registerTodoTagIpc()
   registerAiIpc()
@@ -362,8 +362,10 @@ app.whenReady().then(() => {
   registerJiraBoardIpc()
   registerMorningSyncIpc()
   registerAssistantIpc()
-  registerTodayIpc()
   registerSettingsIpc()
+  registerMobileIpc()
+  // 휴대폰 열람: 사용자가 켜 둔 경우에만 서버를 띄운다(기본 꺼짐)
+  void startMobileServerIfEnabled()
   ipcMain.on('recorder:state', (event, payload) => {
     if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents) {
       recordingGuard.setState(payload)
@@ -376,6 +378,9 @@ app.whenReady().then(() => {
   // A54: 아침 자동 동기화는 스케줄러 틱 끝에서 돈다. 스케줄러는 동기화 모듈을 import 하지 않는다
   startAssistantScheduler({ getMainWindow: () => mainWindow, createWindow, onTick: runMorningSyncIfDue })
   createTrayWidget(() => createWindow())
+
+  // '마이크 + 시스템' 녹음의 getDisplayMedia 요청에 시스템 오디오(loopback)를 붙인다. 창 생성 전에 등록
+  registerSystemAudioLoopback()
 
   createWindow()
 
@@ -406,6 +411,8 @@ app.on('before-quit', (event) => {
 })
 
 app.on('will-quit', () => {
+  // 휴대폰 열람 서버를 먼저 멈춘다(요청이 닫힌 DB 에 닿지 않게)
+  stopMobileServer()
   // 모든 window/timer가 정리된 뒤 DB 닫기 (WAL 잔존 방지)
   closeDatabase()
 })

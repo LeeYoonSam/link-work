@@ -1075,10 +1075,6 @@ export function priorityVisual(name: string | null): PriorityVisual | null {
   return null
 }
 
-export function priorityMarks(name: string | null): PriorityVisual['marks'] | null {
-  return priorityVisual(name)?.marks ?? null
-}
-
 export type IssueTypeKind = 'epic' | 'story' | 'task' | 'bug' | 'subtask' | 'other'
 
 /** 유형 아이콘 종류. level 이 먼저고, 표준 이슈의 세부 유형은 이름(한/영)으로 정한다 */

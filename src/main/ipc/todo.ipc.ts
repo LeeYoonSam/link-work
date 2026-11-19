@@ -181,10 +181,6 @@ export function registerTodoIpc(): void {
     return { success: true }
   })
 
-  ipcMain.handle('todo:history', (_event, todoId: number) => {
-    return db.prepare('SELECT * FROM todo_history WHERE todo_id = ? ORDER BY created_at DESC').all(todoId)
-  })
-
   ipcMain.handle('todo:listActive', () => {
     // Return active todos + todos completed today
     // completed_at is stored in local time, so compare directly with date('now', 'localtime')

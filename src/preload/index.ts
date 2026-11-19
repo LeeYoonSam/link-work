@@ -1,6 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
-import type { TodayBriefingInput } from '../main/services/today-briefing'
 
 const api = {
   tray: {
@@ -27,11 +25,6 @@ const api = {
     // 임의 구간(최대 45일) 일정. force 면 5분 캐시를 무시한다
     range: (fromISO: string, toISO: string, force?: boolean) =>
       ipcRenderer.invoke('calendar:range', fromISO, toISO, force)
-  },
-  // 오늘 대시보드 브리핑 — 규칙 신호를 LLM 이 다듬는다. 실패·꺼짐이면 규칙 문구로 돌려준다
-  today: {
-    getBriefing: (input: TodayBriefingInput, force?: boolean) =>
-      ipcRenderer.invoke('today:getBriefing', input, force)
   },
   variable: {
     create: (input: Record<string, unknown>) => ipcRenderer.invoke('variable:create', input),
@@ -60,15 +53,6 @@ const api = {
       ipcRenderer.invoke('memoCategory:update', id, input),
     delete: (id: number) => ipcRenderer.invoke('memoCategory:delete', id)
   },
-  report: {
-    weeklyActivities: (weekStart: string, weekEnd: string) =>
-      ipcRenderer.invoke('report:weeklyActivities', weekStart, weekEnd),
-    weeklySummary: (weekStart: string, weekEnd: string) =>
-      ipcRenderer.invoke('report:weeklySummary', weekStart, weekEnd),
-    dailyStats: (weekStart: string, weekEnd: string) =>
-      ipcRenderer.invoke('report:dailyStats', weekStart, weekEnd),
-    weeklyTrend: (weeks: number) => ipcRenderer.invoke('report:weeklyTrend', weeks)
-  },
   todo: {
     create: (input: Record<string, unknown>) => ipcRenderer.invoke('todo:create', input),
     list: (completed?: boolean) => ipcRenderer.invoke('todo:list', completed),
@@ -81,7 +65,6 @@ const api = {
       ipcRenderer.invoke('todo:setCompletedAt', id, completedAt),
     restore: (id: number) => ipcRenderer.invoke('todo:restore', id),
     delete: (id: number) => ipcRenderer.invoke('todo:delete', id),
-    history: (todoId: number) => ipcRenderer.invoke('todo:history', todoId),
     listActive: () => ipcRenderer.invoke('todo:listActive')
   },
   todoTag: {
@@ -236,8 +219,7 @@ const api = {
       ipcRenderer.invoke('export:saveMarkdown', content, defaultFileName)
   },
   releaseNote: {
-    // deployVersion을 주면 그 배포 버전과 이름이 같은 릴리스만
-    list: (deployVersion?: string) => ipcRenderer.invoke('releaseNote:list', deployVersion),
+    list: () => ipcRenderer.invoke('releaseNote:list'),
     get: (id: number) => ipcRenderer.invoke('releaseNote:get', id),
     sync: (id: number) => ipcRenderer.invoke('releaseNote:sync', id),
     syncAll: () => ipcRenderer.invoke('releaseNote:syncAll'),
@@ -257,6 +239,19 @@ const api = {
   settings: {
     verifyIntegration: (id: 'google' | 'jira' | 'bitbucket' | 'notion') =>
       ipcRenderer.invoke('settings:verifyIntegration', id)
+  },
+  // 휴대폰 열람 서버 — 켜기·QR·토큰 재발급, 오늘 대시보드 스냅샷 발행
+  mobile: {
+    getStatus: () => ipcRenderer.invoke('mobile:getStatus'),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('mobile:setEnabled', enabled),
+    regenerateToken: () => ipcRenderer.invoke('mobile:regenerateToken'),
+    publishToday: (snapshot: unknown) => ipcRenderer.invoke('mobile:publishToday', snapshot),
+    // 휴대폰이 오늘 화면을 열면 메인이 재발행을 요청한다. 구독 해제 함수를 돌려준다
+    onPublishRequested: (callback: () => void) => {
+      const handler = (): void => callback()
+      ipcRenderer.on('mobile:publishRequested', handler)
+      return () => ipcRenderer.removeListener('mobile:publishRequested', handler)
+    }
   },
   // Jira 티켓 계층 보드 (docs/PROJECT_BOARD.md). Jira는 GET만 하고 DB는 보드 캐시 테이블에만 쓴다
   jiraBoard: {
@@ -315,14 +310,11 @@ const api = {
 
 if (process.contextIsolated) {
   try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
     contextBridge.exposeInMainWorld('api', api)
   } catch (error) {
     console.error(error)
   }
 } else {
-  // @ts-ignore
-  window.electron = electronAPI
   // @ts-ignore
   window.api = api
 }

@@ -1,5 +1,14 @@
 # 개인 비서 설계
 
+> **주의 (2026-11-19)**: 하루 시작·계획·맥락 복구 흐름과 AI 대화 도구 `get_today_plan`·`get_recent_work` 는 제거됐다.
+> 같은 날 하루 시작·계획·맥락 복구 코드를 제거했다(`daily_plans` 등 테이블과 과거 데이터는 유지).
+> 아래의 해당 계약과 grep 완료 조건(부록 F.8 등)은 과거 기록이다. 지금 동작의 기준이 아니다.
+> 헤드리스 LLM 직렬화 줄 `runLlmSerialized` 는 `ai-headless.ts` 에 있다.
+> 오늘 대시보드 브리핑의 LLM 다듬기(부록 O 의 `today-briefing.ts`·`today:getBriefing`·`assistant_events` 의 `today_briefing:{date}` 저장)는 2026-11-19 에 제거했다.
+> 한 줄 브리핑과 신호 문구는 렌더러 규칙(`todayModel.ts`)이 만든 것만 쓴다. 과거 `today_briefing` 행은 DB 에 남아 있다. 비서 LLM 설정(`llmEnabled`·`llmModel`)은 회의 전 브리핑에만 쓴다.
+> 같은 날 남은 계획 읽기 경로도 지웠다: `assistant:getToday` 는 `{ events, settings, aiAvailable, calendarConnected }` 만 돌려주고, 지난 계획 닫기(`closeStalePlans`)·타임라인(`assistant-slots.ts`)·업무 유형(`assistant-worktype.ts`)·하루 계획 설정 8개(`startNudge`·`workEnd`·`planSize`·`jiraScope`·`refresh*`·`completeOriginOnDone`)·활동 구독(`onActivity`)은 없다.
+> 현재 AI 대화 도구는 [AI_CHAT_ARCHITECTURE.md](AI_CHAT_ARCHITECTURE.md) 8절, 가드레일은 [AI_GUARDRAILS.md](AI_GUARDRAILS.md) 8.6절을 본다.
+
 상태: 설계 초안 2판. 작성일 2026-11-02. 구현 전이다.
 
 비서는 사용자의 반복 질문 3가지에 답한다.
@@ -4863,17 +4872,17 @@ export function recoveryVisible(plan: Pick<DailyPlan, 'recovery_text'>, state: R
 ### K.1 메뉴 통합
 - Dashboard 를 지운다. `today` 가 유일한 홈이다. 뷰 상태(지금은 `navigationStore.view`, 2026-11-18 전에는 `projectStore.view`)의 초기값은 `today` 다.
 - 렌더러 `components/layout/navConfig.ts` 가 화면 ID·레이블·사이드바 그룹의 유일 정의처다. 이 파일은 순수 모듈이다.
-  - `VIEW_IDS`·`ViewId`: 화면 ID 12개다. `dashboard` 는 없다. 2026-11-18(프로젝트 페이지 통합) 뒤로 `releases`·`documents` 가 빠져 11개다. 두 옛 이름은 프로젝트 화면의 릴리스 탭·문서 탭으로 가는 별칭이다.
+  - `VIEW_IDS`·`ViewId`: 화면 ID 12개다. `dashboard` 는 없다. 2026-11-18(프로젝트 페이지 통합) 뒤로 `releases`·`documents` 가 빠져 11개다. 두 옛 이름은 프로젝트 화면의 릴리스 탭·문서 탭으로 가는 별칭이다. 2026-11-19 에 `reports`(주간 보고)도 빠져 10개다.
   - `VIEW_LABELS`: 화면 제목이다. 사이드바와 Header 가 같은 레이블을 쓴다. Header 의 빈 제목 3개(today·notes·releases)가 이 표로 채워진다. releases 는 지금 화면 ID 가 아니다.
   - `NAV_GROUPS`: 사이드바 그룹이다. 그룹 안에 그룹을 두지 않는다.
-  - `normalizeView(value)`: `dashboard` 를 `today` 로 바꾼다. 모르는 값이면 null 이다. 트레이·알림·AI 링크·`linkwork://` 의 화면 이름이 이 함수를 거친다.
-- 레이블은 한국어로 통일한다. `Reports` 는 `주간 보고` 다.
+  - `normalizeView(value)`: `dashboard`·`reports` 를 `today` 로 바꾼다. 모르는 값이면 null 이다. 트레이·알림·AI 링크·`linkwork://` 의 화면 이름이 이 함수를 거친다.
+- 레이블은 한국어로 통일한다. (`Reports`(`주간 보고`) 메뉴는 2026-11-19 에 없앴다.)
 - `MenuIcon` 에 해 모양 `today` 아이콘을 더한다. `dashboard` 아이콘을 지운다. 이유: '오늘' 과 '캘린더' 가 같은 아이콘을 쓰면 구분이 약하다.
 
 | 그룹 제목 | 메뉴 (화면 ID) |
 |-----------|----------------|
 | 제목 없음 | 오늘 (`today`), AI 대화 (`ai`) |
-| 업무 | 프로젝트 (`projects`. 2026-11-18 부터 티켓·릴리스·문서 탭을 가진 Jira 페이지), 할 일 (`todos`), 캘린더 (`calendar`), 주간 보고 (`reports`). 릴리스 (`releases`)는 2026-11-18 에 프로젝트 화면의 탭으로 옮겼다 |
+| 업무 | 프로젝트 (`projects`. 2026-11-18 부터 티켓·릴리스·문서 탭을 가진 Jira 페이지), 할 일 (`todos`), 캘린더 (`calendar`). 주간 보고 (`reports`)는 2026-11-19 에 없앴다(옛 값은 today 로 간다). 릴리스 (`releases`)는 2026-11-18 에 프로젝트 화면의 탭으로 옮겼다 |
 | 회의 | 녹음 (`recordings`), 회의록 (`notes`) |
 | 자료 | 메모 (`memos`), 변수 (`variables`). 문서 (`documents`)는 2026-11-18 에 없앴다. Jira 티켓의 연결 문서는 프로젝트 화면의 문서 탭이 모아 보여 준다 |
 

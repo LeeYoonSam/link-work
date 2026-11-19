@@ -112,6 +112,10 @@ describe('parseInternalLink — 레거시 링크', () => {
   it('view/dashboard 는 today 로 옮긴다', () => {
     expect(parseInternalLink('linkwork://view/dashboard')).toEqual({ kind: 'view', view: 'today' })
   })
+
+  it('없앤 view/reports(주간 보고) 는 today 로 옮긴다', () => {
+    expect(parseInternalLink('linkwork://view/reports')).toEqual({ kind: 'view', view: 'today' })
+  })
 })
 
 describe('parseInternalLink — 잘못된 값은 null', () => {

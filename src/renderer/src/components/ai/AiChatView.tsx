@@ -7,19 +7,17 @@ import type {
   AiApprovalRequest,
   AiAttachmentInput,
   AiAttachmentMeta,
-  AiBitbucketStatus,
   AiChat,
   AiChatModelOption,
   AiMessage,
   AiStatus,
-  AiStreamEvent,
   AiWriteMode
 } from '../../types'
 import { AlertTriangleIcon, Card, ImageIcon, XIcon, button } from '../ui'
 
 // 채팅별 데이터 작성 모드 선택지. 입력창 아래 모드 select 에 이 순서로 표시한다
 export const WRITE_MODES: { value: AiWriteMode; label: string; title: string }[] = [
-  { value: 'auto', label: '자동 모드 (Auto)', title: '쓰기를 자동 승인합니다. 변수 변경은 계속 확인합니다.' },
+  { value: 'auto', label: '자동 모드 (Auto)', title: '쓰기를 자동 승인합니다.' },
   { value: 'ask', label: '승인 후 쓰기 (Ask)', title: '쓰기마다 승인을 받습니다.' },
   { value: 'plan', label: '계획 모드 (Plan)', title: '조회만 하고 계획을 먼저 보여 줍니다. 승인하면 실행합니다.' },
   { value: 'readonly', label: '읽기 전용', title: '데이터를 바꾸지 않습니다.' }
@@ -45,20 +43,21 @@ const WRITE_MODE_STYLE: Record<AiWriteMode, string> = {
   readonly: 'border-gray-300 bg-gray-50 text-gray-500'
 }
 
-// "이 채팅에서 항상 승인"을 노출하지 않는 도구 — 변수는 auto 모드에서도 항상 승인
-// (main의 ALWAYS_CONFIRM_WRITE_TOOLS), fetch_url은 쓰기 모드와 무관한 별도 게이트
-const ALWAYS_CONFIRM_TOOLS = ['create_variable', 'update_variable', 'fetch_url']
+// "이 채팅에서 항상 승인"을 노출하지 않는 도구 — fetch_url은 쓰기 모드와 무관한 별도 게이트
+const ALWAYS_CONFIRM_TOOLS = ['fetch_url']
 
 // 이미지 첨부 제한 (main의 ai-attachments.ts와 동일 기준 — renderer 검증은 UX용)
 const MAX_ATTACHMENTS = 4
 const MAX_ATTACHMENT_MB = 8
 const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 
-const EXAMPLE_PROMPTS = [
-  '현재 진행중인 프로젝트 알려줘',
-  '이번주에 진행한 작업들 정리해줘',
-  '미완료 TODO를 우선순위별로 보여줘',
-  '메모에서 클로드 관련 정보들을 알려줘'
+// 빈 화면 추천 질문. 클릭하면 새 채팅에 바로 보낸다.
+// 링크·대상이 필요한 질문은 넣지 않는다 (빈 값으로 전송되기 때문)
+export const EXAMPLE_PROMPTS = [
+  '오늘 마감인 할 일 알려줘',
+  '끝나지 않은 회의 액션아이템 정리해줘',
+  '이번 주 일정 알려줘',
+  '끝나지 않은 할 일을 우선순위별로 보여줘'
 ]
 
 function formatChatTime(value: string): string {
@@ -76,39 +75,20 @@ export default function AiChatView(): React.ReactNode {
   const {
     chats,
     currentChatId,
+    error,
     fetchChats,
     loadModel,
     loadModelOptions,
     createChat,
     deleteChat,
     openChat,
-    sendMessage,
-    handleStreamEvent
+    sendMessage
   } = useAiChatStore()
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null)
   const [listCollapsed, setListCollapsed] = useState(false)
-  const [notionConnected, setNotionConnected] = useState(false)
-  const [bitbucketStatus, setBitbucketStatus] = useState<AiBitbucketStatus>({
-    connected: false,
-    email: null
-  })
-
-  // 연동 토큰 등록·해제는 설정 > 연동이 맡는다. 여기서는 상태 점만 보인다
-  const openIntegrations = (): void => useSettingsStore.getState().open('integrations')
 
   const checkStatus = (): void => {
     window.api.ai.status().then(setAiStatus)
-  }
-
-  const refreshNotionStatus = (): void => {
-    window.api.ai.notionStatus().then((s) => setNotionConnected(s.connected))
-  }
-
-  const refreshBitbucketStatus = (): void => {
-    window.api.ai
-      .bitbucketStatus()
-      .then(setBitbucketStatus)
-      .catch(() => setBitbucketStatus({ connected: false, email: null }))
   }
 
   useEffect(() => {
@@ -117,13 +97,8 @@ export default function AiChatView(): React.ReactNode {
     // 첫 조회는 main 의 모델 탐침 때문에 수 초 걸린다. 그동안 폴백 목록을 보여 준다
     void loadModelOptions()
     checkStatus()
-    refreshNotionStatus()
-    refreshBitbucketStatus()
-    const unsubscribe = window.api.ai.onStream((event) =>
-      handleStreamEvent(event as AiStreamEvent)
-    )
+    // 응답 스트림(ai:stream)은 App 의 installAiStreamSync 가 앱 수준에서 구독한다.
     // AI 쓰기 도구의 데이터 변경(ai:dataChanged)은 App 의 installDataSync 가 반영한다
-    return unsubscribe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -193,32 +168,6 @@ export default function AiChatView(): React.ReactNode {
               ))
             )}
           </div>
-          <div className="p-2 border-t border-gray-200">
-            <button
-              onClick={() => openIntegrations()}
-              title="설정 > 연동에서 Notion 을 연결합니다. AI가 Notion 문서를 읽을 수 있습니다"
-              className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded transition-colors"
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                  notionConnected ? 'bg-green-500' : 'bg-gray-300'
-                }`}
-              />
-              Notion 연동{notionConnected ? ' 중' : ''}
-            </button>
-            <button
-              onClick={() => openIntegrations()}
-              title="설정 > 연동에서 Bitbucket 을 연결합니다. AI가 Bitbucket 저장소의 파일을 읽을 수 있습니다"
-              className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded transition-colors"
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                  bitbucketStatus.connected ? 'bg-green-500' : 'bg-gray-300'
-                }`}
-              />
-              Bitbucket 연동{bitbucketStatus.connected ? ' 중' : ''}
-            </button>
-          </div>
         </div>
       )}
 
@@ -257,13 +206,19 @@ export default function AiChatView(): React.ReactNode {
             <div className="text-4xl mb-3">✦</div>
             <h3 className="text-lg font-semibold text-gray-800 mb-1">LinkWork AI</h3>
             <p className="text-sm text-gray-500 mb-6">
-              프로젝트, TODO, 메모, 문서 등 LinkWork의 데이터를 검색하고 정리해 드립니다.
+              할 일·메모를 찾아 정리하고, Jira 티켓·릴리스 노트·회의 액션아이템·캘린더 일정을 조회합니다.
               <br />
-              Notion·Bitbucket 문서와 웹 링크를 읽고, 첨부한 이미지를 보고 답할 수 있습니다.
+              Notion·Bitbucket·Slack 문서와 웹 링크를 읽고, 첨부한 이미지를 보고 답할 수 있습니다.
               <br />
-              승인을 거쳐 프로젝트·TODO·메모·변수를 만들거나 수정해 드릴 수도 있습니다.
-              (작성 방식은 채팅 상단에서 채팅별로 선택)
+              할 일과 메모를 만들거나 수정해 드릴 수도 있습니다.
+              (작성 방식은 입력창 아래에서 채팅별로 선택)
             </p>
+            {/* 채팅이 없을 때의 오류 (예: 다른 화면에서 대화 생성 실패). 새 채팅을 열면 지워진다 */}
+            {error && (
+              <p role="alert" className="mb-4 w-full max-w-xl px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                {error}
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-2 w-full max-w-xl">
               {EXAMPLE_PROMPTS.map((prompt) => (
                 <button
@@ -323,7 +278,7 @@ function AiUnavailableNotice({
           다시 확인
         </button>
         <p className="mt-4 text-xs text-gray-400">
-          AI 대화 외 다른 기능(프로젝트/TODO/메모 등)은 정상적으로 사용할 수 있습니다.
+          AI 대화 외 다른 기능(할 일·메모·프로젝트 등)은 정상적으로 사용할 수 있습니다.
         </p>
       </Card>
     </div>
@@ -635,7 +590,7 @@ function ChatRoom({ disabled = false }: { disabled?: boolean }): React.ReactNode
             placeholder={
               disabled
                 ? 'Claude Code 설치/로그인 후 사용할 수 있습니다.'
-                : 'LinkWork 데이터, Notion·Bitbucket 문서, 웹 링크에 대해 질문해 보세요… (Enter 전송, 이미지 붙여넣기 가능)'
+                : '할 일·메모·Jira·일정이나 Notion·Bitbucket·Slack 문서, 웹 링크에 대해 질문해 보세요… (Enter 전송, 이미지 붙여넣기 가능)'
             }
             className="flex-1 resize-none px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
           />
@@ -748,7 +703,7 @@ export function PlanApprovalCard({
       <div className="flex flex-wrap gap-2">
         <button
           onClick={() => onRespond(true, 'auto')}
-          title="자동 모드로 바꾸고 계획을 실행합니다. 변수 변경은 계속 확인합니다."
+          title="자동 모드로 바꾸고 계획을 실행합니다."
           className={`px-4 py-1.5 text-sm rounded-lg ${button.dark}`}
         >
           승인 후 자동 실행
@@ -775,7 +730,7 @@ export function PlanApprovalCard({
 }
 
 // 쓰기 도구 실행 전 사용자 승인 카드 (HITL — docs/AI_GUARDRAILS.md 7.2절)
-// allowAlways: "이 채팅에서 항상 승인" 노출 여부 (변수 도구는 항상 승인이 필요해 제외)
+// allowAlways: "이 채팅에서 항상 승인" 노출 여부 (fetch_url 은 별도 게이트라 제외)
 function ApprovalCard({
   request,
   allowAlways,
@@ -819,7 +774,7 @@ function ApprovalCard({
         {allowAlways && (
           <button
             onClick={() => onRespond(true, true)}
-            title="이 채팅을 자동 모드로 바꾸고 승인합니다. 이후 이 채팅에서는 승인 없이 즉시 실행됩니다 (변수 제외)"
+            title="이 채팅을 자동 모드로 바꾸고 승인합니다. 이후 이 채팅에서는 승인 없이 즉시 실행됩니다"
             className="px-4 py-1.5 text-sm rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200 transition-colors"
           >
             이 채팅에서 항상 승인

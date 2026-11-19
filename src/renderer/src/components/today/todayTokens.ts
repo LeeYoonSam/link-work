@@ -33,7 +33,6 @@ export const ROW = 'flex items-start gap-2 px-4 py-2 min-w-0'
 // 한글은 낱말 단위로 줄바꿈하고(break-keep), 마지막 줄에 한 글자만 남지 않게 한다(text-pretty).
 // 띄어쓰기 없는 긴 낱말은 overflow-wrap:anywhere 로 넘친다
 export const ROW_TITLE = 'min-w-0 flex-1 break-keep text-pretty [overflow-wrap:anywhere] text-sm text-gray-800'
-export const ROW_META = 'text-xs text-gray-500 tabular-nums whitespace-nowrap'
 
 // 카드 아래 '외 n건 →' 링크
 export const MORE_LINK =

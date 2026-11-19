@@ -23,6 +23,14 @@ export const STOP_TIMEOUT_MS = 5000
 export const UNEXPECTED_STOP_ERROR =
   '녹음이 예기치 않게 중단되었습니다. 종료 및 저장을 눌러 지금까지 녹음된 내용을 저장하세요.'
 
+// 시스템 오디오 권한이 없으면 에러 없이 처음부터 ended인 오디오 트랙이 온다
+export const SYSTEM_AUDIO_PERMISSION_ERROR =
+  '시스템 오디오 권한이 없어 마이크만 녹음합니다. (시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음)'
+
+// 녹음 도중 시스템 오디오 트랙이 끊긴 경우 — 녹음은 계속하고 경고만 띄운다
+export const SYSTEM_AUDIO_LOST_ERROR =
+  '시스템 오디오가 끊겨 이후 구간은 상대방 음성이 녹음되지 않습니다. 마이크 녹음은 계속됩니다.'
+
 interface RecorderStore {
   state: RecorderState
   elapsedMs: number
@@ -81,7 +89,7 @@ let stopRequested = false
 // 녹음 세션 번호 — reset/새 start 이후 늦게 도착한 이전 녹음기의 이벤트를 무시한다
 let session = 0
 
-export const useRecorderStore = create<RecorderStore>((set) => {
+export const useRecorderStore = create<RecorderStore>((set, get) => {
   const startLevelLoop = (): void => {
     if (!analyser) return
     const buf = new Float32Array(analyser.fftSize)
@@ -210,10 +218,14 @@ export const useRecorderStore = create<RecorderStore>((set) => {
 
       try {
         // 1) 마이크 스트림 획득
+        // noiseSuppression은 끈다: docs/MEETING_RECORDING.md §11이 노이즈 억제가 large 계열
+        // whisper의 WER과 화자분리 DER을 악화시킨다는 이유로 후처리에서 금지했는데,
+        // 입력 단계에서 켜 두면 같은 열화가 그대로 들어가 모순이다.
+        // echoCancellation은 스피커로 나온 상대 음성이 마이크(L)에 섞이는 것을 막으므로 유지한다.
         const mic = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
-            noiseSuppression: true,
+            noiseSuppression: false,
             channelCount: 1
           }
         })
@@ -228,13 +240,22 @@ export const useRecorderStore = create<RecorderStore>((set) => {
               video: true
             })
             // 오디오 트랙만 분리; 비디오 트랙은 즉시 정지
+            // (video를 요청하지 않으면 getDisplayMedia가 실패하므로 요청은 유지한다)
             displayStream.getVideoTracks().forEach((t) => t.stop())
             const audioTracks = displayStream.getAudioTracks()
-            if (audioTracks.length > 0) {
-              sysStream = new MediaStream(audioTracks)
+            // 시스템 오디오 권한이 없으면 처음부터 ended인 트랙이 온다 → live만 쓴다
+            const liveTracks = audioTracks.filter((t) => t.readyState === 'live')
+            if (liveTracks.length > 0) {
+              sysStream = new MediaStream(liveTracks)
+              audioTracks.filter((t) => t.readyState !== 'live').forEach((t) => t.stop())
             } else {
-              // 오디오 권한이 없는 경우
-              set({ error: '시스템 오디오를 가져올 수 없어 마이크만 녹음합니다.' })
+              audioTracks.forEach((t) => t.stop())
+              set({
+                error:
+                  audioTracks.length > 0
+                    ? SYSTEM_AUDIO_PERMISSION_ERROR
+                    : '시스템 오디오를 가져올 수 없어 마이크만 녹음합니다.'
+              })
             }
           } catch {
             // 사용자 취소 또는 미지원
@@ -309,6 +330,18 @@ export const useRecorderStore = create<RecorderStore>((set) => {
           t.addEventListener('ended', () => {
             if (mySession !== session) return
             handleUnexpectedStop()
+          })
+        )
+
+        // 시스템 오디오가 도중에 끊겨도(권한 회수·출력 장치 변경 등) 녹음은 멈추지 않는다.
+        // 마이크용 handleUnexpectedStop은 타이머를 멈추므로 쓰지 않고 경고만 띄운다.
+        sysStream?.getAudioTracks().forEach((t) =>
+          t.addEventListener('ended', () => {
+            if (mySession !== session) return
+            if (stopRequested) return
+            // 더 심각한 녹음 중단 안내가 떠 있으면 덮어쓰지 않는다
+            if (get().error === UNEXPECTED_STOP_ERROR) return
+            set({ error: SYSTEM_AUDIO_LOST_ERROR })
           })
         )
 

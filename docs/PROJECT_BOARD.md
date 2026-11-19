@@ -9,7 +9,7 @@
 2026-11-18 에 사이드바의 "릴리스"·"문서" 메뉴를 없애고 이 화면의 탭으로 합쳤다. 옛 "문서" 메뉴(로컬 `documents` 테이블)는 대체하지 않고 지웠다.
 
 모두 읽기 전용이다. Jira 이슈 편집과 자동 AI 생성은 없다.
-가져온 티켓은 로컬 DB 의 보드 캐시 테이블 2개에 저장한다. 화면을 열면 저장본을 먼저 보여 주고,
+가져온 티켓은 로컬 DB 의 보드 캐시 테이블 2개에 저장한다. 에픽 AI 요약은 세 번째 테이블 `jira_epic_summaries` 에 저장한다. 화면을 열면 저장본을 먼저 보여 주고,
 이어서 Jira 에서 바뀐 티켓만 받아 갱신한다.
 
 이전의 로컬 프로젝트·WBS 작업·일정 타임라인·Jira 프로젝트 싱크업은 모두 없앴다.
@@ -25,9 +25,10 @@
 |---|---|
 | 대상 프로젝트 | 기본 Jira 프로젝트(`jira_default_project_key`) 하나 |
 | 보이는 티켓 | '할 일' 이상 상태(백로그 제외)의 열린 티켓, 최근 14일 안에 완료된 티켓, 그리고 그 조상 |
-| 데이터 방향 | Jira → 로컬 캐시 → 화면 단방향. Jira 는 GET 만 한다. DB 는 보드 캐시 테이블 2개(§3)에만 쓴다 |
+| 데이터 방향 | Jira → 로컬 캐시 → 화면 단방향. Jira 는 GET 만 한다. DB 는 보드 테이블 3개(캐시 2개 + 에픽 AI 요약, §3)에만 쓴다 |
 | 편집 | 없음. 이슈를 바꾸려면 [Jira에서 열기]로 Jira 에서 한다 |
-| AI 요약 | 에픽 상세 패널의 버튼을 눌렀을 때만 만든다. 결과는 main 메모리에만 둔다 |
+| AI 요약 | 에픽 상세 패널의 버튼을 눌렀을 때만 만든다. 결과는 로컬 DB `jira_epic_summaries` 에 에픽당 1행으로 저장한다(§5.1). Jira 에 되쓰지 않는다 |
+| AI 대화 | 상세 패널의 [AI 대화로 열기]가 티켓 키만 담은 질문으로 새 AI 대화를 연다(§6.2) |
 | 연결 문서 | 동기화 때 모아 `JiraBoardIssue.links` 로 저장한다(§2.2). 첨부는 목록만 보여 주고 브라우저로 연다. 앱에서 내려받지 않는다 |
 | 저장 | 받은 티켓은 `jira_board_issues`·`jira_board_sync` 에 저장한다. Jira 에서 다시 받을 수 있는 캐시라 백업하지 않는다 |
 
@@ -112,16 +113,26 @@ CREATE TABLE IF NOT EXISTS jira_board_sync (
   truncated          INTEGER NOT NULL DEFAULT 0,
   recent_done_days   INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS jira_epic_summaries (
+  project_key   TEXT NOT NULL,
+  epic_key      TEXT NOT NULL,
+  fingerprint   TEXT NOT NULL,     -- 날짜 + 에픽·자손 상태 지문의 SHA-256
+  data          TEXT NOT NULL,     -- JiraEpicAiSummary JSON
+  generated_at  TEXT NOT NULL,     -- 요약을 만든 시각 (ISO)
+  PRIMARY KEY (project_key, epic_key)
+);
 ```
 
 - 저장·읽기는 `src/main/services/jira-board-store.ts` 가 한다. DB 핸들을 주입받는다.
-  읽기 `readStoredBoard`, 전체 교체 `replaceStoredBoard`, 증분 upsert `upsertStoredIssues`, 비우기 `clearStoredBoards`(두 테이블 전부).
+  읽기 `readStoredBoard`, 전체 교체 `replaceStoredBoard`, 증분 upsert `upsertStoredIssues`, 비우기 `clearStoredBoards`(세 테이블 전부).
+  에픽 요약은 `readEpicSummary`·`writeEpicSummary`·`deleteEpicSummaries` 다.
   `jira-board.ts` 는 이 함수들을 `JiraBoardStorePort` 로 주입받아 테스트에서 바꿔 끼운다.
 - 행은 `project_key` 로 나뉜다. 기본 프로젝트를 바꿔도 다른 프로젝트의 행과 섞이지 않는다.
 - `data` JSON 이 깨졌거나 모양이 틀린 행은 버리고 계속한다. throw 하지 않는다.
 - 스냅샷은 저장 행으로 조립한다. `fetchedAt` 은 `last_sync_at`, `lastFullSyncAt` 은 `last_full_sync_at` 이다.
   `inScope` 같은 파생 값은 저장된 JSON 을 그대로 쓴다. 상태가 바뀐 이슈는 증분에서 새 JSON 으로 덮인다.
-- 두 테이블은 백업 대상이 아니다(`backup-groups.ts` 의 `NON_GROUP_TABLES`, `CACHE_TABLES`). 백업 사본에서는 행을 지운다(`backup-service.ts` 의 `stripCaches`).
+- `jira_epic_summaries` 는 전체 동기화의 이슈 교체와 따로 둔다. 교체 때 지워지지 않는다. 대신 `replaceStoredBoard` 가 같은 트랜잭션에서 보드에서 사라진 에픽의 요약을 지운다.
+- 세 테이블은 백업 대상이 아니다(`backup-groups.ts` 의 `NON_GROUP_TABLES`, `CACHE_TABLES`). 백업 사본에서는 행을 지운다(`backup-service.ts` 의 `stripCaches`).
   복원으로 Jira 계정(사이트·이메일)이 바뀌면 현재 캐시도 함께 지운다(`CREDENTIAL_BUNDLES` 의 jira `credentialTables`). 캐시가 비면 다음 화면 진입 때 전체 동기화가 돈다.
 
 ## 4. 동기화
@@ -172,7 +183,7 @@ CREATE TABLE IF NOT EXISTS jira_board_sync (
 full 요청은 진행 중인 것도 full 일 때만 같이 기다린다. auto·incremental 이 도는 중에 들어온 full 요청은 버리지 않고, 그 실행이 끝난 뒤(실패해도) 이어서 전체를 돌린다.
 이때 세대는 요청 시점 것을 써서, 기다리는 사이 비우기가 있었으면 결과를 저장하지 않는다.
 
-**비우기.** `clearJiraBoardCache()` 는 두 테이블의 모든 행과 AI 요약 메모리 캐시를 지운다. 세대(generation)를 올려, 비우기 전에 시작된 동기화는 결과를 저장하지 않는다.
+**비우기.** `clearJiraBoardCache()` 는 세 테이블(`jira_board_issues`·`jira_board_sync`·`jira_epic_summaries`)의 모든 행을 지우고, 진행 중인 요약 요청 표도 비운다. 세대(generation)를 올려, 비우기 전에 시작된 동기화는 결과를 저장하지 않는다.
 부르는 곳은 `release-note.ipc.ts` 두 곳이다.
 
 - `jira:saveCredentials`: 자격 증명 **저장이 성공한 뒤**. 실패하면 기존 자격 증명이 그대로라 저장본도 유효하다.
@@ -282,8 +293,24 @@ IPC 는 throw 하지 않고 `{ success, … }` 로 감싼다.
   프롬프트에 넣는 자손은 최대 150건, 자손 발췌는 200자까지다. 응답의 bullets 는 4개까지만 쓴다.
 - 저장본을 읽으므로 앱을 다시 켠 직후에도 동작한다.
 - 스냅샷에 없는 키, 에픽이 아닌 키는 오류다. 이슈 키는 정규식으로 검증한다.
-- 결과는 `epicKey` 와 자손 상태 지문으로 main 메모리에 캐시한다. 자손 상태가 바뀌면 다시 만든다.
-- 도구 권한을 주지 않는다(JSON 응답만). 요약 결과는 DB 에 쓰지 않는다.
+- 호출은 헤드리스 LLM 직렬화 줄 `runLlmSerialized`(`ai-headless.ts`)를 거친다(`runEpicSummaryJson`). 회의 전 브리핑 같은 다른 헤드리스 작업이 도는 중이면 BUSY 로 실패하지 않고 끝나기를 기다렸다가 실행한다.
+- 도구 권한을 주지 않는다(JSON 응답만). Jira 에 되쓰지 않는다. 입력은 로컬 스냅샷뿐이다.
+
+저장 규칙은 다음과 같다.
+
+| 규칙 | 내용 |
+|---|---|
+| 저장 위치 | `jira_epic_summaries`, 에픽당 1행(`project_key`, `epic_key` 기본 키). 다시 만들면 덮어쓴다 |
+| 지문 | 오늘 날짜(앱 시계의 로컬 날짜, 프롬프트의 today 와 같은 값)와, 에픽과 자손의 `키:상태:담당 accountId:기한:제목` 줄을 정렬해 이은 문자열의 SHA-256 |
+| 재사용 | 저장본의 지문이 지금 스냅샷의 지문과 같으면 LLM 을 부르지 않고 저장본을 돌려준다. 앱을 다시 켠 뒤에도 같다 |
+| 다시 만들기 | 날짜가 바뀌거나, 자손의 상태·담당·기한·제목이 바뀌거나, 자손이 늘고 줄면 지문이 달라져 다시 만들고 같은 행을 덮어쓴다. 요약에 "기한 지남" 같은 날짜 의존 문장이 있어서 날짜를 지문에 넣는다. 우선순위·설명 발췌만 바뀌면 같은 날에는 저장본이 나온다 |
+| 겹친 요청 | 같은 `프로젝트#에픽#지문` 의 요청이 진행 중이면 그 결과를 같이 기다린다. LLM 은 한 번만 부른다 |
+| 상한 | 프로젝트당 50행(`MAX_STORED_EPIC_SUMMARIES`). 넘으면 `generated_at` 이 오래된 것부터 지운다 |
+| 사라진 에픽 | 전체 동기화(`replaceStoredBoard`) 때 보드에 없는 에픽의 요약을 지운다 |
+| 연동 해제·계정 변경 | `clearJiraBoardCache()` 가 전부 지운다. 기다리는 사이 비우기가 있었으면(세대가 바뀌었으면) 만든 요약을 저장하지 않는다 |
+| 깨진 행 | JSON 이 깨졌거나 에픽 키가 다르면 없는 것으로 보고 다시 만든다 |
+| 저장 실패 | 만든 요약은 그대로 보여 준다. 다음 버튼에서 다시 만든다 |
+| 백업 | 캐시 테이블로 취급한다. 백업 사본에서 행을 지우고, 복원으로 Jira 계정이 바뀌면 지운다([DATA_BACKUP.md](DATA_BACKUP.md)) |
 
 ## 6. 화면
 
@@ -368,7 +395,11 @@ IPC 는 throw 하지 않고 `{ success, … }` 로 감싼다.
   - 검색어, 상태 분류, 세부 상태, 유형, 릴리스 필터 중 하나라도 걸려 있으면 묶지 않는다(`shouldFoldDone`). 내 담당만·완료 모두 숨김·이전 완료 보기는 묶음을 유지한다. 찾으려고 거른 결과가 묶음 속에 숨으면 안 되기 때문이다.
   - "모두 펼치기/접기"는 묶음 행도 함께 펼치고 접는다. "보드에서 보기"는 조상을 펼친 뒤에도 그 이슈가 묶음 속에 숨어 있을 때만 감싼 묶음·섹션을 펼친다(보이는 이슈면 사용자가 접어 둔 묶음은 그대로 둔다).
   - 포커스된 행이 접힌 묶음 속으로 사라지면 그 이슈를 감싼 묶음 행 → 부모 → 조부모의 묶음 행 → 그룹 → 닫힌 상위 티켓 섹션 순으로 보이는 첫 행에 포커스를 옮긴다.
-- 상세 패널: 메타, 설명 발췌, 하위 목록, [Jira에서 열기]. 에픽이면 [AI 요약] 버튼이 있고, 결과에 "AI 요약 · 시각"을 붙인다.
+- 상세 패널: 메타, 설명 발췌, 하위 목록, [Jira에서 열기], [AI 대화로 열기]. 에픽이면 [AI 요약] 버튼이 있고, 결과에 "AI 요약 · 시각"을 붙인다.
+- [AI 대화로 열기]: [Jira에서 열기] 옆에 있다. 누르면 `openIssueChat` 이 `aiChatStore.startChatWith(prompt, { writeMode: 'ask' })` 로 새 AI 대화를 열고 질문을 보낸다. 이 대화에서 AI 가 할 일·메모를 쓰려면 승인 카드를 거친다
+  (AI 를 쓸 수 없으면 보내지 않고 AI 화면만 연다. [AI_CHAT_ARCHITECTURE.md](AI_CHAT_ARCHITECTURE.md) 6.1절).
+  - 질문은 `aiChatPromptFor(key, isEpic)` 가 만든다. 에픽과 에픽 가상 그룹은 "Jira 에픽 {key} 와 하위 티켓의 현재 상태를 읽고, 내가 할 일의 일정 초안을 제안해줘. 할 일로 만들기 전에 먼저 초안을 보여줘." 이다. 그 밖의 티켓은 "Jira 티켓 {key} 의 내용과 최근 진행 상황을 읽고 정리해줘." 이다.
+  - **질문에는 티켓 키만 넣는다.** 제목·설명은 넣지 않는다. 사용자 메시지에 Jira 원문을 넣으면 그 안의 지시문이 사용자 지시처럼 다뤄진다. 내용은 AI 가 Jira 도구로 읽는다(신뢰할 수 없는 입력으로 다뤄진다).
 
 ### 6.3 상태별 화면
 
@@ -387,13 +418,14 @@ IPC 는 throw 하지 않고 `{ success, … }` 로 감싼다.
 - **Jira 는 GET 만.** 새 코드는 `jira.ts` 의 요청 함수를 거치고 `fetch` 를 직접 부르지 않는다.
   확인: `grep -n "method:" src/main/services/jira.ts` 가 전부 `'GET'`,
   `grep -n "fetch(" src/main/services/jira-board.ts src/main/services/jira-board-store.ts src/main/ipc/jira-board.ipc.ts` 가 0줄.
-- **DB 는 캐시 테이블 2개에만 쓴다.** `jira_board_issues`·`jira_board_sync` 밖의 테이블에는 쓰지 않는다.
-  두 테이블은 Jira 에서 다시 받을 수 있는 캐시라 백업하지 않는다. AI 요약은 main 메모리에만 둔다.
+- **DB 는 보드 테이블 3개에만 쓴다.** `jira_board_issues`·`jira_board_sync`·`jira_epic_summaries` 밖의 테이블에는 쓰지 않는다.
+  세 테이블은 Jira 에서 다시 받거나 버튼으로 다시 만들 수 있는 캐시라 백업하지 않는다.
 - **JQL 에 넣는 값은 삽입 직전에 검증한다.** 프로젝트·이슈 키는 정규식, 증분의 분 수 N 은 정수 검사다.
 - **웹링크 GET 은 상한 안에서만.** 웹링크는 이슈마다 GET 1회라 대상(inScope 에픽·표준 이슈), 동기화당 150건, 동시 4건으로 묶는다.
 - **링크 열기는 저장된 URL 만.** `jiraBoard:openLink` 는 http(s)이고 저장 스냅샷의 `links` 에 든 URL 만 연다. renderer 가 임의 URL 을 열게 하지 않는다. 첨부는 내려받지 않고 브라우저로 넘긴다.
 - **AI 요약은 버튼으로만.** 보드를 열거나 새로고침할 때 자동으로 만들지 않는다.
   Jira 에서 온 제목·설명은 신뢰할 수 없는 입력이라 요약 호출에 도구 권한을 주지 않는다.
+- **AI 대화 질문에는 티켓 키만.** [AI 대화로 열기]는 제목·설명을 질문에 넣지 않는다(`IssueDetailPanel.test.tsx` 가 고정한다).
 
 ## 8. 아침 자동 동기화와의 관계
 
@@ -406,7 +438,8 @@ IPC 는 throw 하지 않고 `{ success, … }` 로 감싼다.
 | 파일 | 다루는 것 |
 |---|---|
 | `src/main/services/jira-board.test.ts` | 전체 수집 규칙(JQL·보강·inScope·상한), 동기화 모드(증분 upsert·저장 대상 선별, 전체로 넘어가는 조건, auto 의 60초 생략·24시간 전체·옛 행 전체, 실패 시 저장본 보존, 비우기), 링크 조립(종류별·중복 제거·http(s)만), 웹링크 대상·상한·실패 무시·증분 유지, AI 요약. Jira 호출 함수와 저장소를 주입해 네트워크 없이 돈다 |
-| `src/main/services/jira-board-store.test.ts` | 저장·읽기·전체 교체·증분 upsert·비우기, 깨진 행 무시, 옛 행 채우기와 `legacyRows`, 쓰기 오류 시 되돌리기 |
+| `src/main/services/jira-board-store.test.ts` | 저장·읽기·전체 교체·증분 upsert·비우기, 깨진 행 무시, 옛 행 채우기와 `legacyRows`, 쓰기 오류 시 되돌리기, 에픽 AI 요약 저장(덮어쓰기·50행 상한·사라진 에픽 삭제·비우기) |
+| `src/renderer/src/components/project/IssueDetailPanel.test.tsx` | [AI 대화로 열기] 버튼 표시와 질문 문구(`aiChatPromptFor`), 질문에 제목·설명이 없음 |
 | `src/main/ipc/jira-board.ipc.test.ts` | `fetch` 의 mode 검증, `cached`, `summarizeEpic` 전달, `openLink` 가 저장 스냅샷에 없는 URL·비 http(s)·문자열 아닌 값을 거부 |
 | `src/main/services/jira-adf.test.ts` | ADF → 평문 변환, 링크 추출(`extractAdfLinks`), 출처 이름 추정(`guessLinkName`) |
 | `src/renderer/src/components/project/boardModel.test.ts` | 트리 구성, 롤업, 필터(릴리스 필터 포함), 정렬, 평탄화, 키보드 이동, 요약 타일, 우선순위 표기 |

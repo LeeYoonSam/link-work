@@ -27,7 +27,6 @@ const fake = {
     error?: string
   },
   statusErrors: {},
-  refreshing: false,
   verifyResults: {},
   verifying: {},
   open: vi.fn(),
@@ -56,11 +55,11 @@ beforeEach(() => {
 })
 
 describe('SettingsView', () => {
-  it('왼쪽에 섹션 5개, 오른쪽에 선택한 섹션을 그린다', () => {
+  it('왼쪽에 섹션 6개, 오른쪽에 선택한 섹션을 그린다', () => {
     const html = render('assistant')
     const sections = [...html.matchAll(/data-section="([a-z]+)"/g)].map((m) => m[1])
-    expect(sections).toEqual(['integrations', 'ai', 'assistant', 'recording', 'data'])
-    for (const label of ['연동', 'AI', '비서', '회의 녹음', '데이터']) expect(html).toContain(label)
+    expect(sections).toEqual(['integrations', 'ai', 'assistant', 'recording', 'mobile', 'data'])
+    for (const label of ['연동', 'AI', '비서', '회의 녹음', '모바일', '데이터']) expect(html).toContain(label)
     expect(html).toContain('data-settings-panel="assistant"')
     expect(html).toMatch(/data-section="assistant" aria-current="page"/)
     // 비서 섹션 내용: 즉시 저장 안내와 그룹 3개
@@ -99,6 +98,15 @@ describe('SettingsView', () => {
     expect(html).toContain('AI 브리핑')
     expect(html).toContain('비서 요약 모델')
     expect(html).toContain('<option value="sonnet"')
+  })
+
+  it('모바일 섹션은 켜기 토글과 주의 문구를 그린다(상태를 읽기 전에는 비활성)', () => {
+    const html = render('mobile')
+    expect(html).toContain('data-settings-panel="mobile"')
+    expect(html).toContain('휴대폰에서 보기 켜기')
+    expect(html).toContain('공용 Wi-Fi')
+    expect(html).toMatch(/<input type="checkbox" disabled=""/)
+    expect(html).not.toContain('<img')
   })
 
   it('데이터 섹션은 백업·복원 열기 버튼을 그린다', () => {

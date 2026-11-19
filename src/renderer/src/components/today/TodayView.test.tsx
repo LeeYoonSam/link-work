@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import type { TodayBriefing } from '../../types'
 import type { TodayDashboard } from './todayModel'
 
 // 오늘 대시보드 (docs/ASSISTANT.md 부록 O).
@@ -32,13 +31,10 @@ const todo = {
 const today = {
   events: [],
   eventsError: null as string | null,
-  briefing: null as TodayBriefing | null,
-  briefingLoading: false,
   loading: false,
   lastSyncedAt: null as string | null,
   load: vi.fn(async () => {}),
-  refresh: vi.fn(async () => {}),
-  requestBriefing: vi.fn(async () => {})
+  refresh: vi.fn(async () => {})
 }
 const assistant = {
   today: null,
@@ -149,7 +145,6 @@ const render = (): string => renderToStaticMarkup(<TodayView now={NOW} />)
 
 beforeEach(() => {
   vi.clearAllMocks()
-  today.briefing = null
   today.loading = false
   today.lastSyncedAt = null
 })
@@ -160,7 +155,6 @@ describe('TodayView 화면', () => {
     const html = render()
     expect(html).toContain('11월 19일 (목)')
     expect(html).toContain(DASH.headline)
-    expect(html).toContain('data-source="rules"')
     expect(html).toContain('동기화 09:12')
     expect(html).toContain('aria-label="새로고침"')
   })
@@ -186,25 +180,14 @@ describe('TodayView 화면', () => {
     expect(render()).toContain('40분 뒤')
   })
 
-  it('같은 날짜의 브리핑이 있으면 헤드라인과 신호 문구·순서를 바꾼다', () => {
-    today.briefing = {
-      date: '2026-11-19',
-      headline: 'QA 첫날, 미완 2건부터 봐요.',
-      signals: [
-        { id: 'meeting_soon', text: '14:00 Tech weekly 준비' },
-        { id: 'release_risk', text: 'QA 전 2건 — 4.177.0' }
-      ],
-      source: 'llm',
-      model: 'sonnet',
-      generatedAt: '2026-11-19T04:00:00Z',
-      inputHash: 'x',
-      error: null
-    }
+  it('헤드라인과 신호는 규칙 문구 그대로 보인다(LLM 다듬기 없음)', () => {
     const html = render()
-    expect(html).toContain('QA 첫날, 미완 2건부터 봐요.')
-    expect(html).toContain('data-source="llm"')
-    expect(html.indexOf('data-signal="meeting_soon"')).toBeLessThan(html.indexOf('data-signal="release_risk"'))
-    expect(html).toContain('QA 전 2건 — 4.177.0')
+    expect(html).toContain(DASH.headline)
+    for (const sig of DASH.signals) {
+      expect(html).toContain(`data-signal="${sig.id}"`)
+      expect(html).toContain(sig.text)
+    }
+    expect(html).not.toContain('data-source=')
   })
 
   it('계획 조작 UI(완료·제외·집중·하루 시작·퇴근·명령·변경 내역·후보)가 없다', () => {

@@ -2,23 +2,16 @@ import { app } from 'electron'
 import { getDatabase } from '../db/database'
 import { getTodayEvents, isOwnCalendarEvent } from './google-calendar'
 import { isConnected as isCalendarConnected } from './google-auth'
-import { isJiraConnected } from './jira'
-import { isHeadlessAvailable } from './ai-headless'
+import { isHeadlessAvailable, runLlmSerialized } from './ai-headless'
 import { collectMeetingContext, toMeetingRef } from './assistant-sources'
 import { requestLlmMeetingBriefing, type MeetingLlmInput } from './assistant-briefing'
-import { logicalDate, toLocalDateTime, toHHmm } from './assistant-day'
-import { buildTimeline, roundUpToQuarter } from './assistant-slots'
+import { logicalDate, toLocalDateTime } from './assistant-day'
 import { computeDueMeetingBriefings } from './assistant-schedule'
 import { buildMeetingBriefing, hasMeetingContext, meetingNoticeText } from './assistant-meeting'
 import {
-  closeStalePlans,
   getEventById,
-  getLastPlanBefore,
-  getPlanByDate,
   insertEvent,
   listEventsByDate,
-  listExclusions,
-  listPlanItems,
   readAssistantSettings,
   updateEventPayload,
   writeAssistantSettings
@@ -26,11 +19,8 @@ import {
 import type {
   AssistantChangedEvent,
   AssistantSettings,
-  DailyPlan,
-  DayTimeline,
   MeetingBriefingPayload,
   MeetingRef,
-  PlanItem,
   SentMeetingNotice,
   TodayPayload
 } from './assistant-types'
@@ -38,7 +28,9 @@ import type {
 // 비서 흐름 조정 모듈이다. IPC 와 스케줄러가 이 파일만 부른다.
 // A2: 이 파일은 비서 테이블과 assistant_* 설정만 쓴다. 원본(todos·meetings 등)은 쓰지 않는다.
 // 부록 O(오늘 대시보드 개편, 2026-11-19): 하루 시작·퇴근·계획 항목 조작·후보·최신화·맥락 복구·명령 입력은
-// 제거됐다. 남은 일: 과거 계획 읽기(getToday), 지난 계획 닫기, 회의 전 브리핑, 설정, LLM 직렬화 줄.
+// 제거됐다. 2026-11-19 에 과거 계획 읽기·지난 계획 닫기도 뺐다(새 계획이 생기지 않는다. 테이블과 과거 행은 남는다).
+// 남은 일: 오늘 화면 페이로드(getToday: 비서 이벤트·설정·연결 상태), 회의 전 브리핑, 설정.
+// LLM 직렬화 줄은 ai-headless.ts(runLlmSerialized)에 있다.
 
 type Db = ReturnType<typeof getDatabase>
 
@@ -52,20 +44,6 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 const backgroundTasks = new Set<Promise<void>>()
-
-// A32: 헤드리스 LLM 은 한 줄로 실행한다. ai-headless 잠금이 두 번째 실행을 BUSY 로 실패시키지 않게 한다
-let llmChain: Promise<unknown> = Promise.resolve()
-
-function llmSerialized<T>(fn: () => Promise<T>): Promise<T> {
-  const run = llmChain.then(fn)
-  llmChain = run.catch(() => undefined)
-  return run
-}
-
-/** 다른 서비스(오늘 브리핑 등)가 같은 LLM 직렬화 줄을 쓰도록 연다 */
-export function runLlmSerialized<T>(fn: () => Promise<T>): Promise<T> {
-  return llmSerialized(fn)
-}
 
 export function setAssistantChangedListener(fn: ((e: AssistantChangedEvent) => void) | null): void {
   changedListener = fn
@@ -87,16 +65,7 @@ function todayOf(db: Db, now: Date): { settings: AssistantSettings; today: strin
   const settings = readAssistantSettings(db)
   const today = logicalDate(now, settings.dayRollover)
   const at = toLocalDateTime(now)
-  // A18: 진입점마다 지난 active 계획을 닫는다. 여러 번 실행해도 결과가 같다
-  closeStalePlans(db, today, at)
   return { settings, today, at }
-}
-
-function missingWrapupDateOf(db: Db, today: string): string | null {
-  const last = getLastPlanBefore(db, today)
-  // 사용자가 건너뛰기를 누른 날짜는 다시 묻지 않는다. 앱을 다시 켜도 같다
-  if (last && last.closed_by === 'auto' && !last.wrapup_note && !last.wrapup_skipped_at) return last.plan_date
-  return null
 }
 
 function safeHeadlessAvailable(): boolean {
@@ -117,58 +86,13 @@ function safeConnected(check: () => boolean): boolean {
   }
 }
 
-const EMPTY_TIMELINE: DayTimeline = { entries: [], freeMinutesLeft: 0, focusItemId: null, unplacedDeadlineItemIds: [] }
-
-// 타임라인의 '지금'. 날짜 경계 전 새벽은 논리 날짜가 전날이다. 이때 전날 블록은 모두 지났으므로 '24:00' 을 쓴다
-function timelineNow(now: Date, today: string): string {
-  return toLocalDateTime(now).slice(0, 10) > today ? '24:00' : toHHmm(now)
-}
-
-// 타임라인 시작 시각. 계획의 started_at('YYYY-MM-DD HH:mm:ss') 을 15분 단위로 올린다 (A23-1)
-function dayStartOf(plan: DailyPlan): string {
-  return roundUpToQuarter(plan.started_at.slice(11, 16))
-}
-
-// 타임라인 입력의 calendar 는 계획 스냅샷의 일정이다 (B.7)
-function timelineOf(
-  plan: DailyPlan | null,
-  items: PlanItem[],
-  settings: AssistantSettings,
-  today: string,
-  now: Date
-): DayTimeline {
-  if (!plan) return EMPTY_TIMELINE
-  return buildTimeline({
-    calendar: plan.source_snapshot?.calendar ?? [],
-    dayStart: dayStartOf(plan),
-    nowHHmm: timelineNow(now, today),
-    workEnd: settings.workEnd,
-    items,
-    today,
-    closed: plan.status === 'closed'
-  })
-}
-
-function buildPayload(db: Db, settings: AssistantSettings, today: string, now: Date): TodayPayload {
-  const plan = getPlanByDate(db, today)
-  const items = plan ? listPlanItems(db, plan.id) : []
+// 오늘 화면이 읽는 값만 담는다(회의 브리핑 카드·설정·AI 사용 가능·캘린더 연결)
+function buildPayload(db: Db, settings: AssistantSettings, today: string): TodayPayload {
   return {
-    logicalDate: today,
-    plan,
-    items,
-    timeline: timelineOf(plan, items, settings, today, now),
     events: listEventsByDate(db, today),
     settings,
-    missingWrapupDate: missingWrapupDateOf(db, today),
     aiAvailable: safeHeadlessAvailable(),
-    jiraConnected: safeConnected(isJiraConnected),
-    calendarConnected: safeConnected(isCalendarConnected),
-    // 부록 O: 후보 수집이 없어져 잘림·수집 오류는 더 생기지 않는다. 모양만 유지한다
-    jiraTruncated: false,
-    lastErrors: [],
-    // 맥락 복구는 제거됐다. 모양만 유지한다 (부록 O)
-    recovery: { inFlight: false, error: null },
-    exclusions: listExclusions(db)
+    calendarConnected: safeConnected(isCalendarConnected)
   }
 }
 
@@ -182,7 +106,7 @@ export async function waitForAssistantBackground(): Promise<void> {
 export async function getToday(now: Date = new Date()): Promise<TodayPayload> {
   const db = getDatabase()
   const { settings, today } = todayOf(db, now)
-  return buildPayload(db, settings, today, now)
+  return buildPayload(db, settings, today)
 }
 
 // ── 회의 전 브리핑 (부록 I) ──
@@ -217,7 +141,7 @@ function meetingLlmFailed(error: string): Partial<MeetingBriefingPayload> {
 }
 
 /**
- * 회의 브리핑 LLM 1회 (I.7). llmSerialized 줄 안에서 부른다 (A32).
+ * 회의 브리핑 LLM 1회 (I.7). runLlmSerialized 줄(ai-headless) 안에서 부른다 (A32).
  * A45: 이 함수는 throw 하지 않는다. 실패는 payload 의 llmStatus·llmError 로만 남는다.
  */
 async function runMeetingLlm(eventId: number, input: MeetingLlmInput, settings: AssistantSettings): Promise<void> {
@@ -250,7 +174,7 @@ function startBackgroundMeetingLlm(
   settings: AssistantSettings,
   date: string
 ): void {
-  const task = llmSerialized(() => runMeetingLlm(eventId, input, settings)).finally(() => {
+  const task = runLlmSerialized(() => runMeetingLlm(eventId, input, settings)).finally(() => {
     backgroundTasks.delete(task)
     emitChanged({ date, reason: 'meeting' })
   })
@@ -402,16 +326,16 @@ export async function regenerateMeetingBriefing(eventId: number, now?: Date): Pr
   if (!safeHeadlessAvailable()) {
     patchMeetingPayload(eventId, meetingLlmFailed(HEADLESS_MISSING_MESSAGE))
     emitChanged({ date: today, reason: 'meeting' })
-    return buildPayload(db, settings, today, t)
+    return buildPayload(db, settings, today)
   }
 
   const ctx = collectMeetingContext(db, payload.meeting)
   // 카드가 진행 상태를 보이게 한다. 이전 본문은 결과가 올 때까지 둔다
   patchMeetingPayload(eventId, { llmStatus: 'pending', llmError: null })
   emitChanged({ date: today, reason: 'meeting' })
-  await llmSerialized(() => runMeetingLlm(eventId, { ctx, ruleMarkdown: payload.ruleMarkdown }, settings))
+  await runLlmSerialized(() => runMeetingLlm(eventId, { ctx, ruleMarkdown: payload.ruleMarkdown }, settings))
   emitChanged({ date: today, reason: 'meeting' })
-  return buildPayload(getDatabase(), settings, today, t)
+  return buildPayload(getDatabase(), settings, today)
 }
 
 export function getSettings(): AssistantSettings {

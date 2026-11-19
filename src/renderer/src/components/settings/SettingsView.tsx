@@ -4,6 +4,7 @@ import IntegrationsSection from './sections/IntegrationsSection'
 import AiSection from './sections/AiSection'
 import AssistantSection from './sections/AssistantSection'
 import RecordingSection from './sections/RecordingSection'
+import MobileSection from './sections/MobileSection'
 import DataSection from './sections/DataSection'
 
 // 설정 화면 (docs/SETTINGS.md). 왼쪽에 섹션 목록(제목과 한 줄 설명), 오른쪽에 고른 섹션.
@@ -13,6 +14,7 @@ const SECTION_BODY: Record<SettingsSectionId, () => React.ReactNode> = {
   ai: AiSection,
   assistant: AssistantSection,
   recording: RecordingSection,
+  mobile: MobileSection,
   data: DataSection
 }
 

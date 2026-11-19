@@ -1,11 +1,12 @@
-// 프로젝트 보드 로컬 캐시(jira_board_issues·jira_board_sync) 읽기·쓰기. SSOT: docs/PROJECT_BOARD.md
+// 프로젝트 보드 로컬 캐시(jira_board_issues·jira_board_sync)와 에픽 AI 요약(jira_epic_summaries) 읽기·쓰기.
+// SSOT: docs/PROJECT_BOARD.md
 //
 // [가드레일]
-// - 이 모듈은 두 캐시 테이블에만 쓴다. 다른 테이블은 읽지도 쓰지도 않는다.
+// - 이 모듈은 위 세 테이블에만 쓴다. 다른 테이블은 읽지도 쓰지도 않는다.
 // - DB 핸들을 주입받는다. 테스트는 인메모리 SQLite 를 넣는다.
 // - 저장된 data JSON 이 깨졌거나 모양이 틀린 행은 버리고 계속한다(throw 하지 않는다).
 import type Database from 'better-sqlite3'
-import type { JiraBoardIssue, JiraIssueLink } from './jira-board'
+import type { JiraBoardIssue, JiraEpicAiSummary, JiraIssueLink } from './jira-board'
 
 type Db = Database.Database
 
@@ -135,11 +136,6 @@ export function parseStoredIssueRow(
   return { issue, legacy }
 }
 
-/** parseStoredIssueRow 의 이슈만. 모양이 틀리면 null */
-export function parseStoredIssue(raw: string, expectedKey: string): JiraBoardIssue | null {
-  return parseStoredIssueRow(raw, expectedKey)?.issue ?? null
-}
-
 interface SyncRow {
   project_key: string
   my_account_id: string | null
@@ -244,6 +240,12 @@ export function replaceStoredBoard(
       insert.run(projectKey, issue.key, JSON.stringify(issue), issue.updated, meta.syncedAt)
     }
     writeSync(db, projectKey, meta, true)
+    // 보드에서 사라진 에픽의 요약은 다시 볼 길이 없다. 고아로 쌓이지 않게 지운다
+    db.prepare(
+      `DELETE FROM jira_epic_summaries
+        WHERE project_key = ?
+          AND epic_key NOT IN (SELECT issue_key FROM jira_board_issues WHERE project_key = ?)`
+    ).run(projectKey, projectKey)
   })()
 }
 
@@ -263,10 +265,87 @@ export function upsertStoredIssues(
   })()
 }
 
-/** 두 캐시 테이블의 모든 행을 지운다(계정이 바뀌면 볼 수 있는 이슈가 다르다) */
+/** 캐시 두 테이블과 에픽 AI 요약의 모든 행을 지운다(계정이 바뀌면 볼 수 있는 이슈가 다르다) */
 export function clearStoredBoards(db: Db): void {
   db.transaction(() => {
     db.prepare('DELETE FROM jira_board_issues').run()
     db.prepare('DELETE FROM jira_board_sync').run()
+    db.prepare('DELETE FROM jira_epic_summaries').run()
+  })()
+}
+
+// ── 에픽 AI 요약 ──
+
+/** 프로젝트당 저장하는 에픽 요약 상한. 넘으면 generated_at 이 오래된 것부터 지운다 */
+export const MAX_STORED_EPIC_SUMMARIES = 50
+
+export interface StoredEpicSummary {
+  /** 에픽·자손 상태 지문(jira-board.ts 가 만든 값 그대로) */
+  fingerprint: string
+  summary: JiraEpicAiSummary
+}
+
+/** 저장된 요약 JSON 을 읽는다. 모양이 틀리거나 에픽 키가 다르면 null */
+export function parseStoredEpicSummary(raw: string, expectedEpicKey: string): JiraEpicAiSummary | null {
+  let v: unknown
+  try {
+    v = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!isRecord(v)) return null
+  const ok =
+    isStr(v.epicKey) &&
+    v.epicKey === expectedEpicKey &&
+    isStr(v.headline) &&
+    Array.isArray(v.bullets) &&
+    v.bullets.every(isStr) &&
+    isStr(v.generatedAt)
+  if (!ok) return null
+  return {
+    epicKey: v.epicKey as string,
+    headline: v.headline as string,
+    bullets: [...(v.bullets as string[])],
+    generatedAt: v.generatedAt as string
+  }
+}
+
+/** 에픽 하나의 저장된 요약. 없거나 깨졌으면 null(깨진 행은 없는 것으로 본다) */
+export function readEpicSummary(db: Db, projectKey: string, epicKey: string): StoredEpicSummary | null {
+  const row = db
+    .prepare('SELECT fingerprint, data FROM jira_epic_summaries WHERE project_key = ? AND epic_key = ?')
+    .get(projectKey, epicKey) as { fingerprint: string; data: string } | undefined
+  if (!row) return null
+  const summary = parseStoredEpicSummary(row.data, epicKey)
+  if (!summary) {
+    console.error('[jira-board-store] 깨진 에픽 요약을 건너뜀', projectKey, epicKey)
+    return null
+  }
+  return { fingerprint: row.fingerprint, summary }
+}
+
+/** 에픽 요약을 저장한다(에픽당 1행, 덮어쓰기). 그 프로젝트의 행이 상한을 넘으면 오래된 것부터 지운다 */
+export function writeEpicSummary(
+  db: Db,
+  projectKey: string,
+  fingerprint: string,
+  summary: JiraEpicAiSummary,
+  max: number = MAX_STORED_EPIC_SUMMARIES
+): void {
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO jira_epic_summaries (project_key, epic_key, fingerprint, data, generated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(project_key, epic_key) DO UPDATE SET
+         fingerprint = excluded.fingerprint, data = excluded.data, generated_at = excluded.generated_at`
+    ).run(projectKey, summary.epicKey, fingerprint, JSON.stringify(summary), summary.generatedAt)
+    db.prepare(
+      `DELETE FROM jira_epic_summaries
+        WHERE project_key = ?
+          AND rowid NOT IN (
+            SELECT rowid FROM jira_epic_summaries WHERE project_key = ?
+             ORDER BY generated_at DESC, rowid DESC LIMIT ?
+          )`
+    ).run(projectKey, projectKey, Math.max(0, Math.floor(max)))
   })()
 }

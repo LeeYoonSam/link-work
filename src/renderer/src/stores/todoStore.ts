@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Todo, TodoTag, TodoInput, TodoTagInput, TodoHistory } from '../types'
+import type { Todo, TodoTag, TodoInput, TodoTagInput } from '../types'
 
 // 배경 갱신 옵션. silent 이면 loading 을 켜지 않는다.
 // 이유: 스피너가 뜨면 목록 화면이 편집 상태를 잃는다
@@ -34,7 +34,6 @@ interface TodoStore {
   setCompletedAt: (id: number, completedAt: string) => Promise<void>
   restoreTodo: (id: number) => Promise<void>
   deleteTodo: (id: number) => Promise<void>
-  getTodoHistory: (todoId: number) => Promise<TodoHistory[]>
 
   fetchTags: () => Promise<void>
   createTag: (input: TodoTagInput) => Promise<void>
@@ -128,10 +127,6 @@ export const useTodoStore = create<TodoStore>((set, get) => ({
     await get().fetchTodos()
     await get().fetchCompletedTodos()
     await get().fetchActiveTodos()
-  },
-
-  getTodoHistory: async (todoId) => {
-    return await window.api.todo.history(todoId)
   },
 
   fetchTags: async () => {

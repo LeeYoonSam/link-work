@@ -69,7 +69,6 @@ function writeSeen(seen: SeenMarks): void {
 
 interface MorningStoreState {
   status: MorningSyncStatus | null
-  error: string
   seen: SeenMarks
   // 상태를 다시 읽는다. throw 하지 않는다
   load: () => Promise<void>
@@ -80,18 +79,17 @@ interface MorningStoreState {
 
 export const useMorningSyncStore = create<MorningStoreState>((set, get) => ({
   status: null,
-  error: '',
   seen: readSeen(),
 
   load: async () => {
     const call = morningStatusApi()
     if (typeof call !== 'function') return
+    // 실패하면 직전 상태를 그대로 둔다. 실패 문구를 보여 주는 화면이 없다
     try {
       const res = await call()
-      if (res?.success) set({ status: res.status, error: '' })
-      else set({ error: res?.error || '아침 동기화 상태를 불러오지 못했어요' })
-    } catch (e) {
-      set({ error: e instanceof Error && e.message ? e.message : '아침 동기화 상태를 불러오지 못했어요' })
+      if (res?.success) set({ status: res.status })
+    } catch {
+      // 다음 load 에서 다시 읽는다
     }
   },
 

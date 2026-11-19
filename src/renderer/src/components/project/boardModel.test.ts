@@ -30,10 +30,10 @@ import {
   NO_RELEASE,
   isTreeRowTarget,
   issueTypeKind,
+  priorityVisual,
   matchesFilter,
   missingEpicId,
   nextFocus,
-  priorityMarks,
   resolveFocus,
   rollupChildren,
   shortDate,
@@ -830,18 +830,16 @@ describe('deriveFacets', () => {
   })
 })
 
-describe('priorityMarks / issueTypeKind / 기타', () => {
+describe('priorityVisual / issueTypeKind / 기타', () => {
   it('우선순위 이름을 점 개수로 바꾼다(영·한)', () => {
-    expect(priorityMarks('Highest')).toBe('●●●')
-    expect(priorityMarks('High')).toBe('●●●')
-    expect(priorityMarks('높음')).toBe('●●●')
-    expect(priorityMarks('Medium')).toBe('●●')
-    expect(priorityMarks('보통')).toBe('●●')
-    expect(priorityMarks('Low')).toBe('●')
-    expect(priorityMarks('Lowest')).toBe('●')
-    expect(priorityMarks('낮음')).toBe('●')
-    expect(priorityMarks(null)).toBeNull()
-    expect(priorityMarks('알수없음')).toBeNull()
+    const marks = (n: string | null): string | null => priorityVisual(n)?.marks ?? null
+    expect(marks('Highest')).toBe('●●●')
+    expect(marks('높음')).toBe('●●●')
+    expect(marks('보통')).toBe('●●')
+    expect(marks('Lowest')).toBe('●')
+    expect(marks('낮음')).toBe('●')
+    expect(marks(null)).toBeNull()
+    expect(marks('알수없음')).toBeNull()
   })
 
   it('유형 아이콘은 level 우선, 세부 유형은 이름으로', () => {

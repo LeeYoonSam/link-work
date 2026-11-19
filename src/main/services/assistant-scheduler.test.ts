@@ -54,28 +54,8 @@ vi.mock('electron', () => ({
 const db = vi.hoisted(() => ({ getDatabase: vi.fn() }))
 vi.mock('../db/database', () => db)
 
-const activity = vi.hoisted(() => ({ listener: null as null | ((e: unknown) => void) }))
-vi.mock('../utils/activity-logger', () => ({
-  onActivity: (fn: (e: unknown) => void) => {
-    activity.listener = fn
-    return () => {
-      activity.listener = null
-    }
-  }
-}))
-
-vi.mock('./assistant-day', () => ({
-  logicalDate: () => '2026-11-02',
-  toLocalDateTime: () => '2026-11-02 09:40:00'
-}))
-
 const store = vi.hoisted(() => ({
-  closeStalePlans: vi.fn((): unknown[] => {
-    order.push('closeStalePlans')
-    return []
-  }),
   findEventByKey: vi.fn(() => null),
-  getPlanByDate: vi.fn(() => null),
   insertEvent: vi.fn(),
   readAssistantSettings: vi.fn(() => ({ dayRollover: '04:00', openAtLogin: false })),
   updateEventStatus: vi.fn()
@@ -151,11 +131,6 @@ beforeEach(() => {
   electron.state.throwOnShow = false
   vi.clearAllMocks()
   db.getDatabase.mockReturnValue({})
-  store.getPlanByDate.mockReturnValue(null)
-  store.closeStalePlans.mockImplementation(() => {
-    order.push('closeStalePlans')
-    return []
-  })
   store.findEventByKey.mockReturnValue(null)
   service.runDueMeetingBriefings.mockImplementation(async () => [])
   store.insertEvent.mockImplementation((_db: unknown, ev: { event_key: string }) => {
@@ -180,22 +155,20 @@ describe('시작 알림·자동 최신화 제거 (부록 O)', () => {
     expect(electron.notifications).toHaveLength(0)
   })
 
-  it('창 포커스 처리기와 활동 구독을 등록하지 않는다', () => {
+  it('창 포커스 처리기를 등록하지 않는다', () => {
     startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
     expect(electron.app.on).not.toHaveBeenCalledWith('browser-window-focus', expect.anything())
     expect(electron.handlers.has('app:browser-window-focus')).toBe(false)
-    expect(activity.listener).toBeNull()
   })
 
   it('틱은 계획이 없어도 회의 브리핑을 보낸다', async () => {
-    store.getPlanByDate.mockReturnValue(null)
     dueMeetingsReturn([meetingNotice()])
     await runTick()
     expect(electron.notifications).toHaveLength(1)
     expect(electron.notifications[0].opts.title).toBe('주간 회의 15분 전')
   })
 
-  it('틱 순서는 closeStalePlans → 회의 브리핑 → onTick 이다', async () => {
+  it('틱 순서는 회의 브리핑 → onTick 이다(지난 계획 닫기는 제거됐다)', async () => {
     const onTick = vi.fn(() => {
       order.push('onTick')
     })
@@ -203,7 +176,7 @@ describe('시작 알림·자동 최신화 제거 (부록 O)', () => {
     startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn(), onTick })
     order.length = 0
     await runTick()
-    expect(order).toEqual(['closeStalePlans', 'runDueMeetingBriefings', 'onTick'])
+    expect(order).toEqual(['runDueMeetingBriefings', 'onTick'])
   })
 })
 
@@ -308,19 +281,6 @@ describe('틱 (부록 E.2)', () => {
     expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1)
   })
 
-  it('A18: closeStalePlans 가 닫으면 메인 창에 assistant:changed day 를 보낸다', async () => {
-    const win = fakeWindow()
-    startAssistantScheduler({ getMainWindow: () => win as never, createWindow: vi.fn() })
-    store.closeStalePlans.mockReturnValue([3] as never)
-    await runTick()
-    expect(win.webContents.send).toHaveBeenCalledWith('assistant:changed', { date: '2026-11-02', reason: 'day' })
-
-    win.webContents.send.mockClear()
-    store.closeStalePlans.mockReturnValue([])
-    await runTick()
-    expect(win.webContents.send).not.toHaveBeenCalledWith('assistant:changed', expect.anything())
-  })
-
   it('정지하면 처리기를 해제하고 변경 리스너를 비운다', () => {
     startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
     stopAssistantScheduler()
@@ -340,7 +300,7 @@ describe('회의 브리핑 발송 (부록 I.9.2)', () => {
   it('A5: 회의 브리핑은 서비스 INSERT 뒤에 Notification show() 를 한다. 답장 입력이 없다', async () => {
     dueMeetingsReturn([meetingNotice()])
     await runTick()
-    expect(order).toEqual(['closeStalePlans', 'runDueMeetingBriefings', 'insertEvent', 'new Notification', 'show'])
+    expect(order).toEqual(['runDueMeetingBriefings', 'insertEvent', 'new Notification', 'show'])
     expect(electron.notifications[0].opts).toEqual({ title: '주간 회의 15분 전', body: '링크워크 · 미완료 액션 2건' })
   })
 

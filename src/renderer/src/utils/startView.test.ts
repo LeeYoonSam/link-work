@@ -24,6 +24,10 @@ describe('resolveStartView (부록 C.1)', () => {
     expect(resolveStartView('dashboard')).toBe('today')
   })
 
+  it('없앤 주간 보고(reports) 저장값은 today', () => {
+    expect(resolveStartView('reports')).toBe('today')
+  })
+
   it('A24 행6: 모르는 값·빈 값·문자열이 아닌 값은 today', () => {
     for (const v of ['', 'Today', 'todos', 'garbage', null, undefined, 0, {}]) {
       expect(resolveStartView(v)).toBe('today')

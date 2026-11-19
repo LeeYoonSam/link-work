@@ -4,8 +4,8 @@ import type { AssistantSettings } from '../../types'
 
 // 설정 화면이 노출하는 비서 설정 키.
 // 부록 O(오늘 대시보드 개편, 2026-11-19): 하루 계획 기능이 없어져 startNudge·refreshNotify·planSize·workEnd·
-// completeOriginOnDone·refreshCalendarMin·refreshJiraMin·jiraScope 칸은 화면에서 뺐다.
-// AssistantSettings 타입과 저장 키는 그대로 두고, 저장된 값도 지우지 않는다.
+// completeOriginOnDone·refreshCalendarMin·refreshJiraMin·jiraScope 는 화면과 AssistantSettings 타입에서 뺐다.
+// 저장은 폼 키 한 칸씩만 보낸다. main 은 모르는 키가 섞인 patch 를 거절한다.
 export type FormSettingKey =
   | 'enabled'
   | 'dayRollover'
@@ -77,15 +77,6 @@ export function validateSettings(s: FormSettings): string | null {
   return null
 }
 
-// 바뀐 키만 patch 로 만든다
-export function diffSettings(base: AssistantSettings, next: FormSettings): Partial<AssistantSettings> {
-  const patch: Partial<AssistantSettings> = {}
-  for (const k of FORM_SETTING_KEYS) {
-    if (base[k] !== next[k]) (patch as Record<string, unknown>)[k] = next[k]
-  }
-  return patch
-}
-
 // 저장된 설정을 폼 값으로 바꾼다. 이전 버전 main 이 주지 않은 키는 기본값을 쓴다
 export function toFormSettings(settings: AssistantSettings): FormSettings {
   const init = {} as Record<string, unknown>
@@ -106,22 +97,14 @@ export function toFormSettings(settings: AssistantSettings): FormSettings {
 export const PLACEHOLDER_SETTINGS: AssistantSettings = {
   enabled: true,
   dayRollover: '04:00',
-  startNudge: true,
-  workEnd: '18:00',
-  planSize: 5,
   llmEnabled: true,
   llmModel: 'sonnet',
-  jiraScope: 'all',
   openAtLogin: false,
-  refreshCalendarMin: 5,
-  refreshJiraMin: 15,
-  refreshNotify: true,
   meetingLeadMin: 15,
   startView: 'today',
   meetingBriefingEnabled: true,
   morningSyncEnabled: true,
-  morningSyncTime: '08:00',
-  completeOriginOnDone: false
+  morningSyncTime: '08:00'
 }
 
 // 즉시 저장할 키(토글·select)와 blur 때 검증 후 저장할 키(숫자·시각)

@@ -271,8 +271,8 @@ export function AssistantSettingsFields({
   if (group === 'ai') {
     return (
       <div className="space-y-2">
-        {toggle('llmEnabled', 'AI 브리핑', '끄면 규칙 기반 브리핑만 만듭니다.')}
-        <Field label="비서 요약 모델" hint="오늘 화면의 브리핑과 회의 전 브리핑을 만드는 모델입니다" saved={flash === 'llmModel'}>
+        {toggle('llmEnabled', 'AI 브리핑', '끄면 회의 전 브리핑을 규칙으로만 만듭니다.')}
+        <Field label="비서 요약 모델" hint="회의 전 브리핑의 AI 본문을 만드는 모델입니다" saved={flash === 'llmModel'}>
           <select
             value={form.llmModel}
             disabled={disabled || !form.llmEnabled}

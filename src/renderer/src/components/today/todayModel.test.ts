@@ -4,16 +4,12 @@ import type {
   JiraBoardIssue,
   JiraBoardSnapshot,
   ReleaseNoteSummary,
-  Todo,
-  TodayBriefing
+  Todo
 } from '../../types'
 import {
-  applyBriefing,
   buildTodayDashboard,
   minutesUntil,
-  toBriefingInput,
   visibleRefs,
-  BRIEFING_REF_LIMIT,
   SIGNAL_REF_DISPLAY_LIMIT,
   JIRA_ROW_LIMIT,
   TODO_ROW_LIMIT,
@@ -381,7 +377,6 @@ describe('buildTodayDashboard — 미연결 문구', () => {
     expect(d.headline).toBe('캘린더와 Jira를 연결하면 오늘 챙길 것이 여기에 보여요.')
     expect(d.summaryLine).toBe('캘린더와 Jira를 연결하면 오늘 챙길 것이 여기에 보여요')
     expect(d.facts).toMatchObject({ calendarConnected: false, jiraConnected: false })
-    expect(toBriefingInput(d).facts).toMatchObject({ calendarConnected: false, jiraConnected: false })
   })
 
   it('한쪽만 미연결이면 그 조각을 말하지 않는다', () => {
@@ -491,58 +486,26 @@ describe('minutesUntil', () => {
   })
 })
 
-describe('toBriefingInput', () => {
-  it('보이는 신호·사실을 담고 상대 시간은 넣지 않는다', () => {
+describe('규칙 사실(facts)과 신호 문구', () => {
+  it('사실을 담고 신호 문구에 상대 시간은 넣지 않는다', () => {
     const d = buildTodayDashboard(
       input({ events: [QA, REL, timed('w', 'Tech weekly', 12, 0)], notes: NOTES, snapshot: snap([issue('ICA-812', { fixVersions: fv177 })]) })
     )
-    const b = toBriefingInput(d)
-    expect(b.date).toBe('2026-11-19')
-    expect(b.ruleHeadline).toBe(d.headline)
-    // meeting_soon 은 화면에만 있고 브리핑 입력에는 없다
     expect(d.signals.map((s) => s.kind)).toContain('meeting_soon')
-    expect(b.signals.map((s) => s.id)).toEqual(['release_risk', 'qa_start'])
-    expect(b.signals[0].refs).toContain('issue:ICA-812')
-    expect(b.facts).toMatchObject({
+    expect(d.facts).toMatchObject({
       meetingCount: 1,
-      nextMeeting: null,
       release: { version: '4.177.0', dDay: 5, linked: true, qaStart: '2026-11-19', mine: { total: 1, progress: 1 } }
     })
-    expect(JSON.stringify(b)).not.toMatch(/분 뒤|시간 뒤/)
-    // 몇 분 뒤에 다시 만들어도(같은 신호 집합이면) 입력이 같다
-    const later = buildTodayDashboard(
-      input({ now: at(11, 25), events: [QA, REL, timed('w', 'Tech weekly', 12, 0)], notes: NOTES, snapshot: snap([issue('ICA-812', { fixVersions: fv177 })]) })
-    )
-    expect(JSON.stringify(toBriefingInput(later))).toBe(JSON.stringify(b))
+    expect(JSON.stringify(d.signals.map((s) => s.text))).not.toMatch(/분 뒤|시간 뒤/)
   })
 })
 
-describe('toBriefingInput — 시간이 흘러도 같은 데이터면 같은 입력', () => {
-  it('13:30 → 14:01 (14:00 회의 전후, meeting_soon 이 생겼다 사라져도) 직렬화가 같다', () => {
-    const data = {
-      events: [QA, REL, timed('w', 'Tech weekly', 14, 0, 40), timed('s', '스크럼', 10, 0, 15)],
-      notes: NOTES,
-      snapshot: snap([
-        issue('ICA-812', { fixVersions: fv177 }),
-        issue('ICA-10', { duedate: '2026-11-10' }),
-        issue('ICA-11', { duedate: '2026-11-19' })
-      ]),
-      activeTodos: [todo('지난 할 일', { id: 9001, due_date: '2026-11-18' })]
-    }
-    const before = buildTodayDashboard(input({ ...data, now: at(13, 30) }))
-    const after = buildTodayDashboard(input({ ...data, now: at(14, 1) }))
-    expect(before.allSignals!.some((s) => s.kind === 'meeting_soon')).toBe(true)
-    expect(after.allSignals!.some((s) => s.kind === 'meeting_soon')).toBe(false)
-    expect(JSON.stringify(toBriefingInput(after))).toBe(JSON.stringify(toBriefingInput(before)))
-    expect(toBriefingInput(before).signals).toHaveLength(3)
-  })
-
-  it('refs 는 브리핑 상한으로 자르고, 화면 칩은 상한 + 나머지 수', () => {
+describe('visibleRefs', () => {
+  it('화면 칩은 상한 + 나머지 수', () => {
     const many = Array.from({ length: 25 }, (_, k) => issue(`ICA-${k + 1}`, { duedate: '2026-11-01' }))
     const d = buildTodayDashboard(input({ snapshot: snap(many) }))
     const s = d.signals.find((x) => x.id === 'overdue:jira')!
     expect(s.refs).toHaveLength(25)
-    expect(toBriefingInput(d).signals[0].refs).toHaveLength(BRIEFING_REF_LIMIT)
     const v = visibleRefs(s)
     expect(v.refs).toHaveLength(SIGNAL_REF_DISPLAY_LIMIT)
     expect(v.moreCount).toBe(25 - SIGNAL_REF_DISPLAY_LIMIT)
@@ -556,69 +519,5 @@ describe('toBriefingInput — 시간이 흘러도 같은 데이터면 같은 입
     const v = visibleRefs({ refs })
     expect(v.refs.map((r) => r.id)).toEqual(['K-0', 'K-1', 'K-2', 'K-3', '4.177.0'])
     expect(v.moreCount).toBe(2)
-  })
-})
-
-describe('applyBriefing', () => {
-  const d = buildTodayDashboard(
-    input({
-      events: [QA, REL],
-      notes: NOTES,
-      snapshot: snap([issue('ICA-812', { fixVersions: fv177 }), issue('ICA-10', { duedate: '2026-11-01' })])
-    })
-  )
-  const briefing = (over: Partial<TodayBriefing>): TodayBriefing => ({
-    date: '2026-11-19',
-    headline: 'LLM 헤드라인',
-    signals: [],
-    source: 'llm',
-    model: 'm',
-    generatedAt: '2026-11-19T02:00:00.000Z',
-    inputHash: 'h',
-    error: null,
-    ...over
-  })
-
-  it('브리핑이 없으면 규칙 그대로', () => {
-    expect(applyBriefing(d, null)).toEqual({ headline: d.headline, signals: d.signals, hiddenSignals: [], source: 'rules' })
-  })
-
-  it('날짜가 다르면 규칙 그대로', () => {
-    const r = applyBriefing(d, briefing({ date: '2026-11-18' }))
-    expect(r.source).toBe('rules')
-    expect(r.headline).toBe(d.headline)
-  })
-
-  it('다룬 신호끼리만 순서·문구를 바꾸고, 빠진 신호는 규칙 자리·문구 그대로, 모르는 id 는 버린다', () => {
-    expect(d.signals.map((s) => s.id)).toEqual(['release_risk', 'overdue:jira', 'qa_start'])
-    const r = applyBriefing(
-      d,
-      briefing({
-        signals: [
-          { id: 'qa_start', text: 'QA가 오늘 시작해요' },
-          { id: 'ghost', text: '없는 신호' },
-          { id: 'release_risk', text: '' }
-        ]
-      })
-    )
-    expect(r.source).toBe('llm')
-    expect(r.headline).toBe('LLM 헤드라인')
-    // 규칙 순서 [release_risk, overdue:jira, qa_start] 에서 다룬 자리(0, 2)를 브리핑 순서로 채운다
-    expect(r.signals.map((s) => s.id)).toEqual(['qa_start', 'overdue:jira', 'release_risk'])
-    expect(r.signals[0].text).toBe('QA가 오늘 시작해요')
-    expect(r.signals[1].text).toBe(d.signals[1].text)
-    expect(r.signals[2].text).toBe(d.signals[0].text)
-    expect(r.signals[0].refs).toEqual(d.signals[2].refs)
-  })
-
-  it('브리핑에 없는 meeting_soon 은 맨 아래로 밀리지 않고 규칙 자리에 남는다', () => {
-    const m = buildTodayDashboard(
-      input({ events: [timed('w', 'Tech weekly', 12, 0)], activeTodos: [todo('오늘', { due_date: '2026-11-19' })] })
-    )
-    expect(m.signals.map((s) => s.kind)).toEqual(['meeting_soon', 'due_today'])
-    const r = applyBriefing(m, briefing({ signals: [{ id: 'due_today', text: '오늘 마감 하나' }] }))
-    expect(r.signals.map((s) => s.kind)).toEqual(['meeting_soon', 'due_today'])
-    expect(r.signals[0].text).toBe('12:00 Tech weekly')
-    expect(r.signals[1].text).toBe('오늘 마감 하나')
   })
 })

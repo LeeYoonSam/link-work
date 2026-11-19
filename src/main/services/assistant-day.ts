@@ -1,9 +1,5 @@
-// 논리 날짜·자동 닫기 대상·시작 알림 판정 (docs/ASSISTANT.md §6).
+// 논리 날짜·시각 변환 (docs/ASSISTANT.md §6).
 // 순수 모듈이다 (A3). 날짜·시각 형식은 A12 를 따른다.
-import type { AssistantSettings, DailyPlan } from './assistant-types'
-
-export type NudgeTrigger = 'unlock-screen' | 'resume' | 'focus'
-
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 const DEFAULT_ROLLOVER = '04:00'
@@ -54,37 +50,13 @@ export function addDays(date: string, n: number): string {
   return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`
 }
 
-// to − from 의 일수. to 가 이르면 음수다.
-export function daysBetween(from: string, to: string): number {
-  return Math.round((dateToUtcMs(to) - dateToUtcMs(from)) / DAY_MS)
-}
-
-// A18: 논리 날짜가 지난 active 계획의 id. 날짜·id 오름차순이다.
-export function plansToAutoClose(
-  plans: Pick<DailyPlan, 'id' | 'plan_date' | 'status'>[],
-  today: string
-): number[] {
-  return plans
-    .filter((p) => p.status === 'active' && p.plan_date < today)
-    .slice()
-    .sort((a, b) => (a.plan_date === b.plan_date ? a.id - b.id : a.plan_date < b.plan_date ? -1 : 1))
-    .map((p) => p.id)
-}
-
-const NUDGE_TRIGGERS: readonly NudgeTrigger[] = ['unlock-screen', 'resume', 'focus']
-
-// A22: §6.5 조건이 모두 참일 때만 참이다.
-export function shouldSendStartNudge(input: {
-  settings: AssistantSettings
-  today: string
-  weekday: number // 0=일 … 6=토
-  hasPlanToday: boolean
-  nudgeSentToday: boolean
-  trigger: NudgeTrigger
-}): boolean {
-  const { settings, weekday, hasPlanToday, nudgeSentToday, trigger } = input
-  if (!settings.enabled || !settings.startNudge) return false
-  if (hasPlanToday || nudgeSentToday) return false
-  if (weekday === 0 || weekday === 6) return false
-  return NUDGE_TRIGGERS.includes(trigger)
+/** 'HH:mm' → 분. 형식이 아니면 null. */
+export function toMinutes(hhmm: string | null | undefined): number | null {
+  if (!hhmm) return null
+  const m = /^(\d{1,2}):(\d{2})/.exec(hhmm.trim())
+  if (!m) return null
+  const h = Number(m[1])
+  const min = Number(m[2])
+  if (h > 24 || min > 59 || (h === 24 && min > 0)) return null
+  return h * 60 + min
 }

@@ -5,7 +5,7 @@ import { useNavigationStore } from '../../stores/navigationStore'
 import BoardSummaryTiles from './BoardSummaryTiles'
 import BoardToolbar from './BoardToolbar'
 import IssueTree from './IssueTree'
-import IssueDetailPanel from './IssueDetailPanel'
+import IssueDetailPanel, { openIssueChat } from './IssueDetailPanel'
 import { ConnectPrompt, ErrorBanner, TruncatedNotice } from './BoardStates'
 import { openBoardLink, openDocsFor, openReleaseForVersion } from './projectNav'
 import {
@@ -159,6 +159,8 @@ export default function ProjectBoardView(): React.ReactNode {
         onOpenRelease={openRelease}
         onOpenLink={openLink}
         onShowAllDocs={openDocsFor}
+        // startChatWith(prompt, { writeMode: 'ask' }) — 쓰기 전에 승인 카드를 거친다
+        onOpenChat={(prompt) => void openIssueChat(prompt)}
       />
     )
   }

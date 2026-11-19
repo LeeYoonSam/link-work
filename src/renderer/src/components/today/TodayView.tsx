@@ -4,7 +4,7 @@
 //
 // 배치: DOM 순서는 좁은 창 순서(헤더·신호 → 배포 → Jira → 할 일 → 일정 → 메모)다.
 // 컨테이너 폭이 1000px 이상이면 격자로 일정을 왼쪽 좁은 열에 두고 오른쪽에 배포 → [Jira | 할 일] 을 둔다.
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AssistantNavigateEvent } from '../../types'
 import { useAssistantStore } from '../../stores/assistantStore'
 import { useTodayStore } from '../../stores/todayStore'
@@ -18,9 +18,7 @@ import { openReleaseForVersion, revealInTickets } from '../project/projectNav'
 import { RefreshIcon } from '../project/BoardBits'
 import { HomeMemos } from '../dashboard/HomeOverview'
 import {
-  applyBriefing,
   buildTodayDashboard,
-  toBriefingInput,
   type NextRelease,
   type SignalRef,
   type TodayDashboard
@@ -32,8 +30,6 @@ import JiraWorkCard from './JiraWorkCard'
 import TodoCard from './TodoCard'
 import ScheduleCard, { localClock } from './ScheduleCard'
 
-// 대시보드가 바뀐 뒤 브리핑을 요청하기까지 기다리는 시간
-export const BRIEFING_DEBOUNCE_MS = 1000
 // 화면의 '지금' 을 다시 읽는 간격
 export const NOW_TICK_MS = 60_000
 
@@ -159,7 +155,6 @@ export default function TodayView({
   const regeneratingIds = useAssistantStore((s) => s.meetingRegeneratingIds)
   const events = useTodayStore((s) => s.events)
   const eventsError = useTodayStore((s) => s.eventsError)
-  const briefing = useTodayStore((s) => s.briefing)
   const loading = useTodayStore((s) => s.loading)
   const lastSyncedAt = useTodayStore((s) => s.lastSyncedAt)
   const activeTodos = useTodoStore((s) => s.activeTodos)
@@ -171,8 +166,6 @@ export default function TodayView({
   const notes = useReleaseNoteStore((s) => s.allNotes)
 
   const [forceOpenEventId, setForceOpenEventId] = useState<number | null>(null)
-  // ↻ 뒤 첫 브리핑 요청은 강제한다
-  const forceBriefing = useRef(false)
 
   // 진입 때 1번 불러온다. assistant:changed·창 focus 재로드는 stores/dataSync.ts 가 맡는다
   useEffect(() => {
@@ -203,21 +196,6 @@ export default function TodayView({
       }),
     [now, events, calendarConnected, snapshot, boardErrorCode, boardLoading, boardError, notes, activeTodos, completedTodos]
   )
-  const shown = applyBriefing(dashboard, briefing)
-
-  // 대시보드가 바뀌면 1초 뒤 브리핑을 요청한다. 불러오는 중에는 기다린다(빈 데이터로 부르지 않는다).
-  // 같은 입력이면 스토어가 생략한다
-  const briefingInput = useMemo(() => toBriefingInput(dashboard), [dashboard])
-  const briefingKey = JSON.stringify(briefingInput)
-  useEffect(() => {
-    if (loading) return
-    const t = setTimeout(() => {
-      const force = forceBriefing.current
-      forceBriefing.current = false
-      void useTodayStore.getState().requestBriefing(briefingInput, force)
-    }, BRIEFING_DEBOUNCE_MS)
-    return () => clearTimeout(t)
-  }, [briefingKey, loading])
 
   // 알림 클릭(회의 브리핑)으로 열리면 그 브리핑을 펼치고 스크롤한다
   useEffect(() => {
@@ -232,7 +210,6 @@ export default function TodayView({
 
   const onRefresh = (): void => {
     if (loading) return
-    forceBriefing.current = true
     void useTodayStore.getState().refresh()
   }
 
@@ -256,23 +233,23 @@ export default function TodayView({
                 onClick={onRefresh}
                 disabled={loading}
                 aria-label="새로고침"
-                title="일정·Jira·릴리스·브리핑을 다시 받아요"
+                title="일정·Jira·릴리스를 다시 받아요"
                 className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <RefreshIcon size={14} className={loading ? 'animate-spin' : ''} />
               </button>
             </div>
           </div>
-          <h2 data-testid="today-headline" data-source={shown.source} className="mt-1 break-words text-xl font-semibold text-gray-900">
-            {shown.headline}
+          <h2 data-testid="today-headline" className="mt-1 break-words text-xl font-semibold text-gray-900">
+            {dashboard.headline}
           </h2>
           {headerError ? <p className="mt-1 break-words text-xs text-amber-700">{headerError}</p> : null}
         </header>
 
         <div className="col-span-full min-w-0">
           <SignalPanel
-            signals={shown.signals}
-            hiddenSignals={shown.hiddenSignals ?? []}
+            signals={dashboard.signals}
+            hiddenSignals={dashboard.hiddenSignals ?? []}
             hiddenCount={dashboard.hiddenSignalCount}
             summaryLine={dashboard.summaryLine}
             now={now}

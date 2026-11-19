@@ -47,7 +47,7 @@ interface WhisperVadModuleLike {
   }): Promise<WhisperVadContextLike>
 }
 
-// silero VAD 검출 파라미터.
+// silero VAD 검출 파라미터. threshold는 호출측이 opts.threshold로 덮어쓸 수 있다(컷편집 전용 낮은 값).
 const VAD_PARAMS: VadDetectOptions = {
   threshold: 0.5,
   minSpeechDurationMs: 250,
@@ -150,6 +150,17 @@ export interface VadDetectOpts {
   onMessage?: (m: string) => void
   // 0~1. 네이티브가 중간 진행을 알려주지 않으므로 경과 시간 기반 추정치다(estimateVadProgress).
   onProgress?: (p: number) => void
+  // 발화 확률 임계값(0~1, 경계 제외). 미지정·범위 밖이면 기본값(VAD_PARAMS.threshold = 0.5).
+  // 다른 VAD 파라미터는 호출측이 바꿀 수 없다.
+  threshold?: number
+}
+
+// 유효한 임계값이면 그대로, 아니면 기본값.
+function resolveThreshold(threshold: number | undefined): number | undefined {
+  if (typeof threshold === 'number' && Number.isFinite(threshold) && threshold > 0 && threshold < 1) {
+    return threshold
+  }
+  return VAD_PARAMS.threshold
 }
 
 /**
@@ -205,7 +216,10 @@ export async function detectSpeechRegions(
 
     let segments: VadSegmentCs[]
     try {
-      segments = await vadCtx.detectSpeechFile(audioPath, VAD_PARAMS)
+      segments = await vadCtx.detectSpeechFile(audioPath, {
+        ...VAD_PARAMS,
+        threshold: resolveThreshold(opts.threshold)
+      })
     } finally {
       clearInterval(ticker)
       await vadCtx.release().catch(() => {})

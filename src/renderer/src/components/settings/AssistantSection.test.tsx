@@ -73,13 +73,17 @@ describe('AssistantSettingsFields', () => {
 })
 
 describe('assistantSettingsForm (부록 O)', () => {
-  it('폼 키에 하루 계획용 키가 없다. 옛 키를 담은 설정도 검증을 통과한다', async () => {
+  it('폼 키·자리 표시 값에 하루 계획용 키가 없다. 옛 키를 담은 저장값도 폼에 섞이지 않는다', async () => {
     const { FORM_SETTING_KEYS, validateSettings, toFormSettings } = await import('./assistantSettingsForm')
     for (const k of ['startNudge', 'refreshNotify', 'planSize', 'workEnd', 'completeOriginOnDone', 'refreshCalendarMin', 'refreshJiraMin', 'jiraScope']) {
       expect(FORM_SETTING_KEYS as string[]).not.toContain(k)
+      expect(k in PLACEHOLDER_SETTINGS).toBe(false)
     }
-    const form = toFormSettings({ ...SETTINGS, planSize: 0, workEnd: 'x' } as AssistantSettings)
+    // 옛 버전 main 이 옛 키를 담아 보내도 폼(=저장 patch 후보)에는 들어가지 않는다
+    const legacy = { ...SETTINGS, planSize: 0, workEnd: 'x' } as unknown as AssistantSettings
+    const form = toFormSettings(legacy)
     expect('planSize' in form).toBe(false)
+    expect('workEnd' in form).toBe(false)
     expect(validateSettings(form)).toBeNull()
   })
 })
@@ -118,14 +122,5 @@ describe('assistantSettingsForm 순수 헬퍼', () => {
     expect(numberInputValue(Number.NaN)).toBe('')
     expect(numberInputValue(15)).toBe(15)
     expect(validateSettings({ ...toFormSettings(SETTINGS), meetingLeadMin: parseNumberInput('') })).toMatch(/입력하세요/)
-  })
-
-  it('diffSettings: 바뀐 폼 키만 patch 로 만든다', async () => {
-    const { diffSettings, toFormSettings } = await import('./assistantSettingsForm')
-    const form = toFormSettings(SETTINGS)
-    expect(diffSettings(SETTINGS, form)).toEqual({})
-    expect(
-      diffSettings(SETTINGS, { ...form, meetingBriefingEnabled: false, meetingLeadMin: 20, morningSyncTime: '07:30' })
-    ).toEqual({ meetingBriefingEnabled: false, meetingLeadMin: 20, morningSyncTime: '07:30' })
   })
 })

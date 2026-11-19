@@ -70,7 +70,6 @@ describe('settingsStore', () => {
     expect(s.claude).toEqual({ available: true })
     expect(s.statusErrors.jira).toBe('jira 꺼짐')
     expect(s.statusErrors.google).toBeUndefined()
-    expect(s.refreshing).toBe(false)
     // 상태 조회는 외부 검증을 부르지 않는다
     expect(api.settings.verifyIntegration).not.toHaveBeenCalled()
   })

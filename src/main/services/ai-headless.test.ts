@@ -16,6 +16,7 @@ import {
   HEADLESS_BUSY_MESSAGE,
   isHeadlessAvailable,
   runHeadlessJson,
+  runLlmSerialized,
   toFriendlyAiError
 } from './ai-headless'
 
@@ -220,5 +221,65 @@ describe('toFriendlyAiError', () => {
     expect(toFriendlyAiError('credit balance is too low')).toContain('결제')
     expect(toFriendlyAiError('overloaded_error')).toContain('잠시 후')
     expect(toFriendlyAiError('기타 오류')).toBe('기타 오류')
+  })
+})
+
+describe('runLlmSerialized (헤드리스 LLM 공용 줄, A32)', () => {
+  it('앞 작업이 reject 해도 다음 작업을 실행하고 각자 결과를 돌려준다', async () => {
+    const order: string[] = []
+    const first = runLlmSerialized(async () => {
+      order.push('a:start')
+      await new Promise((r) => setTimeout(r, 5))
+      order.push('a:reject')
+      throw new Error('폭발')
+    })
+    const second = runLlmSerialized(async () => {
+      order.push('b:start')
+      return 42
+    })
+    await expect(first).rejects.toThrow('폭발')
+    await expect(second).resolves.toBe(42)
+    expect(order).toEqual(['a:start', 'a:reject', 'b:start'])
+  })
+
+  it('앞 작업이 끝나기 전에는 다음 작업을 시작하지 않는다(동시에 하나)', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    let running = 0
+    let maxRunning = 0
+    const job = (wait: Promise<void> | null) => async (): Promise<void> => {
+      running++
+      maxRunning = Math.max(maxRunning, running)
+      if (wait) await wait
+      running--
+    }
+    const a = runLlmSerialized(job(gate))
+    const b = runLlmSerialized(job(null))
+    await new Promise((r) => setTimeout(r, 5))
+    expect(running).toBe(1)
+    release()
+    await Promise.all([a, b])
+    expect(maxRunning).toBe(1)
+  })
+
+  it('줄을 거친 runHeadlessJson 두 번은 BUSY 없이 차례로 성공한다', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    queryMock.mockImplementationOnce(() =>
+      (async function* () {
+        await gate
+        yield { type: 'assistant', message: { content: [{ type: 'text', text: '{"headline":"a","n":1}' }] } }
+      })()
+    )
+    queryMock.mockImplementationOnce(() => textMessages('{"headline":"b","n":2}'))
+
+    const first = runLlmSerialized(() => runHeadlessJson(spec()))
+    const second = runLlmSerialized(() => runHeadlessJson(spec()))
+    await new Promise((r) => setTimeout(r, 5))
+    expect(queryMock).toHaveBeenCalledTimes(1)
+    release()
+    expect(await first).toEqual({ ok: true, value: { headline: 'a', n: 1 } })
+    expect(await second).toEqual({ ok: true, value: { headline: 'b', n: 2 } })
+    expect(queryMock).toHaveBeenCalledTimes(2)
   })
 })

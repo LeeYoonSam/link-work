@@ -345,12 +345,6 @@ export function selectByRail(
   return memos.filter((m) => categoryKeyOf(m, valid) === rail)
 }
 
-// 레일이 가리키는 분류가 지워졌으면 '전체'로 돌린다
-export function validRail(rail: RailKey, categories: MemoCategory[]): RailKey {
-  if (typeof rail === 'number' && !categories.some((c) => c.id === rail)) return 'all'
-  return rail
-}
-
 export function groupImportantFirst(memos: Memo[]): { important: Memo[]; rest: Memo[] } {
   const important: Memo[] = []
   const rest: Memo[] = []

@@ -40,7 +40,7 @@ export const BACKUP_GROUPS: readonly BackupGroupDef[] = [
   {
     id: 'work',
     label: '오늘·업무',
-    menus: '오늘, 프로젝트(릴리스 탭 포함), 할 일, 주간 보고',
+    menus: '오늘, 프로젝트(릴리스 탭 포함), 할 일',
     counts: [
       { table: 'projects', label: '프로젝트' },
       { table: 'todos', label: '할 일' }
@@ -90,10 +90,6 @@ export const BACKUP_GROUPS: readonly BackupGroupDef[] = [
     unit: '개'
   }
 ]
-
-export function isBackupGroupId(v: unknown): v is BackupGroupId {
-  return typeof v === 'string' && (BACKUP_GROUP_IDS as readonly string[]).includes(v)
-}
 
 /** 고정 순서로 정렬하고 중복·모르는 값을 뺀다 */
 export function orderGroups(groups: readonly unknown[]): BackupGroupId[] {

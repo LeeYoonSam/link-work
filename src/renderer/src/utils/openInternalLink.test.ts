@@ -124,6 +124,12 @@ describe('openInternalLink', () => {
     expect(useNavigationStore.getState().view).toBe('today')
   })
 
+  it('view/reports(없앤 주간 보고): 오늘 화면으로 간다', async () => {
+    useNavigationStore.setState({ view: 'todos' })
+    await openInternalLink('linkwork://view/reports')
+    expect(useNavigationStore.getState().view).toBe('today')
+  })
+
   it('calendar: 날짜·이벤트 포커스를 요청한다', async () => {
     await openInternalLink('linkwork://calendar/2026-11-05/abc')
     expect(useFocusStore.getState().request).toMatchObject({

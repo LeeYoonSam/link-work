@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { memoryBoardDb as memoryDb } from './__fixtures__/jira/board-db'
-import type { JiraBoardIssue } from './jira-board'
+import type { JiraBoardIssue, JiraEpicAiSummary } from './jira-board'
 import {
   clearStoredBoards,
-  parseStoredIssue,
+  MAX_STORED_EPIC_SUMMARIES,
+  parseStoredEpicSummary,
+  parseStoredIssueRow,
+  readEpicSummary,
+  writeEpicSummary,
   readStoredBoard,
   replaceStoredBoard,
   upsertStoredIssues,
@@ -100,12 +104,12 @@ describe('jira-board-store', () => {
     spy.mockRestore()
   })
 
-  it('parseStoredIssue 는 필드 형식을 검사한다', () => {
+  it('parseStoredIssueRow 는 필드 형식을 검사한다', () => {
     const ok = JSON.stringify(issue('PROJ-1', { labels: ['a'] }))
-    expect(parseStoredIssue(ok, 'PROJ-1')?.labels).toEqual(['a'])
-    expect(parseStoredIssue(JSON.stringify({ ...issue('PROJ-1'), labels: [1] }), 'PROJ-1')).toBeNull()
-    expect(parseStoredIssue(JSON.stringify({ ...issue('PROJ-1'), inScope: 'yes' }), 'PROJ-1')).toBeNull()
-    expect(parseStoredIssue('null', 'PROJ-1')).toBeNull()
+    expect(parseStoredIssueRow(ok, 'PROJ-1')?.issue.labels).toEqual(['a'])
+    expect(parseStoredIssueRow(JSON.stringify({ ...issue('PROJ-1'), labels: [1] }), 'PROJ-1')).toBeNull()
+    expect(parseStoredIssueRow(JSON.stringify({ ...issue('PROJ-1'), inScope: 'yes' }), 'PROJ-1')).toBeNull()
+    expect(parseStoredIssueRow('null', 'PROJ-1')).toBeNull()
   })
 
   it('links·fixVersions 가 없는 옛 행은 빈 배열로 채우고 legacyRows 로 센다', () => {
@@ -133,7 +137,7 @@ describe('jira-board-store', () => {
         'nope'
       ]
     })
-    const parsed = parseStoredIssue(raw, 'PROJ-1')!
+    const parsed = parseStoredIssueRow(raw, 'PROJ-1')!.issue
     expect(parsed.fixVersions).toEqual([{ id: '1', name: '4.0' }])
     expect(parsed.links).toEqual([
       { kind: 'web', title: '좋음', url: 'https://example.com', source: 'example.com' },
@@ -157,5 +161,96 @@ describe('jira-board-store', () => {
     const bad = { ...issue('PROJ-2'), updated: null } as unknown as JiraBoardIssue
     expect(() => replaceStoredBoard(db, 'PROJ', [issue('PROJ-3'), bad], meta())).toThrow()
     expect(readStoredBoard(db, 'PROJ')?.issues.map((i) => i.key)).toEqual(['PROJ-1'])
+  })
+})
+
+const summary = (epicKey: string, over: Partial<JiraEpicAiSummary> = {}): JiraEpicAiSummary => ({
+  epicKey,
+  headline: `${epicKey} 요약`,
+  bullets: ['진행', '남은 일'],
+  generatedAt: '2026-11-18T01:00:00.000Z',
+  ...over
+})
+
+const countSummaries = (db: ReturnType<typeof memoryDb>, projectKey: string): number =>
+  (db.prepare('SELECT COUNT(*) AS n FROM jira_epic_summaries WHERE project_key = ?').get(projectKey) as { n: number }).n
+
+describe('jira-board-store 에픽 AI 요약 (jira_epic_summaries)', () => {
+  it('없으면 null, 저장하면 지문과 요약을 그대로 읽는다', () => {
+    const db = memoryDb()
+    expect(readEpicSummary(db, 'PROJ', 'PROJ-10')).toBeNull()
+    writeEpicSummary(db, 'PROJ', 'fp1', summary('PROJ-10'))
+    expect(readEpicSummary(db, 'PROJ', 'PROJ-10')).toEqual({ fingerprint: 'fp1', summary: summary('PROJ-10') })
+    // 프로젝트 키로 나뉜다
+    expect(readEpicSummary(db, 'OTHER', 'PROJ-10')).toBeNull()
+  })
+
+  it('같은 에픽은 한 행을 덮어쓴다', () => {
+    const db = memoryDb()
+    writeEpicSummary(db, 'PROJ', 'fp1', summary('PROJ-10'))
+    writeEpicSummary(db, 'PROJ', 'fp2', summary('PROJ-10', { headline: '새', generatedAt: '2026-11-19T00:00:00.000Z' }))
+    expect(countSummaries(db, 'PROJ')).toBe(1)
+    expect(readEpicSummary(db, 'PROJ', 'PROJ-10')).toMatchObject({ fingerprint: 'fp2', summary: { headline: '새' } })
+  })
+
+  it('깨진 JSON·모양이 틀린 행·키가 다른 행은 없는 것으로 본다', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const db = memoryDb()
+    const insert = db.prepare(
+      "INSERT INTO jira_epic_summaries (project_key, epic_key, fingerprint, data, generated_at) VALUES ('PROJ', ?, 'fp', ?, 'T')"
+    )
+    insert.run('PROJ-1', '{깨짐')
+    insert.run('PROJ-2', JSON.stringify({ ...summary('PROJ-2'), bullets: [1, 2] }))
+    insert.run('PROJ-3', JSON.stringify(summary('PROJ-99')))
+    insert.run('PROJ-4', JSON.stringify([summary('PROJ-4')]))
+    for (const key of ['PROJ-1', 'PROJ-2', 'PROJ-3', 'PROJ-4']) expect(readEpicSummary(db, 'PROJ', key)).toBeNull()
+    expect(parseStoredEpicSummary(JSON.stringify(summary('PROJ-5')), 'PROJ-5')).toEqual(summary('PROJ-5'))
+  })
+
+  it(`프로젝트당 ${MAX_STORED_EPIC_SUMMARIES}행을 넘으면 generated_at 이 오래된 것부터 지운다. 다른 프로젝트는 그대로다`, () => {
+    const db = memoryDb()
+    writeEpicSummary(db, 'OTHER', 'fp', summary('OTHER-1', { generatedAt: '2020-01-01T00:00:00.000Z' }))
+    for (let n = 1; n <= MAX_STORED_EPIC_SUMMARIES + 2; n++) {
+      const at = new Date(Date.UTC(2026, 10, 1, 0, n)).toISOString()
+      writeEpicSummary(db, 'PROJ', 'fp', summary(`PROJ-${n}`, { generatedAt: at }))
+    }
+    expect(countSummaries(db, 'PROJ')).toBe(MAX_STORED_EPIC_SUMMARIES)
+    expect(readEpicSummary(db, 'PROJ', 'PROJ-1')).toBeNull()
+    expect(readEpicSummary(db, 'PROJ', 'PROJ-2')).toBeNull()
+    expect(readEpicSummary(db, 'PROJ', 'PROJ-3')).not.toBeNull()
+    expect(readEpicSummary(db, 'PROJ', `PROJ-${MAX_STORED_EPIC_SUMMARIES + 2}`)).not.toBeNull()
+    expect(countSummaries(db, 'OTHER')).toBe(1)
+  })
+
+  it('상한을 넘겨 줄 수 있다(덮어쓴 행은 최신으로 남는다)', () => {
+    const db = memoryDb()
+    writeEpicSummary(db, 'PROJ', 'fp', summary('PROJ-1', { generatedAt: '2026-11-01T00:00:00.000Z' }), 2)
+    writeEpicSummary(db, 'PROJ', 'fp', summary('PROJ-2', { generatedAt: '2026-11-02T00:00:00.000Z' }), 2)
+    writeEpicSummary(db, 'PROJ', 'fp', summary('PROJ-1', { generatedAt: '2026-11-03T00:00:00.000Z' }), 2)
+    writeEpicSummary(db, 'PROJ', 'fp', summary('PROJ-3', { generatedAt: '2026-11-04T00:00:00.000Z' }), 2)
+    const keys = (db.prepare("SELECT epic_key FROM jira_epic_summaries ORDER BY epic_key").all() as { epic_key: string }[]).map((r) => r.epic_key)
+    expect(keys).toEqual(['PROJ-1', 'PROJ-3'])
+  })
+
+  it('전체 저장은 보드에서 사라진 에픽의 요약만 지운다. 증분 저장은 지우지 않는다', () => {
+    const db = memoryDb()
+    replaceStoredBoard(db, 'PROJ', [issue('PROJ-1'), issue('PROJ-2')], meta())
+    writeEpicSummary(db, 'PROJ', 'fp', summary('PROJ-1'))
+    writeEpicSummary(db, 'PROJ', 'fp', summary('PROJ-2'))
+    writeEpicSummary(db, 'OTHER', 'fp', summary('OTHER-1'))
+    upsertStoredIssues(db, 'PROJ', [issue('PROJ-3')], meta())
+    expect(countSummaries(db, 'PROJ')).toBe(2)
+    replaceStoredBoard(db, 'PROJ', [issue('PROJ-2')], meta())
+    expect(readEpicSummary(db, 'PROJ', 'PROJ-1')).toBeNull()
+    expect(readEpicSummary(db, 'PROJ', 'PROJ-2')).not.toBeNull()
+    expect(countSummaries(db, 'OTHER')).toBe(1)
+  })
+
+  it('비우기는 요약도 모두 지운다', () => {
+    const db = memoryDb()
+    writeEpicSummary(db, 'PROJ', 'fp', summary('PROJ-1'))
+    writeEpicSummary(db, 'OTHER', 'fp', summary('OTHER-1'))
+    clearStoredBoards(db)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM jira_epic_summaries').get()).toEqual({ n: 0 })
   })
 })

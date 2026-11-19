@@ -30,7 +30,7 @@ const EMAIL_KEY = 'bitbucket_email'
 const TOKEN_KEY = 'bitbucket_api_token'
 
 export const BITBUCKET_NOT_CONNECTED_MESSAGE =
-  'Bitbucket 이 연동되어 있지 않습니다. AI 대화 화면 하단의 "Bitbucket 연동"에서 Atlassian 이메일과 Bitbucket API token 을 등록하도록 사용자에게 안내하세요.'
+  'Bitbucket 이 연동되어 있지 않습니다. 설정 > 연동(linkwork://view/settings)의 Bitbucket 카드에서 Atlassian 이메일과 Bitbucket API token 을 등록하도록 사용자에게 안내하세요.'
 
 const AUTH_FAILED_MESSAGE =
   'Bitbucket 인증에 실패했습니다. Atlassian 이메일, API token, token 스코프(read:repository)를 확인한 뒤 다시 등록해 주세요.'

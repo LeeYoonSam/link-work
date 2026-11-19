@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { AssistantSettings, TodayPayload, TodayResult } from '../types'
+import type { TodayPayload, TodayResult } from '../types'
 
 const { useAssistantStore } = await import('./assistantStore')
 
-const payload = { logicalDate: '2026-11-19', events: [], settings: { llmEnabled: true } } as unknown as TodayPayload
+const payload = { events: [], settings: { llmEnabled: true } } as unknown as TodayPayload
 
 const api = {
   assistant: {
     getToday: vi.fn(async (): Promise<TodayResult> => ({ success: true, today: payload })),
-    saveSettings: vi.fn(),
     regenerateMeetingBriefing: vi.fn(async (): Promise<TodayResult> => ({ success: true, today: payload })),
     onChanged: vi.fn(() => () => {})
   }
@@ -17,7 +16,7 @@ const api = {
 beforeEach(() => {
   vi.clearAllMocks()
   ;(globalThis as unknown as { window: unknown }).window = { api }
-  useAssistantStore.setState({ today: null, loading: false, error: '', focus: null, meetingRegeneratingIds: [] })
+  useAssistantStore.setState({ today: null, error: '', focus: null, meetingRegeneratingIds: [] })
 })
 
 describe('assistantStore (오늘 대시보드 개편 후)', () => {
@@ -39,7 +38,12 @@ describe('assistantStore (오늘 대시보드 개편 후)', () => {
       'excludeItem',
       'interpretCommand',
       'applyCommand',
-      'completeOrigin'
+      'completeOrigin',
+      // 쓰지 않아 지운 것 (2026-11-19)
+      'saveSettings',
+      'clearError',
+      'subscribe',
+      'loading'
     ]) {
       expect(s[k]).toBeUndefined()
     }
@@ -51,15 +55,6 @@ describe('assistantStore (오늘 대시보드 개편 후)', () => {
     api.assistant.getToday.mockResolvedValueOnce({ success: false, error: 'DB 잠김' })
     await useAssistantStore.getState().load()
     expect(useAssistantStore.getState().error).toBe('DB 잠김')
-    expect(useAssistantStore.getState().loading).toBe(false)
-  })
-
-  it('saveSettings 는 응답 설정을 today 에 반영한다', async () => {
-    useAssistantStore.setState({ today: payload })
-    const settings = { llmEnabled: false } as AssistantSettings
-    api.assistant.saveSettings.mockResolvedValueOnce({ success: true, settings })
-    expect(await useAssistantStore.getState().saveSettings({ llmEnabled: false })).toBe(true)
-    expect(useAssistantStore.getState().today?.settings).toBe(settings)
   })
 
   it('regenerateMeetingBriefing 은 같은 행 중복 호출을 막고 끝나면 id 를 비운다', async () => {
@@ -79,11 +74,8 @@ describe('assistantStore (오늘 대시보드 개편 후)', () => {
     expect(useAssistantStore.getState().meetingRegeneratingIds).toEqual([])
   })
 
-  it('setFocus·clearError', () => {
+  it('setFocus', () => {
     useAssistantStore.getState().setFocus({ kind: 'meeting', id: '5' })
     expect(useAssistantStore.getState().focus).toEqual({ kind: 'meeting', id: '5' })
-    useAssistantStore.setState({ error: 'x' })
-    useAssistantStore.getState().clearError()
-    expect(useAssistantStore.getState().error).toBe('')
   })
 })

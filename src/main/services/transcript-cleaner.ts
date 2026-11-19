@@ -6,15 +6,24 @@ import { gzipSync } from 'zlib'
 import type { SttSegment } from './meeting-types'
 
 // 단독으로 등장하면 노이즈로 보는 비언어 filler(감탄/주저음).
-// '네'/'예'(동의), '그'/'저'(지시어)는 의미를 가질 수 있어 제외 — 오제거 방지.
+// '네'/'예'(동의), '그'/'저'(지시어)는 의미를 가질 수 있어 filler에서 제외 — 오제거 방지.
 const FILLER_CHARS = new Set(['아', '어', '음', '으', '흠', '에', '오', '애', '엇', '윽', '읔'])
+
+// 한 글자 단독 발화 중 보존하는 응답어(동의·확인). 그 밖의 한 글자 단독 발화는 타임라인 노이즈로 제거한다.
+// 회의에서 "네"/"예"/"응" 같은 대답은 그 자체로 의사 표시라 지우면 기록이 왜곡된다.
+const MEANINGFUL_SINGLE_CHARS = new Set(['네', '예', '응', '넵', '넹', '옙'])
 
 // 근접 윈도 dedup 파라미터: 직전 K개 세그먼트, 그리고 시간 창(ms) 이내만 검사.
 // 인접 병합(prev)만으로는 못 잡는 "몇 개 건너뛰고 재등장하는 반복"을 걷어낸다.
 const PROXIMITY_WINDOW = 8
 const PROXIMITY_TIME_MS = 30000
-// 정규화 후 이 길이 이하는 자연스러운 맞장구("네", "그렇죠" 등)로 보고 dedup에서 제외 — 오제거 방지.
-const BACKCHANNEL_MAX_LEN = 4
+// 정규화 후 이 길이 이하는 짧은 발화("네", "그렇죠", "감사합니다", "알겠습니다" 등)로 본다.
+// 화자를 구분하지 않는 단계라, 다른 사람이 한 같은 짧은 말을 중복으로 오인해 지우지 않도록
+// 근접 윈도 dedup에서 제외하고, 인접 병합도 SHORT_REPEAT_MERGE_FROM회째부터만 한다.
+const SHORT_UTTERANCE_MAX_LEN = 8
+// 짧은 발화의 인접 동일 반복은 이 횟수째부터 환각 반복으로 보고 병합한다.
+// 2회까지는 서로 다른 사람의 응답일 수 있으므로 둘 다 남긴다.
+const SHORT_REPEAT_MERGE_FROM = 3
 
 // 세그먼트 내부 어절 루프 붕괴 파라미터.
 const NGRAM_UNIT = 4 // 반복 판정 최소 구절 길이(어절 수) — 짧은 반복은 자연 발화일 수 있어 건드리지 않는다
@@ -33,9 +42,17 @@ function compressionRatio(text: string): number {
   return raw.length / gzipSync(raw).length
 }
 
+// 숫자·구두점·공백만으로 된 반복 단위("00", "0,", "1 ") — 숫자 표기라 축약하면 값이 훼손된다.
+const NUMERIC_UNIT = /^[\d\s\p{P}]+$/u
+
 // segment 내부 즉시 반복 축약: "문장 문장 문장" → "문장"
-function collapseInnerRepeat(text: string): string {
-  return text.replace(/(.{2,}?)(?:\s*\1){2,}/g, '$1').trim()
+// 반복 단위가 숫자·구두점·공백뿐이면 축약하지 않는다("10000000" → "1000" 훼손 방지).
+export function collapseInnerRepeat(text: string): string {
+  return text
+    .replace(/(.{2,}?)(?:\s*\1){2,}/g, (match: string, unit: string) =>
+      NUMERIC_UNIT.test(unit) ? match : unit
+    )
+    .trim()
 }
 
 // words[a..a+p)와 words[b..b+p) 블록이 어절 단위로 완전히 같은지 비교
@@ -94,7 +111,7 @@ export function collapseNgramLoop(
  * 근접 윈도 dedup 판정.
  * recent(시간순 정렬된 정제 결과)의 마지막 windowSize개 중, startMs에서 timeWindowMs 이내에
  * 정규화 텍스트가 동일한 세그먼트가 있으면 true(= 제거 대상).
- * 정규화 후 BACKCHANNEL_MAX_LEN 이하인 짧은 맞장구는 자연스러운 반복이므로 항상 false(보존).
+ * 정규화 후 SHORT_UTTERANCE_MAX_LEN(8자) 이하인 짧은 발화는 다른 화자의 같은 말일 수 있으므로 항상 false(보존).
  */
 export function hasRecentDuplicate(
   text: string,
@@ -104,7 +121,7 @@ export function hasRecentDuplicate(
   timeWindowMs = PROXIMITY_TIME_MS
 ): boolean {
   const norm = normalize(text)
-  if (norm.length <= BACKCHANNEL_MAX_LEN) return false
+  if (norm.length <= SHORT_UTTERANCE_MAX_LEN) return false
   const from = Math.max(0, recent.length - windowSize)
   for (let i = recent.length - 1; i >= from; i--) {
     const cand = recent[i]
@@ -118,18 +135,28 @@ export function hasRecentDuplicate(
 // filler-only 또는 무의미 segment 판정
 function isNoise(stripped: string): boolean {
   if (stripped.length === 0) return true
-  if (stripped.length === 1) return true // 한 글자 단독 발화는 타임라인 노이즈
+  // 한 글자 단독 발화는 응답어(네/예/응 등)만 남기고 타임라인 노이즈로 제거
+  if ([...stripped].length === 1) return !MEANINGFUL_SINGLE_CHARS.has(stripped)
   // 모든 글자가 filler 문자로만 구성("아아", "어어", "음음" 등)
   return [...stripped].every((ch) => FILLER_CHARS.has(ch))
 }
 
+// 정제 결과 끝에서부터 정규화 텍스트가 norm인 세그먼트가 연속 몇 개인지 센다.
+function trailingRunLength(out: SttSegment[], norm: string): number {
+  let n = 0
+  for (let i = out.length - 1; i >= 0 && normalize(out[i].text) === norm; i--) n++
+  return n
+}
+
 /**
  * STT segment 배열을 정제한다.
- * 1) filler-only / 1글자 segment 제거
+ * 1) filler-only / 1글자 segment 제거(단, 응답어 네/예/응/넵/넹/옙은 보존)
  * 2) segment 내부 어절 루프 붕괴 + 문자 단위 즉시 반복 축약
  * 3) compression-ratio가 높은(반복적 환각) segment 제거
  * 4) 인접 중복 segment 병합(텍스트는 버리고 직전 segment의 end_ms만 확장)
- * 5) 근접 윈도 dedup(직전 K개·30초 이내에 재등장한 동일 발언 제거, 짧은 맞장구 제외)
+ *    - 정규화 8자 초과: 2회째부터 병합
+ *    - 정규화 8자 이하: 3회 연속째부터 병합(2회까지는 다른 사람의 응답일 수 있어 둘 다 보존)
+ * 5) 근접 윈도 dedup(직전 K개·30초 이내에 재등장한 동일 발언 제거, 8자 이하 짧은 발화 제외)
  * 입력 순서를 시간순으로 가정하지 않고 start_ms로 정렬 후 처리한다.
  */
 export function cleanSegments(segments: SttSegment[]): SttSegment[] {
@@ -149,14 +176,19 @@ export function cleanSegments(segments: SttSegment[]): SttSegment[] {
 
     if (compressionRatio(collapsed) > 2.4) continue
 
-    // 직전 segment와 정규화 텍스트가 같으면 병합(반복 환각의 연속 출력 제거)
+    // 직전 segment와 정규화 텍스트가 같으면 병합(반복 환각의 연속 출력 제거).
+    // 짧은 발화는 정제 결과 끝에 같은 발화가 이미 (SHORT_REPEAT_MERGE_FROM - 1)개 연속일 때만 병합한다.
+    const norm = normalize(collapsed)
     const prev = out[out.length - 1]
-    if (prev && normalize(prev.text) === normalize(collapsed)) {
-      prev.end_ms = Math.max(prev.end_ms, seg.end_ms)
-      continue
+    if (prev && normalize(prev.text) === norm) {
+      const needRun = norm.length <= SHORT_UTTERANCE_MAX_LEN ? SHORT_REPEAT_MERGE_FROM - 1 : 1
+      if (trailingRunLength(out, norm) >= needRun) {
+        prev.end_ms = Math.max(prev.end_ms, seg.end_ms)
+        continue
+      }
     }
 
-    // 근접 윈도 dedup: 직전 K개·30초 이내에 같은 발언이 재등장하면 제거(짧은 맞장구는 보존)
+    // 근접 윈도 dedup: 직전 K개·30초 이내에 같은 발언이 재등장하면 제거(짧은 발화는 보존)
     if (hasRecentDuplicate(collapsed, seg.start_ms, out)) continue
 
     out.push({ ...seg, text: collapsed })

@@ -3,7 +3,6 @@ import type { Variable, VariableInput } from '../types'
 
 interface VariableStore {
   variables: Variable[]
-  loading: boolean
 
   fetchVariables: () => Promise<void>
   createVariable: (input: VariableInput) => Promise<void>
@@ -14,12 +13,10 @@ interface VariableStore {
 
 export const useVariableStore = create<VariableStore>((set, get) => ({
   variables: [],
-  loading: false,
 
   fetchVariables: async () => {
-    set({ loading: true })
     const variables = await window.api.variable.list()
-    set({ variables, loading: false })
+    set({ variables })
   },
 
   createVariable: async (input) => {

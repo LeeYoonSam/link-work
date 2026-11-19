@@ -23,18 +23,14 @@ import { logAiAudit } from './ai-audit'
 // 3. 도구 호출 1회 = 논리적 1건 변경. 포맷은 zod 스키마가 호출 레벨에서 강제한다.
 //    수정은 전달된 필드만 부분 업데이트하며, 대상 id가 없으면 오류를 반환한다.
 // 4. 실행 결과는 ai_audit_log에 write_executed로 기록한다.
+// 5. 변수(Variables)는 쓰기 도구를 두지 않는다. 사용자가 변수 메뉴에서 직접 관리한다.
 
 export const LINKWORK_WRITE_TOOL_NAMES = [
   'create_todo',
   'create_memo',
-  'create_variable',
   'update_todo',
-  'update_memo',
-  'update_variable'
+  'update_memo'
 ].map((name) => `mcp__linkwork__${name}`)
-
-const dateField = (desc: string): z.ZodString =>
-  z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD 형식').describe(desc)
 
 // TODO 마감일은 알람 시각을 포함할 수 있다: 'YYYY-MM-DD' 또는 'YYYY-MM-DD HH:mm'.
 // 시각이 포함되면 알람(due_reminder)이 켜진 것으로 간주한다 (UI의 TodoForm과 동일한 규약).
@@ -57,50 +53,12 @@ function dueDateHasTime(due: string | null): boolean {
 // 쓰기 도구는 이 마커가 섞인 본문을 거부해 "잘린 내용 되쓰기"로 인한 데이터 유실을 막는다.
 export const TRUNCATION_MARKER = '…(생략)'
 
-// secret 변수 값 마스킹 문자열. 조회(list_variables)/승인 카드 미리보기/감사 로그가 공용 사용.
-export const SECRET_MASK = '(secret — 값 숨김)'
-
-// secret 타입 변수의 value를 마스킹한 사본을 반환한다(아니면 원본 그대로).
-export function maskSecretVariable<T extends { view_type: string }>(row: T): T {
-  return row.view_type === 'secret' ? { ...row, value: SECRET_MASK } : row
-}
-
-// 감사 로그(ai_audit_log)에 input을 기록하기 전, 변수 쓰기 도구의 secret value를 마스킹한다.
-// 조회 경로는 항상 마스킹하므로 감사 로그에만 평문이 남지 않도록 일관성을 맞춘다(§5).
-// shortName은 mcp 접두어를 뗀 도구 이름. 변수 외 도구/일반 변수는 입력을 그대로 둔다.
-export function sanitizeWriteInputForAudit(shortName: string, input: unknown): unknown {
-  if (input === null || typeof input !== 'object') return input
-  const args = input as Record<string, unknown>
-  if (shortName === 'create_variable') {
-    return args.view_type === 'secret' && typeof args.value === 'string'
-      ? { ...args, value: SECRET_MASK }
-      : input
-  }
-  if (shortName === 'update_variable') {
-    if (typeof args.value !== 'string') return input // 값 변경이 없으면 마스킹 불필요
-    let isSecret = args.view_type === 'secret'
-    if (!isSecret && args.view_type === undefined) {
-      // 입력에 view_type이 없으면 기존 변수의 타입으로 secret 여부를 판단(읽기 전용 조회)
-      try {
-        const row = getAiReadOnlyDatabase()
-          .prepare('SELECT view_type FROM variables WHERE id = ?')
-          .get(args.variable_id) as { view_type: string } | undefined
-        isSecret = row?.view_type === 'secret'
-      } catch {
-        isSecret = false
-      }
-    }
-    return isSecret ? { ...args, value: SECRET_MASK } : input
-  }
-  return input
-}
-
 function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] } {
   return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 1) }] }
 }
 
 // AI가 데이터를 생성하면 열려 있는 화면(store)이 갱신되도록 renderer에 알린다.
-function notifyDataChanged(entity: 'todo' | 'memo' | 'variable'): void {
+function notifyDataChanged(entity: 'todo' | 'memo'): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send('ai:dataChanged', { entity })
@@ -209,15 +167,6 @@ export function getUpdatePreview(
           row.content.length > 500 ? row.content.slice(0, 500) + TRUNCATION_MARKER : row.content
         return { ...row, content }
       }
-      case 'update_variable': {
-        const row = db
-          .prepare('SELECT id, key, value, description, view_type FROM variables WHERE id = ?')
-          .get(args.variable_id) as
-          | ({ view_type: string; value: string } & Record<string, unknown>)
-          | undefined
-        if (!row) return null
-        return maskSecretVariable(row)
-      }
       default:
         return null
     }
@@ -318,46 +267,6 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         memo_id: Number(memoId),
         new_category: createdCategory,
         link: `linkwork://memo/${memoId}`
-      })
-    }
-  )
-
-  const createVariable = tool(
-    'create_variable',
-    '새 변수(key-value)를 생성한다. 같은 key가 이미 있으면 생성하지 않고 오류를 반환한다(수정은 변수 메뉴에서만 가능). 실행 전 사용자 승인이 필요하다.',
-    {
-      key: z.string().min(1).max(100).describe('변수 key'),
-      value: z.string().min(1).max(2000).describe('변수 값'),
-      description: z.string().max(500).optional().describe('변수 설명'),
-      view_type: z
-        .enum(['general', 'secret'])
-        .optional()
-        .describe('표시 방식 — secret이면 값이 마스킹됨 (기본 general)')
-    },
-    async (args) => {
-      const db = getDatabase()
-      const existing = db.prepare('SELECT id FROM variables WHERE key = ?').get(args.key) as
-        | { id: number }
-        | undefined
-      if (existing) {
-        return jsonResult({
-          error: `key '${args.key}' 변수가 이미 존재합니다(id=${existing.id}). 값을 바꾸려면 update_variable 도구로 수정하세요.`
-        })
-      }
-      const result = db
-        .prepare(
-          `INSERT INTO variables (key, value, description, view_type, sort_order)
-           VALUES (?, ?, ?, ?, 0)`
-        )
-        .run(args.key, args.value, args.description ?? null, args.view_type ?? 'general')
-      logActivity('variable', 'create', result.lastInsertRowid, args.key, 'AI 생성')
-      logWriteExecuted('create_variable', `id=${result.lastInsertRowid}, key=${args.key}`)
-      notifyDataChanged('variable')
-      return jsonResult({
-        created: true,
-        variable_id: Number(result.lastInsertRowid),
-        key: args.key,
-        link: `linkwork://variable/${result.lastInsertRowid}`
       })
     }
   )
@@ -555,70 +464,5 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
     }
   )
 
-  const updateVariable = tool(
-    'update_variable',
-    '기존 변수(key-value)를 수정한다. variable_id로 대상을 지정하고 변경할 필드만 전달한다. key를 바꾸는 경우 다른 변수와 중복되면 오류를 반환한다. 실행 전 사용자 승인이 필요하다.',
-    {
-      variable_id: z.number().int().positive().describe('수정할 변수 id (list_variables로 먼저 확인)'),
-      key: z.string().min(1).max(100).optional().describe('변수 key'),
-      value: z.string().min(1).max(2000).optional().describe('변수 값'),
-      description: z.string().max(500).nullable().optional().describe('변수 설명 (null이면 비움)'),
-      view_type: z
-        .enum(['general', 'secret'])
-        .optional()
-        .describe('표시 방식 — secret이면 값이 마스킹됨')
-    },
-    async (args) => {
-      const db = getDatabase()
-      const row = db.prepare('SELECT * FROM variables WHERE id = ?').get(args.variable_id) as
-        | { key: string; view_type: string }
-        | undefined
-      if (!row) {
-        return jsonResult({
-          error: `변수 id=${args.variable_id}를 찾지 못했습니다. list_variables로 id를 확인하세요.`
-        })
-      }
-      // secret → general 전환 차단: 마스킹된 값이 list_variables로 평문 노출되는 것을 막는다
-      // (AI_GUARDRAILS §5). 표시 방식 해제는 사용자가 변수 메뉴에서 직접 하도록 안내한다.
-      if (row.view_type === 'secret' && args.view_type === 'general') {
-        return jsonResult({
-          error:
-            'secret 변수를 general로 바꾸면 값이 마스킹 없이 노출됩니다. 표시 방식 변경은 변수 메뉴(linkwork://view/variables)에서 직접 해야 합니다.'
-        })
-      }
-      if (args.key !== undefined && args.key !== row.key) {
-        const duplicate = db
-          .prepare('SELECT id FROM variables WHERE key = ? AND id != ?')
-          .get(args.key, args.variable_id) as { id: number } | undefined
-        if (duplicate) {
-          return jsonResult({
-            error: `key '${args.key}'는 이미 다른 변수(id=${duplicate.id})가 사용 중입니다.`
-          })
-        }
-      }
-      const { set, values, keys } = buildSetClause(args, ['key', 'value', 'description', 'view_type'])
-      if (set.length === 0) return jsonResult({ error: '변경할 필드가 없습니다.' })
-      set.push("updated_at = datetime('now')")
-      db.prepare(`UPDATE variables SET ${set.join(', ')} WHERE id = ?`).run(...values, args.variable_id)
-      logActivity('variable', 'update', args.variable_id, args.key ?? row.key, `AI 수정: ${keys.join(', ')}`)
-      logWriteExecuted('update_variable', `id=${args.variable_id}, fields=${keys.join(',')}`)
-      notifyDataChanged('variable')
-      return jsonResult({
-        updated: true,
-        variable_id: args.variable_id,
-        key: args.key ?? row.key,
-        updated_fields: keys,
-        link: `linkwork://variable/${args.variable_id}`
-      })
-    }
-  )
-
-  return [
-    createTodo,
-    createMemo,
-    createVariable,
-    updateTodo,
-    updateMemo,
-    updateVariable
-  ]
+  return [createTodo, createMemo, updateTodo, updateMemo]
 }

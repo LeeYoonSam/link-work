@@ -13,19 +13,15 @@ describe('ASSISTANT_SETTING_KEYS', () => {
     }
   })
 
-  it('§3.2 키 13개, 부록 C.2 키 1개, 부록 I 키 1개, A54 키 2개, 원본 완료 키 1개, 모두 18개를 가진다. 3판에서 assistant_slot_min 을, 부록 L 에서 체크인 키 3개를 없앴다', () => {
-    expect(Object.keys(ASSISTANT_SETTING_KEYS)).toHaveLength(18)
-    expect(new Set(Object.values(ASSISTANT_SETTING_KEYS)).size).toBe(18)
+  it('키 10개를 가진다. 3판에서 assistant_slot_min 을, 부록 L 에서 체크인 키 3개를, 2026-11-19 에 하루 계획 키 8개를 없앴다', () => {
+    expect(Object.keys(ASSISTANT_SETTING_KEYS)).toHaveLength(10)
+    expect(new Set(Object.values(ASSISTANT_SETTING_KEYS)).size).toBe(10)
     expect(Object.values(ASSISTANT_SETTING_KEYS)).not.toContain('assistant_slot_min')
     expect(ASSISTANT_SETTING_KEYS.dayRollover).toBe('assistant_day_rollover')
-    expect(ASSISTANT_SETTING_KEYS.refreshCalendarMin).toBe('assistant_refresh_calendar_min')
-    expect(ASSISTANT_SETTING_KEYS.refreshJiraMin).toBe('assistant_refresh_jira_min')
-    expect(ASSISTANT_SETTING_KEYS.refreshNotify).toBe('assistant_refresh_notify')
     expect(ASSISTANT_SETTING_KEYS.startView).toBe('assistant_start_view')
     expect(ASSISTANT_SETTING_KEYS.meetingBriefingEnabled).toBe('assistant_meeting_briefing_enabled')
     expect(ASSISTANT_SETTING_KEYS.morningSyncEnabled).toBe('assistant_morning_sync_enabled')
     expect(ASSISTANT_SETTING_KEYS.morningSyncTime).toBe('assistant_morning_sync_time')
-    expect(ASSISTANT_SETTING_KEYS.completeOriginOnDone).toBe('assistant_complete_origin_on_done')
   })
 })
 
@@ -34,22 +30,14 @@ describe('parseAssistantSettings', () => {
     expect(parseAssistantSettings([])).toEqual({
       enabled: true,
       dayRollover: '04:00',
-      startNudge: true,
-      workEnd: '18:00',
-      planSize: 5,
       llmEnabled: true,
       llmModel: 'sonnet',
-      jiraScope: 'all',
       openAtLogin: false,
-      refreshCalendarMin: 5,
-      refreshJiraMin: 15,
-      refreshNotify: true,
       meetingLeadMin: 15,
       startView: 'today',
       meetingBriefingEnabled: true,
       morningSyncEnabled: true,
-      morningSyncTime: '08:00',
-      completeOriginOnDone: false
+      morningSyncTime: '08:00'
     })
   })
 
@@ -57,16 +45,12 @@ describe('parseAssistantSettings', () => {
     const s = parseAssistantSettings([
       { key: 'assistant_enabled', value: '0' },
       { key: 'assistant_day_rollover', value: '05:30' },
-      { key: 'assistant_plan_size', value: '7' },
       { key: 'assistant_llm_model', value: 'haiku' },
-      { key: 'assistant_jira_scope', value: 'default_project' },
       { key: 'assistant_open_at_login', value: '1' }
     ])
     expect(s.enabled).toBe(false)
     expect(s.dayRollover).toBe('05:30')
-    expect(s.planSize).toBe(7)
     expect(s.llmModel).toBe('haiku')
-    expect(s.jiraScope).toBe('default_project')
     expect(s.openAtLogin).toBe(true)
   })
 
@@ -74,14 +58,10 @@ describe('parseAssistantSettings', () => {
     const s = parseAssistantSettings([
       { key: 'assistant_enabled', value: 'true' },
       { key: 'assistant_day_rollover', value: '4:00' },
-      { key: 'assistant_work_end', value: '24:00' },
-      { key: 'assistant_plan_size', value: '0' },
       { key: 'assistant_llm_model', value: 'gpt' },
-      { key: 'assistant_jira_scope', value: 'mine' },
       { key: 'assistant_start_view', value: 'dashboard' },
       { key: 'assistant_morning_sync_enabled', value: 'on' },
       { key: 'assistant_morning_sync_time', value: '8:00' },
-      { key: 'assistant_complete_origin_on_done', value: 'true' },
       { key: 'assistant_meeting_briefing_enabled', value: 'true' },
       { key: 'assistant_meeting_lead_min', value: '0' }
     ])
@@ -151,25 +131,20 @@ describe('parseAssistantSettings', () => {
     }
   })
 
-  it('assistant_complete_origin_on_done 은 0·1 을 읽는다. 기본값은 끔이다', () => {
-    expect(parseAssistantSettings([]).completeOriginOnDone).toBe(false)
-    expect(
-      parseAssistantSettings([{ key: 'assistant_complete_origin_on_done', value: '1' }]).completeOriginOnDone
-    ).toBe(true)
-    expect(
-      parseAssistantSettings([{ key: 'assistant_complete_origin_on_done', value: '0' }]).completeOriginOnDone
-    ).toBe(false)
-    expect(
-      parseAssistantSettings([{ key: 'assistant_complete_origin_on_done', value: 'true' }]).completeOriginOnDone
-    ).toBe(false)
+  it('2026-11-19 에 뺀 하루 계획 설정 행은 무시한다. 결과에 그 필드가 없다', () => {
+    const legacy = [
+      'start_nudge', 'work_end', 'plan_size', 'jira_scope',
+      'refresh_calendar_min', 'refresh_jira_min', 'refresh_notify', 'complete_origin_on_done'
+    ].map((k) => ({ key: `assistant_${k}`, value: '1' }))
+    expect(parseAssistantSettings(legacy)).toEqual(DEFAULT_ASSISTANT_SETTINGS)
   })
 
   it('B.6: DB 에 남은 assistant_slot_min 행은 무시한다', () => {
     const s = parseAssistantSettings([
       { key: 'assistant_slot_min', value: '90' },
-      { key: 'assistant_plan_size', value: '6' }
+      { key: 'assistant_meeting_lead_min', value: '6' }
     ])
-    expect(s).toEqual({ ...DEFAULT_ASSISTANT_SETTINGS, planSize: 6 })
+    expect(s).toEqual({ ...DEFAULT_ASSISTANT_SETTINGS, meetingLeadMin: 6 })
     expect(Object.keys(s)).not.toContain('slot' + 'Min')
   })
 
@@ -179,7 +154,7 @@ describe('parseAssistantSettings', () => {
 
   it('기본값 객체를 바꾸지 않는다', () => {
     const before = { ...DEFAULT_ASSISTANT_SETTINGS }
-    parseAssistantSettings([{ key: 'assistant_plan_size', value: '9' }])
+    parseAssistantSettings([{ key: 'assistant_meeting_lead_min', value: '9' }])
     expect(DEFAULT_ASSISTANT_SETTINGS).toEqual(before)
   })
 })
@@ -187,20 +162,19 @@ describe('parseAssistantSettings', () => {
 describe('serializeAssistantSettingsPatch', () => {
   it('부분 설정을 app_settings 행으로 바꾼다', () => {
     expect(
-      serializeAssistantSettingsPatch({ enabled: false, workEnd: '19:00', planSize: 3, llmModel: 'opus' })
+      serializeAssistantSettingsPatch({ enabled: false, meetingLeadMin: 3, llmModel: 'opus' })
     ).toEqual([
       { key: 'assistant_enabled', value: '0' },
-      { key: 'assistant_work_end', value: '19:00' },
-      { key: 'assistant_plan_size', value: '3' },
+      { key: 'assistant_meeting_lead_min', value: '3' },
       { key: 'assistant_llm_model', value: 'opus' }
     ])
   })
 
   it('직렬화한 값을 다시 읽으면 같은 값이다', () => {
-    const patch = { dayRollover: '03:00', refreshNotify: false, meetingLeadMin: 10 }
+    const patch = { dayRollover: '03:00', llmEnabled: false, meetingLeadMin: 10 }
     const s = parseAssistantSettings(serializeAssistantSettingsPatch(patch))
     expect(s.dayRollover).toBe('03:00')
-    expect(s.refreshNotify).toBe(false)
+    expect(s.llmEnabled).toBe(false)
     expect(s.meetingLeadMin).toBe(10)
   })
 
@@ -257,11 +231,10 @@ describe('serializeAssistantSettingsPatch', () => {
     expect(() => serializeAssistantSettingsPatch({ morningSyncTime: '24:00' })).toThrow()
   })
 
-  it('completeOriginOnDone 을 assistant_complete_origin_on_done 행으로 바꾼다', () => {
-    expect(serializeAssistantSettingsPatch({ completeOriginOnDone: true })).toEqual([
-      { key: 'assistant_complete_origin_on_done', value: '1' }
-    ])
-    expect(() => serializeAssistantSettingsPatch({ completeOriginOnDone: 'true' })).toThrow()
+  it('2026-11-19 에 뺀 하루 계획 설정은 모르는 키로 throw 한다', () => {
+    for (const key of ['startNudge', 'workEnd', 'planSize', 'jiraScope', 'refreshCalendarMin', 'refreshJiraMin', 'refreshNotify', 'completeOriginOnDone']) {
+      expect(() => serializeAssistantSettingsPatch({ [key]: 1 })).toThrow(/알 수 없는 비서 설정입니다/)
+    }
   })
 
   it('빈 객체는 빈 배열이다', () => {
@@ -287,9 +260,8 @@ describe('serializeAssistantSettingsPatch', () => {
   it('형식이 틀린 값은 throw 한다', () => {
     expect(() => serializeAssistantSettingsPatch({ enabled: '1' })).toThrow()
     expect(() => serializeAssistantSettingsPatch({ dayRollover: '4:00' })).toThrow()
-    expect(() => serializeAssistantSettingsPatch({ planSize: 2.5 })).toThrow()
-    expect(() => serializeAssistantSettingsPatch({ planSize: 0 })).toThrow()
+    expect(() => serializeAssistantSettingsPatch({ meetingLeadMin: 2.5 })).toThrow()
+    expect(() => serializeAssistantSettingsPatch({ meetingLeadMin: 0 })).toThrow()
     expect(() => serializeAssistantSettingsPatch({ llmModel: 'gpt' })).toThrow()
-    expect(() => serializeAssistantSettingsPatch({ jiraScope: 'mine' })).toThrow()
   })
 })

@@ -89,6 +89,20 @@ let running = false
 // 진행 중인 실행의 abort 핸들. cancelAllHeadless 가 쓴다.
 let active: { controller: AbortController; cancelled: boolean } | null = null
 
+// A32: 헤드리스 LLM 을 부르는 기능(회의 전 브리핑·에픽 AI 요약)은 이 줄로 한 번에 하나씩 실행한다.
+// A11 잠금은 줄 밖의 동시 호출을 BUSY 로 막는 안전장치로 남는다. 줄을 거치면 BUSY 로 실패하지 않고 기다린다.
+let llmChain: Promise<unknown> = Promise.resolve()
+
+/**
+ * fn 을 공용 LLM 줄 끝에 세워 앞 작업이 끝난 뒤 실행한다.
+ * 앞 작업의 실패(reject)는 뒤 작업을 막지 않는다. 각 호출은 자기 fn 의 결과를 그대로 받는다.
+ */
+export function runLlmSerialized<T>(fn: () => Promise<T>): Promise<T> {
+  const run = llmChain.then(fn)
+  llmChain = run.catch(() => undefined)
+  return run
+}
+
 /** 진행 중인 헤드리스 실행을 중단한다. 앱 종료(before-quit) 때 부른다 */
 export function cancelAllHeadless(): void {
   if (!active) return

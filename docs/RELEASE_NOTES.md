@@ -172,10 +172,12 @@ CREATE INDEX IF NOT EXISTS idx_release_note_items_note
 
 `UNIQUE (jira_project_key, jira_version_id)`가 같은 릴리스를 두 번 가져오는 것을 막는다.
 
-### 3.1 프로젝트와 이어 보는 법 — 배포 버전 이름 대조
+### 3.1 프로젝트와 이어 보는 법 — 배포 버전 이름 대조 (제거됨)
 
 > 로컬 프로젝트 기능과 함께 프로젝트 상세의 Release Notes 카드도 없앴다(프로젝트 메뉴는 Jira 티켓 보드다,
-> [PROJECT_BOARD.md](PROJECT_BOARD.md)). 아래 대조 규칙은 `listReleaseNotes(deployVersion)` 에 남아 있다.
+> [PROJECT_BOARD.md](PROJECT_BOARD.md)). 2026-11-19 에 아래 대조 경로(`listReleaseNotes(deployVersion)`,
+> `releaseNote:list` 인자, `version-match.ts` 의 대조 함수)도 지웠다. `releaseNote:list` 는 인자 없이 전체를 돌려준다.
+> 아래는 과거 기록이다.
 
 저장된 연결이 없으므로, 옛 Release Notes 카드는 그 프로젝트의
 `projects.deploy_version`과 **이름이 같은** 릴리스를 조회 시점에 찾아 읽기만 했다
@@ -464,7 +466,8 @@ API 토큰이 1년 안에 반드시 만료되므로:
 
 ### 8.3 Jira 연동 설정
 
-AI 대화의 Notion 연동 UI와 같은 자리에 사이트 URL·이메일·토큰·만료일 입력.
+설정 > 연동의 Jira 카드(`JiraConnectDialog`)에서 사이트 URL·이메일·토큰·만료일을 입력한다.
+프로젝트 화면 릴리스 탭에서는 `JiraSettingsModal` 이 같은 팝업을 그 자리에서 띄운다([SETTINGS.md](SETTINGS.md)).
 연결 상태와 만료 임박 경고를 함께 표시한다.
 
 ### 8.4 오늘 화면의 다음 배포 판정

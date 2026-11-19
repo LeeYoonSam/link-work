@@ -58,14 +58,11 @@ const noop = async (): Promise<void> => {}
 vi.mock('../../stores/releaseNoteStore', () => ({
   useReleaseNoteStore: () => ({
     ...state,
-    notes: [],
     allNotes: [],
     details: {},
     jiraStatus: null,
-    loading: false,
     allLoading: false,
     fetchJiraStatus: noop,
-    fetchReleaseNotes: noop,
     fetchAllReleaseNotes: noop,
     fetchDetail: async () => null,
     syncNote: async () => ({ success: true })

@@ -368,7 +368,7 @@ describe('BackupModal 그룹 선택 (docs/DATA_BACKUP.md §1)', () => {
     for (const id of ALL) expect(boxes[id]).toEqual({ checked: true, disabled: false })
     // 그룹 이름은 메뉴 이름으로 읽힌다
     expect(html).toContain('오늘·업무')
-    expect(html).toContain('오늘, 프로젝트(릴리스 탭 포함), 할 일, 주간 보고')
+    expect(html).toContain('오늘, 프로젝트(릴리스 탭 포함), 할 일')
     expect(html).toContain('녹음, 회의록')
     expect(html).toContain('메모, 변수, 예전 문서 메뉴의 문서')
     // backup:stats 숫자와 파일 용량

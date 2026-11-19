@@ -1,14 +1,13 @@
 import { app, Notification, powerMonitor, type BrowserWindow } from 'electron'
 import { getDatabase } from '../db/database'
-import { logicalDate, toLocalDateTime } from './assistant-day'
-import { closeStalePlans, readAssistantSettings, updateEventStatus } from './assistant-store'
+import { readAssistantSettings, updateEventStatus } from './assistant-store'
 import { TICK_MS } from './assistant-schedule'
 import { runDueMeetingBriefings, setAssistantChangedListener } from './assistant-service'
 import type { AssistantChangedEvent, AssistantNavigateEvent, SentMeetingNotice } from './assistant-types'
 
 // 비서의 부수 효과 모듈이다. 이벤트 처리기와 60초 틱을 둔다 (§7.2, 부록 E.2).
 // 부록 O(오늘 대시보드 개편): 시작 알림·자동 최신화·활동 기반 최신화는 제거됐다.
-// 틱은 지난 계획 닫기 → 회의 브리핑 → onTick 만 한다.
+// 틱은 회의 브리핑 → onTick 만 한다(2026-11-19 지난 계획 닫기 제거).
 // A13: 모든 처리기는 try/catch 로 감싼다. 백업 복원 중 DB 가 닫혀 있어도 메인 프로세스가 죽지 않는다.
 // 위험 8: 확인 시각은 assistant-service 경유로 읽는다. assistant-sources 를 직접 import 하지 않는다.
 // A54: 아침 자동 동기화는 onTick 주입으로만 돈다. 이 모듈은 싱크업·릴리스·아침 동기화 모듈을 import 하지 않는다.
@@ -155,25 +154,13 @@ function fireOnTick(wake: boolean, injectedNow: Date | undefined): void {
  */
 export async function runTick(wake: boolean = false, injectedNow?: Date): Promise<void> {
   try {
-    await runTickSteps(wake, injectedNow)
+    await runTickSteps(injectedNow)
   } finally {
     fireOnTick(wake, injectedNow)
   }
 }
 
-async function runTickSteps(wake: boolean, injectedNow: Date | undefined): Promise<void> {
-  const now = injectedNow ?? new Date()
-  try {
-    const db = getDatabase()
-    const settings = readAssistantSettings(db)
-    const today = logicalDate(now, settings.dayRollover)
-    // A18: 날짜 경계가 지나면 닫는다. 열린 오늘 화면을 닫힘 상태로 바꾼다
-    const closed = closeStalePlans(db, today, toLocalDateTime(now))
-    if (closed.length > 0) sendToMainWindow('assistant:changed', { date: today, reason: 'day' } satisfies AssistantChangedEvent)
-  } catch (err) {
-    logError(`tick${wake ? '(wake)' : ''}`, err)
-    return
-  }
+async function runTickSteps(injectedNow: Date | undefined): Promise<void> {
   // 실제 틱은 undefined 를 넘긴다. 서비스가 serialized 줄 안에서 현재 시각을 잡는다
   await runDueSteps(injectedNow)
 }
@@ -213,21 +200,9 @@ function syncLoginItemOnStart(): void {
   }
 }
 
-function closeStaleOnStart(): void {
-  try {
-    const db = getDatabase()
-    const settings = readAssistantSettings(db)
-    const now = new Date()
-    closeStalePlans(db, logicalDate(now, settings.dayRollover), toLocalDateTime(now))
-  } catch (err) {
-    logError('auto close', err)
-  }
-}
-
 export function startAssistantScheduler(d: SchedulerDeps): void {
   if (deps) stopAssistantScheduler()
   deps = d
-  closeStaleOnStart()
   syncLoginItemOnStart()
   setAssistantChangedListener(onAssistantChanged)
   try {

@@ -75,7 +75,12 @@ const jira = vi.hoisted(() => ({ isJiraConnected: vi.fn(() => false) }))
 vi.mock('./jira', () => jira)
 
 const headless = vi.hoisted(() => ({ isHeadlessAvailable: vi.fn(() => true), runHeadlessJson: vi.fn() }))
-vi.mock('./ai-headless', () => headless)
+// LLM 줄(runLlmSerialized)은 실제 구현을 쓴다. 에픽 요약과 같은 줄을 거치는지 본다 (A32)
+vi.mock('./ai-agent', () => ({ findClaudeExecutable: () => undefined }))
+vi.mock('./ai-headless', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./ai-headless')>()
+  return { ...actual, ...headless }
+})
 
 // 수집 모듈은 네트워크를 쓰므로 픽스처로 답한다
 const sources = vi.hoisted(() => ({
@@ -107,16 +112,14 @@ import {
   getToday,
   regenerateMeetingBriefing,
   runDueMeetingBriefings,
-  runLlmSerialized,
   saveSettings,
   setAssistantChangedListener,
   waitForAssistantBackground
 } from './assistant-service'
-import { createPlan, getEventById, insertEvent } from './assistant-store'
+import { runLlmSerialized } from './ai-headless'
+import { getEventById, insertEvent } from './assistant-store'
 import type {
   AssistantChangedEvent,
-  CalendarRef,
-  Candidate,
   DueMeetingBriefing,
   MeetingBriefingPayload,
   MeetingContext,
@@ -124,11 +127,11 @@ import type {
 } from './assistant-types'
 
 // 부록 O(오늘 대시보드 개편, 2026-11-19): 하루 시작·퇴근·계획 항목 조작·후보·최신화·맥락 복구·명령 입력은
-// 제거됐다. 이 파일은 남은 기능(과거 계획 읽기, 회의 전 브리핑, 설정, LLM 직렬화 줄)만 검증한다.
+// 제거됐다. 2026-11-19 에 과거 계획 읽기·지난 계획 닫기도 뺐다.
+// 이 파일은 남은 기능(오늘 화면 페이로드, 회의 전 브리핑, 설정, LLM 직렬화 줄)만 검증한다.
 
 // 2026-11-02 는 월요일이다
 const MON_0940 = new Date(2026, 10, 2, 9, 40, 0)
-const MON_1100 = new Date(2026, 10, 2, 11, 0, 0)
 
 const changed: AssistantChangedEvent[] = []
 
@@ -148,96 +151,49 @@ afterEach(async () => {
   closeDatabase()
 })
 
-describe('getToday (과거 계획 읽기)', () => {
-  const lunch: CalendarRef = { id: 'e1', title: '점심 회의', start: '12:00', end: '13:00', allDay: false }
-
-  it('계획이 없으면 빈 타임라인을 돌려준다. 새 계획을 만들지 않는다', async () => {
+describe('getToday (오늘 화면 페이로드)', () => {
+  it('비서 이벤트·설정·AI 사용 가능·캘린더 연결만 담는다. 계획을 만들거나 닫지 않는다', async () => {
+    const at = '2026-11-01 09:00:00'
+    getDatabase()
+      .prepare(
+        `INSERT INTO daily_plans (plan_date, status, started_at, source_snapshot, created_at, updated_at)
+         VALUES ('2026-11-01', 'active', ?, NULL, ?, ?)`
+      )
+      .run(at, at, at)
     const today = await getToday(MON_0940)
-    expect(today.plan).toBeNull()
-    expect(today.items).toEqual([])
-    expect(today.timeline).toEqual({ entries: [], freeMinutesLeft: 0, focusItemId: null, unplacedDeadlineItemIds: [] })
-    expect(today.recovery).toEqual({ inFlight: false, error: null })
-    expect(getDatabase().prepare('SELECT COUNT(*) AS n FROM daily_plans').get()).toEqual({ n: 0 })
-  })
-
-  it('저장된 계획 행은 그대로 읽고 스냅샷 일정으로 타임라인을 만든다', async () => {
-    createPlan(getDatabase(), {
-      plan_date: '2026-11-02',
-      started_at: '2026-11-02 09:40:00',
-      source_snapshot: { calendar: [lunch], jira: [], seenCandidateIds: [], takenAt: '2026-11-02 09:40:00' },
-      items: []
-    })
-    const today = await getToday(MON_1100)
-    expect(today.plan?.plan_date).toBe('2026-11-02')
-    expect(today.timeline.entries).toContainEqual({ kind: 'meeting', start: '12:00', end: '13:00', title: '점심 회의', location: null, note: null })
-  })
-
-  it('A18: 다음 날 읽으면 전날 계획을 자동으로 닫고 missingWrapupDate 를 채운다', async () => {
-    createPlan(getDatabase(), {
-      plan_date: '2026-11-02',
-      started_at: '2026-11-02 09:40:00',
-      source_snapshot: { calendar: [], jira: [], seenCandidateIds: [], takenAt: '2026-11-02 09:40:00' },
-      items: []
-    })
-    const next = await getToday(new Date(2026, 10, 3, 9, 30, 0))
-    expect(next.plan).toBeNull()
-    expect(next.missingWrapupDate).toBe('2026-11-02')
+    expect(Object.keys(today).sort()).toEqual(['aiAvailable', 'calendarConnected', 'events', 'settings'])
+    expect(today.events).toEqual([])
+    // 옛 active 계획 행은 그대로 남는다(지난 계획 닫기는 제거됐다)
+    expect(getDatabase().prepare('SELECT status FROM daily_plans').all()).toEqual([{ status: 'active' }])
   })
 })
 
 describe('getToday 연결 상태 (M1)', () => {
-  it('Google·Jira 연결 여부를 부를 때마다 실제 상태로 읽는다. 앱을 켠 뒤 연결·해제해도 바로 맞는다', async () => {
-    const first = await getToday(MON_0940)
-    expect(first).toMatchObject({ calendarConnected: false, jiraConnected: false, jiraTruncated: false, lastErrors: [] })
-
+  it('Google 연결 여부를 부를 때마다 실제 상태로 읽는다. 앱을 켠 뒤 연결·해제해도 바로 맞는다', async () => {
+    expect(await getToday(MON_0940)).toMatchObject({ calendarConnected: false })
     auth.isConnected.mockReturnValue(true)
-    jira.isJiraConnected.mockReturnValue(true)
-    expect(await getToday(MON_0940)).toMatchObject({ calendarConnected: true, jiraConnected: true })
-
+    expect(await getToday(MON_0940)).toMatchObject({ calendarConnected: true })
     auth.isConnected.mockReturnValue(false)
-    expect(await getToday(MON_0940)).toMatchObject({ calendarConnected: false, jiraConnected: true })
+    expect(await getToday(MON_0940)).toMatchObject({ calendarConnected: false })
     expect(auth.isConnected).toHaveBeenCalledTimes(3)
-    expect(jira.isJiraConnected).toHaveBeenCalledTimes(3)
   })
 
   it('연결 확인이 throw 하면 미연결로 보고 getToday 는 실패하지 않는다', async () => {
     auth.isConnected.mockImplementation(() => {
       throw new Error('Database not initialized')
     })
-    jira.isJiraConnected.mockImplementation(() => {
-      throw new Error('boom')
-    })
-    expect(await getToday(MON_0940)).toMatchObject({ calendarConnected: false, jiraConnected: false })
+    expect(await getToday(MON_0940)).toMatchObject({ calendarConnected: false })
   })
 })
 
 describe('saveSettings', () => {
-  it('openAtLogin 이 바뀔 때만 setLoginItemSettings 를 부른다. 화면에서 뺀 옛 키도 받는다', () => {
+  it('openAtLogin 이 바뀔 때만 setLoginItemSettings 를 부른다', () => {
     saveSettings({ openAtLogin: true })
     expect(electron.setLoginItemSettings).toHaveBeenCalledWith({ openAtLogin: true })
     electron.setLoginItemSettings.mockClear()
-    saveSettings({ planSize: 4 })
+    saveSettings({ meetingLeadMin: 10 })
     expect(electron.setLoginItemSettings).not.toHaveBeenCalled()
     expect(getDatabase()).toBeTruthy()
-  })
-})
-
-describe('runLlmSerialized (오늘 브리핑과 공유하는 LLM 줄)', () => {
-  it('앞 작업이 reject 해도 다음 작업을 실행하고 각자 결과를 돌려준다', async () => {
-    const order: string[] = []
-    const first = runLlmSerialized(async () => {
-      order.push('a:start')
-      await new Promise((r) => setTimeout(r, 5))
-      order.push('a:reject')
-      throw new Error('폭발')
-    })
-    const second = runLlmSerialized(async () => {
-      order.push('b:start')
-      return 42
-    })
-    await expect(first).rejects.toThrow('폭발')
-    await expect(second).resolves.toBe(42)
-    expect(order).toEqual(['a:start', 'a:reject', 'b:start'])
   })
 })
 
@@ -546,7 +502,7 @@ describe('회의 전 브리핑 (부록 I)', () => {
         return { ok: true, markdown: '# AI 회의 브리핑', model: 'claude-sonnet-5-5' }
       })
 
-      // 오늘 브리핑 LLM 처럼 같은 줄에 먼저 선 작업
+      // 다른 헤드리스 작업(에픽 요약 등)처럼 같은 줄에 먼저 선 작업
       const earlier = runLlmSerialized(async () => {
         log.push('today:start')
         await gate.promise

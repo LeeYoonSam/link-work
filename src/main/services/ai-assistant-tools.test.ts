@@ -51,7 +51,7 @@ vi.mock('../db/database', () => ({
   }
 }))
 
-// assistant-sources 가 끌어오는 네트워크 모듈이다 (부록 F.13 위험 4). 호출되면 기록한다.
+// 비서 모듈이 끌어올 수 있는 네트워크 모듈이다 (부록 F.13 위험 4). 호출되면 기록한다.
 vi.mock('./jira', () => {
   const record = (name: string) => () => {
     state.networkCalls.push(name)
@@ -61,9 +61,7 @@ vi.mock('./jira', () => {
     getDefaultJiraProjectKey: () => null,
     getJiraIssueUrl: (key: string) => `https://acme.atlassian.net/browse/${key}`,
     isJiraConnected: () => true,
-    listMyOpenIssues: record('listMyOpenIssues'),
     listIssuesByKeys: record('listIssuesByKeys'),
-    listMyRecentlyUpdatedIssues: record('listMyRecentlyUpdatedIssues'),
     getJiraMyAccountId: record('getJiraMyAccountId')
   }
 })
@@ -79,15 +77,12 @@ import Database from 'better-sqlite3'
 import { ASSISTANT_SCHEMA } from './assistant-schema'
 import {
   ASSISTANT_LIST_MAX,
-  ASSISTANT_TEXT_MAX,
   ASSISTANT_TITLE_MAX,
-  ASSISTANT_TOOL_NAMES,
   buildAssistantTools
 } from './ai-assistant-tools'
 
-// 로컬 시각 기준. 기본 하루 경계 04:00 이후라 논리 날짜는 TODAY 다.
+// 로컬 시각 기준. 기본 하루 경계 04:00 이후라 논리 날짜는 2026-11-02 다.
 const NOW = new Date(2026, 10, 2, 10, 0)
-const TODAY = '2026-11-02'
 
 interface FakeToolDef {
   name: string
@@ -125,9 +120,6 @@ function seed(db: Database.Database, table: string, rows: string[]): void {
   for (const values of rows) db.exec(`INSERT INTO ${table} VALUES ${values}`)
 }
 
-const PLAN_COLS = 'daily_plans (id, plan_date, status, started_at, closed_at, briefing_text, briefing_source, recovery_text, recovery_source, wrapup_note)'
-const ITEM_COLS = 'plan_items (id, plan_id, candidate_id, source, title, score, rank, added_by, status, due_date, urgent)'
-
 function makeDb(): Database.Database {
   const db = new Database(':memory:')
   db.exec(`CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT)`)
@@ -162,123 +154,8 @@ afterEach(() => {
 })
 
 describe('도구 목록', () => {
-  it('3개 도구를 계약 이름으로 만든다', () => {
-    expect(tools.map((t) => t.name)).toEqual([...ASSISTANT_TOOL_NAMES])
-    expect(ASSISTANT_TOOL_NAMES).toEqual(['get_today_plan', 'get_recent_work', 'list_meeting_action_items'])
-  })
-})
-
-describe('get_today_plan', () => {
-  it('계획이 없으면 plan null 과 대시보드 전환 안내를 돌려준다', async () => {
-    const r = await call('get_today_plan')
-    expect(r).toEqual({
-      date: TODAY,
-      plan: null,
-      items: [],
-      suggested: [],
-      hint: '이 날짜의 계획이 없다. 오늘 화면은 대시보드로 바뀌어 새 계획을 만들지 않는다. 오늘 할 일·일정·Jira 작업은 다른 도구로 조회한다.'
-    })
-  })
-
-  it('date 를 생략하면 하루 경계를 적용한 논리 날짜를 쓴다', async () => {
-    // 03:00 은 기본 경계 04:00 이전이라 전날이다.
-    vi.setSystemTime(new Date(2026, 10, 2, 3, 0))
-    const r = await call('get_today_plan')
-    expect(r.date).toBe('2026-11-01')
-  })
-
-  it('계획과 항목을 계약 모양으로 돌려준다. suggested·dismissed 는 items 에서 뺀다', async () => {
-    seed(db, PLAN_COLS, [
-      `(1, '${TODAY}', 'active', '${TODAY} 09:40:00', NULL, '브리핑', 'llm', '복구 본문', 'rules', NULL)`
-    ])
-    seed(db, ITEM_COLS, [
-      `(1, 1, 'todo:1', 'todo', '랭크 없음', 5, NULL, 'start', 'planned', NULL, 0)`,
-      `(2, 1, 'todo:2', 'todo', '두 번째', 9, 2, 'start', 'in_progress', '2026-11-03', 1)`,
-      `(3, 1, 'todo:3', 'todo', '첫 번째', 10, 1, 'start', 'done', NULL, 0)`,
-      `(4, 1, 'jira:PROJ-1', 'jira', '제안', 8, NULL, 'refresh', 'suggested', '2026-11-04', 1)`,
-      `(5, 1, 'todo:5', 'todo', '거절', 1, NULL, 'refresh', 'dismissed', NULL, 0)`
-    ])
-    const r = await call('get_today_plan', { date: TODAY })
-    expect(r.date).toBe(TODAY)
-    expect(r.plan).toEqual({
-      status: 'active',
-      started_at: `${TODAY} 09:40:00`,
-      closed_at: null,
-      wrapup_note: null,
-      briefing_source: 'llm',
-      briefing_text: '브리핑',
-      recovery_source: 'rules',
-      recovery_text: '복구 본문'
-    })
-    // rank 오름차순, null 은 뒤
-    expect(r.items.map((i: { title: string }) => i.title)).toEqual(['첫 번째', '두 번째', '랭크 없음'])
-    expect(Object.keys(r.items[0]).sort()).toEqual(
-      [
-        'id', 'candidate_id', 'title', 'source', 'link', 'jira_issue_key', 'due_date', 'rank', 'status',
-        'status_note', 'urgent', 'first_planned_date'
-      ].sort()
-    )
-    expect(r.items[1]).toMatchObject({ status: 'in_progress', urgent: true, due_date: '2026-11-03' })
-    expect(r.suggested).toEqual([
-      { id: 4, candidate_id: 'jira:PROJ-1', title: '제안', due_date: '2026-11-04', urgent: true }
-    ])
-    expect(r.hint).toBe('오늘 화면은 linkwork://view/today 다.')
-  })
-
-  it('본문은 4000자, 제목은 300자에서 자른다', async () => {
-    const longBody = 'b'.repeat(ASSISTANT_TEXT_MAX + 50)
-    const longTitle = 't'.repeat(ASSISTANT_TITLE_MAX + 50)
-    seed(db, PLAN_COLS, [
-      `(1, '${TODAY}', 'closed', '${TODAY} 09:40:00', '${TODAY} 18:00:00', '${longBody}', 'rules', '${longBody}', 'llm', '${longBody}')`
-    ])
-    seed(db, ITEM_COLS, [`(1, 1, 'todo:1', 'todo', '${longTitle}', 5, 1, 'start', 'planned', NULL, 0)`])
-    const r = await call('get_today_plan', { date: TODAY })
-    for (const text of [r.plan.briefing_text, r.plan.recovery_text, r.plan.wrapup_note]) {
-      expect(text.startsWith('b'.repeat(ASSISTANT_TEXT_MAX))).toBe(true)
-      expect(text.length).toBeLessThan(longBody.length)
-    }
-    expect(r.items[0].title.startsWith('t'.repeat(ASSISTANT_TITLE_MAX))).toBe(true)
-    expect(r.items[0].title.length).toBeLessThan(longTitle.length)
-  })
-
-  it('date 형식이 틀리면 zod 가 거부한다', async () => {
-    await expect(call('get_today_plan', { date: '2026/11/02' })).rejects.toThrow()
-  })
-})
-
-describe('get_recent_work', () => {
-  it('기본 3일을 보고 jira·errors 섹션을 뺀다', async () => {
-    seed(db, PLAN_COLS, [
-      `(1, '2026-10-31', 'closed', '2026-10-31 09:00:00', '2026-10-31 18:00:00', NULL, NULL, NULL, NULL, '내일 배포 확인')`
-    ])
-    seed(db, ITEM_COLS, [`(1, 1, 'todo:9', 'todo', '남은 일', 5, 1, 'start', 'planned', NULL, 0)`])
-    const r = await call('get_recent_work')
-    expect(r.days).toBe(3)
-    expect(r.since).toBe('2026-10-30 00:00:00')
-    expect(r.last_plan_date).toBe('2026-10-31')
-    expect(r.hint).toBe('Jira 변경은 Atlassian 도구로 조회한다.')
-    const keys = r.sections.map((s: { key: string }) => s.key)
-    expect(keys).toContain('last_day')
-    expect(keys).toContain('unfinished')
-    expect(keys).not.toContain('jira')
-    expect(keys).not.toContain('errors')
-    for (const s of r.sections) {
-      expect(typeof s.title).toBe('string')
-      expect(Array.isArray(s.lines)).toBe(true)
-    }
-  })
-
-  it('이전 계획이 없으면 last_plan_date 는 null 이다', async () => {
-    const r = await call('get_recent_work', { days: 7 })
-    expect(r.days).toBe(7)
-    expect(r.since).toBe('2026-10-26 00:00:00')
-    expect(r.last_plan_date).toBeNull()
-  })
-
-  it('days 는 1~14 정수만 받는다', async () => {
-    await expect(call('get_recent_work', { days: 0 })).rejects.toThrow()
-    await expect(call('get_recent_work', { days: 15 })).rejects.toThrow()
-    await expect(call('get_recent_work', { days: 1.5 })).rejects.toThrow()
+  it('회의 액션아이템 도구 1개만 계약 이름으로 만든다', () => {
+    expect(tools.map((t) => t.name)).toEqual(['list_meeting_action_items'])
   })
 })
 
@@ -305,7 +182,6 @@ describe('list_meeting_action_items', () => {
         meeting_id: 10,
         meeting_title: '최근 회의',
         meeting_started_at: '2026-11-01 10:00:00',
-        project_id: 3,
         index: 0,
         text: '열린 항목',
         assignee: '김',
@@ -317,7 +193,6 @@ describe('list_meeting_action_items', () => {
         meeting_id: 10,
         meeting_title: '최근 회의',
         meeting_started_at: '2026-11-01 10:00:00',
-        project_id: 3,
         index: 1,
         text: '미완료 todo',
         assignee: null,
@@ -329,7 +204,6 @@ describe('list_meeting_action_items', () => {
         meeting_id: 11,
         meeting_title: '이전 회의',
         meeting_started_at: '2026-10-28 10:00:00',
-        project_id: null,
         index: 0,
         text: '이전 열린 항목',
         assignee: null,
@@ -338,6 +212,13 @@ describe('list_meeting_action_items', () => {
         todo_completed: null
       }
     ])
+  })
+
+  it('결과에 쓰이지 않는 project_id 필드를 싣지 않는다', async () => {
+    seedMeetings()
+    const r = await call('list_meeting_action_items')
+    expect(r.length).toBeGreaterThan(0)
+    for (const a of r) expect(a).not.toHaveProperty('project_id')
   })
 
   it('completed true: 완료된 todo 항목만 돌려준다. 삭제된 todo 는 빠진다', async () => {
@@ -377,17 +258,11 @@ describe('A31 읽기 전용·네트워크 없음', () => {
     expect(src).not.toMatch(/INSERT INTO|UPDATE |DELETE FROM/)
   })
 
-  it('A31: 세 도구는 SELECT 만 실행하고 Jira·캘린더·쓰기 커넥션을 부르지 않는다', async () => {
-    seed(db, PLAN_COLS, [
-      `(1, '2026-10-31', 'closed', '2026-10-31 09:00:00', NULL, NULL, NULL, NULL, NULL, NULL)`,
-      `(2, '${TODAY}', 'active', '${TODAY} 09:40:00', NULL, NULL, NULL, NULL, NULL, NULL)`
-    ])
+  it('A31: 도구는 SELECT 만 실행하고 Jira·캘린더·쓰기 커넥션을 부르지 않는다', async () => {
     seed(db, 'meetings (id, title, started_at, project_id)', [`(1, '회의', '2026-11-01 10:00:00', NULL)`])
     seed(db, 'meeting_summaries (id, meeting_id, action_items, generated_at)', [
       `(1, 1, '[{"text":"a","todo_id":1}]', '2026-11-01 11:00:00')`
     ])
-    await call('get_today_plan')
-    await call('get_recent_work', { days: 14 })
     await call('list_meeting_action_items', { completed: true })
     expect(state.networkCalls).toEqual([])
     expect(state.sql.length).toBeGreaterThan(0)

@@ -69,7 +69,6 @@ interface MemoStore {
   archivedMemos: Memo[]
   importantMemos: Memo[]
   categories: MemoCategory[]
-  loading: boolean
 
   // 탐색 상태
   rail: RailKey
@@ -120,7 +119,6 @@ export const useMemoStore = create<MemoStore>((set, get) => {
     archivedMemos: [],
     importantMemos: [],
     categories: [],
-    loading: false,
 
     ...loadInitial(),
     query: '',
@@ -170,9 +168,8 @@ export const useMemoStore = create<MemoStore>((set, get) => {
     },
 
     fetchMemos: async () => {
-      set({ loading: true })
       const memos = await window.api.memo.list(false)
-      set({ memos, loading: false })
+      set({ memos })
     },
 
     fetchArchivedMemos: async () => {

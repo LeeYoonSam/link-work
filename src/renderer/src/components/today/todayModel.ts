@@ -1,7 +1,7 @@
 // 오늘 대시보드 순수 모델. 스토어 값을 받아 화면 한 장(신호·다음 배포·내 Jira 작업·할 일·일정)을 조립한다.
 // React·스토어·window 를 쓰지 않는다. 시각(now)은 호출부가 넘긴다.
-// 신호와 그 근거(ref)는 여기 규칙이 만든다. LLM 브리핑은 headline 과 신호 순서·문구만 다듬는다(applyBriefing).
-// 브리핑 입력에는 상대 시간("40분 뒤")을 넣지 않는다 — 입력 해시가 분마다 바뀌면 안 된다. "n분 뒤"는 화면이 붙인다.
+// 한 줄 브리핑(headline)·신호와 그 근거(ref)·문구는 모두 여기 규칙이 만든다. LLM 으로 다듬지 않는다.
+// 신호 문구에는 상대 시간("40분 뒤")을 넣지 않는다. "n분 뒤"는 화면이 붙인다.
 import type {
   CalendarEvent,
   JiraBoardIssue,
@@ -11,8 +11,7 @@ import type {
   SignalSeverity,
   Todo,
   TodoPriority,
-  TodayBriefing,
-  TodayBriefingInput
+  TodayFacts
 } from '../../types'
 import { clockTime, compareIssueKeys, isOverdue, localDate } from '../project/boardModel'
 import {
@@ -111,15 +110,10 @@ export interface TodayDashboard {
     tomorrowFirst: string | null
   }
   /**
-   * 브리핑 입력용 사실. 행 목록은 상한으로 잘려 있어 건수를 다시 셀 수 없다.
-   * 계약 밖의 선택 필드다 — 없으면 toBriefingInput 이 행에서 근사한다.
+   * 규칙 문구를 만든 사실(건수·연결 여부). 행 목록은 상한으로 잘려 있어 건수를 다시 셀 수 없다.
+   * 계약 밖의 선택 필드다. buildTodayDashboard 는 늘 채운다.
    */
-  facts?: TodayBriefingInput['facts']
-  /**
-   * 상한으로 자르기 전 전체 신호(규칙 순서). 계약 밖의 선택 필드다.
-   * 브리핑 입력은 시간에 따라 바뀌는 meeting_soon 을 뺀 상위 신호를 여기서 고른다.
-   */
-  allSignals?: TodaySignal[]
+  facts?: TodayFacts
 }
 
 // ─── 상수 ─────────────────────────────────────────────────
@@ -131,8 +125,6 @@ export const TODO_ROW_LIMIT = 6
 export const MEETING_SOON_MINUTES = 60
 /** 신호 행에 그릴 근거 칩 상한(배포 ref 는 상한과 별개로 늘 보인다) */
 export const SIGNAL_REF_DISPLAY_LIMIT = 4
-/** 메인 브리핑 입력 검증의 refs 상한 */
-export const BRIEFING_REF_LIMIT = 20
 
 const SEVERITY_ORDER: Record<SignalSeverity, number> = { critical: 0, warn: 1, info: 2 }
 const KIND_ORDER: Record<SignalKind, number> = {
@@ -468,7 +460,7 @@ export function buildTodayDashboard(input: TodayModelInput): TodayDashboard {
   const releaseOut: NextRelease | null = release ? { ...release, rows: release.rows.map(mark) } : null
 
   const overdueCount = overdueJira.length + todoOverdue.length
-  const facts: TodayBriefingInput['facts'] = {
+  const facts: TodayFacts = {
     calendarConnected: input.calendarConnected,
     jiraConnected: isJiraConnected(jiraState),
     meetingCount: schedule.rows.filter((r) => schedule.primaryIds.has(r.id)).length,
@@ -501,7 +493,6 @@ export function buildTodayDashboard(input: TodayModelInput): TodayDashboard {
     signals: visible,
     hiddenSignalCount: hidden.length,
     hiddenSignals: hidden,
-    allSignals: sorted,
     summaryLine: summaryLine(facts, jiraKnown),
     release: releaseOut,
     releaseUnknown: releaseOut === null && jiraState !== 'ok',
@@ -540,7 +531,7 @@ const isJiraConnected = (state: TodayDashboard['jira']['state']): boolean =>
   state !== 'not_connected' && state !== 'no_project'
 
 /** 할 말이 없을 때의 문구. 미연결 영역을 "없음"으로 단정하지 않는다 */
-function quietText(facts: TodayBriefingInput['facts'], period: boolean): string {
+function quietText(facts: TodayFacts, period: boolean): string {
   const end = period ? '.' : ''
   if (!facts.calendarConnected && !facts.jiraConnected) return `캘린더와 Jira를 연결하면 오늘 챙길 것이 여기에 보여요${end}`
   if (!facts.calendarConnected) return `급한 Jira 작업·할 일은 없어요. 캘린더를 연결하면 회의도 함께 보여요${end}`
@@ -552,7 +543,7 @@ function quietText(facts: TodayBriefingInput['facts'], period: boolean): string 
 function ruleHeadline(
   release: NextRelease | null,
   riskCount: number,
-  facts: TodayBriefingInput['facts'],
+  facts: TodayFacts,
   today: string,
   jiraKnown: boolean
 ): string {
@@ -576,7 +567,7 @@ function ruleHeadline(
 }
 
 /** 신호가 없을 때의 한 줄 요약. 해당 없는 조각은 뺀다 */
-function summaryLine(facts: TodayBriefingInput['facts'], jiraKnown: boolean): string {
+function summaryLine(facts: TodayFacts, jiraKnown: boolean): string {
   const parts: string[] = []
   if (facts.calendarConnected && facts.meetingCount > 0) parts.push(`회의 ${facts.meetingCount}`)
   if (facts.dueTodayCount > 0) parts.push(`오늘 마감${jiraKnown ? '' : ' 할 일'} ${facts.dueTodayCount}`)
@@ -595,84 +586,4 @@ export function visibleRefs(s: Pick<TodaySignal, 'refs'>): { refs: SignalRef[]; 
   const rest = s.refs.filter((r) => r.type !== 'release')
   const shown = rest.slice(0, SIGNAL_REF_DISPLAY_LIMIT)
   return { refs: [...shown, ...release], moreCount: rest.length - shown.length }
-}
-
-// ─── 브리핑 ─────────────────────────────────────────────────
-
-const refText = (r: SignalRef): string => `${r.type}:${r.id}`
-
-/**
- * 브리핑 입력에 넣는 신호인가. meeting_soon 은 시각이 흐르면 생기고 사라져 입력 해시를 흔든다 —
- * 데이터가 그대로인데 회의마다 LLM 을 다시 부르게 된다. 화면에서 규칙 문구 그대로 보인다.
- */
-const isBriefingSignal = (s: TodaySignal): boolean => s.kind !== 'meeting_soon'
-
-/**
- * 대시보드 → 메인 브리핑 입력. 시간에 따라 바뀌는 값을 넣지 않는다:
- * meeting_soon 신호를 빼고, nextMeeting 은 늘 null 이다. 신호는 그것을 뺀 규칙 순서 상위 SIGNAL_LIMIT 건이다.
- * refs 는 메인 입력 검증 상한(BRIEFING_REF_LIMIT)으로 자른다.
- */
-export function toBriefingInput(d: TodayDashboard): TodayBriefingInput {
-  const base: TodayBriefingInput['facts'] = d.facts ?? {
-    calendarConnected: d.schedule.connected,
-    jiraConnected: isJiraConnected(d.jira.state),
-    meetingCount: d.schedule.rows.length,
-    overdueCount: d.jira.rows.filter((r) => r.overdue).length + d.todos.rows.filter((r) => r.bucket === 'overdue').length,
-    dueTodayCount:
-      d.jira.rows.filter((r) => r.dueToday).length + d.todos.rows.filter((r) => r.bucket === 'today').length,
-    nextMeeting: null,
-    release: d.release
-      ? {
-          version: d.release.version,
-          date: d.release.date,
-          dDay: d.release.dDay,
-          qaStart: d.release.qaStart,
-          linked: d.release.linked,
-          mine: { ...d.release.mine }
-        }
-      : null
-  }
-  const facts: TodayBriefingInput['facts'] = { ...base, nextMeeting: null }
-  const signals = (d.allSignals ?? d.signals).filter(isBriefingSignal).slice(0, SIGNAL_LIMIT)
-  return {
-    date: d.date,
-    ruleHeadline: d.headline,
-    signals: signals.map((s) => ({
-      id: s.id,
-      kind: s.kind,
-      severity: s.severity,
-      text: s.text,
-      refs: s.refs.slice(0, BRIEFING_REF_LIMIT).map(refText)
-    })),
-    facts
-  }
-}
-
-/**
- * 브리핑을 대시보드에 얹는다. 브리핑이 없거나 날짜가 다르면 규칙 그대로.
- * 있으면 브리핑이 다룬 신호끼리만 순서·문구를 바꾼다 — 그 신호들이 규칙 순서에서 차지한 자리에
- * 브리핑 순서대로 채운다. 브리핑에 없는 신호(meeting_soon 등)는 규칙 자리·규칙 문구 그대로 남는다.
- * 모르는 id 는 버린다. 신호의 kind·severity·refs 는 늘 규칙 값이다.
- */
-export function applyBriefing(
-  d: TodayDashboard,
-  b: TodayBriefing | null
-): { headline: string; signals: TodaySignal[]; hiddenSignals: TodaySignal[]; source: 'llm' | 'rules' } {
-  // 숨은 신호는 브리핑 대상이 아니라 규칙 문구 그대로 전달한다
-  const hiddenSignals = d.hiddenSignals ?? []
-  if (!b || b.date !== d.date) return { headline: d.headline, signals: d.signals, hiddenSignals, source: 'rules' }
-  const byId = new Map(d.signals.map((s) => [s.id, s]))
-  const used = new Set<string>()
-  const llmOrdered: TodaySignal[] = []
-  for (const bs of b.signals ?? []) {
-    const s = byId.get(bs.id)
-    if (!s || used.has(bs.id)) continue
-    used.add(bs.id)
-    const text = typeof bs.text === 'string' && bs.text.trim() ? bs.text.trim() : s.text
-    llmOrdered.push({ ...s, text })
-  }
-  let k = 0
-  const signals = d.signals.map((s) => (used.has(s.id) ? llmOrdered[k++] : s))
-  const headline = typeof b.headline === 'string' && b.headline.trim() ? b.headline.trim() : d.headline
-  return { headline, signals, hiddenSignals, source: b.source }
 }

@@ -1,4 +1,4 @@
-import { Tray, BrowserWindow, nativeImage, screen, ipcMain, app } from 'electron'
+import { Tray, BrowserWindow, nativeImage, screen, ipcMain } from 'electron'
 import { join } from 'path'
 import { getDatabase } from '../db/database'
 import { getTodayEvents, CalendarEvent } from './google-calendar'

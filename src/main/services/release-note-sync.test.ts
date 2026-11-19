@@ -390,26 +390,6 @@ describe('listReleaseNotes', () => {
     ])
   })
 
-  it('배포 버전을 주면 이름이 같은 릴리스만 돌려준다', () => {
-    linkReleaseNote('PROJ', versionOf({ id: '1', name: '4.164.0' }))
-    linkReleaseNote('PROJ', versionOf({ id: '2', name: '4.155.0' }))
-
-    expect(listReleaseNotes('4.155.0').map((n) => n.version_name)).toEqual(['4.155.0'])
-    expect(listReleaseNotes('9.9.9')).toEqual([])
-  })
-
-  it('배포 버전 한 칸에 여러 버전이 적혀 있어도 각각 찾는다', () => {
-    // 실제 데이터의 '2.8.1 , 4.155.0' — 통째로 비교하면 어느 쪽과도 맞지 않았다
-    linkReleaseNote('PROJ', versionOf({ id: '1', name: '4.155.0' }))
-    linkReleaseNote('PROJ', versionOf({ id: '2', name: '2.8.1' }))
-    linkReleaseNote('PROJ', versionOf({ id: '3', name: '4.164.0' }))
-
-    expect(listReleaseNotes('2.8.1 , 4.155.0').map((n) => n.version_name)).toEqual([
-      '4.155.0',
-      '2.8.1'
-    ])
-  })
-
   it('같은 배포 버전을 쓰는 프로젝트가 여럿이어도 릴리스는 한 줄이다', () => {
     // 이 파일의 핵심 — 예전에는 프로젝트마다 한 행을 만들어 같은 버전이 목록에 세 번 떴다
     seedProject('가 프로젝트', '4.155.0')
@@ -418,7 +398,6 @@ describe('listReleaseNotes', () => {
     linkReleaseNote('PROJ', versionOf({ id: '1', name: '4.155.0' }))
 
     expect(listReleaseNotes()).toHaveLength(1)
-    expect(listReleaseNotes('4.155.0')).toHaveLength(1)
   })
 
   it('프로젝트를 지워도 릴리스 노트는 남는다 — 프로젝트에 딸린 데이터가 아니다', () => {

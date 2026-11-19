@@ -5,7 +5,7 @@ import { MEMO_WITH_CATEGORY_SELECT } from '../utils/memo-helpers'
 import { TODO_TAGS_SUBQUERY } from '../utils/todo-helpers'
 import { getEventsInRange } from './google-calendar'
 import { buildAssistantTools } from './ai-assistant-tools'
-import { buildWriteTools, maskSecretVariable, TRUNCATION_MARKER } from './ai-write-tools'
+import { buildWriteTools, TRUNCATION_MARKER } from './ai-write-tools'
 import {
   BITBUCKET_NOT_CONNECTED_MESSAGE,
   isBitbucketConnected,
@@ -16,8 +16,7 @@ import { isBitbucketUrl } from './bitbucket-url'
 import {
   getNotionDatabaseEntries,
   getNotionPageContent,
-  isNotionConnected,
-  searchNotion
+  isNotionConnected
 } from './notion'
 import { extractNotionPageId } from './notion-markdown'
 import { sortReleaseNotes } from './release-note-sync'
@@ -30,7 +29,7 @@ import { fetchUrlAsText } from './web-fetch'
 // 1. 모든 도구는 읽기 전용 DB 커넥션(getAiReadOnlyDatabase)을 사용한다.
 //    SQLite가 커넥션 레벨에서 쓰기를 차단하므로 INSERT/UPDATE/DELETE가 물리적으로 불가능하다.
 // 2. 검색어/날짜 등 입력은 zod로 길이·형식을 제한한다 (SQL은 전부 바인딩 파라미터 사용).
-// 3. secret 변수 값은 마스킹 후 반환한다.
+// 3. 변수(Variables)는 AI 도구로 다루지 않는다. 사용자가 변수 메뉴에서 직접 관리한다.
 // 추후 쓰기 도구를 도입할 때는 반드시 문서의 "쓰기 도구 도입 기준"을 따를 것.
 
 const searchTerm = (desc: string): z.ZodOptional<z.ZodString> =>
@@ -44,20 +43,15 @@ export const LINKWORK_TOOL_NAMES = [
   'get_todo',
   'search_memos',
   'get_memo',
-  'list_variables',
-  'get_activity_log',
   'get_calendar_events',
   // 릴리스 노트는 이미 동기화된 로컬 DB만 읽으므로(Jira 직접 호출 없음) 자동 허용
   'list_release_notes',
   'get_release_note',
   // Notion은 사용자 자신의 워크스페이스를 읽기 전용으로 조회하므로 자동 허용
-  'search_notion',
   'get_notion_page',
   // Bitbucket 은 사용자 token 계정의 저장소를 GET 으로만 조회하므로 자동 허용 (AI_GUARDRAILS 8.7)
   'read_bitbucket',
   // 비서 도구는 읽기 전용 로컬 DB 만 읽는다. Jira 를 호출하지 않는다 (AI_GUARDRAILS 8.6)
-  'get_today_plan',
-  'get_recent_work',
   'list_meeting_action_items'
 ].map((name) => `mcp__linkwork__${name}`)
 
@@ -78,7 +72,7 @@ function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] 
 }
 
 const NOTION_NOT_CONNECTED_MESSAGE =
-  'Notion이 연동되어 있지 않습니다. AI 대화 화면의 "Notion 연동" 설정에서 통합 토큰을 등록하도록 사용자에게 안내하세요.'
+  'Notion이 연동되어 있지 않습니다. 설정 > 연동(linkwork://view/settings)의 Notion 카드에서 통합 토큰을 등록하도록 사용자에게 안내하세요.'
 
 function toErrorMessage(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err)
@@ -243,61 +237,6 @@ const getMemo = tool(
   }
 )
 
-const listVariables = tool(
-  'list_variables',
-  '변수(Variables) 목록을 조회한다. secret 타입 변수의 값은 마스킹되어 반환된다.',
-  {
-    search: searchTerm('변수 key/설명 부분 검색어')
-  },
-  async (args) => {
-    const db = getAiReadOnlyDatabase()
-    const conditions: string[] = []
-    const params: unknown[] = []
-    if (args.search) {
-      conditions.push("(key LIKE ? OR IFNULL(description, '') LIKE ?)")
-      params.push(`%${args.search}%`, `%${args.search}%`)
-    }
-    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-    const rows = db
-      .prepare(`SELECT id, key, value, description, view_type FROM variables ${where} ORDER BY sort_order, id`)
-      .all(...params) as { value: string; view_type: string }[]
-    return jsonResult(rows.map(maskSecretVariable))
-  }
-)
-
-const getActivityLog = tool(
-  'get_activity_log',
-  '활동 로그를 조회한다. 문서/변수/메모(과거 기록에는 프로젝트/태스크도 있다)의 생성·수정·삭제 이력으로, "이번주에 진행한 작업 정리" 같은 질문에 사용한다. 날짜는 YYYY-MM-DD 형식이며 created_at은 로컬 시간 기준으로 변환되어 반환된다.',
-  {
-    start_date: dateArg('조회 시작일 (YYYY-MM-DD, 포함)'),
-    end_date: dateArg('조회 종료일 (YYYY-MM-DD, 포함)'),
-    entity_type: z
-      .enum(['project', 'task', 'document', 'variable', 'memo'])
-      .optional()
-      .describe('엔티티 종류 필터')
-  },
-  async (args) => {
-    const db = getAiReadOnlyDatabase()
-    const conditions = ["date(created_at, 'localtime') >= date(?)", "date(created_at, 'localtime') <= date(?)"]
-    const params: unknown[] = [args.start_date, args.end_date]
-    if (args.entity_type) {
-      conditions.push('entity_type = ?')
-      params.push(args.entity_type)
-    }
-    const rows = db
-      .prepare(
-        `SELECT entity_type, entity_id, entity_name, action,
-                datetime(created_at, 'localtime') AS created_at
-         FROM activity_log
-         WHERE ${conditions.join(' AND ')}
-         ORDER BY created_at ASC
-         LIMIT 500`
-      )
-      .all(...params)
-    return jsonResult(rows)
-  }
-)
-
   const getCalendarEvents = tool(
     'get_calendar_events',
     'Google 캘린더 일정(회의/미팅 등)을 조회한다. "오늘 일정", "이번주 회의" 같은 질문에 사용한다. 날짜는 YYYY-MM-DD 형식.',
@@ -435,29 +374,6 @@ const getActivityLog = tool(
   // 모두 읽기 전용(GET/검색)이며, 반환 내용은 신뢰할 수 없는 데이터로 취급된다
   // (시스템 프롬프트의 인젝션 방어 규칙 적용 대상).
 
-  const searchNotionTool = tool(
-    'search_notion',
-    '연동된 Notion 워크스페이스에서 페이지/데이터베이스를 검색한다. 제목, ID, URL, 최근 수정 시각을 반환한다. 내용을 읽으려면 반환된 ID/URL로 get_notion_page를 호출한다.',
-    {
-      query: z.string().max(200).describe('검색어 (제목 기준)')
-    },
-    async (args) => {
-      if (!isNotionConnected()) return jsonResult({ error: NOTION_NOT_CONNECTED_MESSAGE })
-      try {
-        const results = await searchNotion(args.query)
-        if (results.length === 0) {
-          return jsonResult({
-            results: [],
-            hint: '검색 결과가 없습니다. 통합(integration)에 공유된 페이지만 검색됩니다.'
-          })
-        }
-        return jsonResult({ results })
-      } catch (err) {
-        return jsonResult({ error: toErrorMessage(err) })
-      }
-    }
-  )
-
   const getNotionPageTool = tool(
     'get_notion_page',
     'Notion 페이지의 전체 내용을 마크다운으로 읽는다. page에 Notion URL(notion.so/notion.site) 또는 32자리 페이지 ID를 전달한다. 데이터베이스 ID를 전달하면 항목 목록(제목/ID)을 반환한다. 사용자가 Notion 링크를 주거나 Notion 문서 내용을 물으면 이 도구를 사용한다.',
@@ -557,13 +473,10 @@ const getActivityLog = tool(
       getTodo,
       searchMemos,
       getMemo,
-      listVariables,
-      getActivityLog,
       getCalendarEvents,
       ...assistantTools,
       listReleaseNotes,
       getReleaseNote,
-      searchNotionTool,
       getNotionPageTool,
       readBitbucketTool,
       fetchUrlTool,

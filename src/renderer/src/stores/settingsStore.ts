@@ -40,7 +40,6 @@ interface SettingsStore {
   claude: AiStatus | null
   /** 상태 조회에 실패한 항목의 오류 문구 */
   statusErrors: Partial<Record<StatusKey, string>>
-  refreshing: boolean
   verifyResults: Partial<Record<IntegrationId, IntegrationVerifyResult>>
   verifying: Partial<Record<IntegrationId, boolean>>
 
@@ -64,7 +63,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   statuses: { google: null, jira: null, bitbucket: null, notion: null },
   claude: null,
   statusErrors: {},
-  refreshing: false,
   verifyResults: {},
   verifying: {},
 
@@ -76,7 +74,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   setSection: (section) => set({ section: normalizeSettingsSection(section) }),
 
   refreshStatuses: async () => {
-    set({ refreshing: true })
     const api = window.api
     const [google, jira, bitbucket, notion, claude] = await Promise.allSettled([
       api.calendar.status(),
@@ -100,8 +97,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         notion: pick('notion', notion, prev.statuses.notion)
       },
       claude: pick('claude', claude, prev.claude),
-      statusErrors: errors,
-      refreshing: false
+      statusErrors: errors
     })
   },
 

@@ -1,5 +1,6 @@
 import { useId } from 'react'
 import type { JiraEpicAiSummary } from '../../types'
+import { useAiChatStore } from '../../stores/aiChatStore'
 import { ClampedText, button, taskTag, typo } from '../ui'
 import {
   ExternalLinkIcon,
@@ -28,6 +29,26 @@ export interface IssueDetailPanelProps {
   onOpenLink?: (url: string) => void
   /** "문서 탭에서 모두 보기" — 검색어(에픽·이슈 키)로 문서 탭을 연다 */
   onShowAllDocs?: (query: string) => void
+  /** [AI 대화로 열기] — 프롬프트로 새 AI 대화를 연다(aiChatStore.startChatWith) */
+  onOpenChat?: (prompt: string) => void
+}
+
+/**
+ * [AI 대화로 열기]의 기본 동작. 에픽·일반 모두 승인 후 쓰기(ask) 모드로 연다.
+ * 화면 밖에서 시작한 대화는 쓰기 전에 승인 카드를 거친다
+ */
+export function openIssueChat(prompt: string): Promise<void> {
+  return useAiChatStore.getState().startChatWith(prompt, { writeMode: 'ask' })
+}
+
+/**
+ * [AI 대화로 열기]가 보내는 프롬프트. 티켓 키만 담는다.
+ * 제목·설명 같은 Jira 텍스트는 넣지 않는다 — 외부 입력은 AI 가 도구로 읽게 한다(가드레일)
+ */
+export function aiChatPromptFor(key: string, isEpic: boolean): string {
+  return isEpic
+    ? `Jira 에픽 ${key} 와 하위 티켓의 현재 상태를 읽고, 내가 할 일의 일정 초안을 제안해줘. 할 일로 만들기 전에 먼저 초안을 보여줘.`
+    : `Jira 티켓 ${key} 의 내용과 최근 진행 상황을 읽고 정리해줘.`
 }
 
 /** 상세에 바로 보이는 관련 문서 수. 나머지는 문서 탭에서 본다 */
@@ -53,7 +74,8 @@ export default function IssueDetailPanel({
   onOpenJira,
   onOpenRelease,
   onOpenLink,
-  onShowAllDocs
+  onShowAllDocs,
+  onOpenChat
 }: IssueDetailPanelProps): React.ReactNode {
   // 넓은 창 패널과 좁은 창 인라인이 함께 마운트될 수 있어 제목 id 를 고유하게 만든다
   const titleId = useId()
@@ -236,14 +258,26 @@ export default function IssueDetailPanel({
       ) : null}
 
       {jiraKey ? (
-        <button
-          type="button"
-          onClick={() => onOpenJira(jiraKey)}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm ${button.primary}`}
-        >
-          Jira에서 열기
-          <ExternalLinkIcon size={12} />
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenJira(jiraKey)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm ${button.primary}`}
+          >
+            Jira에서 열기
+            <ExternalLinkIcon size={12} />
+          </button>
+          {onOpenChat ? (
+            <button
+              type="button"
+              onClick={() => onOpenChat(aiChatPromptFor(jiraKey, isEpic || (!issue && !!group)))}
+              title="이 티켓을 AI 대화에서 이어서 봅니다. 티켓 키만 넘기고 내용은 AI 가 Jira 에서 읽습니다"
+              className={`px-3 py-1.5 text-sm ${button.subtle}`}
+            >
+              AI 대화로 열기
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </section>
   )
