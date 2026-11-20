@@ -15,11 +15,10 @@ import {
   type KeyValueStorage
 } from '../components/memo/memoNav'
 
-export type { MemoSortOrder, RailKey, CategoryKey }
 
 // 메모 화면 상태를 기억하는 localStorage 키. DB 는 쓰지 않는다
-export const MEMO_UI_STORAGE_KEY = 'linkwork.memo.ui'
-export const MEMO_RECENT_STORAGE_KEY = 'linkwork.memo.recent'
+const MEMO_UI_STORAGE_KEY = 'linkwork.memo.ui'
+const MEMO_RECENT_STORAGE_KEY = 'linkwork.memo.recent'
 
 interface StoredUi {
   rail?: unknown

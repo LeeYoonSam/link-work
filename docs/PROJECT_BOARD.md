@@ -6,14 +6,13 @@
 - **릴리스** 탭: 릴리스 노트다. 규칙은 [RELEASE_NOTES.md](RELEASE_NOTES.md) 를 따른다.
 - **문서** 탭: 티켓에 연결된 웹링크·첨부·본문 링크·연결 이슈를 모아 보여 준다(§2.2).
 
-2026-11-18 에 사이드바의 "릴리스"·"문서" 메뉴를 없애고 이 화면의 탭으로 합쳤다. 옛 "문서" 메뉴(로컬 `documents` 테이블)는 대체하지 않고 지웠다.
+릴리스와 문서는 사이드바 메뉴가 아니라 이 화면의 탭이다. 로컬 `documents` 테이블은 이 화면이 읽지 않는다.
 
 모두 읽기 전용이다. Jira 이슈 편집과 자동 AI 생성은 없다.
 가져온 티켓은 로컬 DB 의 보드 캐시 테이블 2개에 저장한다. 에픽 AI 요약은 세 번째 테이블 `jira_epic_summaries` 에 저장한다. 화면을 열면 저장본을 먼저 보여 주고,
 이어서 Jira 에서 바뀐 티켓만 받아 갱신한다.
 
-이전의 로컬 프로젝트·WBS 작업·일정 타임라인·Jira 프로젝트 싱크업은 모두 없앴다.
-`projects`·`tasks` 테이블과 다른 테이블의 `project_id` 컬럼은 남아 있다. 백업 그룹과 과거 기록 때문이다.
+`projects`·`tasks` 테이블과 다른 테이블의 `project_id` 컬럼은 백업 그룹과 과거 기록 때문에 남아 있다.
 이 기능은 그 테이블을 읽지도 쓰지도 않는다.
 
 - 관련 문서: [RELEASE_NOTES.md](RELEASE_NOTES.md) (Jira 인증·`/search/jql`·페이지네이션 §2),
@@ -58,7 +57,7 @@
 ### 2.1 이렇게 정한 이유
 
 - **상태 이름을 JQL 에 넣지 않는다.** 화면의 `할 일` 은 번역된 표시 이름이고 원래 이름은 `Open` 이다.
-  `status = "할 일"` 은 오류 없이 0건을 돌려준다(실제 16건일 때 0건이 나온 적이 있다).
+  `status = "할 일"` 은 오류 없이 0건을 돌려준다.
   JQL 은 번역과 무관한 `statusCategory` 로 넓게 조회하고, 응답의 `status.name` 으로 백로그만 거른다.
   카테고리만으로는 가를 수 없다. 백로그와 할 일이 같은 `new` 카테고리다.
 - **화이트리스트가 아니라 백로그 블랙리스트다.** 워크플로마다 '할 일' 계열 이름이 다르다.
@@ -125,7 +124,7 @@ CREATE TABLE IF NOT EXISTS jira_epic_summaries (
 
 - 저장·읽기는 `src/main/services/jira-board-store.ts` 가 한다. DB 핸들을 주입받는다.
   읽기 `readStoredBoard`, 전체 교체 `replaceStoredBoard`, 증분 upsert `upsertStoredIssues`, 비우기 `clearStoredBoards`(세 테이블 전부).
-  에픽 요약은 `readEpicSummary`·`writeEpicSummary`·`deleteEpicSummaries` 다.
+  에픽 요약은 `readEpicSummary`·`writeEpicSummary` 다. 사라진 에픽의 요약 삭제는 `replaceStoredBoard` 안에서 한다.
   `jira-board.ts` 는 이 함수들을 `JiraBoardStorePort` 로 주입받아 테스트에서 바꿔 끼운다.
 - 행은 `project_key` 로 나뉜다. 기본 프로젝트를 바꿔도 다른 프로젝트의 행과 섞이지 않는다.
 - `data` JSON 이 깨졌거나 모양이 틀린 행은 버리고 계속한다. throw 하지 않는다.
@@ -429,7 +428,7 @@ IPC 는 throw 하지 않고 `{ success, … }` 로 감싼다.
 
 ## 8. 아침 자동 동기화와의 관계
 
-아침 자동 동기화는 이제 릴리스 파트만 돈다(`MORNING_SYNC_PARTS = ['release']`). 상태 조회는
+아침 자동 동기화는 릴리스 파트만 돈다(`MORNING_SYNC_PARTS = ['release']`). 상태 조회는
 `morningSync:status`(`window.api.morningSync.status()`)다. 옛 `morning_sync` 이벤트 payload 에 남은
 `project` 파트는 무시한다. 프로젝트 보드는 아침 자동 동기화를 쓰지 않는다. 화면을 열 때(`auto`)와 새로고침할 때 동기화한다.
 

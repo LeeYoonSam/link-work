@@ -104,7 +104,6 @@ import {
   BACKUP_FORMAT_VERSION,
   DB_FILE,
   MANIFEST_ENTRY,
-  SECRET_SETTING_KEYS,
   buildManifest,
   classifyEntry,
   collectGroupStats,
@@ -122,6 +121,7 @@ import {
   type BackupProgress,
   type DatabaseLike
 } from './backup-service'
+import { SECRET_SETTING_KEYS } from './backup-groups'
 
 const tempDirs: string[] = []
 

@@ -23,14 +23,14 @@ export interface OldSegmentRow {
 }
 
 /** 새로 귀속한 결과(세그먼트 시간 + 새 speaker_key) */
-export interface TimedKey {
+interface TimedKey {
   start_ms: number
   end_ms: number
   speaker_key: string
 }
 
 /** 새 화자 키가 옛 화자에게서 이어받을 속성 */
-export interface CarriedSpeakerMeta {
+interface CarriedSpeakerMeta {
   oldSpeakerId: number
   display_name: string | null
   color: string
@@ -39,7 +39,7 @@ export interface CarriedSpeakerMeta {
 }
 
 /** merge가 INSERT할 화자 행 계획 */
-export interface PlannedSpeaker {
+interface PlannedSpeaker {
   speaker_key: string
   label: string
   display_name: string | null
@@ -48,7 +48,7 @@ export interface PlannedSpeaker {
 }
 
 /** 세그먼트별 화자 연결 계획. speakerIndex는 PlannedSpeaker 배열의 인덱스(null=화자 없음) */
-export interface PlannedSegmentSpeaker {
+interface PlannedSegmentSpeaker {
   speakerIndex: number | null
   speakerCorrected: boolean
 }

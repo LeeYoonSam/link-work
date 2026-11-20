@@ -12,7 +12,7 @@ import type { Region, WavDataRange } from './vad-segmenter'
 
 export type { Region }
 
-export interface CompactionPlanOptions {
+interface CompactionPlanOptions {
   // 발화 구간 앞뒤로 남길 여유. 자음 파열·어미 잘림을 막는다.
   padMs?: number
   // 이 길이 미만의 침묵은 손대지 않는다(자연스러운 쉼은 그대로 둔다).
@@ -41,7 +41,7 @@ export const DEFAULT_COMPACTION_OPTIONS: Required<CompactionPlanOptions> = {
   fadeMs: 8
 }
 
-export interface CompactionPlan {
+interface CompactionPlan {
   // 원본 타임라인 기준으로 남길 구간. 정렬·비중첩·병합됨.
   keep: Region[]
   // 원본 타임라인 기준 제거 구간.

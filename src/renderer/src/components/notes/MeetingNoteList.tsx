@@ -5,7 +5,7 @@ import { FOCUS_RING_CLASS, focusDomId, useFlash, useFocusScroll } from '../../ho
 import type { MeetingNoteItem } from '../../types'
 import { EmptyState } from '../ui'
 
-export function monthLabel(startedAt: string): string {
+function monthLabel(startedAt: string): string {
   const [y, m] = startedAt.slice(0, 7).split('-')
   return `${y}년 ${Number(m)}월`
 }

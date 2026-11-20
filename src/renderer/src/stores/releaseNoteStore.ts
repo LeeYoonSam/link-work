@@ -8,7 +8,7 @@ import type {
 } from '../types'
 
 /** 방금 끝난 동기화 결과. 0건도 정상이라 실패와 반드시 구분해 보여줘야 한다 */
-export interface SyncOutcome {
+interface SyncOutcome {
   itemCount: number
   truncated: boolean
 }

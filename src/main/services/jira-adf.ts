@@ -9,7 +9,7 @@ interface AdfNode {
   content?: AdfNode[]
 }
 
-export interface ExtractedLink {
+interface ExtractedLink {
   name: string
   url: string
 }

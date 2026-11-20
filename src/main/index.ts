@@ -375,7 +375,7 @@ app.whenReady().then(() => {
     recordingGuard.handleCommandDone(payload)
   })
   startNotificationService()
-  // A54: 아침 자동 동기화는 스케줄러 틱 끝에서 돈다. 스케줄러는 동기화 모듈을 import 하지 않는다
+  // 아침 자동 동기화(docs/ASSISTANT.md §6.1·§8)는 스케줄러 틱 끝에서 돈다. 스케줄러는 동기화 모듈을 import 하지 않는다
   startAssistantScheduler({ getMainWindow: () => mainWindow, createWindow, onTick: runMorningSyncIfDue })
   createTrayWidget(() => createWindow())
 

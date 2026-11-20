@@ -42,7 +42,7 @@ export function DialogField({
   )
 }
 
-export interface ConnectDialogProps {
+interface ConnectDialogProps {
   title: string
   /** 용도 한 줄 */
   purpose: string

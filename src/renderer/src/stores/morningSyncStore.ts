@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { MorningSyncPartName, MorningSyncStatus } from '../types'
 
-// 아침 자동 동기화 상태 (docs/ASSISTANT.md A54).
+// 아침 자동 동기화 상태 (docs/ASSISTANT.md §8.3).
 // 사이드바 배지와 목록 화면 상태 줄이 읽는다. 이 스토어는 아무것도 쓰지 않는다.
 // 타입은 types/index.ts 의 공유 타입을 쓴다. 기존 import 경로를 위해 부분 이름만 다시 내보낸다
 export type { MorningSyncPartName }
@@ -21,20 +21,20 @@ function morningStatusApi(): MorningStatusApi['status'] | undefined {
   return api?.morningSync?.status
 }
 
-export type SeenMarks = Record<MorningSyncPartName, string | null>
+type SeenMarks = Record<MorningSyncPartName, string | null>
 
 const SEEN_KEY = 'linkwork.morningSync.seen'
 const EMPTY_SEEN: SeenMarks = { release: null }
 
 // 한 번의 실행을 가리키는 표식이다. 같은 실행의 새 항목은 한 번만 알린다
-export function runMark(status: MorningSyncStatus | null, part: MorningSyncPartName): string | null {
+function runMark(status: MorningSyncStatus | null, part: MorningSyncPartName): string | null {
   const p = status?.[part]
   if (!status?.date || !p) return null
   return `${status.date}|${p.finishedAt ?? ''}`
 }
 
 // 사용자가 아직 보지 않은 새 항목 수다. 성공한 실행만 센다
-export function unseenOf(
+function unseenOf(
   status: MorningSyncStatus | null,
   seen: SeenMarks,
   part: MorningSyncPartName

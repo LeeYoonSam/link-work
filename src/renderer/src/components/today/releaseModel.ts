@@ -70,7 +70,7 @@ export function shiftDay(day: string, delta: number): string {
 }
 
 /** to − from 일수. 둘 다 'YYYY-MM-DD' */
-export function dayDiff(from: string, to: string): number {
+function dayDiff(from: string, to: string): number {
   const ms = (s: string): number => {
     const [y, m, d] = s.split('-').map(Number)
     return Date.UTC(y, m - 1, d)
@@ -213,7 +213,7 @@ export function toJiraRow(issue: JiraBoardIssue, issues: JiraBoardIssue[], today
  * - QA 가 시작돼 배포일 전까지인데 아직 할 일이거나 리뷰가 아닌 진행 중
  * - 배포 D-1·D-day 인데 완료가 아님
  */
-export function isReleaseRiskIssue(
+function isReleaseRiskIssue(
   issue: Pick<JiraBoardIssue, 'statusCategory' | 'status'>,
   r: Pick<NextRelease, 'qaStart' | 'date' | 'dDay'>,
   today: string

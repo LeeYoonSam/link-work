@@ -19,7 +19,7 @@ function isLowSurrogate(code: number): boolean {
 }
 
 // 검색어 정규화: NFKC(전각→반각, NFD 한글→완성형) + 소문자
-export function normalizeSearch(s: string): string {
+function normalizeSearch(s: string): string {
   return s.normalize('NFKC').toLowerCase()
 }
 
@@ -125,8 +125,8 @@ function safeEnd(text: string, i: number): number {
   return k
 }
 
-export const EXCERPT_RADIUS = 40
-export const EXCERPT_LENGTH = 140
+const EXCERPT_RADIUS = 40
+const EXCERPT_LENGTH = 140
 
 // 첫 일치 위치 주변을 자른 발췌. 앞뒤가 잘렸으면 '…'을 붙이고 구간을 발췌 기준으로 다시 계산한다.
 // 일치가 없으면 앞부분(약 2줄 분량)을 쓴다
@@ -153,7 +153,7 @@ export function makeExcerpt(
   return { text: prefix + text.slice(start, end) + suffix, ranges: out }
 }
 
-export interface Segment {
+interface Segment {
   text: string
   hit: boolean
 }
@@ -176,18 +176,18 @@ export function toSegments(text: string, ranges: Range[]): Segment[] {
 
 // ---------- 메모 매칭 ----------
 
-export interface MemoTextIndex {
+interface MemoTextIndex {
   title: string
   // 제목 줄을 뺀 본문 평문
   plain: string
 }
 
-export function indexMemoText(content: string): MemoTextIndex {
+function indexMemoText(content: string): MemoTextIndex {
   const { title, body } = parseMemoTitle(content)
   return { title, plain: toPlainText(body) }
 }
 
-export interface MemoMatch {
+interface MemoMatch {
   score: number
   titleRanges: Range[]
   bodyRanges: Range[]
@@ -225,11 +225,11 @@ export function matchMemo(
 // 분류 칩·레일의 분류 키. 지워진 분류를 가리키는 메모는 미분류로 본다
 export type CategoryKey = number | 'uncategorized'
 
-export function categoryKeyOf(memo: Memo, validIds: Set<number>): CategoryKey {
+function categoryKeyOf(memo: Memo, validIds: Set<number>): CategoryKey {
   return memo.category_id != null && validIds.has(memo.category_id) ? memo.category_id : 'uncategorized'
 }
 
-export function categoryIdSet(categories: MemoCategory[]): Set<number> {
+function categoryIdSet(categories: MemoCategory[]): Set<number> {
   return new Set(categories.map((c) => c.id))
 }
 
@@ -361,7 +361,7 @@ export interface MemoListItem {
   excerpt: Excerpt
 }
 
-export interface MemoSearchResult extends MemoListItem {
+interface MemoSearchResult extends MemoListItem {
   score: number
   categoryHit: boolean
   categoryKey: CategoryKey

@@ -25,7 +25,7 @@ const inputClass =
 const SAVED_FLASH_MS = 1500
 
 /** null 이면 성공, 문자열이면 사용자에게 보일 오류 문구 */
-export type SaveAssistantPatch = (patch: Partial<AssistantSettings>) => Promise<string | null>
+type SaveAssistantPatch = (patch: Partial<AssistantSettings>) => Promise<string | null>
 
 /** 비서 설정을 읽고 부분 patch 로 저장한다. 저장하면 오늘 화면이 들고 있는 설정도 맞춘다 */
 export function useAssistantSettings(): {
@@ -139,12 +139,10 @@ function Group({ title, children }: { title: string; children: ReactNode }): Rea
   )
 }
 
-export type AssistantFieldsGroup = 'assistant' | 'ai'
+type AssistantFieldsGroup = 'assistant' | 'ai'
 
 /**
  * 비서 설정 칸. group='assistant' 는 동작·시간·알림 3그룹, group='ai' 는 AI 브리핑과 비서 요약 모델.
- * 부록 O(오늘 대시보드 개편): 하루 계획용 칸(시작 알림·최신화 알림·계획 항목 수·근무 종료·원본 완료·
- * 확인 주기 2개·Jira 범위)은 뺐다. 저장 키는 남아 있다.
  * settings 가 null 이면 자리 표시 값으로 비활성 상태를 그린다.
  */
 export function AssistantSettingsFields({

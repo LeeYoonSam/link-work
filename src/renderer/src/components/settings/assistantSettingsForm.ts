@@ -1,10 +1,8 @@
-// 비서 설정 폼의 순수 헬퍼 (docs/ASSISTANT.md §3.2, 부록 E.5).
-// 예전 오늘 화면의 비서 설정 모달에서 옮겨 왔다. React·window 를 쓰지 않는다.
+// 비서 설정 폼의 순수 헬퍼 (docs/ASSISTANT.md §4).
+// React·window 를 쓰지 않는다.
 import type { AssistantSettings } from '../../types'
 
 // 설정 화면이 노출하는 비서 설정 키.
-// 부록 O(오늘 대시보드 개편, 2026-11-19): 하루 계획 기능이 없어져 startNudge·refreshNotify·planSize·workEnd·
-// completeOriginOnDone·refreshCalendarMin·refreshJiraMin·jiraScope 는 화면과 AssistantSettings 타입에서 뺐다.
 // 저장은 폼 키 한 칸씩만 보낸다. main 은 모르는 키가 섞인 patch 를 거절한다.
 export type FormSettingKey =
   | 'enabled'
@@ -72,7 +70,7 @@ export function validateSettings(s: FormSettings): string | null {
   }
   if (!HHMM.test(s.dayRollover)) return '날짜 경계는 HH:mm 형식이어야 합니다'
   if (!HHMM.test(s.morningSyncTime)) return '아침 자동 동기화 시각은 HH:mm 형식이어야 합니다'
-  // 회의 전 브리핑 시각 (부록 I.10.4)
+  // 회의 전 브리핑 시각 (§4)
   if (!isIntIn(s.meetingLeadMin, 1, 120)) return '회의 전 알림은 1~120분 사이여야 합니다'
   return null
 }
@@ -83,7 +81,7 @@ export function toFormSettings(settings: AssistantSettings): FormSettings {
   for (const k of FORM_SETTING_KEYS) init[k] = settings[k]
   // 이전 값 auto·dashboard 와 빈 값은 '오늘' 로 보인다. DB 행은 저장할 때만 바뀐다 (D5)
   init.startView = formStartView(init.startView)
-  // 회의 브리핑 기본값 (부록 I.11.4)
+  // 회의 브리핑 기본값 (§4)
   init.meetingBriefingEnabled ??= true
   init.meetingLeadMin ??= 15
   // 아침 자동 동기화 기본값 켬·08:00 (D9)

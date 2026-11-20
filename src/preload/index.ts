@@ -166,7 +166,7 @@ const api = {
       return () => ipcRenderer.removeListener('recording:stream', handler)
     }
   },
-  // 회의록 — 요약 완료된 회의 목록·검색·Markdown (docs/MEETING_NOTES.md)
+  // 회의록 — 요약 완료된 회의 목록·검색·Markdown (docs/MEETING_RECORDING.md §10)
   meetingNotes: {
     list: (filter?: { q?: string; kind?: string }) =>
       ipcRenderer.invoke('meetingNotes:list', filter),
@@ -264,7 +264,7 @@ const api = {
     // 저장된 스냅샷의 links 에 든 http(s) URL 만 연다. 검증은 main 이 한다
     openLink: (url: string) => ipcRenderer.invoke('jiraBoard:openLink', url)
   },
-  // 아침 자동 동기화(A54) 상태. 읽기 전용이다
+  // 아침 자동 동기화 상태(docs/ASSISTANT.md §8.3). 읽기 전용이다
   morningSync: {
     status: () => ipcRenderer.invoke('morningSync:status')
   },
@@ -290,7 +290,7 @@ const api = {
   // 개인 비서 — 오늘 데이터·회의 브리핑·설정. 응답은 { success, error } 로 감싼다(getSettings 제외)
   assistant: {
     getToday: () => ipcRenderer.invoke('assistant:getToday'),
-    // 회의 브리핑 AI 본문 다시 만들기 (부록 I.11.10)
+    // 회의 브리핑 AI 본문 다시 만들기 (docs/ASSISTANT.md §7.7)
     regenerateMeetingBriefing: (eventId: number) => ipcRenderer.invoke('assistant:regenerateMeetingBriefing', eventId),
     getSettings: () => ipcRenderer.invoke('assistant:getSettings'),
     saveSettings: (patch: Record<string, unknown>) => ipcRenderer.invoke('assistant:saveSettings', patch),

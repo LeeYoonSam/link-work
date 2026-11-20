@@ -5,15 +5,15 @@ import { button } from '../../ui'
 // Google 캘린더 연결 팝업. 자격 증명 저장과 OAuth 로그인을 한 번에 진행한다.
 // calendar:saveSettings 다음에 바로 calendar:auth 를 부른다.
 
-export const GOOGLE_REDIRECT_URI = 'http://localhost:8945/callback'
-export const GOOGLE_CREDENTIALS_URL = 'https://console.cloud.google.com/apis/credentials'
+const GOOGLE_REDIRECT_URI = 'http://localhost:8945/callback'
+const GOOGLE_CREDENTIALS_URL = 'https://console.cloud.google.com/apis/credentials'
 
-export const GOOGLE_SCOPES: ConnectScope[] = [
+const GOOGLE_SCOPES: ConnectScope[] = [
   { scope: 'calendar.readonly', reason: '회의 일정을 읽기만 합니다', need: '필수' }
 ]
 
 // 팝업에 번호 순서로 보이는 연결 안내. 리디렉션 URI 단계(4번)는 [복사] 버튼이 있어 컴포넌트가 따로 그린다.
-export const GOOGLE_CONNECT_STEPS: string[] = [
+const GOOGLE_CONNECT_STEPS: string[] = [
   '[발급 페이지 열기]로 Google Cloud 콘솔을 열고 프로젝트를 고릅니다. 없으면 새로 만듭니다.',
   '처음이면 "API 및 서비스 > 라이브러리"에서 Google Calendar API 를 사용 설정하고 OAuth 동의 화면을 만듭니다. 회사 계정은 "내부", 개인 계정은 "외부"로 하고 테스트 사용자에 본인을 추가합니다.',
   '"사용자 인증 정보 만들기 > OAuth 클라이언트 ID"에서 유형을 "웹 애플리케이션"으로 고릅니다.',
@@ -21,7 +21,7 @@ export const GOOGLE_CONNECT_STEPS: string[] = [
   '로그인 창에서 일정을 가져올 Google 계정을 고르고 캘린더 읽기를 허용합니다. 처음에는 그 계정의 기본 캘린더만 읽습니다. 연결 후 카드의 "가져올 캘린더"에서 다른 캘린더를 더 고를 수 있습니다.'
 ]
 
-export interface GoogleCalendarConnectDialogProps {
+interface GoogleCalendarConnectDialogProps {
   onClose: () => void
   onConnected: () => void
 }

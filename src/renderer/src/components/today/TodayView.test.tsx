@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { TodayDashboard } from './todayModel'
 
-// 오늘 대시보드 (docs/ASSISTANT.md 부록 O).
+// 오늘 대시보드 (docs/ASSISTANT.md §11).
 // 스토어는 상태 객체를 읽는 가짜로 바꾼다. 대시보드 조립(buildTodayDashboard)은 고정 fixture 를 돌려준다 —
 // 조립 규칙은 todayModel.test.ts 가 맡는다. 화면은 배치·문구·이동만 본다.
 
@@ -202,7 +202,7 @@ describe('TodayView 화면', () => {
     const dir = resolve(__dirname)
     for (const f of readdirSync(dir).filter((n) => n.endsWith('.tsx') && !n.includes('.test.'))) {
       const src = readFileSync(resolve(dir, f), 'utf8')
-      // '집중'+' 가능' 은 저장소 전체 grep(완료 조건 C8)에 걸리지 않도록 나눠 쓴다
+      // '집중'+' 가능' 은 저장소 전체 grep 에 걸리지 않도록 나눠 쓴다
       for (const word of ['하루 시작', '퇴근', '지금 집중', '후보', '집중' + ' 가능']) {
         expect(src, f).not.toContain(word)
       }
@@ -254,11 +254,9 @@ describe('TodayView 이동', () => {
     delete (globalThis as unknown as { document?: unknown }).document
   })
 
-  it('알림 focus: meeting 만 브리핑 이벤트 id 로 바꾸고 다른 kind 는 무시한다', () => {
+  it('알림 focus: meeting 을 브리핑 이벤트 id 로 바꾸고 id 가 숫자가 아니거나 focus 가 없으면 null 이다', () => {
     expect(meetingFocusEventId({ kind: 'meeting', id: '42' })).toBe(42)
     expect(meetingFocusEventId({ kind: 'meeting', id: 'x' })).toBeNull()
-    expect(meetingFocusEventId({ kind: 'item', id: '7' })).toBeNull()
-    expect(meetingFocusEventId({ kind: 'inbox' })).toBeNull()
     expect(meetingFocusEventId(null)).toBeNull()
   })
 

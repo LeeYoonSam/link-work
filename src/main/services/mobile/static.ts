@@ -2,7 +2,7 @@
 // 경로 탈출(.., 절대경로, 인코딩된 슬래시·역슬래시, NUL)은 null 로 거부한다.
 import { extname, resolve, sep } from 'path'
 
-export const MOBILE_HTML = 'mobile.html'
+const MOBILE_HTML = 'mobile.html'
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

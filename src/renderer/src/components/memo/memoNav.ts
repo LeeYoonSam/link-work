@@ -1,7 +1,7 @@
 // 메모 화면 탐색 순수 함수: 최근 본 기록, 키보드 선택 이동, 레이아웃 판정, 저장소 읽기·쓰기.
 // React·store 에 의존하지 않는다. 저장소는 인자로 받아 window 없이 테스트한다
 
-export const RECENT_MAX = 10
+const RECENT_MAX = 10
 
 // 맨 앞에 넣고 중복을 빼고 상한을 지킨다
 export function pushRecent(ids: number[], id: number, max = RECENT_MAX): number[] {
@@ -28,10 +28,10 @@ export function neighborAfterRemoval(ids: number[], id: number): number | null {
   return ids[i + 1] ?? ids[i - 1] ?? null
 }
 
-export type LayoutMode = 'three' | 'two' | 'one'
+type LayoutMode = 'three' | 'two' | 'one'
 
-export const LAYOUT_THREE_MIN = 880
-export const LAYOUT_TWO_MIN = 600
+const LAYOUT_THREE_MIN = 880
+const LAYOUT_TWO_MIN = 600
 
 // 메모 화면 컨테이너 폭으로 단 수를 고른다(뷰포트가 아니라 컨테이너 기준)
 export function layoutMode(width: number): LayoutMode {

@@ -50,23 +50,15 @@ describe('parseInternalLink — 신규 항목 링크', () => {
     expect(parseInternalLink('linkwork://calendar/0001-01-01')).toBeNull()
   })
 
-  it('오늘 화면 영역·항목·회의를 읽는다', () => {
-    expect(parseInternalLink('linkwork://today/inbox')).toEqual({
-      kind: 'today',
-      focus: { kind: 'inbox' }
-    })
-    expect(parseInternalLink('linkwork://today/briefing')).toEqual({
-      kind: 'today',
-      focus: { kind: 'briefing' }
-    })
-    expect(parseInternalLink('linkwork://today/timeline')).toEqual({
-      kind: 'today',
-      focus: { kind: 'timeline' }
-    })
-    expect(parseInternalLink('linkwork://today/item/7')).toEqual({
-      kind: 'today',
-      focus: { kind: 'item', id: '7' }
-    })
+  it('오늘 화면의 회의 링크는 회의 focus 를, 옛 영역·항목 링크는 focus 없이 오늘 화면을 연다', () => {
+    for (const href of [
+      'linkwork://today/inbox',
+      'linkwork://today/briefing',
+      'linkwork://today/timeline',
+      'linkwork://today/item/7'
+    ]) {
+      expect(parseInternalLink(href)).toEqual({ kind: 'today', focus: null })
+    }
     expect(parseInternalLink('linkwork://today/meeting/42')).toEqual({
       kind: 'today',
       focus: { kind: 'meeting', id: '42' }

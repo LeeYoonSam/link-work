@@ -69,11 +69,10 @@ import Database from 'better-sqlite3'
 import type { MeetingRef } from './assistant-types'
 import { collectMeetingContext, MEETING_LIMITS, toMeetingRef } from './assistant-sources'
 
-// 부록 O(오늘 대시보드 개편): 후보·오늘 일정·Jira·맥락 복구 수집은 제거됐다.
-// 이 파일은 남은 회의 전 브리핑 수집(toMeetingRef·collectMeetingContext)만 검증한다.
+// 이 파일은 회의 전 브리핑 수집(toMeetingRef·collectMeetingContext)만 검증한다.
 
 // 픽스처 행을 넣는다. 테이블 이름을 인자로 받는다.
-// 이유: MVP1 조건 12 의 A2 grep 이 테스트 파일도 검사한다. 원본 테이블 쓰기 문장을 소스에 직접 쓰지 않는다.
+// 이유: assistant-* 파일에서 원본 테이블 쓰기 문장을 grep 해도 걸리지 않게 한다. 쓰기 문장을 소스에 직접 쓰지 않는다.
 function seed(db: Database.Database, table: string, rows: string[]): void {
   for (const values of rows) db.exec(`INSERT INTO ${table} VALUES ${values}`)
 }
@@ -112,7 +111,7 @@ describe('toMeetingRef', () => {
   })
 })
 
-// 회의 수집 쿼리가 읽는 컬럼을 가진 스키마. 실제 database.ts 의 해당 컬럼과 같다.
+// 회의 수집 쿼리가 읽는 컬럼을 가진 스키마. 실제 db/schema.ts 의 해당 컬럼과 같다.
 function makeMeetingDb(): Database.Database {
   const db = new Database(':memory:')
   db.exec(`
@@ -174,7 +173,7 @@ describe('collectMeetingContext', () => {
     expect(ctx.openActionItems).toEqual(['문서 공유', '견적 확인'])
   })
 
-  it('A46: 지난 회의는 회의 시작 기준 90일 안만 읽는다', () => {
+  it('지난 회의는 회의 시작 기준 90일 안만 읽는다', () => {
     const db = makeMeetingDb()
     seed(db, 'meetings', [
       meetingRow(1, MEETING.title, '2026-08-04 14:00:00'),
@@ -186,7 +185,7 @@ describe('collectMeetingContext', () => {
     expect(ctx.pastMeetings.map((m) => m.meetingId)).toEqual([1])
   })
 
-  it('A46: 지난 회의는 최근 3건까지만 둔다. startedAt 내림차순이다', () => {
+  it('지난 회의는 최근 3건까지만 둔다. startedAt 내림차순이다', () => {
     const db = makeMeetingDb()
     seed(db, 'meetings', [1, 2, 3, 4, 5].map((n) => meetingRow(n, MEETING.title, `2026-10-0${n} 14:00:00`)))
     seed(db, 'meeting_summaries', [1, 2, 3, 4, 5].map((n) => summaryRow(n, `요약 ${n}`, [])))
@@ -195,7 +194,7 @@ describe('collectMeetingContext', () => {
     expect(ctx.pastMeetings.map((m) => m.meetingId)).toEqual([5, 4, 3])
   })
 
-  it('A46: 지난 회의 후보는 최근 200건까지만 읽는다', () => {
+  it('지난 회의 후보는 최근 200건까지만 읽는다', () => {
     const db = makeMeetingDb()
     const rows: string[] = []
     const sums: string[] = []
@@ -212,7 +211,7 @@ describe('collectMeetingContext', () => {
     expect(collectMeetingContext(db, MEETING).pastMeetings).toEqual([])
   })
 
-  it('A46: 미완료 액션아이템은 10건까지만 둔다', () => {
+  it('미완료 액션아이템은 10건까지만 둔다', () => {
     const db = makeMeetingDb()
     seed(db, 'meetings', [
       meetingRow(1, MEETING.title, '2026-10-26 14:00:00'),
@@ -229,7 +228,7 @@ describe('collectMeetingContext', () => {
     expect(ctx.pastMeetings[0].openActionItems).toHaveLength(10)
   })
 
-  it('A46: tldr 는 200자에서 자른다', () => {
+  it('tldr 는 200자에서 자른다', () => {
     const db = makeMeetingDb()
     seed(db, 'meetings', [meetingRow(1, MEETING.title, '2026-10-26 14:00:00')])
     seed(db, 'meeting_summaries', [summaryRow(1, '가'.repeat(300), [])])
@@ -248,7 +247,7 @@ describe('collectMeetingContext', () => {
     expect(empty.errors).toEqual(['지난 회의 조회에 실패했습니다.'])
   })
 
-  it('A2·A46: 수집은 원본 테이블을 바꾸지 않고 Jira·캘린더를 부르지 않는다', () => {
+  it('수집은 원본 테이블을 바꾸지 않고 Jira·캘린더를 부르지 않는다', () => {
     const db = makeMeetingDb()
     seed(db, 'meetings', [meetingRow(1, MEETING.title, '2026-10-26 14:00:00')])
     seed(db, 'meeting_summaries', [summaryRow(1, '요약', [{ text: '액션' }])])

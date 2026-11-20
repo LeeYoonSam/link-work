@@ -4,7 +4,7 @@ import { create } from 'zustand'
 // 할 일은 todoStore.selectedTodoId, 오늘은 assistantStore.setFocus 를 쓴다
 export type FocusEntity = 'memo' | 'variable' | 'release' | 'recording' | 'note' | 'calendar'
 
-export type FocusRequest =
+type FocusRequest =
   | { entity: Exclude<FocusEntity, 'calendar'>; id: number; nonce: number }
   | { entity: 'calendar'; date: string; eventId: string | null; nonce: number }
 
@@ -14,7 +14,7 @@ export const FOCUS_REQUEST_TTL_MS = 10_000
 
 // Omit 을 유니언 각 멤버에 따로 적용한다. 이유: 유니언에 바로 Omit 을 쓰면 판별 필드가 사라진다
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
-export type FocusRequestInput = DistributiveOmit<FocusRequest, 'nonce'>
+type FocusRequestInput = DistributiveOmit<FocusRequest, 'nonce'>
 
 interface FocusStore {
   request: FocusRequest | null
@@ -49,7 +49,7 @@ export const useFocusStore = create<FocusStore>((set, get) => ({
 
 // 엔터티 하나의 요청 타입. 예: FocusRequestOf<'memo'> → { entity: 'memo'; id; nonce }.
 // Extract 를 쓰지 않는다. 이유: entity 가 유니언인 멤버는 Extract 에서 never 가 된다
-export type FocusRequestOf<E extends FocusEntity> = E extends 'calendar'
+type FocusRequestOf<E extends FocusEntity> = E extends 'calendar'
   ? Extract<FocusRequest, { entity: 'calendar' }>
   : { entity: E; id: number; nonce: number }
 

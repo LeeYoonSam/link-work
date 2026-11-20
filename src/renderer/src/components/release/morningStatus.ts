@@ -1,13 +1,12 @@
 // 릴리스 화면 상단의 아침 자동 동기화 상태 줄 (docs/RELEASE_NOTES.md §8.1).
-// 옛 오늘 화면의 변경 내역(ChangeLog)에서 옮겨 왔다. 변경 내역은 오늘 대시보드 개편(부록 O)으로 지웠다.
 import type { MorningSyncPart, MorningSyncPartName, MorningSyncStatus } from '../../types'
 import { useMorningSyncStore } from '../../stores/morningSyncStore'
 
-export type MorningPartKey = MorningSyncPartName
+type MorningPartKey = MorningSyncPartName
 
-// payload 의 부분 상태 1개. 공유 타입 MorningSyncPart 를 따른다 (ASSISTANT A54).
+// payload 의 부분 상태 1개. 공유 타입 MorningSyncPart 를 따른다 (docs/ASSISTANT.md §8).
 // status 는 모르는 값도 받는다. 이유: 새 상태가 생겨도 화면이 그 값을 그대로 보인다
-export type MorningPartView = Omit<MorningSyncPart, 'status'> & {
+type MorningPartView = Omit<MorningSyncPart, 'status'> & {
   status: MorningSyncPart['status'] | (string & {})
 }
 
@@ -80,7 +79,7 @@ export function morningStamp(ts: string | null, today: string): string {
 }
 
 // 상태 줄이 읽는 실행 설정이다. enabled 는 자동 실행 켜짐, at 은 예정 시각 'HH:mm', date 는 마지막 실행 날짜다
-export type MorningRunInfo = Pick<MorningSyncStatus, 'enabled' | 'at' | 'date'>
+type MorningRunInfo = Pick<MorningSyncStatus, 'enabled' | 'at' | 'date'>
 
 // 화면 상단 상태 줄. 예: '아침 동기화 08:01 · 새 1건', '아침 동기화 실패 08:01 · 토큰 만료'.
 // today 는 로컬 날짜 'YYYY-MM-DD' 다. run 을 생략하면 스토어의 현재 상태를 읽는다.

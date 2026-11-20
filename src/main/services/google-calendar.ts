@@ -17,7 +17,7 @@ export interface CalendarEvent {
 }
 
 /** 설정 화면의 "가져올 캘린더" 목록 1행. 기본 캘린더의 id 는 항상 'primary' 로 돌려준다 */
-export interface CalendarListEntry {
+interface CalendarListEntry {
   id: string
   summary: string
   primary: boolean
@@ -279,7 +279,7 @@ export async function fetchEventsInRange(timeMin: Date, timeMax: Date): Promise<
 }
 
 // ── 오늘 대시보드용 기간 조회 (calendar:range) ──────────────
-export const RANGE_MAX_DAYS = 45
+const RANGE_MAX_DAYS = 45
 const rangeCache = new Map<string, { events: CalendarEvent[]; fetchedAt: number }>()
 const RANGE_CACHE_LIMIT = 8
 

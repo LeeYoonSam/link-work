@@ -2,7 +2,7 @@
 // 원칙: 파스텔 배경(50~100) + 톤다운 텍스트(600~700) 뱃지, 도트/바 상태 표현,
 // 단일 파란 액센트(오늘/현재), 화이트 카드 + gray-200 보더, 마이크로 라벨은 uppercase tracking.
 
-export interface StatusStyle {
+interface StatusStyle {
   label: string
   badge: string // 파스텔 필 뱃지
   dot: string // 상태 도트

@@ -3,15 +3,13 @@
 import { normalizeView, projectsTabAlias, type ViewId } from '../components/layout/navConfig'
 import type { ProjectsTab } from '../stores/navigationStore'
 
-export type InternalLinkTarget =
+type InternalLinkTarget =
   // tab 은 view 가 'projects' 일 때 열 탭이다. 없으면 마지막으로 본 탭을 그대로 둔다
   | { kind: 'view'; view: ViewId; tab?: ProjectsTab }
   | { kind: 'memo' | 'todo' | 'variable' | 'release' | 'recording' | 'note'; id: number }
   | { kind: 'calendar'; date: string; eventId: string | null }
-  | {
-      kind: 'today'
-      focus: { kind: 'inbox' | 'briefing' | 'timeline' | 'item' | 'meeting'; id?: string }
-    }
+  // focus 가 null 이면 오늘 화면만 연다
+  | { kind: 'today'; focus: { kind: 'meeting'; id: string } | null }
 
 const SCHEME = 'linkwork://'
 const NUM_RE = /^\d+$/
@@ -22,7 +20,8 @@ const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 const SIMPLE_KINDS = new Set(['memo', 'todo', 'variable', 'release', 'recording', 'note'])
 type SimpleKind = 'memo' | 'todo' | 'variable' | 'release' | 'recording' | 'note'
 
-const TODAY_AREAS = new Set(['inbox', 'briefing', 'timeline'])
+// 옛 오늘 화면(하루 계획)의 영역 링크. 이유: 옛 대화의 링크가 죽지 않게 오늘 화면만 연다
+const LEGACY_TODAY_AREAS = new Set(['inbox', 'briefing', 'timeline'])
 
 // 숫자 id 를 읽는다. 0 이하와 안전 정수 밖의 값은 거부한다
 function parseId(value: string | undefined): number | null {
@@ -102,12 +101,9 @@ export function parseInternalLink(href: string): InternalLinkTarget | null {
 
   if (kind === 'today') {
     const [area, id] = rest
-    if (rest.length === 1 && TODAY_AREAS.has(area)) {
-      return { kind: 'today', focus: { kind: area as 'inbox' | 'briefing' | 'timeline' } }
-    }
-    if (rest.length === 2 && area === 'item' && parseId(id) !== null) {
-      return { kind: 'today', focus: { kind: 'item', id } }
-    }
+    if (rest.length === 1 && LEGACY_TODAY_AREAS.has(area)) return { kind: 'today', focus: null }
+    // 옛 계획 항목 링크. 위와 같은 이유로 오늘 화면만 연다
+    if (rest.length === 2 && area === 'item' && parseId(id) !== null) return { kind: 'today', focus: null }
     if (rest.length === 2 && area === 'meeting' && EVENT_ID_RE.test(id)) {
       return { kind: 'today', focus: { kind: 'meeting', id } }
     }

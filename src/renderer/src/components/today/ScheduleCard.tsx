@@ -1,4 +1,4 @@
-// 오늘 대시보드의 '일정' 카드 (docs/ASSISTANT.md 부록 O).
+// 오늘 대시보드의 '일정' 카드 (docs/ASSISTANT.md §11.3, §11.5).
 // 종일 칩, 시간 일정 행(지난 일정 흐림), '지금 HH:mm' 선, 회의 전 브리핑 인라인 펼침, 내일 1줄.
 // 브리핑 짝짓기는 payload.meeting.id === CalendarEvent.id(ScheduleRow.id) 다.
 import { Fragment, useEffect, useState } from 'react'
@@ -41,7 +41,7 @@ export function defaultOpenBriefingId(matched: Map<string, MeetingBriefingRow>, 
 }
 
 // 브리핑 본문 글자. 'keep-all' 로 '목/표' 처럼 낱말 중간에서 끊기지 않게 한다
-export const BRIEFING_BODY_TEXT = [
+const BRIEFING_BODY_TEXT = [
   'break-keep [overflow-wrap:anywhere] text-pretty',
   '[&_p]:text-[13px] [&_li]:text-[13px] [&_p]:leading-snug [&_li]:leading-snug',
   '[&_ul]:pl-4 [&_ol]:pl-4 [&_*]:break-keep'
@@ -87,7 +87,7 @@ function ScheduleItem({
 }): React.ReactNode {
   const past = row.timing === 'past'
   const current = row.timing === 'current'
-  // ScheduleRow.calendarId (impl-b 모델). 다른 캘린더 일정은 그대로 보이되 작은 꼬리표로 구분한다
+  // ScheduleRow.calendarId 다. 다른 캘린더 일정은 그대로 보이되 작은 꼬리표로 구분한다
   const calendarId = row.calendarId
   const other = isOtherCalendar(calendarId)
   return (

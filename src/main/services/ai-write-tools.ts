@@ -342,7 +342,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
           keys.push('tags')
         }
         if (keys.length === 0) return null
-        // 전이가 있으면 활동 로그·이력에 complete/restore로 기록 — 주간 리포트 집계가 메뉴와 일치
+        // 전이가 있으면 활동 로그·이력에 complete/restore로 기록한다 — 메뉴와 같은 기록이다
         const action = completionChange ?? 'update'
         saveTodoHistory(db, args.todo_id, action)
         logActivity('todo', action, args.todo_id, args.title ?? row.title, `AI 수정: ${keys.join(', ')}`)
@@ -402,7 +402,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
       }
       let createdCategory: string | null = null
       const applyUpdate = db.transaction((): string[] | null => {
-        // 실제 보관 전이 추적 — 활동 로그 action을 정확히 기록(주간 리포트 집계가 메뉴와 일치)
+        // 실제 보관 전이 추적 — 활동 로그 action을 메뉴와 같게 기록한다
         let archiveChange: 'archive' | 'restore' | null = null
         if (args.is_archived === true && !row.is_archived) archiveChange = 'archive'
         else if (args.is_archived === false && row.is_archived) archiveChange = 'restore'

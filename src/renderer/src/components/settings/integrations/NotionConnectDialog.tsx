@@ -5,14 +5,14 @@ import { DISCONNECT_CONFIRM } from '../integrationStatus'
 // Notion 내부 통합 토큰 등록 팝업.
 // main 이 GET /v1/users/me 로 확인한 뒤에만 safeStorage 로 암호화 저장한다.
 
-export const NOTION_INTEGRATIONS_URL = 'https://www.notion.so/my-integrations'
+const NOTION_INTEGRATIONS_URL = 'https://www.notion.so/my-integrations'
 
-export const NOTION_SCOPES: ConnectScope[] = [
+const NOTION_SCOPES: ConnectScope[] = [
   { scope: '콘텐츠 읽기', reason: '내부 통합을 만들 때 이 권한만 켭니다', need: '필수' },
   { scope: '⋯ → 연결', reason: 'AI가 읽을 페이지에 만든 통합을 추가합니다(하위 페이지에 자동 적용)', need: '필수' }
 ]
 
-export interface NotionConnectDialogProps {
+interface NotionConnectDialogProps {
   connected: boolean
   onClose: () => void
   onChanged: () => void

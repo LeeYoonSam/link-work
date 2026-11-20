@@ -53,7 +53,7 @@ function App(): React.ReactNode {
       useAssistantStore.getState().setFocus(p.focus ?? null)
     }
     const unsubscribe = api.onNavigate(goToday)
-    // 구독 전에 도착한 이동 신호를 가져간다 (§12.1).
+    // 구독 전에 도착한 이동 신호를 가져간다 (docs/ASSISTANT.md §6.3).
     // cleanup 후 결과도 적용한다. StrictMode 재마운트 때 신호를 잃지 않기 위해서다
     if (typeof api.takePendingNavigate === 'function') {
       api
@@ -66,7 +66,7 @@ function App(): React.ReactNode {
     return unsubscribe
   }, [])
 
-  // 첫 화면 선택 (docs/ASSISTANT.md 부록 C.1, A24). 기본 첫 화면은 today 다.
+  // 첫 화면 선택 (docs/ASSISTANT.md §4). 기본 첫 화면은 today 다.
   // 설정이 projects·calendar 이면 그 화면으로 옮긴다.
   // 판정 중 사용자 이동이나 assistant:navigate 로 화면이 바뀌면 결과를 버린다.
   // 실패하면 아무것도 하지 않는다. 첫 화면은 today 로 남는다.

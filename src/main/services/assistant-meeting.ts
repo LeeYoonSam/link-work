@@ -1,14 +1,14 @@
-// 회의 전 브리핑의 매칭·규칙 본문·알림 문구 (docs/ASSISTANT.md 부록 I.5·I.6).
-// 순수 모듈이다 (A3). ./assistant-types 만 import 한다.
+// 회의 전 브리핑의 매칭·규칙 본문·알림 문구 (docs/ASSISTANT.md §7.3, §7.4).
+// 순수 모듈이다. ./assistant-types 만 import 한다.
 import type { MeetingContext } from './assistant-types'
 
-/** 알림 제목에 넣는 회의 제목의 최대 글자 수 (I.6). */
+/** 알림 제목에 넣는 회의 제목의 최대 글자 수. */
 export const MEETING_TITLE_MAX = 30
-/** 규칙 본문 한 줄의 최대 글자 수 (I.6). tldr 도 같은 상한이다. */
+/** 규칙 본문 한 줄의 최대 글자 수. tldr 도 같은 상한이다. */
 export const MEETING_LINE_MAX = 200
 const EMPTY_TITLE = '(제목 없음)'
 
-/** 소문자화하고 공백·구두점·기호를 지운다 (I.5). */
+/** 소문자화하고 공백·구두점·기호를 지운다. */
 export function normalizeTitle(s: string): string {
   return s.normalize('NFC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '')
 }
@@ -19,7 +19,7 @@ export function sameTitle(a: string, b: string): boolean {
   return na.length > 0 && na === normalizeTitle(b)
 }
 
-/** 지난 회의·액션아이템 중 하나라도 있으면 참이다 (I.6). */
+/** 지난 회의·액션아이템 중 하나라도 있으면 참이다. */
 export function hasMeetingContext(ctx: MeetingContext): boolean {
   return ctx.pastMeetings.length > 0 || ctx.openActionItems.length > 0
 }
@@ -64,7 +64,7 @@ function mmdd(dateTime: string): string {
   return m ? m[1] : ''
 }
 
-/** 규칙 브리핑 Markdown (I.6). 각 줄은 200자에서 자른다. 입력을 바꾸지 않는다 (A14). */
+/** 규칙 브리핑 Markdown. 각 줄은 200자에서 자른다. 입력을 바꾸지 않는다. */
 export function buildMeetingBriefing(ctx: MeetingContext): string {
   const out: string[] = []
   const time = hhmm(ctx.meeting.startAt)
@@ -92,7 +92,7 @@ export function buildMeetingBriefing(ctx: MeetingContext): string {
 }
 
 /**
- * 알림 제목·본문 (I.6, §12.1).
+ * 알림 제목·본문.
  * 제목은 '<회의 제목 30자> <lead>분 전' 이다. 30자를 넘으면 30자로 자르고 '…' 를 붙인다.
  * 본문은 '미완료 액션 N건' 이다.
  */

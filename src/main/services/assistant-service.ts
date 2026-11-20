@@ -26,16 +26,14 @@ import type {
 } from './assistant-types'
 
 // 비서 흐름 조정 모듈이다. IPC 와 스케줄러가 이 파일만 부른다.
-// A2: 이 파일은 비서 테이블과 assistant_* 설정만 쓴다. 원본(todos·meetings 등)은 쓰지 않는다.
-// 부록 O(오늘 대시보드 개편, 2026-11-19): 하루 시작·퇴근·계획 항목 조작·후보·최신화·맥락 복구·명령 입력은
-// 제거됐다. 2026-11-19 에 과거 계획 읽기·지난 계획 닫기도 뺐다(새 계획이 생기지 않는다. 테이블과 과거 행은 남는다).
-// 남은 일: 오늘 화면 페이로드(getToday: 비서 이벤트·설정·연결 상태), 회의 전 브리핑, 설정.
+// 이 파일은 비서 테이블과 assistant_* 설정만 쓴다. 원본(todos·meetings 등)은 쓰지 않는다.
+// 하는 일: 오늘 화면 페이로드(getToday: 비서 이벤트·설정·연결 상태), 회의 전 브리핑, 설정.
 // LLM 직렬화 줄은 ai-headless.ts(runLlmSerialized)에 있다.
 
 type Db = ReturnType<typeof getDatabase>
 
 let changedListener: ((e: AssistantChangedEvent) => void) | null = null
-// 회의 브리핑 쓰기는 한 줄로 처리한다 (A15)
+// 회의 브리핑 쓰기는 한 줄로 처리한다
 let writeChain: Promise<unknown> = Promise.resolve()
 
 function serialized<T>(fn: () => Promise<T>): Promise<T> {
@@ -77,7 +75,7 @@ function safeHeadlessAvailable(): boolean {
 }
 
 // 연결 여부는 부를 때마다 실제 상태로 읽는다. 앱을 켠 뒤 연결·해제해도 바로 맞는다.
-// 백업 복원 중 DB 가 닫혀 있으면 throw 하므로 false 로 본다 (A13)
+// 백업 복원 중 DB 가 닫혀 있으면 throw 하므로 false 로 본다
 function safeConnected(check: () => boolean): boolean {
   try {
     return check()
@@ -109,7 +107,7 @@ export async function getToday(now: Date = new Date()): Promise<TodayPayload> {
   return buildPayload(db, settings, today)
 }
 
-// ── 회의 전 브리핑 (부록 I) ──
+// ── 회의 전 브리핑 (docs/ASSISTANT.md §7) ──
 
 const LLM_OFF_MESSAGE = 'AI 브리핑이 꺼져 있습니다. 비서 설정에서 켜세요.'
 const HEADLESS_MISSING_MESSAGE = 'Claude Code 를 찾을 수 없습니다. 설치와 로그인을 확인하세요.'
@@ -126,7 +124,7 @@ function parseMeetingPayload(payload: string | null): MeetingBriefingPayload | n
   }
 }
 
-// 같은 행의 payload 에 LLM 결과만 덮어쓴다. 규칙 본문과 알림 문구는 그대로다 (A45)
+// 같은 행의 payload 에 LLM 결과만 덮어쓴다. 규칙 본문과 알림 문구는 그대로다
 function patchMeetingPayload(eventId: number, patch: Partial<MeetingBriefingPayload>): void {
   const db = getDatabase()
   const ev = getEventById(db, eventId)
@@ -141,8 +139,8 @@ function meetingLlmFailed(error: string): Partial<MeetingBriefingPayload> {
 }
 
 /**
- * 회의 브리핑 LLM 1회 (I.7). runLlmSerialized 줄(ai-headless) 안에서 부른다 (A32).
- * A45: 이 함수는 throw 하지 않는다. 실패는 payload 의 llmStatus·llmError 로만 남는다.
+ * 회의 브리핑 LLM 1회. runLlmSerialized 줄(ai-headless) 안에서 부른다.
+ * 이 함수는 throw 하지 않는다. 실패는 payload 의 llmStatus·llmError 로만 남는다.
  */
 async function runMeetingLlm(eventId: number, input: MeetingLlmInput, settings: AssistantSettings): Promise<void> {
   try {
@@ -167,7 +165,7 @@ async function runMeetingLlm(eventId: number, input: MeetingLlmInput, settings: 
   }
 }
 
-// A8·A45: 알림을 막지 않는다. 결과를 기다리지 않는다. 끝나면 카드를 다시 그리게 한다
+// 알림을 막지 않는다. 결과를 기다리지 않는다. 끝나면 카드를 다시 그리게 한다
 function startBackgroundMeetingLlm(
   eventId: number,
   input: MeetingLlmInput,
@@ -191,8 +189,8 @@ function logicalDateOfDateTime(dateTime: string, rollover: string): string | nul
   return Number.isNaN(d.getTime()) ? null : logicalDate(d, rollover)
 }
 
-// I.3.1: notification.ts 가 데우는 5분 캐시다. 조회 실패는 이전 캐시로 나타난다. 예외도 '일정 없음' 으로 본다.
-// 부록 O: 알림성 경로라 기본 캘린더 일정만 본다. 추가로 고른 캘린더(Tech 등)의 회의는
+// notification.ts 가 데우는 5분 캐시다. 조회 실패는 이전 캐시로 나타난다. 예외도 '일정 없음' 으로 본다.
+// 알림성 경로라 기본 캘린더 일정만 본다. 추가로 고른 캘린더(Tech 등)의 회의는
 // 내가 참석하지 않는 회의일 수 있어 브리핑 대상·하루 상한 계산에서 뺀다
 async function readTodayMeetings(): Promise<MeetingRef[]> {
   try {
@@ -207,8 +205,8 @@ async function readTodayMeetings(): Promise<MeetingRef[]> {
 }
 
 /**
- * 회의 브리핑 판정·INSERT (I.9.1). show() 는 스케줄러가 한다 (A5).
- * 규칙 본문을 INSERT 한 뒤 알림 목록을 돌려주고, LLM 은 그 뒤 백그라운드로 돈다 (A45).
+ * 회의 브리핑 판정·INSERT (docs/ASSISTANT.md §7.6). show() 는 스케줄러가 한다.
+ * 규칙 본문을 INSERT 한 뒤 알림 목록을 돌려주고, LLM 은 그 뒤 백그라운드로 돈다.
  */
 export async function runDueMeetingBriefings(now?: Date): Promise<SentMeetingNotice[]> {
   // 꺼져 있으면 캘린더 캐시도 읽지 않는다
@@ -217,7 +215,7 @@ export async function runDueMeetingBriefings(now?: Date): Promise<SentMeetingNot
   // 캘린더 조회는 줄 밖에서 한다. 일정이 0건인 날은 캐시가 적중하지 않아 매 틱 네트워크를 쓴다.
   // 줄 안에서 기다리면 사용자 쓰기가 그동안 막힌다
   const meetings = await readTodayMeetings()
-  // 시각은 줄 안에서 잡는다. 앞선 최신화가 줄을 오래 잡아도 창 판정이 낡지 않는다 (H.16)
+  // 시각은 줄 안에서 잡는다. 앞선 작업이 줄을 오래 잡아도 창 판정이 낡지 않는다
   return serialized(() => runDueMeetingBriefingsImpl(meetings, now ?? new Date()))
 }
 
@@ -250,7 +248,7 @@ async function runDueMeetingBriefingsImpl(meetings: MeetingRef[], now: Date): Pr
   for (const d of due) {
     try {
       if (d.action === 'skip') {
-        // A47: 창 밖·상한 초과는 skipped 행이다. 다음 틱이 같은 회의를 다시 보지 않는다
+        // 창 밖·상한 초과는 skipped 행이다. 다음 틱이 같은 회의를 다시 보지 않는다
         insertEvent(db, {
           event_key: d.eventKey,
           kind: 'meeting_briefing',
@@ -264,12 +262,12 @@ async function runDueMeetingBriefingsImpl(meetings: MeetingRef[], now: Date): Pr
         continue
       }
 
-      // A46: DB 읽기만 한다. throw 하지 않는다
+      // DB 읽기만 한다. throw 하지 않는다
       const ctx = collectMeetingContext(db, d.meeting)
       const ruleMarkdown = buildMeetingBriefing(ctx)
       const notice = meetingNoticeText(ctx, settings.meetingLeadMin)
       const hasContext = hasMeetingContext(ctx)
-      // I-7: 자료가 없으면 LLM 을 부르지 않는다
+      // 자료가 없으면 LLM 을 부르지 않는다
       const willLlm = hasContext && llmReady
       const payload: MeetingBriefingPayload = {
         meeting: d.meeting,
@@ -283,7 +281,7 @@ async function runDueMeetingBriefingsImpl(meetings: MeetingRef[], now: Date): Pr
         llmAt: null,
         llmError: null
       }
-      // A45: 규칙 본문을 먼저 저장한다
+      // 규칙 본문을 먼저 저장한다
       const ev = insertEvent(db, {
         event_key: d.eventKey,
         kind: 'meeting_briefing',
@@ -294,7 +292,7 @@ async function runDueMeetingBriefingsImpl(meetings: MeetingRef[], now: Date): Pr
         ref_id: d.meeting.id,
         payload: JSON.stringify(payload)
       })
-      // A5: UNIQUE 충돌이면 이미 처리한 회의다. 보내지 않는다
+      // UNIQUE 충돌이면 이미 처리한 회의다. 보내지 않는다
       if (!ev) continue
       sent.push({ eventId: ev.id, title: notice.title, body: notice.body, focus: { kind: 'meeting', id: String(ev.id) } })
       if (willLlm) jobs.push({ eventId: ev.id, input: { ctx, ruleMarkdown } })
@@ -310,7 +308,7 @@ async function runDueMeetingBriefingsImpl(meetings: MeetingRef[], now: Date): Pr
 }
 
 /**
- * 회의 브리핑 AI 본문 다시 만들기 (I.7, I.11.8). 버튼은 결과를 기다린다.
+ * 회의 브리핑 AI 본문 다시 만들기 (docs/ASSISTANT.md §7.7). 버튼은 결과를 기다린다.
  * 규칙 본문은 그대로 남는다. 맥락은 지금 DB 로 다시 수집한다.
  */
 export async function regenerateMeetingBriefing(eventId: number, now?: Date): Promise<TodayPayload> {

@@ -35,7 +35,7 @@ import {
 //  3 = 세그먼트 분할(maxLen) + 환각 필터 + 화자 centroid 병합 + 컷편집 VAD 이원화 + 화자 속성 승계.
 // 파이프라인 동작이 결과에 영향을 줄 만큼 바뀌면 올린다. meetings.pipeline_version에 기록해,
 // 옛 버전으로 처리된 녹음을 골라 다시 돌릴 수 있게 한다(0 = 이 컬럼이 생기기 전 처리분).
-export const CURRENT_PIPELINE_VERSION = 3
+const CURRENT_PIPELINE_VERSION = 3
 
 // 정제를 거치는 작업용 세그먼트. 빠른 재적용에서 사용자가 수정한 발언은 text_corrected=1로 표시해
 // 정제·환각 필터·용어집 후보정을 건너뛰고 플래그도 그대로 다시 저장한다.

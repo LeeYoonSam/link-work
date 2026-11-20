@@ -15,7 +15,7 @@ import { DocLinkLine } from './DocBits'
 import { relatedDocs } from './docsModel'
 import { isOverdue, shortDateTime, shortDate, statusVisual, type DetailTarget } from './boardModel'
 
-export interface IssueDetailPanelProps {
+interface IssueDetailPanelProps {
   target: DetailTarget | null
   today: string
   aiSummary?: JiraEpicAiSummary

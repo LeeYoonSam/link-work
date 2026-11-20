@@ -1,140 +1,105 @@
 # LinkWork
 
-WBS(Work Breakdown Structure) + 미팅 스케줄 관리를 위한 데스크톱 애플리케이션입니다.
-프로젝트 일정을 체계적으로 관리하고, 구글 캘린더 연동으로 미팅 일정을 한눈에 확인할 수 있습니다.
+개인 업무와 회의 일정·기록을 한곳에서 관리하는 macOS 데스크톱 앱이다.
+오늘 할 일·일정·Jira 티켓·배포 일정을 한 화면에서 읽고, 회의를 녹음해 로컬에서 전사·화자 분리한 뒤 Claude Code 로 요약한다.
+데이터는 이 Mac 의 SQLite 파일에만 저장한다.
 
-## 주요 기능
+## 화면
 
-### 프로젝트 관리
-- 프로젝트 등록/수정/삭제
-- 개발 기간, QA 기간(자동 계산: 개발 종료 +3일), 배포일(QA 종료 다음날) 관리
-- QA 기간 및 배포일 수동 수정 가능
-- 프로젝트별 작업(Task) 리스트 등록 및 기간 지정
-- 작업 상태 관리 (Pending / In Progress / Done)
+사이드바 메뉴(`src/renderer/src/components/layout/navConfig.ts`)를 기준으로 한다.
 
-### 대시보드
-- 진행중인 프로젝트 경과율(%) 실시간 표시
-- 긴박도에 따른 색상 표시
-  - 초기(0~33%): 초록
-  - 중기(34~66%): 파랑
-  - 말기(67~100%): 빨강
-- 금일 구글 캘린더 일정 표시
+| 그룹 | 메뉴 | 내용 |
+|---|---|---|
+| — | 오늘 | 오늘 대시보드. 신호·다음 배포·Jira 작업·할 일·일정·메모를 한 화면에 모은다 |
+| — | AI 대화 | Claude Code 구독 로그인으로 앱 데이터(할 일·메모·일정·Jira 등)를 묻고 고친다 ([AI_CHAT_ARCHITECTURE.md](docs/AI_CHAT_ARCHITECTURE.md)) |
+| 업무 | 프로젝트 | Jira 프로젝트 화면. 티켓·릴리스·문서 탭 ([PROJECT_BOARD.md](docs/PROJECT_BOARD.md), [RELEASE_NOTES.md](docs/RELEASE_NOTES.md)) |
+| 업무 | 할 일 | 할 일과 태그 |
+| 업무 | 캘린더 | Google 캘린더 주간 일정(읽기 전용) |
+| 회의 | 녹음 | 회의·면접 녹음, 전사, 화자 분리, AI 요약, 액션아이템을 할 일로 등록 ([MEETING_RECORDING.md](docs/MEETING_RECORDING.md)) |
+| 회의 | 회의록 | 요약이 끝난 회의를 문서처럼 검색·열람하고 Markdown 으로 내보낸다 |
+| 자료 | 메모 | 카테고리·검색·3단 탐색 메모 |
+| 자료 | 변수 | 자주 쓰는 값을 저장해 두고 복사한다 |
+| (하단) | 설정 | 연동·AI·비서·회의 녹음·모바일·데이터 ([SETTINGS.md](docs/SETTINGS.md)) |
 
-### 구글 캘린더 연동
-- Google OAuth2 인증으로 캘린더 연동
-- 금일 일정 자동 조회 (5분 간격 동기화)
-- 현재 진행중인 일정 하이라이트
+그 밖에 메뉴 막대 트레이 패널(오늘 일정·할 일), 같은 Wi-Fi 의 휴대폰에서 오늘·할 일·메모를 보는 휴대폰 열람([MOBILE_VIEW.md](docs/MOBILE_VIEW.md))이 있다.
 
-### 로컬 알림
-- 일정 시작 10분전, 5분전, 1분전 OS 알림 표시
-- 중복 알림 방지
-- 앱이 백그라운드에서도 동작
+## 연동
+
+설정 > 연동에서 연결한다. 자격 증명은 macOS `safeStorage` 로 암호화해 저장하고 백업에 넣지 않는다.
+
+| 연동 | 쓰는 곳 | 필요한 것 |
+|---|---|---|
+| Google 캘린더 | 캘린더, 오늘 일정, 회의 알림·회의 전 브리핑 | Google Cloud OAuth 클라이언트(웹 애플리케이션, 리디렉션 URI `http://localhost:8945/callback`, 범위 `calendar.readonly`) |
+| Jira | 프로젝트 화면(티켓·릴리스), 오늘의 Jira 작업 | 사이트 URL, 이메일, Atlassian API token |
+| Bitbucket | AI 대화의 저장소·PR 읽기 | 이메일, Atlassian API token(`read:repository:bitbucket` 등) |
+| Notion | AI 대화의 Notion 문서 읽기 | 내부 통합 토큰 |
+| Claude Code | AI 대화, 회의 요약, 회의 전 브리핑 | 이 Mac 에 Claude Code 를 설치하고 구독 계정으로 로그인. 앱에 API 키를 넣지 않는다 |
+
+## 개발 환경
+
+준비물:
+- macOS (Apple Silicon. `npm run deploy` 는 `dist/mac-arm64` 산출물을 쓴다)
+- Node.js 22 와 npm
+- 네이티브 모듈(`better-sqlite3`) 빌드용 Xcode Command Line Tools 와 `distutils` 가 있는 Python. 기본 Python 에 `distutils` 가 없으면 `PYTHON=/usr/bin/python3` 처럼 지정한다
+- 회의 전사·화자 분리는 선택 의존성(`@fugood/whisper.node`, `sherpa-onnx-node`, `silero-vad-node`)을 쓴다. 설치되지 않으면 녹음·저장은 되고 전사는 폴백으로 동작한다. 모델은 첫 처리 때 내려받는다
+
+```bash
+npm install            # postinstall 이 electron-builder install-app-deps 로 네이티브 모듈을 Electron 용으로 빌드한다
+npm run dev            # 개발 모드 (electron-vite dev)
+npx vitest run         # 단위 테스트
+npm run typecheck      # node(main·preload) + web(renderer) 타입체크
+npm run build          # 프로덕션 번들 (out/)
+npm run deploy         # 빌드 → 앱 패키징(--dir) → ad-hoc 서명 → /Applications/LinkWork.app 에 반영
+```
+
+그 밖의 스크립트: `npm run build:unpack`(패키징만, `dist/`), `npm run build:mac`(DMG), `npm run preview`(빌드 결과 미리보기), `npm run typecheck:node`, `npm run typecheck:web`, `npm run check:docs`(문서가 가리키는 경로·IPC 채널 검사).
+
+앱 데이터는 `~/Library/Application Support/` 아래 앱 폴더(`linkwork.db`, `recordings/`, `ai-attachments/`, `models/`)에 있다. 새 PC 로 옮길 때는 설정 > 데이터의 백업·복원을 쓴다([DATA_BACKUP.md](docs/DATA_BACKUP.md)).
 
 ## 기술 스택
 
-| 구분 | 기술 |
-|------|------|
-| Framework | Electron 33 |
-| Frontend | React 19 + TypeScript |
-| Build Tool | electron-vite + Vite 6 |
-| State | Zustand 5 |
-| Storage | SQLite (better-sqlite3) |
-| Calendar | Google Calendar API v3 |
-| Auth | google-auth-library |
-| Styling | Tailwind CSS 4 |
-| Date | date-fns |
+Electron 43, React 19, TypeScript, electron-vite, Tailwind CSS 4, zustand, better-sqlite3, Claude Agent SDK, googleapis, date-fns, zod, vitest.
 
-## 설치 및 실행
-
-### 사전 요구사항
-- Node.js 18+
-- npm 9+
-
-### 설치
-
-```bash
-git clone <repository-url>
-cd LinkWork
-npm install
-```
-
-### 개발 모드 실행
-
-```bash
-npm run dev
-```
-
-### 프로덕션 빌드
-
-```bash
-npm run build          # 빌드만
-npm run build:mac      # macOS DMG 생성
-```
-
-### 타입 체크
-
-```bash
-npm run typecheck
-```
-
-## Google Calendar 연동 설정
-
-### 1. Google Cloud Console 설정
-
-1. [Google Cloud Console](https://console.cloud.google.com)에 접속
-2. 새 프로젝트 생성 또는 기존 프로젝트 선택
-3. **API 및 서비스 > 라이브러리**에서 "Google Calendar API" 검색 후 활성화
-4. **API 및 서비스 > 사용자 인증 정보**로 이동
-5. **사용자 인증 정보 만들기 > OAuth 클라이언트 ID** 선택
-6. 애플리케이션 유형: **웹 애플리케이션** 선택
-7. **승인된 리디렉션 URI**에 `http://localhost:8945/callback` 추가
-8. 생성된 **클라이언트 ID**와 **클라이언트 시크릿**을 메모
-
-### 2. OAuth 동의 화면 설정
-
-1. **API 및 서비스 > OAuth 동의 화면**으로 이동
-2. User Type: **외부** 선택
-3. 앱 이름, 사용자 지원 이메일 등 필수 정보 입력
-4. 범위 추가: `https://www.googleapis.com/auth/calendar.readonly`
-5. 테스트 사용자에 본인 Google 계정 추가
-
-### 3. LinkWork 앱에서 연동
-
-1. 앱 실행 후 사이드바에서 **Calendar** 클릭
-2. **Step 1**: Client ID와 Client Secret 입력 후 Save
-3. **Step 2**: "Connect Google Calendar" 클릭
-4. Google 로그인 팝업에서 계정 선택 및 권한 허용
-5. 연동 완료 후 금일 일정이 자동으로 표시됨
-
-## 프로젝트 구조
+## 폴더 구조
 
 ```
 src/
-├── main/                          # Electron Main Process
-│   ├── index.ts                   # 앱 엔트리
-│   ├── db/database.ts             # SQLite 초기화
-│   ├── ipc/
-│   │   ├── project.ipc.ts         # 프로젝트 CRUD
-│   │   ├── task.ipc.ts            # 작업 CRUD
-│   │   └── calendar.ipc.ts        # 캘린더 API
-│   ├── services/
-│   │   ├── google-auth.ts         # OAuth2 인증
-│   │   ├── google-calendar.ts     # Calendar API 호출
-│   │   └── notification.ts        # 로컬 알림
-│   └── utils/date.ts              # 날짜 유틸리티
-├── preload/index.ts               # contextBridge API
-└── renderer/src/                  # React Frontend
-    ├── App.tsx                    # 라우팅
-    ├── stores/
-    │   ├── projectStore.ts        # 프로젝트 상태
-    │   └── calendarStore.ts       # 캘린더 상태
-    └── components/
-        ├── layout/                # Sidebar, Header
-        ├── dashboard/             # Dashboard, ProjectProgress, TodaySchedule
-        ├── project/               # ProjectList, ProjectForm, ProjectDetail, TaskList
-        └── calendar/              # CalendarView, CalendarSettings
+├── main/                  # Electron 메인 프로세스 (Node)
+│   ├── index.ts           # 앱 진입점: 창·트레이·IPC 등록·휴대폰 열람 서버
+│   ├── db/                # SQLite 초기화(database.ts)와 스키마·마이그레이션(schema.ts)
+│   ├── ipc/               # 기능별 IPC 핸들러 (*.ipc.ts)
+│   ├── services/          # 기능 로직: AI(ai-*), 비서(assistant-*), Jira·Bitbucket·Notion, 백업, 회의 녹음
+│   │   ├── stt/ vad/ diarization/   # 회의 전사·침묵 검출·화자 분리 어댑터
+│   │   └── mobile/        # 휴대폰 열람 HTTP 서버
+│   └── utils/
+├── preload/index.ts       # contextBridge 로 window.api 노출
+└── renderer/
+    ├── index.html         # 데스크톱 창(메인 창·트레이 패널)
+    ├── mobile.html        # 휴대폰 열람 화면 진입점
+    └── src/
+        ├── App.tsx, main.tsx
+        ├── components/    # 화면별 컴포넌트 (today, ai, project, release, todo, calendar, recording, notes, memo, variable, settings, layout, ui …)
+        ├── stores/        # zustand 스토어
+        ├── mobile/        # 휴대폰 열람 화면
+        ├── types/         # IPC·도메인 타입
+        └── utils/
+resources/                 # 앱 아이콘(icon.icns), 트레이 아이콘
+scripts/eval/              # 회의 파이프라인 평가 도구(Python, scripts/eval/README.md)
+docs/                      # 설계·계약 문서
 ```
 
-## License
+## 문서
 
-MIT
+| 문서 | 내용 |
+|---|---|
+| [docs/ASSISTANT.md](docs/ASSISTANT.md) | 개인 비서·오늘 대시보드 |
+| [docs/AI_CHAT_ARCHITECTURE.md](docs/AI_CHAT_ARCHITECTURE.md) | AI 대화 아키텍처 |
+| [docs/AI_GUARDRAILS.md](docs/AI_GUARDRAILS.md) | AI 가드레일 정책 |
+| [docs/PROJECT_BOARD.md](docs/PROJECT_BOARD.md) | 프로젝트 화면(티켓·릴리스·문서 탭) |
+| [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md) | 릴리스 노트(릴리스 탭) |
+| [docs/MEETING_RECORDING.md](docs/MEETING_RECORDING.md) | 회의 녹음 파이프라인과 회의록 메뉴 |
+| [docs/SETTINGS.md](docs/SETTINGS.md) | 설정 화면·연동 |
+| [docs/MOBILE_VIEW.md](docs/MOBILE_VIEW.md) | 휴대폰 열람 |
+| [docs/DATA_BACKUP.md](docs/DATA_BACKUP.md) | 데이터 백업·복원(새 PC 이전) |
+
+개발 규칙과 검증 명령은 [CLAUDE.md](CLAUDE.md)에 있다.

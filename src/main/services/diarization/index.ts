@@ -1,8 +1,7 @@
 // 화자분리 오케스트레이션 — 폴백 체인
 // mic+system: 채널 기반 분리(모델 불필요)를 우선 시도 → 2화자 미만/실패면 sherpa 임베딩 분리 → none(단일).
 // mic 단독: sherpa 임베딩 다화자 분리 → none.
-// 과거엔 mic+system이면 channel만 단독 시도(early return)라, 채널 에너지가 없으면(.channels.json 부재)
-// 곧장 단일 화자로 붕괴했다. 이제는 어떤 경우에도 sherpa로 폴백해 다화자 분리를 보장한다.
+// 채널 에너지(.channels.json)가 없어도 sherpa 로 폴백하므로 mic+system 녹음이 단일 화자로 무너지지 않는다.
 import type { DiarTurn, SttSegment } from '../meeting-types'
 import { SherpaAdapter } from './sherpa-adapter'
 import { ChannelAdapter } from './channel-adapter'
@@ -16,11 +15,8 @@ import {
   twoStageDegradedNote
 } from './notes'
 
-export type { DiarizationAdapter } from '../meeting-types'
-export type { DiarTurn } from '../meeting-types'
-export { ChannelAdapter } from './channel-adapter'
 
-export interface DiarizeOptions {
+interface DiarizeOptions {
   source: string
   segments: SttSegment[]
   numSpeakers?: number
@@ -43,7 +39,7 @@ function abortError(): Error {
  * - note: 사용자에게 보여줄 한국어 한 문장. 품질이 강등됐거나(모델 준비 실패·sherpa 실패 등)
  *   알릴 것이 있을 때(centroid 정제로 화자 수가 줄어든 경우)만 채운다.
  */
-export interface DiarizeResult {
+interface DiarizeResult {
   turns: DiarTurn[]
   adapter: string
   note?: string

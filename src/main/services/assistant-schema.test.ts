@@ -95,7 +95,7 @@ describe('ASSISTANT_SCHEMA', () => {
     db.close()
   })
 
-  it('A58: assistant_exclusions 테이블과 컬럼 5개를 만든다 (부록 M)', () => {
+  it('assistant_exclusions 테이블과 컬럼 5개를 만든다', () => {
     const db = new Database(':memory:')
     db.exec(ASSISTANT_SCHEMA)
     expect(names(db, 'table')).toContain('assistant_exclusions')
@@ -105,17 +105,17 @@ describe('ASSISTANT_SCHEMA', () => {
     db.close()
   })
 
-  it('MVP3 맥락 복구 컬럼 3개가 daily_plans 에 있다 (부록 F.6)', () => {
+  it('맥락 복구 컬럼 3개가 daily_plans 에 있다', () => {
     const db = new Database(':memory:')
     db.exec(ASSISTANT_SCHEMA)
-    // 맥락 복구 기능은 제거됐다(부록 O). 과거 데이터를 담는 컬럼이라 스키마는 남긴다
+    // 맥락 복구 기능은 제거됐다. 과거 데이터를 담는 컬럼이라 스키마는 남긴다
     expect(columns(db, 'daily_plans')).toEqual(
       expect.arrayContaining(['recovery_text', 'recovery_source', 'recovery_at'])
     )
     db.close()
   })
 
-  it('A17: 부분 UNIQUE 인덱스가 active 계획 2개를 막는다', () => {
+  it('부분 UNIQUE 인덱스가 active 계획 2개를 막는다', () => {
     const db = new Database(':memory:')
     db.exec(ASSISTANT_SCHEMA)
     const insert = db.prepare(
@@ -144,7 +144,7 @@ describe('ASSISTANT_SCHEMA', () => {
   })
 })
 
-// briefing_instruction 컬럼이 없던 MVP3 시점 DDL 이다 (부록 G.7.1)
+// briefing_instruction 컬럼이 없던 옛 DDL 이다
 const OLD_SCHEMA = ASSISTANT_SCHEMA.replace('    briefing_instruction TEXT,\n', '')
 
 // wrapup_skipped_at 컬럼이 없던 시점 DDL 이다 (어제 메모 건너뛰기 영구 저장 이전)
@@ -243,15 +243,15 @@ describe('migrateAssistantSchema', () => {
   })
 })
 
-// 업무 유형 컬럼 4개가 없던 MVP5 시점 plan_items DDL 이다 (부록 J.5)
+// 업무 유형 컬럼 4개가 없던 옛 plan_items DDL 이다
 const WORK_COLUMNS = ['work_type', 'work_version', 'parent_key', 'group_name']
 const PRE_J_SCHEMA = ASSISTANT_SCHEMA.replace(
   "    work_type TEXT NOT NULL DEFAULT 'etc',\n    work_version TEXT,\n    parent_key TEXT,\n    group_name TEXT,\n",
   ''
 )
 
-describe('A50: plan_items 업무 유형 컬럼', () => {
-  it('A50: 새 DDL 의 plan_items 에 컬럼 4개가 있고 work_type 기본값은 etc 다', () => {
+describe('plan_items 업무 유형 컬럼', () => {
+  it('새 DDL 의 plan_items 에 컬럼 4개가 있고 work_type 기본값은 etc 다', () => {
     const db = new Database(':memory:')
     db.exec(ASSISTANT_SCHEMA)
     expect(columns(db, 'plan_items')).toEqual(expect.arrayContaining(WORK_COLUMNS))
@@ -265,7 +265,7 @@ describe('A50: plan_items 업무 유형 컬럼', () => {
     db.close()
   })
 
-  it('A50: 옛 DDL 에 컬럼 4개를 더하고 기존 행은 etc·null 이 된다', () => {
+  it('옛 DDL 에 컬럼 4개를 더하고 기존 행은 etc·null 이 된다', () => {
     expect(PRE_J_SCHEMA).not.toBe(ASSISTANT_SCHEMA)
     const db = new Database(':memory:')
     db.exec(PRE_J_SCHEMA)
@@ -284,7 +284,7 @@ describe('A50: plan_items 업무 유형 컬럼', () => {
     db.close()
   })
 
-  it('A50: 마이그레이션을 여러 번 실행해도 컬럼 목록이 같다 (멱등성)', () => {
+  it('마이그레이션을 여러 번 실행해도 컬럼 목록이 같다 (멱등성)', () => {
     const db = new Database(':memory:')
     db.exec(PRE_J_SCHEMA)
     migrateAssistantSchema(db)
@@ -314,7 +314,7 @@ describe('initDatabase', () => {
       expect.arrayContaining(['daily_plans', 'plan_items', 'assistant_events', 'assistant_exclusions', 'app_settings'])
     )
     expect(names(db, 'index')).toContain('idx_daily_plans_one_active')
-    // database.ts 가 ASSISTANT_SCHEMA 다음에 migrateAssistantSchema 를 부른다
+    // db/schema.ts 가 ASSISTANT_SCHEMA 다음에 migrateAssistantSchema 를 부른다
     expect(columns(db, 'daily_plans')).toContain('briefing_instruction')
     expect(columns(db, 'daily_plans')).toContain('wrapup_skipped_at')
   })

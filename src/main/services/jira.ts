@@ -576,7 +576,7 @@ export interface JiraSearchIssue {
   issueLinks: JiraIssueLinkRef[]
 }
 
-export interface JiraAttachmentRef {
+interface JiraAttachmentRef {
   filename: string
   url: string
   mimeType: string | null
@@ -584,7 +584,7 @@ export interface JiraAttachmentRef {
   createdAt: string | null
 }
 
-export interface JiraIssueLinkRef {
+interface JiraIssueLinkRef {
   /** 이 이슈에서 본 관계 이름(Jira 표시 이름. 예: 관심, 선행 작업, blocks) */
   relation: string
   key: string
@@ -707,7 +707,7 @@ function toStatusCategory(key: string | undefined): JiraStatusCategory {
   return key === 'done' || key === 'indeterminate' ? key : 'new'
 }
 
-export function toSearchIssue(raw: RawSearchIssue): JiraSearchIssue {
+function toSearchIssue(raw: RawSearchIssue): JiraSearchIssue {
   const f = raw.fields ?? {}
   return {
     key: raw.key ?? '',
@@ -796,7 +796,7 @@ export async function listOpenProjectIssues(
 }
 
 /** 최근 완료 이슈 조회 기간 상한(일) */
-export const MAX_RECENT_DONE_DAYS = 90
+const MAX_RECENT_DONE_DAYS = 90
 
 /** 프로젝트에서 최근 days일 안에 완료된 이슈 */
 export async function listRecentlyDoneProjectIssues(

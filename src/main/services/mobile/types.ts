@@ -46,36 +46,12 @@ export interface MobileAddress {
   qrDataUrl: string
 }
 
-export interface MobileTodayResponse {
-  snapshot: MobileTodaySnapshot | null
-}
-
-export interface MobileMemoCreateBody {
-  /** trim 후 1~20000자 */
-  content: string
-  category_id?: number | null
-  is_important?: 0 | 1
-}
-
-export interface MobileMemoCreated {
-  id: number
-}
-
-export interface MobileOk {
-  success: true
-}
-
-export interface MobileError {
-  error: string
-}
-
 export type MobilePublishResult = { success: boolean; error?: string }
 
 /** 휴대폰 쓰기 뒤 데스크톱 화면에 알리는 엔티티 (기존 'ai:dataChanged' 채널의 payload) */
 export type MobileChangedEntity = 'todo' | 'memo'
 
-/** 서버 기본 포트와 대체 포트(사용 중이면 순서대로 시도) */
-export const MOBILE_DEFAULT_PORT = 8946
+/** 서버 포트 후보. 앞에서부터 시도하고 사용 중이면 다음 포트로 넘어간다 */
 export const MOBILE_PORT_CANDIDATES: readonly number[] = [
   8946, 8947, 8948, 8949, 8950, 8951, 8952, 8953, 8954, 8955
 ]

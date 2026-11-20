@@ -101,7 +101,7 @@ function vadCrashGuardPath(): string {
   return join(modelsDir(), '.vad-crash-guard')
 }
 
-export function writeVadCrashGuard(): void {
+function writeVadCrashGuard(): void {
   try {
     // 네이티브 abort 직전 확실히 디스크에 남도록 동기 기록(타임스탬프).
     writeFileSync(vadCrashGuardPath(), new Date().toISOString())
@@ -110,7 +110,7 @@ export function writeVadCrashGuard(): void {
   }
 }
 
-export function clearVadCrashGuard(): void {
+function clearVadCrashGuard(): void {
   try {
     unlinkSync(vadCrashGuardPath())
   } catch {
@@ -137,7 +137,7 @@ export function consumeVadCrashGuard(): boolean {
   return existed
 }
 
-export interface VadDetectResult {
+interface VadDetectResult {
   // 절대시간 발화 구간(ms). vadSegmentsToRegions까지만 적용된 상태로, 전사 청크로 뭉치는
   // coalesceRegions는 호출측(whisper-adapter)이 필요할 때 적용한다.
   regions: Region[]
@@ -145,7 +145,7 @@ export interface VadDetectResult {
   audioMs: number
 }
 
-export interface VadDetectOpts {
+interface VadDetectOpts {
   signal?: AbortSignal
   onMessage?: (m: string) => void
   // 0~1. 네이티브가 중간 진행을 알려주지 않으므로 경과 시간 기반 추정치다(estimateVadProgress).

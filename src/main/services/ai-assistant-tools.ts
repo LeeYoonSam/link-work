@@ -1,7 +1,6 @@
-// AI 채팅용 회의 액션아이템 조회 도구 (docs/ASSISTANT.md 부록 F.8).
-// 과거 계획·최근 작업 조회 도구는 호출 실적이 없어 2026-11 에 제거했다.
+// AI 채팅용 회의 액션아이템 조회 도구 (docs/AI_GUARDRAILS.md 8.6).
 //
-// [가드레일] A31 — docs/AI_GUARDRAILS.md 8.6
+// [가드레일] 읽기 전용·네트워크 없음 — docs/AI_GUARDRAILS.md 8.6
 // 1. DB 는 읽기 전용 커넥션(getAiReadOnlyDatabase)만 쓴다. 비서 테이블에 쓰지 않는다.
 // 2. Jira·캘린더·헤드리스 AI 를 호출하지 않는다. 네트워크를 쓰지 않는다.
 // 3. 입력은 zod 로 검증한다. SQL 은 바인딩 파라미터만 쓴다.
@@ -45,7 +44,7 @@ interface ActionItemRow {
   action_items: string | null
 }
 
-export interface MeetingActionItemView {
+interface MeetingActionItemView {
   meeting_id: number
   meeting_title: string | null
   meeting_started_at: string | null

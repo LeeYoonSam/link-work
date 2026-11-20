@@ -3,7 +3,7 @@
 import type { MenuIconName } from '../icons/MenuIcon'
 import type { ProjectsTab } from '../../stores/navigationStore'
 
-// 앱 화면 ID. 'today' 가 유일한 홈이다. 'dashboard'·'reports'(주간 보고) 는 없앴다
+// 앱 화면 ID. 'today' 가 유일한 홈이다
 export const VIEW_IDS = [
   'today',
   'ai',
@@ -33,13 +33,13 @@ export const VIEW_LABELS: Record<ViewId, string> = {
   settings: '설정'
 }
 
-export interface NavItem {
+interface NavItem {
   id: ViewId
   label: string
   icon: MenuIconName
 }
 
-export interface NavGroup {
+interface NavGroup {
   // null 이면 그룹 제목을 그리지 않는다
   title: string | null
   items: NavItem[]
@@ -75,10 +75,10 @@ export const NAV_GROUPS: NavGroup[] = [
 // 사이드바 하단 고정 항목. 자주 쓰지 않는 화면이라 그룹 목록과 떼어 둔다
 export const NAV_FOOTER: NavItem[] = [item('settings', 'settings')]
 
-// 없앤 화면 ID 를 새 ID 로 옮긴다. 이유: AI 링크·저장값에 예전 ID 가 남는다
+// 지금은 없는 화면 ID 를 새 ID 로 옮긴다. 이유: AI 링크·저장값에 옛 ID 가 남아 있을 수 있다
 const VIEW_ALIASES: Record<string, ViewId> = {
   dashboard: 'today',
-  // 주간 보고 화면은 없앴다(2026-11-19). 활동 기록(activity_log)은 계속 쌓인다
+  // 주간 보고 화면. 활동 기록(activity_log)은 계속 쌓인다
   reports: 'today'
 }
 

@@ -15,7 +15,7 @@ interface SherpaSegment {
 }
 
 /** 워커가 알려주는 centroid 정제 결과 요약 (worker.ts DiarWorkerInfo와 동일 형태). */
-export interface SherpaDiarizationInfo {
+interface SherpaDiarizationInfo {
   speakersBefore: number
   speakersAfter: number
   refined: boolean
@@ -35,10 +35,10 @@ interface WorkerOutput {
 }
 
 // 워커 타임아웃 기본값: 30분. 긴 회의도 이 안에 끝나며, 넘으면 워커가 멈춘 것으로 본다.
-export const DEFAULT_WORKER_TIMEOUT_MS = 30 * 60 * 1000
+const DEFAULT_WORKER_TIMEOUT_MS = 30 * 60 * 1000
 
 /** sherpa를 쓸 수 없는 이유. null이면 사용 가능. */
-export type SherpaUnavailableReason = 'not-installed' | 'models-missing'
+type SherpaUnavailableReason = 'not-installed' | 'models-missing'
 
 // 워커 스크립트 경로 — main 빌드 산출물과 같은 디렉터리(out/main/)에 위치
 function workerPath(): string {

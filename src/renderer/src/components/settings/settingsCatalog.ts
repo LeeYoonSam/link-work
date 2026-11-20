@@ -5,7 +5,7 @@ export const SETTINGS_SECTION_IDS = ['integrations', 'ai', 'assistant', 'recordi
 
 export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number]
 
-export interface SettingsSectionMeta {
+interface SettingsSectionMeta {
   id: SettingsSectionId
   title: string
   description: string

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FocusEntity } from '../stores/focusStore'
 
 // 링크로 찾아간 항목을 강조하는 시간
-export const FOCUS_FLASH_MS = 2500
+const FOCUS_FLASH_MS = 2500
 
 // 강조 스타일. 리터럴 문자열로 둔다. 이유: Tailwind 는 소스의 리터럴만 스캔한다
 export const FOCUS_RING_CLASS = 'ring-2 ring-blue-400 ring-offset-1 bg-blue-50/60'

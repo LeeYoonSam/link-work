@@ -10,8 +10,8 @@ import { join, resolve, sep } from 'path'
 // - 파일명은 main이 생성한다 (사용자 파일명은 meta에만 기록 — 경로 조작 차단).
 // - AI의 Read 도구는 이 디렉토리 안의 파일만 허용된다 (ai-agent.ts canUseTool).
 
-export const MAX_ATTACHMENTS_PER_MESSAGE = 4
-export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024 // 8MB (Claude 이미지 입력 상한 이내)
+const MAX_ATTACHMENTS_PER_MESSAGE = 4
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024 // 8MB (Claude 이미지 입력 상한 이내)
 
 // Claude 비전이 지원하는 이미지 타입만 허용
 const MIME_EXTENSIONS: Record<string, string> = {
@@ -34,7 +34,7 @@ export interface SavedAttachment {
   type: string
 }
 
-export function aiAttachmentsDir(): string {
+function aiAttachmentsDir(): string {
   return join(app.getPath('userData'), 'ai-attachments')
 }
 

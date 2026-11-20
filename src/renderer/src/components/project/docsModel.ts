@@ -17,7 +17,7 @@ export const DOC_KIND_LABELS: Record<DocKind, string> = {
 }
 
 /** 링크가 걸린 티켓 */
-export interface DocOrigin {
+interface DocOrigin {
   key: string
   summary: string
 }
@@ -123,7 +123,7 @@ export function matchesDoc(e: DocEntry, f: DocsFilter, groupEpicKey: string | nu
   return ts.every((t) => hay.includes(t))
 }
 
-export interface DocsView {
+interface DocsView {
   groups: DocGroup[]
   /** 종류 필터를 빼고 센 종류별 건수. 상단 요약이자 종류 토글의 숫자다 */
   kindCounts: Record<DocKind, number>

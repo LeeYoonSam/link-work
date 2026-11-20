@@ -10,7 +10,7 @@ import type { JiraBoardIssue, JiraEpicAiSummary, JiraIssueLink } from './jira-bo
 
 type Db = Database.Database
 
-export interface JiraBoardSyncState {
+interface JiraBoardSyncState {
   projectKey: string
   myAccountId: string | null
   /** 마지막 전체 동기화 시작 시각(ISO). 없으면 null */

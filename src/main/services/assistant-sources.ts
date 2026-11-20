@@ -1,9 +1,8 @@
 // 비서의 수집 지점. 회의 전 브리핑 맥락을 DB 에서 모은다.
-// SSOT: docs/ASSISTANT.md 부록 I.3.1, I.5
-// 부록 O(오늘 대시보드 개편): 후보·오늘 일정·Jira·맥락 복구 수집은 제거됐다.
+// SSOT: docs/ASSISTANT.md §7.1, §7.3
 //
 // [가드레일]
-// - A2: 이 파일은 DB 를 읽기만 한다. 원본 테이블에 쓰지 않는다.
+// - 이 파일은 DB 를 읽기만 한다. 원본 테이블에 쓰지 않는다.
 // - 조회 실패는 throw 하지 않는다. 해당 출처를 비우고 errors 에 문구를 넣는다.
 import type Database from 'better-sqlite3'
 import { addDays, isoToLocalDateTime } from './assistant-day'
@@ -16,9 +15,9 @@ function nonBlank(value: string | null | undefined): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value : null
 }
 
-// ── 회의 전 브리핑 수집 (부록 I.3.1, I.5) ──
-// A46: DB 읽기만 한다. Jira·캘린더를 부르지 않는다. 일정은 호출자가 캐시에서 읽어 넘긴다.
-// A2: meetings·meeting_summaries 는 SELECT 만 한다.
+// ── 회의 전 브리핑 수집 ──
+// DB 읽기만 한다. Jira·캘린더를 부르지 않는다. 일정은 호출자가 캐시에서 읽어 넘긴다.
+// meetings·meeting_summaries 는 SELECT 만 한다.
 
 export const MEETING_LIMITS = {
   pastDays: 90,
@@ -86,7 +85,7 @@ function readPastMeetings(db: Database.Database, meeting: MeetingRef): MeetingPa
   return out
 }
 
-/** 회의 브리핑 맥락. throw 하지 않는다. 실패한 출처는 비우고 errors 에 문구를 넣는다 (A46) */
+/** 회의 브리핑 맥락. throw 하지 않는다. 실패한 출처는 비우고 errors 에 문구를 넣는다 */
 export function collectMeetingContext(db: Database.Database, meeting: MeetingRef): MeetingContext {
   const errors: string[] = []
   function guard<T>(message: string, empty: T, read: () => T): T {

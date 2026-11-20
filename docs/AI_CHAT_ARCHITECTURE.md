@@ -9,9 +9,6 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
   회의 액션아이템/Google 캘린더)와 연결된 외부 지식(Notion, Atlassian(Jira), Slack,
   Bitbucket, 웹 페이지)을 도구로 조회해서 답하는 로컬 전용 채팅 기능.
 - 변수는 AI 가 조회·생성·수정하지 않는다. 변수가 필요하면 AI 는 변수 메뉴(`linkwork://view/variables`)로 안내한다.
-- 2026-11-19 에 도구 7종(`list_variables`·`create_variable`·`update_variable`·`get_activity_log`·
-  `search_notion`·`get_today_plan`·`get_recent_work`)을 제거했다. 5개월 감사 로그에서 호출이 0회였거나
-  데이터원이 더 이상 갱신되지 않아서다.
 - 응답은 마크다운으로 렌더링되며, `linkwork://` 링크를 통해 앱 내 화면 이동·항목 강조
   같은 액션을 수행할 수 있다.
 - 채팅 목록/히스토리는 SQLite에 영속화되고, 채팅 재진입 시 AI 세션도 이어진다.
@@ -79,8 +76,9 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 | `src/main/services/ai-assistant-tools.ts` | 회의 액션아이템 조회 도구 `list_meeting_action_items` |
 | `src/main/services/ai-write-tools.ts` | 쓰기 도구 4종 (생성 2종 `create_todo`/`create_memo` + 수정 2종 `update_todo`/`update_memo`, 채팅별 쓰기 모드 게이트 — 가드레일 문서 7절) |
 | `src/main/services/ai-audit.ts` | 감사 로그 기록 헬퍼 |
-| `src/main/services/ai-model.ts` | 모델 패밀리 레지스트리(`AI_MODEL_FAMILIES`), AI 대화 모델 선택 저장(`ai_model`), 동적 라벨 캐시(`ai_model_labels`). 개인 비서용 고정 ID 매핑(`resolveAiModelId`)도 둔다 |
-| `src/main/services/notion.ts` | Notion 연동 (토큰 safeStorage 저장, 페이지/DB 조회 API). 검색 함수는 `search_notion` 도구와 함께 제거했다 |
+| `src/main/services/ai-model.ts` | 모델 패밀리 레지스트리(`AI_MODEL_FAMILIES`), AI 대화 모델 선택 저장(`ai_model`), 동적 라벨 캐시(`ai_model_labels`). 헤드리스 호출(회의 전 브리핑·에픽 AI 요약)용 고정 ID 매핑(`resolveAiModelId`)도 둔다 |
+| `src/main/services/ai-headless.ts` | 창 없이 Claude 를 1회 실행하고 JSON 을 zod 로 검증하는 `runHeadlessJson`, 헤드리스 LLM 직렬화 줄 `runLlmSerialized`. AI 대화가 아니라 회의 전 브리핑·에픽 AI 요약이 쓴다. 도구는 0개다 |
+| `src/main/services/notion.ts` | Notion 연동 (토큰 safeStorage 저장, 페이지/DB 조회 API) |
 | `src/main/services/notion-markdown.ts` | Notion 블록 → 마크다운 변환 (순수 함수, 단위 테스트) |
 | `src/main/services/bitbucket.ts` | Bitbucket 연동. 이메일과 API token 을 safeStorage 로 암호화해 저장하고, 저장소 폴더 목록·파일 내용을 읽는다 |
 | `src/main/services/bitbucket-url.ts` | bitbucket.org 웹 URL 을 workspace·저장소·ref·경로로 나누는 파서 (순수 함수, 단위 테스트) |
@@ -117,7 +115,7 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 ```
 
 > 옛 프로젝트 기능의 `projects`·`tasks` 테이블은 백업 그룹과 과거 기록 때문에 남아 있지만,
-> AI 도구는 읽지도 쓰지도 않는다. 프로젝트 메뉴는 Jira 티켓 보드로 바뀌었다([PROJECT_BOARD.md](./PROJECT_BOARD.md)).
+> AI 도구는 읽지도 쓰지도 않는다. 프로젝트 메뉴는 Jira 티켓 보드다([PROJECT_BOARD.md](./PROJECT_BOARD.md)).
 
 ## 6. 메시지 전송 흐름 (시퀀스)
 
@@ -284,7 +282,7 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
   커넥터 연결 안내, 읽기만 가능"으로 서술한다. 도구 이름은 커넥터 이름 규칙으로 맞춘 값이며,
   실제 앱 감사 로그로는 아직 실측하지 않았다.
 - **Bitbucket 연동 (이메일 + API token)**:
-  - 사용자는 설정 > 연동(`linkwork://view/settings`)의 Bitbucket 카드에서 Atlassian 계정 이메일과 API token 을 등록한다. AI 대화 화면에는 연동 버튼이 없다(2026-11-19 제거).
+  - 사용자는 설정 > 연동(`linkwork://view/settings`)의 Bitbucket 카드에서 Atlassian 계정 이메일과 API token 을 등록한다. AI 대화 화면에는 연동 버튼이 없다.
   - main 은 Bitbucket API 로 자격 증명을 검증한 뒤 저장한다. 저장은 `bitbucket.ts` 가 safeStorage 로 암호화해서 한다.
   - `read_bitbucket` 은 bitbucket.org 링크를 받는다. 대상은 저장소 루트, 폴더, 파일이다.
   - `fetch_url` 에 bitbucket.org 링크가 오면 `read_bitbucket` 경로로 위임한다. 로그인 없이 읽으면 404 만 보이기 때문이다.
@@ -302,7 +300,6 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 - 모델이 `AskUserQuestion` 을 부르면 `canUseTool` 이 감사 로그에 `tool_denied` 를 남기고 거부한다.
   거부 메시지(`ASK_USER_QUESTION_DENY_MESSAGE`)는 "번호 선택지를 본문에 글로 적어 물으라"는 취지다.
   그 외 도구의 거부 메시지는 "LinkWork 조회 도구만 사용할 수 있습니다." 이다.
-- 근거: 감사 로그에서 `AskUserQuestion` 이 7회 차단됐다.
 
 ### 8.4 이미지 첨부
 
@@ -321,7 +318,7 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 renderer의 `MarkdownContent`가 클릭을 가로채 처리한다
 (react-markdown의 기본 URL sanitize에서 `linkwork://`만 예외 처리).
 
-AI 채팅과 오늘 화면은 같은 처리기 `utils/openInternalLink.ts` 를 쓴다.
+AI 채팅과 오늘 화면의 회의 브리핑 카드는 같은 처리기 `utils/openInternalLink.ts` 를 쓴다.
 파싱은 `utils/internalLink.ts` 의 `parseInternalLink` 가 맡는다. 모르는 형식이면 아무 동작도 하지 않는다.
 처리 순서는 다음과 같다.
 1. 처리기가 대상을 가리는 필터·탭을 푼다.
@@ -336,7 +333,7 @@ AI 채팅과 오늘 화면은 같은 처리기 `utils/openInternalLink.ts` 를 �
 | 링크 | 동작 |
 |---|---|
 | `linkwork://project/…` (옛 프로젝트·작업 링크) | 프로젝트 화면의 티켓 탭을 연다. 옛 대화의 링크가 죽지 않게 남긴 동작이다 |
-| `linkwork://document/{id}` (옛 문서 링크) | 프로젝트 화면의 문서 탭을 연다. 문서 메뉴를 없앤 뒤 옛 대화의 링크가 죽지 않게 남긴 동작이다 |
+| `linkwork://document/{id}` (옛 문서 링크) | 프로젝트 화면의 문서 탭을 연다. 옛 대화의 링크가 죽지 않게 남긴 동작이다 |
 | `linkwork://memo/{id}` | 메모 카드를 강조하고 메모 보기 창을 연다. 보관 메모면 보관함을 연다 |
 | `linkwork://todo/{id}` | 할 일 항목을 강조한다. 태그 필터를 푼다 |
 | `linkwork://variable/{id}` | 변수 행을 강조한다. secret 값은 공개하지 않는다. AI 도구가 변수를 다루지 않으므로 옛 대화의 링크용이다 |
@@ -345,8 +342,8 @@ AI 채팅과 오늘 화면은 같은 처리기 `utils/openInternalLink.ts` 를 �
 | `linkwork://note/{meetingId}` | 회의록 필터를 풀고 회의록을 열고 목록 행을 강조 |
 | `linkwork://calendar/{YYYY-MM-DD}[/{eventId}]` | 그 날짜의 주로 이동해 날짜 카드와 일정을 강조 |
 | `linkwork://today/meeting/{eventId}` | 오늘 화면을 열고 그 회의 브리핑을 펼치고 스크롤한다 |
-| `linkwork://today/item/{id}`, `linkwork://today/{inbox\|briefing\|timeline}` | 오늘 화면으로 이동만 한다. 오늘 대시보드(`TodayView`)는 `meeting` 포커스만 소비한다(`meetingFocusEventId`). 옛 대화의 링크가 죽지 않게 남긴 형식이다 |
-| `linkwork://view/{name}` | 메뉴 이동 (today/projects/todos/…). `dashboard`·`reports`(2026-11-19 에 없앤 주간 보고) 는 today 의 별칭이다. `projects` 는 프로젝트 화면의 티켓 탭을 연다. `releases`·`documents` 는 릴리스 탭·문서 탭으로 가는 별칭이다 |
+| `linkwork://today/item/{id}`, `linkwork://today/{inbox\|briefing\|timeline}` | 포커스 없이 오늘 화면만 연다. 옛 대화의 링크가 죽지 않게 남긴 형식이다 |
+| `linkwork://view/{name}` | 메뉴 이동 (today/projects/todos/…). `dashboard`·`reports` 는 today 의 별칭이다(옛 대화의 링크용). `projects` 는 프로젝트 화면의 티켓 탭을 연다. `releases`·`documents` 는 릴리스 탭·문서 탭으로 가는 별칭이다 |
 | 일반 `https://` | 외부 브라우저로 열기 (기존 동작) |
 
 링크 규칙은 다음과 같다.
@@ -354,9 +351,6 @@ AI 채팅과 오늘 화면은 같은 처리기 `utils/openInternalLink.ts` 를 �
 - 쓰기 도구(`ai-write-tools.ts`)는 결과의 `link` 에 항목 링크를 넣는다. AI 는 생성·수정 뒤 그 값을 그대로 쓴다.
 - 단건 조회 도구 `get_memo`, `get_todo`, `get_release_note` 는 결과에 `link` 를 넣는다. 목록 도구에는 넣지 않는다.
 - `get_calendar_events` 는 일정 `id` 를 돌려준다. AI 는 이 값으로 캘린더 링크를 만든다.
-- 오늘 화면 후보의 링크는 다음과 같다.
-  - 할 일: `linkwork://todo/{id}`
-  - 액션아이템: `linkwork://note/{meetingId}`
 
 ## 10. 빌드/패키징 주의사항
 
@@ -378,18 +372,18 @@ AI 채팅과 오늘 화면은 같은 처리기 `utils/openInternalLink.ts` 를 �
 - **조회 도구 추가**: `ai-tools.ts`의 `buildServer()`에 `tool()` 정의 → tools 배열과
   파일 상단 `LINKWORK_TOOL_NAMES` 목록에 추가 → 필요 시 `ai-agent.ts`의
   `TOOL_LABELS`에 한국어 라벨 추가 → 8.1절 표와 가드레일 문서를 갱신.
-  - 추가 전에 실제로 부를 질문이 있는지 확인한다. 2026-11-19 에 감사 로그 0회 호출 도구를 제거했다(1절).
+  - 추가 전에 실제로 부를 질문이 있는지 확인한다. 감사 로그(`tool_call`)로 호출 실적을 본다.
 - **claude.ai 커넥터 도구 허용**: `ai-agent.ts` 의 `CLAUDE_AI_*_READ_TOOLS` 배열에 읽기 도구만 넣는다.
   이 배열은 `allowedTools` 와 `canUseTool` 양쪽에 쓰인다. 쓰기·전송 도구는 넣지 않는다.
   도구 이름은 감사 로그로 실측한 뒤 확정한다(가드레일 문서 8.1·8.2·8.9절).
 - **다른 화면에서 AI 대화 열기**: `useAiChatStore.getState().startChatWith(prompt)` 를 부른다(6.1절).
   프롬프트에는 식별자만 넣는다.
-- **데이터 추가/수정/삭제 도구**: [AI_GUARDRAILS.md의 "쓰기 도구 도입 기준"](./AI_GUARDRAILS.md#7-쓰기-도구-도입-기준-향후)을
+- **데이터 추가/수정/삭제 도구**: [AI_GUARDRAILS.md 7절의 쓰기 도구 기준](./AI_GUARDRAILS.md#7-쓰기-도구)을
   반드시 따를 것 (HITL 승인, 소프트 삭제, 일괄 변경 금지, 채팅별 쓰기 모드 등).
 - **모델 선택지 변경**: `ai-model.ts` 의 `AI_MODEL_FAMILIES`(패밀리 정의)와 `AI_CHAT_MODEL_CHOICES`(AI 대화 선택지)를 고친다.
   - 새 버전이 나오면 코드를 고치지 않는다. CLI 가 별칭을 최신 버전으로 해석하고, 라벨도 `supportedModels()` 에서 갱신된다.
   - 저장된 값이 선택지 밖이면(예 이전 선택지 `sonnet`) `normalizeAiChatModel` 이 기본값 `opus` 로 바꾼다.
-  - 개인 비서(오늘 화면)는 `resolveAiModelId` 의 고정 ID 매핑을 따로 쓴다. 비서 결과에 modelId 를 기록하기 때문이다.
+  - 헤드리스 호출(회의 전 브리핑·에픽 AI 요약)은 `resolveAiModelId` 의 고정 ID 매핑을 따로 쓴다. 회의 전 브리핑이 결과에 modelId 를 기록하기 때문이다.
 - **라벨 갱신 시점**: (1) `runAiQuery` 가 query 를 만든 직후 `supportedModels()` 를 비동기로 부른다. 실패는 무시한다. (2) 캐시가 비었을 때 `ai:getModelOptions` 가 탐침 query 를 1회 띄운다. 탐침은 사용자 메시지 없이 CLI 초기화 응답만 받으므로 사용량을 쓰지 않는다. 탐침은 20초에 끝나고, 실패하면 10분 동안 다시 띄우지 않는다.
 - **턴 수 변경**: `ai-agent.ts`의 `MAX_TURNS` 상수.
 - **시스템 프롬프트(답변 포맷) 조정**: `ai-agent.ts`의 `buildSystemPrompt()`.

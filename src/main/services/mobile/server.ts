@@ -38,12 +38,12 @@ import {
   memoCategoryExists
 } from '../../utils/memo-helpers'
 
-export const MAX_BODY_BYTES = 64 * 1024
-export const MAX_MEMO_LENGTH = 20000
+const MAX_BODY_BYTES = 64 * 1024
+const MAX_MEMO_LENGTH = 20000
 /** /api/today 가 데스크톱에 재발행을 요청하는 최소 간격 */
-export const PUBLISH_REQUEST_INTERVAL_MS = 5000
+const PUBLISH_REQUEST_INTERVAL_MS = 5000
 /** 이보다 작은 응답은 압축하지 않는다 */
-export const GZIP_MIN_BYTES = 1024
+const GZIP_MIN_BYTES = 1024
 const GZIP_CACHE_MAX = 64
 
 export type MobileActivityLogger = (
@@ -53,7 +53,7 @@ export type MobileActivityLogger = (
   entityName?: string
 ) => void
 
-export interface MobileServerDeps {
+interface MobileServerDeps {
   db: Database.Database
   /** 현재 페어링 토큰. 없으면 모든 인증이 실패한다 */
   getToken: () => string | null

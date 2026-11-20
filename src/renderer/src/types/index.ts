@@ -1,7 +1,7 @@
 export interface TrayAPI {
   getData: () => Promise<unknown>
   openApp: () => Promise<void>
-  // 트레이 '오늘 보기'. 메인 창을 오늘 화면으로 연다 (부록 E.4.3)
+  // 트레이 '오늘 보기'. 메인 창을 오늘 화면으로 연다 (docs/ASSISTANT.md §10)
   openToday: () => Promise<void>
   onData: (callback: (data: unknown) => void) => () => void
 }
@@ -54,7 +54,7 @@ export interface CalendarAPI {
   ) => Promise<{ success: true; events: CalendarEvent[]; fetchedAt: string } | Fail>
 }
 
-// ── 오늘 대시보드 신호 (docs/ASSISTANT.md 부록 O). 한 줄 브리핑·신호 문구는 렌더러 규칙(todayModel)이 만든다 ──
+// ── 오늘 대시보드 신호 (docs/ASSISTANT.md §11). 한 줄 브리핑·신호 문구는 렌더러 규칙(todayModel)이 만든다 ──
 export type SignalKind =
   | 'release_risk'
   | 'release_day'
@@ -460,7 +460,7 @@ export interface Meeting {
   // 컷편집 전 길이. audio_compacted=0이면 null
   original_duration_ms: number | null
   // 이 회의를 처리한 파이프라인 버전. 0=구 파이프라인/미처리,
-  // 2=무음 컷편집·용어집·참석자 힌트 파이프라인.
+  // 2=무음 컷편집·용어집·참석자 힌트 파이프라인, 3=현재(docs/MEETING_RECORDING.md §13).
   // 요약 재생성 시 "새 파이프라인으로 재분석할지"를 이 값으로 판단한다.
   pipeline_version: number
   project_id: number | null
@@ -536,8 +536,8 @@ export interface MeetingSummary {
   meeting_id: number
   // 회의: TL;DR / 면접: 면접 개요
   tldr: string | null
+  // 회의 전용 4개 필드 — key_points 포함 (면접에서는 빈 배열)
   key_points: string[]
-  // 회의 전용 3분류 (면접에서는 빈 배열)
   decisions: string[]
   action_items: ActionItem[]
   next_steps: string[]
@@ -585,7 +585,7 @@ export interface ChannelEnergy {
   right: number[]
 }
 
-// ── 회의록 (요약 완료된 회의를 문서처럼 열람) — docs/MEETING_NOTES.md ──
+// ── 회의록 (요약 완료된 회의를 문서처럼 열람) — docs/MEETING_RECORDING.md §10 ──
 export interface MeetingNoteFilter {
   q?: string                      // 검색어(공백 trim, 빈 문자열은 무시)
   kind?: 'all' | MeetingKind      // 기본 'all'
@@ -951,7 +951,7 @@ export interface JiraBoardAPI {
   openLink: (url: string) => Promise<{ success: true } | { success: false; error: string }>
 }
 
-// ── 아침 자동 동기화 (docs/ASSISTANT.md A54) ──
+// ── 아침 자동 동기화 (docs/ASSISTANT.md §8) ──
 // main 의 assistant-types.ts 와 같은 모양이다. 한쪽만 바꾸면 배지와 상태 줄이 빈 값을 그린다.
 
 export type MorningSyncPartName = 'release'
@@ -1090,7 +1090,7 @@ export interface BackupAPI {
   onProgress: (cb: (p: BackupProgress) => void) => () => void
 }
 
-// ── 개인 비서 (docs/ASSISTANT.md 부록 A.1·A.5·B.7 복제) ──
+// ── 개인 비서 (docs/ASSISTANT.md §4·§5·§12) ──
 // main 의 src/main/services/assistant-types.ts 와 같은 모양을 유지한다.
 
 export type AssistantEventKind =
@@ -1117,7 +1117,7 @@ export interface AssistantEvent {
   created_at: string
 }
 
-// 하루 계획 시절의 설정(startNudge·workEnd·planSize·jiraScope·refresh*·completeOriginOnDone)은 2026-11-19 에 뺐다
+// 비서 설정 (docs/ASSISTANT.md §4)
 export interface AssistantSettings {
   enabled: boolean
   dayRollover: string
@@ -1126,17 +1126,17 @@ export interface AssistantSettings {
   llmModel: AiModelChoice
   openAtLogin: boolean
   meetingLeadMin: number
-  // 회의 전 브리핑 켜기 (부록 I.11.4)
+  // 회의 전 브리핑 켜기 (§7)
   meetingBriefingEnabled: boolean
-  // 첫 화면 (docs/ASSISTANT.md 부록 C, A24). 저장된 auto·dashboard 는 main 이 today 로 읽는다
+  // 첫 화면 (§4). 저장된 auto·dashboard 는 main 이 today 로 읽는다
   startView: 'today' | 'projects' | 'calendar'
-  // 아침 자동 동기화 켜기 (부록 K, A54)
+  // 아침 자동 동기화 켜기 (§8)
   morningSyncEnabled: boolean
   // 아침 자동 동기화 시각 'HH:mm'
   morningSyncTime: string
 }
 
-// 오늘 화면(assistant:getToday)이 읽는 값. 하루 계획·타임라인·맥락 복구 필드는 2026-11-19 에 뺐다
+// 오늘 화면(assistant:getToday)이 읽는 값 (docs/ASSISTANT.md §11.1)
 export interface TodayPayload {
   // 오늘 논리 날짜의 비서 이벤트(회의 전 브리핑 카드)
   events: AssistantEvent[]
@@ -1149,15 +1149,16 @@ export interface AssistantChangedEvent {
   date: string
   reason: 'meeting'
 }
+// 메인이 보내는 focus 는 회의 브리핑 알림 클릭의 'meeting' 뿐이다 (docs/ASSISTANT.md §6.3)
 export interface AssistantNavigateEvent {
   view: 'today'
   focus?: {
-    kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'meeting'
+    kind: 'meeting'
     id?: string
   }
 }
 
-// ── 회의 전 브리핑 (부록 I.11.1 복제) ──
+// ── 회의 전 브리핑 (docs/ASSISTANT.md §7) ──
 // 시각은 'YYYY-MM-DD HH:mm:ss' 다. 종일 일정은 없다
 export interface MeetingRef {
   id: string
@@ -1184,7 +1185,7 @@ export type AssistantResult<T> = ({ success: true } & T) | { success: false; err
 export type TodayResult = AssistantResult<{ today: TodayPayload }>
 
 export interface AssistantAPI {
-  // 오늘 대시보드 개편(부록 O)으로 계획 조작 채널 18개를 지웠다. 회의 브리핑·설정·이동만 남는다
+  // 오늘 데이터·회의 브리핑·설정·이동 (docs/ASSISTANT.md §12)
   getToday: () => Promise<TodayResult>
   getSettings: () => Promise<AssistantSettings>
   saveSettings: (
@@ -1192,7 +1193,7 @@ export interface AssistantAPI {
   ) => Promise<AssistantResult<{ settings: AssistantSettings }>>
   onNavigate: (cb: (p: AssistantNavigateEvent) => void) => () => void
   onChanged: (cb: (p: AssistantChangedEvent) => void) => () => void
-  // 회의 브리핑의 AI 본문을 다시 만든다 (부록 I.11.10). 결과를 기다린다
+  // 회의 브리핑의 AI 본문을 다시 만든다 (docs/ASSISTANT.md §7.7). 결과를 기다린다
   regenerateMeetingBriefing: (eventId: number) => Promise<TodayResult>
 }
 

@@ -62,8 +62,7 @@ import {
 } from './assistant-store'
 import type { NewAssistantEvent } from './assistant-types'
 
-// 부록 O(오늘 대시보드 개편): 계획 만들기·항목 조작·브리핑·복구·제외 쓰기 함수는 제거됐다.
-// 2026-11-19 에 과거 계획 읽기·지난 계획 닫기·계속 제외 읽기도 뺐다. 이 파일은 이벤트·설정 함수만 검증한다.
+// 이 파일은 비서 이벤트·설정 함수를 검증한다 (docs/ASSISTANT.md §4, §5.1).
 
 const DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/
 const AT = '2026-11-02 09:40:00'
@@ -74,7 +73,7 @@ beforeEach(() => {
   db = new Database(':memory:')
   db.exec(`CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT DEFAULT (datetime('now')))`)
   db.exec(ASSISTANT_SCHEMA)
-  // database.ts 와 같은 순서다. 옛 DB 에서만 컬럼을 더한다 (부록 G.16 위험 13)
+  // db/schema.ts 와 같은 순서다. 옛 DB 에서만 컬럼을 더한다
   migrateAssistantSchema(db)
 })
 
@@ -104,8 +103,8 @@ describe('설정', () => {
   })
 })
 
-describe('A12: 날짜·시각 형식', () => {
-  it('A12: insertEvent 가 저장한 created_at 은 로컬 YYYY-MM-DD HH:mm:ss 다', () => {
+describe('날짜·시각 형식', () => {
+  it('insertEvent 가 저장한 created_at 은 로컬 YYYY-MM-DD HH:mm:ss 다', () => {
     const ev = insertEvent(db, {
       event_key: 'start_nudge:2026-11-02:-',
       kind: 'start_nudge',
@@ -119,7 +118,7 @@ describe('A12: 날짜·시각 형식', () => {
     expect(ev?.created_at).toMatch(DATETIME_RE)
   })
 
-  it('A12: UTC ISO datetime 을 넘기면 throw 하고 쓰지 않는다', () => {
+  it('UTC ISO datetime 을 넘기면 throw 하고 쓰지 않는다', () => {
     const iso = '2026-11-02T00:40:00.000Z'
     expect(() =>
       insertEvent(db, {
@@ -149,7 +148,7 @@ describe('비서 이벤트', () => {
     payload: '{"title":"오늘 시작할까요?"}'
   }
 
-  it('A5: 같은 event_key 는 1회만 기록한다. 두 번째 insertEvent 는 null 이다', () => {
+  it('같은 event_key 는 1회만 기록한다. 두 번째 insertEvent 는 null 이다', () => {
     const first = insertEvent(db, ev)
     expect(first?.event_key).toBe(ev.event_key)
     expect(insertEvent(db, { ...ev, status: 'late' })).toBeNull()
@@ -175,7 +174,7 @@ describe('비서 이벤트', () => {
   })
 
 
-  it('updateEventPayload: 지정한 행의 payload 만 바꾼다 (부록 I.8)', () => {
+  it('updateEventPayload: 지정한 행의 payload 만 바꾼다', () => {
     const meeting = insertEvent(db, {
       ...ev,
       event_key: 'meeting_briefing:2026-11-02:evt-1',
@@ -204,8 +203,8 @@ describe('비서 이벤트', () => {
   })
 })
 
-describe('A2: 원본 테이블 보호', () => {
-  it('A2: 저장소는 비서 테이블과 app_settings 만 쓴다', () => {
+describe('원본 테이블 보호', () => {
+  it('저장소는 비서 테이블과 app_settings 만 쓴다', () => {
     // 원본 테이블이 없는 DB 에서 모든 쓰기 함수가 동작하면, 원본 테이블을 건드리지 않는다
     writeAssistantSettings(db, { enabled: false })
     const ev = insertEvent(db, {

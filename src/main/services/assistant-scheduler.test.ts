@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// 호출 순서를 한 배열에 남긴다. A5 는 INSERT 가 show() 보다 먼저인지 본다
+// 호출 순서를 한 배열에 남긴다. INSERT 가 show() 보다 먼저인지 본다
 const order = vi.hoisted(() => [] as string[])
 
 const electron = vi.hoisted(() => {
@@ -79,8 +79,7 @@ import {
   takePendingNavigate
 } from './assistant-scheduler'
 
-// 부록 O(오늘 대시보드 개편, 2026-11-19): 시작 알림·자동 최신화·활동 기반 최신화는 제거됐다.
-// 틱은 지난 계획 닫기 → 회의 브리핑 → onTick 순서만 남는다.
+// 틱은 회의 브리핑 → onTick 순서다 (docs/ASSISTANT.md §6.1).
 
 function deferred(): { promise: Promise<unknown>; resolve: (v: unknown) => void } {
   let resolve: (v: unknown) => void = () => undefined
@@ -116,7 +115,7 @@ function meetingNotice(over: Record<string, unknown> = {}): Record<string, unkno
   }
 }
 
-// 서비스가 회의 브리핑 행을 INSERT 한 뒤 결과를 돌려준다 (I.9.1)
+// 서비스가 회의 브리핑 행을 INSERT 한 뒤 결과를 돌려준다
 function dueMeetingsReturn(notices: Record<string, unknown>[]): void {
   service.runDueMeetingBriefings.mockImplementation(async () => {
     order.push('runDueMeetingBriefings')
@@ -144,8 +143,8 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('시작 알림·자동 최신화 제거 (부록 O)', () => {
-  it('깨어나도 시작 알림을 보내지 않는다. 계획이 없어도 start_nudge 행을 만들지 않는다', async () => {
+describe('틱과 잠자기 복귀', () => {
+  it('깨어나면 회의 브리핑 판정만 돈다. 스케줄러가 직접 이벤트 행이나 알림을 만들지 않는다', async () => {
     startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
     electron.handlers.get('power:resume')?.()
     await vi.waitFor(() => expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1))
@@ -161,14 +160,14 @@ describe('시작 알림·자동 최신화 제거 (부록 O)', () => {
     expect(electron.handlers.has('app:browser-window-focus')).toBe(false)
   })
 
-  it('틱은 계획이 없어도 회의 브리핑을 보낸다', async () => {
+  it('틱은 회의 브리핑 알림을 보낸다', async () => {
     dueMeetingsReturn([meetingNotice()])
     await runTick()
     expect(electron.notifications).toHaveLength(1)
     expect(electron.notifications[0].opts.title).toBe('주간 회의 15분 전')
   })
 
-  it('틱 순서는 회의 브리핑 → onTick 이다(지난 계획 닫기는 제거됐다)', async () => {
+  it('틱 순서는 회의 브리핑 → onTick 이다', async () => {
     const onTick = vi.fn(() => {
       order.push('onTick')
     })
@@ -180,7 +179,7 @@ describe('시작 알림·자동 최신화 제거 (부록 O)', () => {
   })
 })
 
-describe('알림 클릭 이동과 보관 신호 (§12.1)', () => {
+describe('알림 클릭 이동과 보관 신호', () => {
   it('창이 있고 로딩이 끝났으면 바로 navigate 를 보내고 보관 신호는 없다', () => {
     const win = fakeWindow()
     startAssistantScheduler({ getMainWindow: () => win as never, createWindow: vi.fn() })
@@ -247,14 +246,14 @@ describe('알림 클릭 이동과 보관 신호 (§12.1)', () => {
   })
 })
 
-describe('A13: DB 미초기화 예외를 삼킨다', () => {
+describe('DB 미초기화 예외를 삼킨다', () => {
   beforeEach(() => {
     db.getDatabase.mockImplementation(() => {
       throw new Error('Database not initialized')
     })
   })
 
-  it('A13: 시작·이벤트 처리기·정지가 getDatabase 예외에도 throw 하지 않는다', async () => {
+  it('시작·이벤트 처리기·정지가 getDatabase 예외에도 throw 하지 않는다', async () => {
     expect(() => startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })).not.toThrow()
     expect(() => electron.handlers.get('power:unlock-screen')?.()).not.toThrow()
     expect(() => electron.handlers.get('power:resume')?.()).not.toThrow()
@@ -262,12 +261,12 @@ describe('A13: DB 미초기화 예외를 삼킨다', () => {
     expect(() => stopAssistantScheduler()).not.toThrow()
   })
 
-  it('A13: runTick 은 getDatabase 가 throw 해도 throw 하지 않는다', async () => {
+  it('runTick 은 getDatabase 가 throw 해도 throw 하지 않는다', async () => {
     await expect(runTick()).resolves.toBeUndefined()
   })
 })
 
-describe('틱 (부록 E.2)', () => {
+describe('틱', () => {
   it('setInterval 로 60초마다 틱을 돌린다. 정지하면 더 돌지 않는다', async () => {
     vi.useFakeTimers()
     startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
@@ -296,22 +295,22 @@ describe('틱 (부록 E.2)', () => {
   })
 })
 
-describe('회의 브리핑 발송 (부록 I.9.2)', () => {
-  it('A5: 회의 브리핑은 서비스 INSERT 뒤에 Notification show() 를 한다. 답장 입력이 없다', async () => {
+describe('회의 브리핑 발송', () => {
+  it('회의 브리핑은 서비스 INSERT 뒤에 Notification show() 를 한다. 답장 입력이 없다', async () => {
     dueMeetingsReturn([meetingNotice()])
     await runTick()
     expect(order).toEqual(['runDueMeetingBriefings', 'insertEvent', 'new Notification', 'show'])
     expect(electron.notifications[0].opts).toEqual({ title: '주간 회의 15분 전', body: '링크워크 · 미완료 액션 2건' })
   })
 
-  it('A5: 서비스가 돌려준 회의 알림이 없으면 Notification 을 만들지 않는다', async () => {
+  it('서비스가 돌려준 회의 알림이 없으면 Notification 을 만들지 않는다', async () => {
     dueMeetingsReturn([])
     await runTick()
     expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1)
     expect(electron.notifications).toHaveLength(0)
   })
 
-  it('A5: 회의 브리핑 show() 가 실패하면 그 행마다 failed 로 바꾼다', async () => {
+  it('회의 브리핑 show() 가 실패하면 그 행마다 failed 로 바꾼다', async () => {
     electron.state.throwOnShow = true
     dueMeetingsReturn([meetingNotice({ eventId: 41 }), meetingNotice({ eventId: 42 })])
     await runTick()
@@ -325,7 +324,7 @@ describe('회의 브리핑 발송 (부록 I.9.2)', () => {
     expect(electron.notifications.map((n) => n.opts.title)).toEqual(['주간 회의 15분 전', '설계 리뷰 15분 전'])
   })
 
-  it('회의 브리핑 알림 클릭은 meeting focus 로 이동한다 (I.2)', async () => {
+  it('회의 브리핑 알림 클릭은 meeting focus 로 이동한다', async () => {
     const win = fakeWindow()
     startAssistantScheduler({ getMainWindow: () => win as never, createWindow: vi.fn() })
     dueMeetingsReturn([meetingNotice()])
@@ -337,7 +336,7 @@ describe('회의 브리핑 발송 (부록 I.9.2)', () => {
     })
   })
 
-  it('창이 없을 때 회의 브리핑 알림을 클릭하면 meeting focus 를 보관 신호에 둔다 (부록 D.4)', async () => {
+  it('창이 없을 때 회의 브리핑 알림을 클릭하면 meeting focus 를 보관 신호에 둔다', async () => {
     startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
     dueMeetingsReturn([meetingNotice()])
     await runTick()
@@ -354,8 +353,8 @@ describe('회의 브리핑 발송 (부록 I.9.2)', () => {
   })
 })
 
-describe('A42: 회의 브리핑은 1개만 실행한다', () => {
-  it('A42: dueInFlight 가 켜져 있으면 두 번째 틱은 runDueMeetingBriefings 를 부르지 않는다', async () => {
+describe('회의 브리핑은 1개만 실행한다', () => {
+  it('dueInFlight 가 켜져 있으면 두 번째 틱은 runDueMeetingBriefings 를 부르지 않는다', async () => {
     const gate = deferred()
     service.runDueMeetingBriefings.mockImplementationOnce(async () => {
       await gate.promise
@@ -372,7 +371,7 @@ describe('A42: 회의 브리핑은 1개만 실행한다', () => {
     expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(2)
   })
 
-  it('A42: stopAssistantScheduler 가 dueInFlight 를 비운다', async () => {
+  it('stopAssistantScheduler 가 dueInFlight 를 비운다', async () => {
     const gate = deferred()
     service.runDueMeetingBriefings.mockImplementationOnce(async () => {
       await gate.promise
@@ -388,8 +387,8 @@ describe('A42: 회의 브리핑은 1개만 실행한다', () => {
   })
 })
 
-describe('A13: 회의 브리핑 예외를 삼킨다', () => {
-  it('A13: runDueMeetingBriefings 가 reject 해도 runTick 은 throw 하지 않고 가드를 푼다', async () => {
+describe('회의 브리핑 예외를 삼킨다', () => {
+  it('runDueMeetingBriefings 가 reject 해도 runTick 은 throw 하지 않고 가드를 푼다', async () => {
     service.runDueMeetingBriefings.mockRejectedValueOnce(new Error('Database not initialized'))
     await expect(runTick()).resolves.toBeUndefined()
     await runTick()
@@ -397,8 +396,8 @@ describe('A13: 회의 브리핑 예외를 삼킨다', () => {
   })
 })
 
-describe('A54: 틱 끝의 onTick 주입', () => {
-  it('A54: 틱은 7단계 뒤에 onTick(wake=false, now) 를 부른다', async () => {
+describe('틱 끝의 onTick 주입', () => {
+  it('틱은 회의 브리핑 단계 뒤에 onTick(wake=false, now) 를 부른다', async () => {
     const onTick = vi.fn(() => {
       order.push('onTick')
     })
@@ -414,7 +413,7 @@ describe('A54: 틱 끝의 onTick 주입', () => {
     expect(order.indexOf('onTick')).toBeGreaterThan(order.indexOf('runDueMeetingBriefings'))
   })
 
-  it('A54: wake 처리기도 onTick(wake=true) 를 부른다', async () => {
+  it('wake 처리기도 onTick(wake=true) 를 부른다', async () => {
     const onTick = vi.fn()
     startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn(), onTick })
     electron.handlers.get('power:unlock-screen')?.()
@@ -422,7 +421,7 @@ describe('A54: 틱 끝의 onTick 주입', () => {
     expect(onTick.mock.calls[0][0]).toBe(true)
   })
 
-  it('A54: 60초 틱이 onTick 을 부른다', async () => {
+  it('60초 틱이 onTick 을 부른다', async () => {
     vi.useFakeTimers()
     const onTick = vi.fn()
     startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn(), onTick })
@@ -433,7 +432,7 @@ describe('A54: 틱 끝의 onTick 주입', () => {
     expect(onTick.mock.calls[0][0]).toBe(false)
   })
 
-  it('A54: onTick 을 기다리지 않는다. 끝나지 않는 onTick 도 틱을 막지 않는다', async () => {
+  it('onTick 을 기다리지 않는다. 끝나지 않는 onTick 도 틱을 막지 않는다', async () => {
     const gate = deferred()
     const onTick = vi.fn(() => gate.promise)
     startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn(), onTick })
@@ -443,7 +442,7 @@ describe('A54: 틱 끝의 onTick 주입', () => {
     gate.resolve(null)
   })
 
-  it('A54: onTick 의 reject 를 삼킨다', async () => {
+  it('onTick 의 reject 를 삼킨다', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const onTick = vi.fn(async () => {
       throw new Error('morning sync failed')
@@ -455,7 +454,7 @@ describe('A54: 틱 끝의 onTick 주입', () => {
     errSpy.mockRestore()
   })
 
-  it('A54: onTick 의 동기 throw 를 삼킨다', async () => {
+  it('onTick 의 동기 throw 를 삼킨다', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const onTick = vi.fn(() => {
       throw new Error('sync throw')
@@ -465,7 +464,7 @@ describe('A54: 틱 끝의 onTick 주입', () => {
     errSpy.mockRestore()
   })
 
-  it('A54: 틱 단계가 getDatabase 예외로 끝나도 onTick 을 부른다', async () => {
+  it('틱 단계가 getDatabase 예외로 끝나도 onTick 을 부른다', async () => {
     db.getDatabase.mockImplementation(() => {
       throw new Error('Database not initialized')
     })
@@ -475,13 +474,13 @@ describe('A54: 틱 끝의 onTick 주입', () => {
     expect(onTick).toHaveBeenCalledTimes(1)
   })
 
-  it('A54: onTick 이 없어도 틱이 동작한다', async () => {
+  it('onTick 이 없어도 틱이 동작한다', async () => {
     startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn() })
     await expect(runTick()).resolves.toBeUndefined()
     expect(service.runDueMeetingBriefings).toHaveBeenCalledTimes(1)
   })
 
-  it('A54: 정지하면 onTick 을 더 부르지 않는다', async () => {
+  it('정지하면 onTick 을 더 부르지 않는다', async () => {
     const onTick = vi.fn()
     startAssistantScheduler({ getMainWindow: () => null, createWindow: vi.fn(), onTick })
     stopAssistantScheduler()

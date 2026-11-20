@@ -38,16 +38,16 @@ describe('logicalDate', () => {
   })
 })
 
-describe('A12: 로컬 날짜·시각 형식', () => {
-  it('A12: toLocalDateTime 은 로컬 YYYY-MM-DD HH:mm:ss 다', () => {
+describe('로컬 날짜·시각 형식', () => {
+  it('toLocalDateTime 은 로컬 YYYY-MM-DD HH:mm:ss 다', () => {
     expect(toLocalDateTime(local(2026, 11, 2, 9, 5, 7))).toBe('2026-11-02 09:05:07')
   })
 
-  it('A12: toHHmm 은 로컬 HH:mm 다', () => {
+  it('toHHmm 은 로컬 HH:mm 다', () => {
     expect(toHHmm(local(2026, 11, 2, 9, 5))).toBe('09:05')
   })
 
-  it('A12: isoToLocalDateTime 은 시간대 ISO 를 로컬 datetime 으로 바꾼다', () => {
+  it('isoToLocalDateTime 은 시간대 ISO 를 로컬 datetime 으로 바꾼다', () => {
     const expected = toLocalDateTime(new Date(Date.UTC(2026, 10, 2, 1, 0, 0)))
     expect(isoToLocalDateTime('2026-11-02T01:00:00.000Z')).toBe(expected)
     // Jira 는 콜론 없는 오프셋을 쓴다

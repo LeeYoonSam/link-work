@@ -1,4 +1,4 @@
-// 오늘 대시보드 (docs/ASSISTANT.md 부록 O).
+// 오늘 대시보드 (docs/ASSISTANT.md §11).
 // 오늘 챙겨야 할 것을 한눈에 읽는 화면이다. 직접 하는 동작은 할 일 체크·빠른 추가, 이동 링크,
 // 회의 브리핑 펼침, 새로고침뿐이다. 조립은 todayModel(순수 함수)이 하고 이 파일은 데이터 연결과 배치만 한다.
 //
@@ -31,7 +31,7 @@ import TodoCard from './TodoCard'
 import ScheduleCard, { localClock } from './ScheduleCard'
 
 // 화면의 '지금' 을 다시 읽는 간격
-export const NOW_TICK_MS = 60_000
+const NOW_TICK_MS = 60_000
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토']
 
@@ -103,8 +103,8 @@ export function openSignalRef(ref: SignalRef, release: NextRelease | null): void
 }
 
 /**
- * 알림 클릭 focus 를 대시보드 동작으로 바꾼다. 대시보드는 'meeting' 만 쓴다 — 그 브리핑을 펼치고 스크롤한다.
- * 그 밖의 kind(옛 계획 화면의 inbox·item·briefing·timeline)는 무시한다
+ * 알림 클릭 focus 를 대시보드 동작으로 바꾼다. focus 는 'meeting' 하나다 — 그 브리핑을 펼치고 스크롤한다.
+ * focus 가 없으면(옛 linkwork://today/... 링크 포함) 오늘 화면만 연다.
  */
 export function meetingFocusEventId(focus: AssistantNavigateEvent['focus'] | null): number | null {
   if (!focus || focus.kind !== 'meeting') return null
@@ -134,7 +134,7 @@ export function headerErrorText(eventsError: string | null, calendarConnected: b
 }
 
 /** 일정 id → 시작 ISO. 신호의 'n분 뒤' 에 쓴다 */
-export function meetingStartMap(d: Pick<TodayDashboard, 'schedule'>): Record<string, string> {
+function meetingStartMap(d: Pick<TodayDashboard, 'schedule'>): Record<string, string> {
   const map: Record<string, string> = {}
   for (const r of d.schedule.rows) map[r.id] = r.startISO
   return map

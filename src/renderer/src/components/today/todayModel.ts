@@ -118,11 +118,11 @@ export interface TodayDashboard {
 
 // ─── 상수 ─────────────────────────────────────────────────
 
-export const SIGNAL_LIMIT = 3
+const SIGNAL_LIMIT = 3
 export const JIRA_ROW_LIMIT = 7
 export const TODO_ROW_LIMIT = 6
 /** meeting_soon 을 띄우는 범위(분) */
-export const MEETING_SOON_MINUTES = 60
+const MEETING_SOON_MINUTES = 60
 /** 신호 행에 그릴 근거 칩 상한(배포 ref 는 상한과 별개로 늘 보인다) */
 export const SIGNAL_REF_DISPLAY_LIMIT = 4
 

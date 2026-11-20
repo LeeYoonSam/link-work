@@ -1,4 +1,4 @@
-// 오늘 대시보드의 '다음 배포' 카드 (docs/ASSISTANT.md 부록 O, docs/RELEASE_NOTES.md '오늘 화면의 다음 배포 판정').
+// 오늘 대시보드의 '다음 배포' 카드 (docs/ASSISTANT.md §11.3, docs/RELEASE_NOTES.md §8.4 '오늘 화면의 다음 배포 판정').
 // 판정은 releaseModel 이 한다. 여기서는 그리기와 이동만 한다.
 import type { JiraRow, NextRelease } from './releaseModel'
 import { Card } from '../ui'
@@ -127,7 +127,7 @@ export function MineBar({ mine }: { mine: NextRelease['mine'] }): React.ReactNod
 }
 
 /** 배포 카드의 이슈 행. 내 Jira 작업 카드와 같은 1줄 모양이다. 마감은 지난 경우만 보인다 */
-export function ReleaseIssueRow({ row, onOpenIssue }: { row: JiraRow; onOpenIssue: (row: JiraRow) => void }): React.ReactNode {
+function ReleaseIssueRow({ row, onOpenIssue }: { row: JiraRow; onOpenIssue: (row: JiraRow) => void }): React.ReactNode {
   return <IssueRow row={row} onOpenIssue={onOpenIssue} showDue={false} />
 }
 

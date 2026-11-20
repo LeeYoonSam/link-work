@@ -12,7 +12,7 @@ const render = (s: AssistantSettings | null, group: 'assistant' | 'ai' = 'assist
   renderToStaticMarkup(<AssistantSettingsFields settings={s} onSave={save} group={group} />)
 
 describe('AssistantSettingsFields', () => {
-  it('부록 O: 하루 계획용 칸 8개(시작 알림·최신화 알림·계획 항목 수·근무 종료·원본 완료·확인 주기 2개·Jira 범위)가 없다', () => {
+  it('하루 계획용 칸 8개(시작 알림·최신화 알림·계획 항목 수·근무 종료·원본 완료·확인 주기 2개·Jira 범위)가 없다', () => {
     const html = render(SETTINGS)
     for (const label of [
       '시작 알림',
@@ -72,7 +72,7 @@ describe('AssistantSettingsFields', () => {
   })
 })
 
-describe('assistantSettingsForm (부록 O)', () => {
+describe('assistantSettingsForm', () => {
   it('폼 키·자리 표시 값에 하루 계획용 키가 없다. 옛 키를 담은 저장값도 폼에 섞이지 않는다', async () => {
     const { FORM_SETTING_KEYS, validateSettings, toFormSettings } = await import('./assistantSettingsForm')
     for (const k of ['startNudge', 'refreshNotify', 'planSize', 'workEnd', 'completeOriginOnDone', 'refreshCalendarMin', 'refreshJiraMin', 'jiraScope']) {

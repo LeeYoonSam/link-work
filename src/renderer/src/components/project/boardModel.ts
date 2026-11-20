@@ -16,7 +16,7 @@ export interface CategoryCounts {
   done: number
 }
 
-export interface Rollup extends CategoryCounts {
+interface Rollup extends CategoryCounts {
   /** 분모. 조회 범위 안(inScope) 직계 자식 수 */
   total: number
   /** 완료가 아닌데 기한이 지난 직계 자식 수 */
@@ -151,7 +151,7 @@ function normalizeCategory(c: string): StatusCategory {
 
 // ─── 트리 구성 ─────────────────────────────────────────────
 
-export interface ForestOptions {
+interface ForestOptions {
   /** 최근 완료로 보는 기간(일). 스냅샷의 recentDoneDays */
   recentDoneDays: number
   /** 이전 완료 잎도 그린다(툴바 "이전 완료 보기") */
@@ -633,7 +633,7 @@ export const CLOSED_SECTION_ID = 'fold:closed-groups'
 /** 한 부모 안의 닫힘(done) 자식 묶음 행 id */
 export const doneFoldId = (parentId: string): string => `fold:done:${parentId}`
 
-export interface FoldInfo {
+interface FoldInfo {
   /** closedGroups: 닫힌 상위 티켓 섹션, done: 한 부모 안의 닫힘 묶음 */
   scope: 'closedGroups' | 'done'
   count: number
@@ -655,13 +655,13 @@ export interface VisibleRow {
   fold?: FoldInfo
 }
 
-export interface FlattenOptions {
+interface FlattenOptions {
   /** 닫힘 항목을 묶어 기본 접힘으로 보인다 */
   foldDone: boolean
 }
 
 /** 펼침 기본값: 에픽 그룹은 펼침, 하위작업을 가진 자식은 접힘 */
-export function isExpanded(
+function isExpanded(
   expanded: Record<string, boolean>,
   id: string,
   kind: 'group' | 'issue'
@@ -808,7 +808,7 @@ export function expandableIds(forest: BoardForest): string[] {
 
 // ─── 키보드 포커스 이동 (WAI-ARIA APG treegrid) ───────────────────
 
-export interface FocusMove {
+interface FocusMove {
   focusId: string | null
   /** 펼침 상태를 바꿔야 하면 대상과 새 값 */
   toggle?: { id: string; expanded: boolean }
@@ -851,7 +851,7 @@ export function nextFocus(rows: VisibleRow[], currentId: string | null, key: str
   }
 }
 
-export type TreeKeyAction =
+type TreeKeyAction =
   | { kind: 'select'; id: string }
   | { kind: 'open'; key: string }
   | { kind: 'move'; move: FocusMove }
@@ -1024,7 +1024,7 @@ export function deriveFacets(issues: JiraBoardIssue[]): BoardFacets {
 
 // ─── 표기 매핑 ─────────────────────────────────────────────
 
-export interface StatusVisual {
+interface StatusVisual {
   badge: string
   /** 색 외 신호. ○ 할 일, ◐ 진행, ● 완료 */
   shape: '○' | '◐' | '●'
@@ -1052,7 +1052,7 @@ export const CATEGORY_LABELS: Record<StatusCategory, string> = {
   done: '완료'
 }
 
-export interface PriorityVisual {
+interface PriorityVisual {
   marks: '●●●' | '●●' | '●'
   text: string
   label: string

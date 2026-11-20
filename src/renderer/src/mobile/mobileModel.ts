@@ -40,7 +40,7 @@ export const connectionAfterSuccess = (current: Connection): Connection => (curr
  * 같은 목록을 여러 번 읽을 때 늦게 도착한 옛 응답이 새 상태를 덮지 않게 한다.
  * begin() 이 순번을 내주고, 마지막으로 시작한(또는 invalidate 한) 순번의 응답만 적용한다
  */
-export interface RequestGate {
+interface RequestGate {
   begin: () => number
   isLatest: (seq: number) => boolean
   /** 진행 중인 응답을 모두 버린다(낙관적 갱신이 옛 응답에 덮이지 않게) */
@@ -101,7 +101,7 @@ export function dDayLabel(dDay: number): string {
 }
 
 /** 이보다 오래된 스냅샷은 경고색으로 보인다 */
-export const STALE_AFTER_MS = 5 * 60_000
+const STALE_AFTER_MS = 5 * 60_000
 
 /** 스냅샷 발행 시각 문구와 오래됨 여부. 'Mac 에서 3분 전 갱신' */
 export function publishedAgo(publishedAt: string, now: Date): { text: string; stale: boolean } {
@@ -128,9 +128,9 @@ export function minutesUntil(startISO: string, now: Date): number {
 
 const PRIORITY_ORDER: Record<TodoPriority, number> = { high: 0, medium: 1, low: 2 }
 
-export type DueBucket = 'overdue' | 'today' | 'later' | 'none'
+type DueBucket = 'overdue' | 'today' | 'later' | 'none'
 
-export function dueBucket(due: string | null, today: string): DueBucket {
+function dueBucket(due: string | null, today: string): DueBucket {
   if (!due) return 'none'
   const d = due.slice(0, 10)
   if (d < today) return 'overdue'

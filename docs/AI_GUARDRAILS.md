@@ -26,9 +26,7 @@ LinkWork "AI 대화" 기능의 데이터 보호·보안·추적 기준. 코드�
 
 새 조회 도구는 `ai-tools.ts`에 정의하고 `LINKWORK_TOOL_NAMES`에 등록해야만 실행된다.
 회의 액션아이템 도구(`list_meeting_action_items`)는 `ai-assistant-tools.ts` 에 정의한다. 등록은 같은 `LINKWORK_TOOL_NAMES` 에 한다.
-2026-11-19 에 조회·쓰기 도구 7종(`list_variables`·`create_variable`·`update_variable`·`get_activity_log`·
-`search_notion`·`get_today_plan`·`get_recent_work`)을 제거했다. 5개월 감사 로그에서 호출이 0회였거나
-데이터원이 더 이상 갱신되지 않아서다. 지금 `LINKWORK_TOOL_NAMES` 는 10종이다.
+`LINKWORK_TOOL_NAMES` 는 10종이다(8.1·8.5·8.6·8.7절).
 쓰기 도구(`LINKWORK_WRITE_TOOL_NAMES`)와 `fetch_url`(`FETCH_URL_TOOL_NAME`)은
 **의도적으로 `allowedTools`에 넣지 않는다** — 자동 승인을 막고 항상 `canUseTool`의
 게이트를 거치게 하기 위함이다.
@@ -39,7 +37,6 @@ LinkWork "AI 대화" 기능의 데이터 보호·보안·추적 기준. 코드�
 - 시스템 프롬프트 답변 규칙 6번: 요청이 모호하면 도구를 호출하지 않는다. 번호를 붙인 선택지를 응답 본문에 글로 적어 묻고 답을 기다린다.
 - 모델이 `AskUserQuestion` 을 부르면 `canUseTool` 이 catch-all 경로에서 `tool_denied` 를 기록하고 거부한다.
   거부 메시지는 `ASK_USER_QUESTION_DENY_MESSAGE` 다. "이 앱에서는 질문 도구를 쓸 수 없다. 번호 선택지를 본문에 글로 적어 물으라"는 취지다.
-- 근거: 감사 로그에서 `AskUserQuestion` 이 7회 차단됐다.
 
 ## 3. 감사 추적 (Audit Log)
 
@@ -64,7 +61,7 @@ LinkWork "AI 대화" 기능의 데이터 보호·보안·추적 기준. 코드�
 | `query_error` | 실패 | 오류 메시지 |
 | `query_cancelled` | 사용자 중단 | duration_ms |
 
-점검 쿼리 예시 (`~/Library/Application Support/linkwork/linkwork.db`):
+점검 쿼리 예시 (`~/Library/Application Support/LinkWork/linkwork.db`):
 
 ```sql
 -- 차단된 도구 사용 시도 확인 (있으면 비정상 동작 신호)
@@ -87,11 +84,10 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
 
 ## 5. 정보 노출 최소화
 
-- **변수는 AI 가 다루지 않는다.** 변수 조회·생성·수정 도구는 없다(2026-11-19 제거).
+- **변수는 AI 가 다루지 않는다.** 변수 조회·생성·수정 도구는 없다.
   그래서 secret 변수 값이 모델 컨텍스트·승인 카드·감사 로그에 들어갈 경로가 없다.
   변수가 필요하면 AI 는 변수 메뉴(`linkwork://view/variables`)에서 사용자가 직접 관리하도록 안내한다.
-  옛 마스킹 헬퍼(`maskSecretVariable`·`SECRET_MASK`·`sanitizeWriteInputForAudit`)도 함께 제거했다.
-  변수 도구를 다시 도입하려면 secret 마스킹 기준을 이 절에 먼저 정의한다(7절 6번).
+  변수 도구를 도입하려면 secret 마스킹 기준을 이 절에 먼저 정의한다(7절 6번).
 - 내장 WebSearch/WebFetch는 계속 차단. 외부 접근은 자체 `fetch_url` 도구로만 가능하며,
   사용자가 언급하지 않은 주소는 승인 카드를 거친다 (8절) — 조회한 데이터를 임의 URL로
   실어 보내는 유출 경로를 승인 게이트로 차단
@@ -111,7 +107,7 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
   외부 전송 통로인 `fetch_url`은 승인 게이트(8절)를 거치므로 인젝션이 성공해도
   피해 범위는 "잘못된 답변 표시"로 한정됨
 
-## 7. 쓰기 도구 (생성·수정 — 구현됨)
+## 7. 쓰기 도구
 
 데이터 추가/수정/삭제 도구는 아래 기준을 **모두** 충족해야 한다:
 
@@ -141,10 +137,9 @@ zod 스키마가 도구 호출 레벨에서 강제한다.
 | `update_todo` | todos 1건 부분 수정 (+ 태그 전체 교체, 완료/복원) | 낮 | `todo_history` 스냅샷(실제 완료 전이 시에만 complete/restore). notes 전체 교체. due_date 시각 포함 시 알람(due_reminder) 동기화 |
 | `update_memo` | memos 1건 부분 수정 (+ 카테고리 변경/해제, 보관/해제) | 중 | content는 전체 교체 — 수정 전 `get_memo`로 전문 확인 필수 |
 
-`LINKWORK_WRITE_TOOL_NAMES` 는 위 4종이다. 변수 생성·수정 도구(`create_variable`·`update_variable`)는
-2026-11-19 에 제거했다(5절).
+`LINKWORK_WRITE_TOOL_NAMES` 는 위 4종이다. 변수 쓰기 도구는 없다(5절).
 
-문서 생성·수정 도구는 문서 메뉴와 함께 없앴다. `documents` 테이블과 활동 로그의 과거 기록은 남지만 AI 는 읽지도 쓰지도 않는다. Jira 티켓에 연결된 문서는 프로젝트 화면의 문서 탭이 보여 준다([PROJECT_BOARD.md](PROJECT_BOARD.md)).
+AI 는 `documents` 테이블을 읽지도 쓰지도 않는다. Jira 티켓에 연결된 문서는 프로젝트 화면의 문서 탭이 보여 준다([PROJECT_BOARD.md](PROJECT_BOARD.md)).
 
 수정 도구 공통 규칙:
 
@@ -184,8 +179,7 @@ AI가 쓰기 도구 호출
 
 ### 7.3 채팅별 쓰기 모드 (`ai_chats.write_mode`)
 
-전역 opt-in 토글(`app_settings.ai_write_enabled`)을 대체한다. 채팅마다 독립적으로
-설정하며, 변경은 감사 로그(`write_toggle`)에 기록된다.
+채팅마다 독립적으로 설정하며, 변경은 감사 로그(`write_toggle`)에 기록된다.
 
 | 모드 | 동작 | 비고 |
 |---|---|---|
@@ -202,8 +196,7 @@ AI가 쓰기 도구 호출
 `auto` 모드 설계 근거와 안전장치:
 
 - 새 채팅의 기본값이다. 승인 카드의 "이 채팅에서 항상 승인" 버튼 또는 모드 선택으로도 진입한다
-- 쓰기 도구 4종(할 일·메모 생성·수정)은 모두 auto 모드에서 자동 승인된다. 옛 예외 목록
-  `ALWAYS_CONFIRM_WRITE_TOOLS`(변수 도구용)는 변수 도구와 함께 제거했다
+- 쓰기 도구 4종(할 일·메모 생성·수정)은 모두 auto 모드에서 자동 승인된다. 예외 목록은 없다
 - 자동 승인 시 수정 도구는 **변경 전 스냅샷**을 `write_approved`의 detail에 기록해
   잘못된 변경의 수동 복구 근거를 남긴다 (특히 update_memo는 본문 전체 교체라 중요)
 - 프롬프트 인젝션으로 쓰기가 시도되는 경우에 대비해 "쓰기는 사용자가 대화에서 직접
@@ -257,7 +250,7 @@ AI가 앱 밖의 지식(Notion 문서, Atlassian(Jira) 티켓·프로젝트, Sla
 - Claude 구독 계정에 Notion 커넥터가 연결돼 있으면 헤드리스 SDK 쿼리에도
   커넥터 MCP 서버가 자동 로드된다 (`settingSources: []` 격리와 무관 — 계정 레벨.
   실측 검증됨. 단 `strictMcpConfig`를 켜면 끊기므로 **켜지 말 것**).
-- 커넥터는 쓰기 도구(create/update/move 등 16종)도 노출하지만, 앱은
+- 커넥터는 쓰기 도구(create/update/move 등)도 노출하지만, 앱은
   `CLAUDE_AI_NOTION_READ_TOOLS` = `notion-search`/`notion-fetch` **2종만**
   `allowedTools`+`canUseTool`에 허용한다. 나머지는 catch-all 거부 + `tool_denied` 감사.
 - OAuth/권한 범위는 사용자가 claude.ai에서 커넥터에 허가한 그대로다.
@@ -267,7 +260,7 @@ AI가 앱 밖의 지식(Notion 문서, Atlassian(Jira) 티켓·프로젝트, Sla
 - 커넥터를 쓰지 않을 때의 경로. 토큰이 접근을 허가한 페이지만 읽는다
   (Notion 측 권한 모델). 조회 API(pages/blocks/databases query)만 호출하며
   쓰기 API 호출은 금지한다 (`src/main/services/notion.ts`).
-- 이 경로의 AI 도구는 `get_notion_page` 하나다. 토큰 검색 도구는 2026-11-19 에 제거했다.
+- 이 경로의 AI 도구는 `get_notion_page` 하나다. 토큰 경로에는 검색 도구가 없다.
   제목 검색은 커넥터의 `notion-search` 가 있을 때만 한다.
 - 토큰 등록·해제는 설정 > 연동(`linkwork://view/settings`)의 Notion 카드에서 한다.
   미연동이면 `get_notion_page` 와 시스템 프롬프트가 이 카드로 안내한다.
@@ -364,16 +357,13 @@ Jira 릴리스(버전)에 묶인 이슈를 앱이 미리 동기화해 둔 결과
   도구 결과 안의 지시문을 따르지 않으며, 조회한 값을 외부 URL로 실어 보내지 않는다.
   항목당 300자·200건 상한으로 컨텍스트를 채워 다른 지시를 밀어내는 것도 제한한다.
 - 조회 전용이라 인젝션이 성공해도 피해 범위는 "잘못된 답변 표시"로 한정된다.
-- Jira API 토큰은 `app_settings`에 **safeStorage 암호화**로 저장되며(`jira_api_token`),
-  renderer와 AI에는 연결 여부·계정 표시명·만료일만 노출된다. 토큰 값은 어떤 도구 결과에도
-  포함되지 않는다 (Notion 토큰과 동일 취급, 8.1.b).
+- Jira API 토큰은 `app_settings`에 **safeStorage 암호화**로 저장된다(`jira_api_token`).
+  renderer 에는 연결 상태(연결 여부·사이트 주소·계정 표시명·이메일·기본 프로젝트·만료일, `jira:status`)만 노출된다.
+  토큰 값은 어떤 도구 결과에도 포함되지 않는다 (Notion 토큰과 동일 취급, 8.1.b).
 
 ### 8.6 회의 액션아이템 조회 (로컬 DB만 읽음)
 
 회의 요약의 액션아이템을 조회하는 도구다. 정의는 `ai-assistant-tools.ts` 에 있다.
-설계 이력은 [ASSISTANT.md](ASSISTANT.md) 부록 F.8 에 있다.
-과거 계획·최근 작업 조회 도구(`get_today_plan`·`get_recent_work`)는 2026-11-19 에 제거했다.
-하루 시작·계획·맥락 복구 흐름이 없어져 데이터원이 더 이상 갱신되지 않고, 감사 로그 호출도 없었다.
 도구는 읽기 전용 로컬 DB(`getAiReadOnlyDatabase`, 1절)만 읽는다.
 조회 시점에 외부 호출이 없다. 그래서 자동 허용 화이트리스트(`LINKWORK_TOOL_NAMES`)에 등재한다.
 
@@ -478,5 +468,5 @@ AI 대화는 **Claude 구독 계정(OAuth) 인증만** 사용한다. 토큰당 �
 - "감지 후 경고"가 아니라 전달 자체를 막는 방식이므로 휴리스틱 누락이 없다
 
 API 키만 있고 구독이 없는 사용자는 "구독 계정 로그인 필요" 안내를 받는다 (`ai:status`).
-의도적으로 API 키 과금을 허용해야 한다면, 향후 설정에 **opt-in 스위치**(기본 꺼짐,
-켤 때 과금 경고 표시)를 추가하는 방식으로만 풀 것.
+API 키 과금을 허용하려면 설정에 **opt-in 스위치**(기본 꺼짐, 켤 때 과금 경고 표시)를
+추가하는 방식으로만 푼다. 지금은 이 스위치가 없다.

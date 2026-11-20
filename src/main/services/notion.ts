@@ -42,7 +42,7 @@ function decrypt(value: string): string {
   return value
 }
 
-export function getNotionToken(): string | null {
+function getNotionToken(): string | null {
   const row = getDatabase()
     .prepare('SELECT value FROM app_settings WHERE key = ?')
     .get(TOKEN_KEY) as { value: string } | undefined
@@ -128,7 +128,7 @@ async function notionHttpError(res: Response): Promise<Error> {
   return new Error(`Notion API 오류 (${res.status}): ${body.slice(0, 200)}`)
 }
 
-export interface NotionPageContent {
+interface NotionPageContent {
   id: string
   title: string
   url: string

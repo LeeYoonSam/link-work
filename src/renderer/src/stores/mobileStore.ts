@@ -5,7 +5,7 @@ import type { MobileServerStatus } from '../mobile/contract'
 // 설정 > 모바일 섹션과 오늘 대시보드 발행기(components/mobile/MobileTodayPublisher)가 함께 쓴다.
 // 섹션에서 켜고 끄면 발행기가 즉시 따라 움직인다.
 
-export interface MobileStore {
+interface MobileStore {
   status: MobileServerStatus | null
   /** getStatus 를 한 번이라도 받았는가 */
   loaded: boolean

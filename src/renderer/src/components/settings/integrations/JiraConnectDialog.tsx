@@ -14,12 +14,12 @@ import JiraDefaultProjectSelect from './JiraDefaultProjectSelect'
 // main 이 GET /rest/api/3/myself 로 확인한 뒤에만 safeStorage 로 암호화 저장한다.
 // 연결돼 있으면 같은 팝업 안에서 기본 프로젝트도 고른다(작업 흐름 중에 그 자리에서 띄우기 위해).
 
-export const JIRA_SCOPES: ConnectScope[] = [
+const JIRA_SCOPES: ConnectScope[] = [
   { scope: 'API token', reason: '범위를 고르지 않습니다. 내 계정 권한 그대로 쓰고 읽기만 합니다' },
   { scope: '만료일', reason: '발급할 때 정한 날짜를 입력하면 만료 30일 전부터 알려 줍니다' }
 ]
 
-export interface JiraConnectDialogProps {
+interface JiraConnectDialogProps {
   status: JiraConnectionStatus | null
   onClose: () => void
   onChanged: () => void

@@ -299,7 +299,7 @@ export function MemoComposer({
 
 const EMPTY_DRAFT: MemoDraft = { content: '', categoryId: null, important: false }
 
-export interface MemosTabProps extends TabProps {
+interface MemosTabProps extends TabProps {
   /** 작성 중 초안. 탭을 바꿔도(이 컴포넌트가 내려가도) 남도록 MobileApp 이 갖는다. null = 작성 중 아님 */
   draft: MemoDraft | null
   onDraft: (d: MemoDraft | null) => void

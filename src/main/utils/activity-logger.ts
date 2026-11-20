@@ -1,6 +1,6 @@
 import { getDatabase } from '../db/database'
 
-export type EntityType =
+type EntityType =
   | 'variable'
   | 'memo'
   | 'memo_category'
@@ -8,7 +8,7 @@ export type EntityType =
   | 'todo_tag'
   | 'meeting'
   | 'release_note'
-export type ActionType = 'create' | 'update' | 'delete' | 'archive' | 'restore' | 'complete'
+type ActionType = 'create' | 'update' | 'delete' | 'archive' | 'restore' | 'complete'
 
 export function logActivity(
   entityType: EntityType,

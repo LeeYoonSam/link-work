@@ -1,4 +1,4 @@
-// 오늘 대시보드의 '할 일' 카드 (docs/ASSISTANT.md 부록 O).
+// 오늘 대시보드의 '할 일' 카드 (docs/ASSISTANT.md §11.3).
 // 대시보드에서 직접 하는 동작은 할 일 체크와 빠른 추가뿐이다.
 import { useState } from 'react'
 import type { TodoRow, TodayDashboard } from './todayModel'
@@ -48,7 +48,7 @@ export async function handleQuickAddKey(
   }
 }
 
-export function TodoItemRow({
+function TodoItemRow({
   row,
   disabled,
   onComplete,

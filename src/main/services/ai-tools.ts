@@ -30,7 +30,7 @@ import { fetchUrlAsText } from './web-fetch'
 //    SQLite가 커넥션 레벨에서 쓰기를 차단하므로 INSERT/UPDATE/DELETE가 물리적으로 불가능하다.
 // 2. 검색어/날짜 등 입력은 zod로 길이·형식을 제한한다 (SQL은 전부 바인딩 파라미터 사용).
 // 3. 변수(Variables)는 AI 도구로 다루지 않는다. 사용자가 변수 메뉴에서 직접 관리한다.
-// 추후 쓰기 도구를 도입할 때는 반드시 문서의 "쓰기 도구 도입 기준"을 따를 것.
+// 4. 쓰기 도구는 ai-write-tools.ts 에 있다. 문서 7절의 쓰기 도구 기준을 따른다.
 
 const searchTerm = (desc: string): z.ZodOptional<z.ZodString> =>
   z.string().max(200).optional().describe(desc)
@@ -51,7 +51,7 @@ export const LINKWORK_TOOL_NAMES = [
   'get_notion_page',
   // Bitbucket 은 사용자 token 계정의 저장소를 GET 으로만 조회하므로 자동 허용 (AI_GUARDRAILS 8.7)
   'read_bitbucket',
-  // 비서 도구는 읽기 전용 로컬 DB 만 읽는다. Jira 를 호출하지 않는다 (AI_GUARDRAILS 8.6)
+  // 회의 액션아이템 도구는 읽기 전용 로컬 DB 만 읽는다. Jira 를 호출하지 않는다 (AI_GUARDRAILS 8.6)
   'list_meeting_action_items'
 ].map((name) => `mcp__linkwork__${name}`)
 

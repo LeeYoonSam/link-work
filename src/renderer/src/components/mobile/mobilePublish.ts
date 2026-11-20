@@ -21,7 +21,7 @@ export interface MobileTodayInputs extends Omit<TodayModelInput, 'now'> {
 }
 
 /** 규칙 문구 그대로의 대시보드. 계약 밖의 선택 필드(facts)는 크기를 줄이려고 뺀다 */
-export function mobileDashboard(d: TodayDashboard): TodayDashboard {
+function mobileDashboard(d: TodayDashboard): TodayDashboard {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { facts, ...rest } = d
   return { ...rest, hiddenSignals: d.hiddenSignals ?? [] }

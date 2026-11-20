@@ -16,7 +16,7 @@ const input =
 
 // 쉼표로 나열한 텍스트 ↔ 문자열 배열. 별칭 입력은 사람이 읽고 쓰는 형태가 쉼표 나열이라
 // 저장 직전에만 배열로 바꾼다.
-export function parseCsvList(text: string): string[] {
+function parseCsvList(text: string): string[] {
   const seen = new Set<string>()
   const out: string[] = []
   for (const raw of text.split(',')) {

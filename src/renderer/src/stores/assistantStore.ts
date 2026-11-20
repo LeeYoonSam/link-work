@@ -1,9 +1,8 @@
 import { create } from 'zustand'
 import type { AssistantNavigateEvent, TodayPayload } from '../types'
 
-// 비서 상태 (docs/ASSISTANT.md 부록 O).
-// 오늘 화면이 대시보드로 바뀌어 계획 조작(하루 시작·항목 상태·명령 등)은 모두 지웠다.
-// 남은 용도: 회의 전 브리핑(today.events), 알림 클릭 focus.
+// 비서 상태 (docs/ASSISTANT.md §11, §12).
+// 용도: 회의 전 브리핑(today.events), 알림 클릭 focus.
 // 비서 설정 저장은 설정 화면(AssistantSection)이 IPC 를 직접 부른다.
 // assistant:changed 구독은 dataSync.installDataSync 가 맡는다.
 
@@ -19,7 +18,7 @@ interface AssistantStore {
 
   load: () => Promise<void>
   setFocus: (focus: Focus | null) => void
-  // 회의 브리핑의 AI 본문을 다시 만든다 (부록 I.10.3). 결과를 기다린다
+  // 회의 브리핑의 AI 본문을 다시 만든다 (docs/ASSISTANT.md §7.7). 결과를 기다린다
   regenerateMeetingBriefing: (eventId: number) => Promise<void>
 }
 

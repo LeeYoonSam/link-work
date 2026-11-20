@@ -96,6 +96,3 @@ export interface MobileOk {
   success: true
 }
 
-export interface MobileError {
-  error: string
-}

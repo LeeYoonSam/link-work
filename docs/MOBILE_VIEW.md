@@ -35,13 +35,13 @@ Mac 앱의 메인 프로세스가 작은 HTTP 서버를 띄우고, 휴대폰은 
 
 | 항목 | 규칙 |
 |---|---|
-| 입력 | 오늘 화면(`TodayView`)과 같다 — `useTodayStore`(events·eventsError·loading·lastSyncedAt), `useTodoStore`(activeTodos·completedTodos), `useJiraBoardStore`(snapshot·errorCode·loading·error), `useReleaseNoteStore`(allNotes), `useAssistantStore`(today → calendarConnected) |
+| 입력 | 오늘 화면(`TodayView`)과 같다(`readTodayInputs`) — `useTodayStore`(events·eventsError·loading·lastSyncedAt), `useTodoStore`(activeTodos·completedTodos), `useJiraBoardStore`(snapshot·errorCode·loading·error), `useReleaseNoteStore`(allNotes), `useAssistantStore`(today → calendarConnected) |
 | 스냅샷 | `{ v: 1, publishedAt, date, heading, dashboard, loading }` (`mobile/contract.ts` 의 `MobileTodaySnapshot`). `dashboard` 는 오늘 화면과 같은 규칙 문구(headline·signals·hiddenSignals)의 완전한 `TodayDashboard` 이고, 계약 밖 선택 필드 `facts` 는 크기를 줄이려고 뺀다 |
-| 발행 시점 | (a) 켜진 직후 1회 (b) 입력 스토어가 바뀌면 500ms 디바운스 뒤, 직렬화(발행 시각 제외)가 직전과 다를 때만 (c) 60초마다 내용과 무관하게(일정의 timing·"n분 뒤"가 시간에 따라 바뀐다) (d) 메인의 `mobile:publishRequested` 를 받았을 때 |
+| 발행 시점 | (a) 켜진 직후 1회 (b) 입력 스토어가 바뀌면 500ms(`PUBLISH_DEBOUNCE_MS`) 디바운스 뒤, 직렬화(발행 시각 제외)가 직전과 다를 때만 (c) 60초마다 내용과 무관하게(일정의 timing·"n분 뒤"가 시간에 따라 바뀐다) (d) 메인의 `mobile:publishRequested` 를 받았을 때 |
 | 재발행 요청 | 오늘 화면이 열려 있지 않아도 최신이 되도록 `useTodayStore.load()`(캐시 허용, refresh 아님 — 할 일 목록도 함께 다시 읽는다)를 먼저 하고 발행한다. 마지막 불러오기에서 30초 안이거나 이미 불러오는 중이면 불러오기를 생략하고 현재 상태만 발행한다. 메인은 `/api/today` 마다 요청하되 5초에 1번으로 줄인다 |
 | 첫 로드 | 오늘 스토어가 한 번도 불러오지 않았으면(`lastSyncedAt === null`) 시작 때 한 번 불러오고, 그동안은 `loading: true` 로 발행한다 |
 | 자정 넘김 | 발행한 `date` 가 바뀌면 오늘 범위의 일정을 다시 불러온다. 끝나면 스토어 변경으로 다시 발행된다 |
-| 브리핑 | headline·신호 문구는 오늘 화면과 같은 규칙 문구다. LLM 으로 다듬지 않는다(2026-11-19 오늘 브리핑 LLM 다듬기 제거, 이때 `briefingSource` 필드도 뺐다) |
+| 문구 | headline·신호 문구는 오늘 화면과 같은 규칙 문구다. LLM 으로 다듬지 않는다 |
 | 정지 | 꺼지거나 메인 창이 언마운트되면 타이머·스토어 구독·`onPublishRequested` 구독을 모두 해제한다 |
 
 ## 3. 화면과 쓰기 범위
@@ -54,7 +54,7 @@ Mac 앱의 메인 프로세스가 작은 HTTP 서버를 띄우고, 휴대폰은 
 | 할 일 | `GET /api/todos?completed=0` / `=1` | 완료(`POST /api/todos/:id/complete`), 되돌리기(`.../restore`) |
 | 메모 | `GET /api/memos`(보관하지 않은 메모 전부 + 카테고리) | 작성(`POST /api/memos`) |
 
-`401` 을 받으면 화면은 "설정 화면의 QR 을 다시 스캔하세요" 를 보인다.
+`401` 을 받으면 화면은 "Mac 의 LinkWork 설정 → 모바일에서 QR 을 다시 스캔하세요." 를 보인다(`EXPIRED_TEXT`).
 
 ## 4. 보안 모델
 
@@ -76,11 +76,11 @@ Mac 앱의 메인 프로세스가 작은 HTTP 서버를 띄우고, 휴대폰은 
 
 ## 5. 계약
 
-타입의 단일 출처는 렌더러 `src/renderer/src/mobile/contract.ts` 와 메인 `src/main/services/mobile/types.ts` 다(한쪽을 바꾸면 다른 쪽도 바꾼다).
+계약 타입은 렌더러 `src/renderer/src/mobile/contract.ts` 에 있다(HTTP 응답·요청 본문 포함). 실패 본문 `{ error: string }` 은 타입 없이 `api.ts` 의 `errorMessageOf` 가 해석한다. 메인 `src/main/services/mobile/types.ts` 는 메인이 다루는 것(`MobileTodaySnapshot`·`MobileServerStatus`·`MobileAddress`·`MobileTailscaleState`)을 같은 모양으로 따로 정의하고 포트 후보·설정 키를 둔다. 두 파일의 공통 타입은 한쪽을 바꾸면 다른 쪽도 바꾼다.
 
 ### 5.1 HTTP API
 
-모두 쿠키 인증이 필요하고 JSON 을 주고받는다. 실패는 `{ error: string }` 과 4xx/5xx 다.
+모두 쿠키 인증이 필요하고 JSON 을 주고받는다. `/api/*` 의 실패는 `{ error: string }` 과 4xx/5xx 다.
 
 **gzip**: 요청의 `Accept-Encoding` 에 gzip 이 있고(`q=0` 제외) 본문이 1KB 이상이면 `mobile.html`, `/assets` 의 js·css(그 밖에 html·json·svg·map·txt), JSON API 응답을 gzip 으로 보낸다. 압축 대상 응답에는 실제 압축 여부와 관계없이 `Vary: Accept-Encoding` 을 붙인다. 정적 파일의 압축본은 경로+mtime+size 키로 메모리에 캐시한다(최대 64개).
 
@@ -109,7 +109,7 @@ Mac 앱의 메인 프로세스가 작은 HTTP 서버를 띄우고, 휴대폰은 
 `MobileServerStatus` 는 `{ enabled, running, port, pairUrl, qrDataUrl, error, addresses, tailscale }` 다.
 
 - `addresses: MobileAddress[]` — 휴대폰이 열 수 있는 주소 전부. 주소마다 `{ kind: 'lan' | 'tailscale', iface, ip, pairUrl, qrDataUrl }` 이고 순서는 lan(en0 우선) → tailscale 이다. 서버가 꺼져 있으면 빈 배열(분류·제외 규칙은 §7.1).
-- `pairUrl`·`qrDataUrl` — `addresses[0]` 과 같다(옛 화면 호환). 주소가 없으면 null.
+- `pairUrl`·`qrDataUrl` — `addresses[0]` 과 같다. 주소가 없으면 null.
 - `tailscale: 'connected' | 'installed' | 'not_installed'` — §7 참고.
 
 설정 화면은 옛 응답(`addresses` 가 없음)도 `pairUrl`·`qrDataUrl` 로 같은 네트워크 주소 1개를 만들어 그린다.
@@ -117,7 +117,7 @@ Mac 앱의 메인 프로세스가 작은 HTTP 서버를 띄우고, 휴대폰은 
 
 ## 6. 포트
 
-`0.0.0.0` 에 바인드한다. 기본 포트는 **8946** 이고, 사용 중이면 8947 → 8955 를 차례로 시도한다. 모두 사용 중이면 켜기 실패로 `error` 를 돌려준다.
+`0.0.0.0` 에 바인드한다. 포트 후보는 `MOBILE_PORT_CANDIDATES`(8946 → 8955)이고 앞에서부터 차례로 시도한다. 모두 사용 중이면 켜기 실패로 `error` 를 돌려준다.
 포트가 바뀌면 QR 도 바뀌므로 다시 스캔해야 한다. (8945 는 Google OAuth 콜백이 쓴다.)
 
 ## 7. 제약
@@ -127,7 +127,7 @@ Mac 앱의 메인 프로세스가 작은 HTTP 서버를 띄우고, 휴대폰은 
 - **회사 Wi-Fi 격리**: 기기 간 통신(client isolation)을 막는 네트워크에서는 접속되지 않을 수 있다.
 - **주소 없음**: Wi-Fi·유선·Tailscale IPv4 가 하나도 없으면 `addresses` 가 비고 `pairUrl`·`qrDataUrl` 은 null, `error` 에 "Wi-Fi·Tailscale 등 휴대폰이 닿을 주소를 찾지 못했습니다." 가 들어간다. 설정 화면은 그 문구와 "Wi-Fi 주소를 찾지 못했어요" 를 보인다. IP 가 바뀌면 QR 도 바뀐다(설정 화면은 10초마다 다시 읽는다).
 - **iOS "홈 화면에 추가" (실기기 미확인)**: 홈 화면 아이콘으로 연 웹앱은 Safari 와 쿠키 저장소가 분리될 수 있다. 그러면 페어링 쿠키가 없어 401 "QR 을 다시 스캔하세요" 안내가 뜰 수 있다. 설정 화면의 사용 안내는 이 경우 Safari 책갈피를 쓰라고 안내한다.
-- **오늘 데이터의 신선도**: 오늘 대시보드는 데스크톱 렌더러가 올린 스냅샷이라, 데스크톱 메인 창이 살아 있어야 갱신된다. 브리핑 문구는 발행 시점의 규칙 문구다.
+- **오늘 데이터의 신선도**: 오늘 대시보드는 데스크톱 렌더러가 올린 스냅샷이라, 데스크톱 메인 창이 살아 있어야 갱신된다. 헤드라인·신호 문구는 발행 시점의 규칙 문구다.
 
 ## 7.1 Tailscale 로 밖에서 접속
 
@@ -169,7 +169,7 @@ Mac 앱의 메인 프로세스가 작은 HTTP 서버를 띄우고, 휴대폰은 
 | `src/main/services/mobile/snapshot.ts` | 마지막 오늘 스냅샷 보관·검사 |
 | `src/main/services/mobile/controller.ts` | 서버 수명(앱 시작 때 켜짐이면 시작, 종료 때 정지)·상태·스냅샷 보관·재발행 요청. IPC 는 `src/main/ipc/mobile.ipc.ts` |
 | `src/main/services/mobile/settings.ts` | 켜짐 여부·토큰(safeStorage) 저장 |
-| `src/main/services/mobile/types.ts` | 메인 쪽 계약 타입·포트·설정 키 |
+| `src/main/services/mobile/types.ts` | 메인 쪽 계약 타입·포트 후보·설정 키 |
 | `src/preload/index.ts` | `window.api.mobile` |
 | `src/renderer/src/mobile/contract.ts` | 렌더러 쪽 계약 타입(데스크톱·모바일 공용) |
 | `src/renderer/src/mobile/` , `src/renderer/mobile.html` | 모바일 화면 |

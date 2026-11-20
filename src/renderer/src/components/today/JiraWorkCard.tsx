@@ -1,4 +1,4 @@
-// 오늘 대시보드의 '내 Jira 작업' 카드 (docs/ASSISTANT.md 부록 O).
+// 오늘 대시보드의 '내 Jira 작업' 카드 (docs/ASSISTANT.md §11.3).
 // 행 선택·정렬·상한은 todayModel 이 프로젝트 화면 규칙(boardModel)으로 한다. 여기서는 그리기와 이동만 한다.
 import type { JiraRow, TodayDashboard } from './todayModel'
 import { Card } from '../ui'
@@ -65,7 +65,7 @@ export function IssueRow({
   )
 }
 
-export function JiraWorkRow({ row, onOpenIssue }: { row: JiraRow; onOpenIssue: (row: JiraRow) => void }): React.ReactNode {
+function JiraWorkRow({ row, onOpenIssue }: { row: JiraRow; onOpenIssue: (row: JiraRow) => void }): React.ReactNode {
   return <IssueRow row={row} onOpenIssue={onOpenIssue} />
 }
 

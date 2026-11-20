@@ -13,7 +13,7 @@ import {
   type MeetingBriefingRow
 } from './MeetingBriefingCard'
 
-// 회의 전 브리핑 조각 (docs/ASSISTANT.md 부록 I.10.1·I.11.11, 부록 O).
+// 회의 전 브리핑 조각 (docs/ASSISTANT.md §11.5).
 // 대시보드에서는 일정 카드의 회의 행 아래에 본문(MeetingBriefingBody)만 펼친다
 
 const basePayload = (over: Partial<MeetingBriefingPayload> = {}): MeetingBriefingPayload => ({

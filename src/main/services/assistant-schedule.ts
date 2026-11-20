@@ -1,5 +1,4 @@
-// 회의 전 브리핑 판정 (부록 I), 아침 자동 동기화 판정 (A54). 순수 모듈이다 (A3).
-// 작업 경계 체크인은 제거됐다 (부록 L). 자동 최신화 판정은 제거됐다 (부록 O).
+// 회의 전 브리핑 판정 (docs/ASSISTANT.md §7.2), 아침 자동 동기화 판정 (§8.1). 순수 모듈이다.
 import { toMinutes } from './assistant-day'
 import type {
   DueMeetingBriefing,
@@ -14,7 +13,7 @@ export const TICK_MS = 60_000
 
 // ── 공용 시각 계산 ──
 
-/** 예정 시각보다 이만큼 늦으면 status 가 late 다 (H.2.2). */
+/** 예정 시각보다 이만큼(분) 늦으면 status 가 late 다. */
 export const LATE_AFTER_MIN = 2
 const DATE_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
 
@@ -37,9 +36,9 @@ export function minutesBetween(fromDateTime: string, toDateTime: string): number
   return (b - a) / 60_000
 }
 
-// ── MVP5 회의 전 브리핑 (부록 I) ──
+// ── 회의 전 브리핑 ──
 
-/** 하루에 보내는 회의 브리핑 수의 상한 (I.3.2). 설정으로 노출하지 않는다. */
+/** 하루에 보내는 회의 브리핑 수의 상한. 설정으로 노출하지 않는다. */
 export const MEETING_BRIEFING_DAILY_CAP = 6
 
 function pad2(n: number): string {
@@ -55,15 +54,15 @@ function formatLocalDateTime(ms: number): string {
   )
 }
 
-/** 'meeting_briefing:<date>:<id>'. 키는 캘린더 일정 id 다 (I.3.3). */
+/** 'meeting_briefing:<date>:<id>'. 키는 캘린더 일정 id 다. */
 export function meetingEventKey(today: string, calendarEventId: string): string {
   return `meeting_briefing:${today}:${calendarEventId}`
 }
 
 /**
- * I.4 의 순서로 이번 틱의 회의 브리핑을 판정한다 (A47).
+ * 이번 틱의 회의 브리핑을 판정한다. 순서는 docs/ASSISTANT.md §7.2 다.
  * 창은 [시작 − lead, 시작) 이다. 창 뒤와 상한 초과는 skip 결과다. 창 전은 결과에 넣지 않는다.
- * 회의 중 여부를 보지 않는다. 입력을 바꾸지 않는다 (A14).
+ * 회의 중 여부를 보지 않는다. 입력을 바꾸지 않는다.
  */
 export function computeDueMeetingBriefings(input: MeetingDecisionInput): DueMeetingBriefing[] {
   const { today, at, settings, meetings, events } = input
@@ -119,7 +118,7 @@ export function computeDueMeetingBriefings(input: MeetingDecisionInput): DueMeet
   return out
 }
 
-// ── 아침 자동 동기화 (A54) ──
+// ── 아침 자동 동기화 ──
 
 /** failed 부분을 다시 시도하는 최소 간격(분). deferred 도 이 간격으로 다시 본다. */
 export const MORNING_SYNC_RETRY_MIN = 30
@@ -128,7 +127,7 @@ export const MORNING_SYNC_MAX_ATTEMPTS = 3
 /** running 이 이보다 오래되면 failed 로 본다. 앱이 동기화 중에 꺼진 경우다. */
 export const MORNING_SYNC_STALE_MIN = 15
 /** 판정 순서다. 실행기도 이 순서로 실행한다. */
-export const MORNING_SYNC_PARTS: readonly MorningSyncPartName[] = ['release']
+const MORNING_SYNC_PARTS: readonly MorningSyncPartName[] = ['release']
 
 // 마지막 시도 뒤 간격이 지났는지. 시각을 읽지 못하면 지났다고 본다
 function retryGapPassed(part: MorningSyncPart, at: string): boolean {
@@ -160,10 +159,10 @@ function partDue(part: MorningSyncPart | null, at: string): boolean {
 }
 
 /**
- * A54. 이번 틱에 실행할 아침 동기화 부분을 고른다. 없으면 빈 배열이다.
+ * 이번 틱에 실행할 아침 동기화 부분을 고른다. 없으면 빈 배열이다.
  * 꺼짐·진행 중·설정 시각 이전·새벽 논리 날짜이면 실행하지 않는다.
  * ok·skipped 는 다시 실행하지 않는다. failed 는 30분 간격으로 하루 3회까지 다시 한다.
- * 15분 넘은 running 은 failed 로 본다. 입력을 바꾸지 않는다 (A14).
+ * 15분 넘은 running 은 failed 로 본다. 입력을 바꾸지 않는다.
  */
 export function decideMorningSync(input: MorningSyncDecisionInput): MorningSyncPartName[] {
   const { settings, payload, at } = input

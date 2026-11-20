@@ -10,7 +10,7 @@ import type {
   MobileTodosResponse
 } from './contract'
 
-export type MobileApiErrorKind = 'auth' | 'network' | 'http'
+type MobileApiErrorKind = 'auth' | 'network' | 'http'
 
 export class MobileApiError extends Error {
   readonly kind: MobileApiErrorKind

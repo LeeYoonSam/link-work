@@ -25,7 +25,7 @@ vi.mock('./assistant-scheduler', () => ({ navigateToToday: vi.fn() }))
 
 import { getTrayData } from './tray-widget'
 
-describe('트레이 데이터 (부록 O: 오늘 계획 섹션 제거)', () => {
+describe('트레이 데이터', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     db.all.mockReturnValue([])

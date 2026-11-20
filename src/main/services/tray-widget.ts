@@ -18,7 +18,7 @@ interface TrayEvent {
   isCompleted: boolean
 }
 
-// 부록 O(오늘 대시보드 개편): '오늘 계획' 요약(assistant)은 제거됐다. 일정 목록만 보낸다
+// 트레이 패널 데이터. 오늘 일정과 오늘의 할 일만 보낸다 (docs/ASSISTANT.md §10)
 export interface TrayData {
   events: TrayEvent[]
 }
@@ -219,7 +219,7 @@ export function createTrayWidget(onOpenApp: () => void): void {
     panelWindow?.hide()
   })
 
-  // 트레이 '오늘 보기' (부록 E.4.3)
+  // 트레이 '오늘 보기'. 메인 창의 오늘 화면을 연다
   ipcMain.handle('tray:openToday', () => {
     navigateToToday()
     panelWindow?.hide()

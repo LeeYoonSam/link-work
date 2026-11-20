@@ -4,7 +4,7 @@ import JiraTokenWarning, { resolveOpenSettings } from './JiraTokenWarning'
 import { useSettingsStore } from '../../stores/settingsStore'
 import type { JiraConnectionStatus } from '../../types'
 
-// Jira 토큰 경고의 [설정 열기] 는 작업 흐름을 끊지 않는다(설정 화면 설계 §7 결정 2)
+// Jira 토큰 경고의 [설정 열기] 는 작업 흐름을 끊지 않는다
 
 describe('JiraTokenWarning 설정 열기', () => {
   it('설정 열기는 그 자리 콜백이 있으면 그것을 부르고 없을 때만 설정 화면으로 이동한다', () => {

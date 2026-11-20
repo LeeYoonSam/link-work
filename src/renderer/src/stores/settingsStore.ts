@@ -23,14 +23,14 @@ import {
 //
 // verify 결과와 checkedAt 은 이 스토어 메모리에만 둔다. DB 키를 늘리지 않는다.
 
-export interface IntegrationStatuses {
+interface IntegrationStatuses {
   google: CalendarStatus | null
   jira: JiraConnectionStatus | null
   bitbucket: AiBitbucketStatus | null
   notion: AiNotionStatus | null
 }
 
-export type StatusKey = IntegrationId | 'claude'
+type StatusKey = IntegrationId | 'claude'
 
 export const INTEGRATION_IDS: IntegrationId[] = ['google', 'jira', 'bitbucket', 'notion']
 

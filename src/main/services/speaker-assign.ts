@@ -16,12 +16,12 @@ export const SPEAKER_COLORS = [
 ]
 
 /** 두 구간의 겹침 ms (겹치지 않으면 0) */
-export function overlapMs(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
+function overlapMs(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
   return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart))
 }
 
 /** 두 구간 사이 간격 ms (겹치거나 맞닿으면 0) */
-export function gapMs(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
+function gapMs(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
   return Math.max(0, bStart - aEnd, aStart - bEnd)
 }
 
@@ -29,7 +29,7 @@ export function gapMs(aStart: number, aEnd: number, bStart: number, bEnd: number
  * STT 세그먼트를 화자분리 turn의 speaker_key에 귀속한다.
  *  - 겹침이 가장 큰 turn의 화자. 겹침이 같으면 배열에서 먼저 나온 turn.
  *  - 어떤 turn과도 겹치지 않으면(겹침 0) 시간상 가장 가까운 turn(구간 사이 간격 최소)의 화자.
- *    간격이 같으면 먼저 나온 turn. (예전엔 겹침 0이면 무조건 turns[0] — 회의 첫 화자 — 로 갔다.)
+ *    간격이 같으면 먼저 나온 turn.
  *  - turns가 비어 있으면 기본 키 'spk_0'.
  * turns 정렬 여부와 무관하게 정확하다(전수 비교).
  */

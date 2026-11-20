@@ -11,7 +11,7 @@ export const CALENDAR_PICKER_OWN_ONLY =
   '기본 캘린더가 아닌 캘린더의 일정은 화면에만 보이고 회의 알림·회의 전 브리핑은 만들지 않습니다.'
 export const CALENDAR_LIST_FAILED =
   '캘린더 목록을 불러오지 못했습니다. 카드의 [Google 로그인]으로 다시 로그인해 주세요. 그동안은 저장된 선택(처음이면 기본 캘린더)으로 가져옵니다.'
-export const CALENDAR_MIN_ONE = '캘린더를 1개 이상 골라야 합니다.'
+const CALENDAR_MIN_ONE = '캘린더를 1개 이상 골라야 합니다.'
 
 /**
  * 체크 변경 후의 선택. 목록에 없는 옛 id 는 버리고 목록 순서로 돌려준다.

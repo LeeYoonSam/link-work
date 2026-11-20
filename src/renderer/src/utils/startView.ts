@@ -1,7 +1,7 @@
-// 앱 첫 화면 판정 (docs/ASSISTANT.md 부록 C.1, A24).
+// 앱 첫 화면 판정 (docs/ASSISTANT.md §4).
 // 순수 함수다. 브라우저 전역·React·스토어를 쓰지 않는다.
 
-export type StartView = 'today' | 'projects' | 'calendar'
+type StartView = 'today' | 'projects' | 'calendar'
 
 export const START_VIEWS: readonly StartView[] = ['today', 'projects', 'calendar']
 

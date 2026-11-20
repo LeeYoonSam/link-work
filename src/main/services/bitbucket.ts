@@ -20,8 +20,8 @@ const REQUEST_TIMEOUT_MS = 15_000
 const MAX_REDIRECTS = 5
 export const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 export const MAX_CONTENT_CHARS = 15_000
-export const MAX_LIST_PAGES = 5
-export const MAX_LIST_ENTRIES = 500
+const MAX_LIST_PAGES = 5
+const MAX_LIST_ENTRIES = 500
 const LIST_PAGE_LEN = 100
 // 슬래시가 든 브랜치를 찾으려고 ref 를 늘려 다시 시도하는 최대 횟수
 const MAX_REF_RETRIES = 3
@@ -271,7 +271,7 @@ export async function verifyStoredBitbucket(): Promise<{ account: string | null 
 
 // ── 저장소 조회 ──
 
-export interface BitbucketDirectoryEntry {
+interface BitbucketDirectoryEntry {
   path: string
   type: 'file' | 'directory'
   size?: number

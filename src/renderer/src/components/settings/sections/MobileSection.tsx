@@ -13,7 +13,7 @@ const COPIED_FLASH_MS = 1500
 /** 섹션이 보이는 동안 서버 상태를 다시 읽는 간격. Wi-Fi 가 바뀌면 QR·주소가 바뀐다 */
 export const STATUS_REFRESH_MS = 10_000
 
-export interface StatusPollingDeps {
+interface StatusPollingDeps {
   /** 처리 중(켜기·끄기·재발급)이면 true. 그때는 재조회를 생략한다 */
   isBusy: () => boolean
   refresh: () => void
@@ -50,7 +50,7 @@ export async function confirmAndRegenerate(
   return true
 }
 
-export const TAILSCALE_DOWNLOAD_URL = 'https://tailscale.com/download'
+const TAILSCALE_DOWNLOAD_URL = 'https://tailscale.com/download'
 
 /**
  * 휴대폰이 열 수 있는 주소 목록. 옛 상태(addresses 가 없는 응답)는 pairUrl·qrDataUrl 로 같은 네트워크 주소 1개를 만든다
@@ -124,7 +124,7 @@ function TailscaleGuide({ state }: { state: MobileServerStatus['tailscale'] }): 
   )
 }
 
-export interface MobileSectionViewProps {
+interface MobileSectionViewProps {
   status: MobileServerStatus | null
   loaded: boolean
   busy: boolean

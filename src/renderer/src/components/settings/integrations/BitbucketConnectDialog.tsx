@@ -11,13 +11,13 @@ import { DISCONNECT_CONFIRM } from '../integrationStatus'
 // Bitbucket Cloud 범위 지정 API token 등록 팝업.
 // main 이 GET /2.0/user 로 확인한 뒤에만 safeStorage 로 암호화 저장한다.
 
-export const BITBUCKET_SCOPES: ConnectScope[] = [
+const BITBUCKET_SCOPES: ConnectScope[] = [
   { scope: 'read:repository:bitbucket', reason: '저장소 파일 읽기', need: '필수' },
   { scope: 'read:pullrequest:bitbucket', reason: 'PR 링크 읽기', need: '권장' },
   { scope: 'read:user:bitbucket', reason: '연결 계정 이름 표시', need: '권장' }
 ]
 
-export interface BitbucketConnectDialogProps {
+interface BitbucketConnectDialogProps {
   status: AiBitbucketStatus
   onClose: () => void
   onChanged: () => void

@@ -9,7 +9,7 @@ interface TrayEvent {
   isCompleted: boolean
 }
 
-// 메인 tray-widget.ts 의 TrayData 와 같은 모양. 계획 섹션은 오늘 대시보드 개편으로 지웠다 (부록 O)
+// 메인 tray-widget.ts 의 TrayData 와 같은 모양 (docs/ASSISTANT.md §10)
 interface TrayData {
   events: TrayEvent[]
 }

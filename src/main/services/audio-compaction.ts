@@ -33,9 +33,9 @@ const WRITE_DONE_PROGRESS = 0.95
 // 기본값 0.5와 0.3 사이에서 보수적으로 0.35를 택했다(실측 튜닝값 아님).
 // 낮은 임계로 잡힌 잡음 구간을 전사하면 환각이 늘어나므로 이 구간은 STT에 쓰지 않는다
 // — 전사용 VAD는 whisper-adapter가 컷편집된 파일에 기본 임계값으로 다시 돌린다.
-export const COMPACTION_VAD_THRESHOLD = 0.35
+const COMPACTION_VAD_THRESHOLD = 0.35
 
-export interface CompactionResult {
+interface CompactionResult {
   applied: boolean
   originalMs: number
   compactedMs: number

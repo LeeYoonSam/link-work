@@ -1,4 +1,4 @@
-// 오늘 대시보드 전용 시각 상수 (docs/ASSISTANT.md 부록 O).
+// 오늘 대시보드 전용 시각 상수 (docs/ASSISTANT.md §11.3).
 // 공용 ui/tokens.ts 는 다른 화면도 쓴다. 그래서 대시보드의 위계·강조 규칙은 이 파일에만 둔다.
 //
 // 정보 위계: 헤드라인(lg) > 신호(sm medium) > 카드 제목(sm semibold) > 행(sm) > 메타(xs).
@@ -38,7 +38,7 @@ export const ROW_TITLE = 'min-w-0 flex-1 break-keep text-pretty [overflow-wrap:a
 export const MORE_LINK =
   'inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline'
 
-// 신호에 올라간 항목 표식. 강조는 이 표식 1가지만 쓴다 (부록 O)
+// 신호에 올라간 항목 표식. 강조는 이 표식 1가지만 쓴다
 export const SIGNALED_MARK = 'inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500'
 
 // 마감 글자

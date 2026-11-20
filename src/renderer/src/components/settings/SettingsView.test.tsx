@@ -66,7 +66,7 @@ describe('SettingsView', () => {
     expect(html).toContain('바꾸는 즉시 저장됩니다')
     for (const g of ['동작', '시간', '알림']) expect(html).toContain(g)
     expect(html).toContain('회의 전 알림(분)')
-    // 부록 O: 하루 계획용 칸은 없다
+    // 하루 계획용 칸은 없다
     expect(html).not.toContain('캘린더 확인 주기 (분)')
   })
 

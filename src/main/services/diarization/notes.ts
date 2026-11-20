@@ -13,7 +13,7 @@ function withCause(sentence: string, cause?: string): string {
   return c ? `${sentence} (${c})` : sentence
 }
 
-export type SherpaUnavailableKind = 'ensure-failed' | 'not-installed' | 'models-missing'
+type SherpaUnavailableKind = 'ensure-failed' | 'not-installed' | 'models-missing'
 
 /** sherpa를 쓸 수 없어 화자 구분 없이(단일 화자) 끝난 경우. */
 export function sherpaUnavailableNote(kind: SherpaUnavailableKind, cause?: string): string {

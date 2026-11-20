@@ -16,9 +16,9 @@ import { createRequestGate, dDayLabel, dueLabel, localDay, minutesUntil, monthDa
 import { CheckButton, Empty, ErrorNote, PageHeader, RefreshButton, Section, Skeleton } from './ui'
 
 /** 재발행을 요청한 뒤 최신본을 다시 읽기까지 기다리는 시간 */
-export const FOLLOW_UP_MS = 1500
+const FOLLOW_UP_MS = 1500
 /** 화면이 보이는 동안 다시 읽는 주기 */
-export const POLL_MS = 60_000
+const POLL_MS = 60_000
 
 // ─── 신호 ─────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ function SeverityIcon({ severity }: { severity: SignalSeverity }): React.ReactNo
 const REF_TONE: Record<string, string | undefined> = { issue: 'mono', todo: 'success', meeting: 'purple', release: 'mono' }
 
 /** meeting_soon 의 'n분 뒤'. 데스크톱 meetingSoonSuffix 와 같다 */
-export function meetingSuffix(signal: TodaySignal, rows: ScheduleRow[], now: Date): string {
+function meetingSuffix(signal: TodaySignal, rows: ScheduleRow[], now: Date): string {
   if (signal.kind !== 'meeting_soon') return ''
   const ref = signal.refs.find((r) => r.type === 'meeting')
   const row = ref ? rows.find((r) => r.id === ref.id) : undefined
@@ -84,7 +84,7 @@ function SignalItem({ signal: s, rows, now }: { signal: TodaySignal; rows: Sched
   )
 }
 
-export function SignalsSection({ dashboard, now }: { dashboard: TodayDashboard; now: Date }): React.ReactNode {
+function SignalsSection({ dashboard, now }: { dashboard: TodayDashboard; now: Date }): React.ReactNode {
   const hidden = dashboard.hiddenSignals ?? []
   const rows = dashboard.schedule.rows
   return (
@@ -129,7 +129,7 @@ function StatusChip({ row }: { row: JiraRow }): React.ReactNode {
 }
 
 /** 마감 표시. 데스크톱 jiraDueText 와 같은 문구 */
-export function jiraDue(
+function jiraDue(
   row: Pick<JiraRow, 'duedate' | 'overdue' | 'dueToday'>,
   showAll = true
 ): { text: string; tone: 'danger' | 'warn' | undefined } | null {
@@ -207,7 +207,7 @@ function MineBar({ mine }: { mine: NextRelease['mine'] }): React.ReactNode {
   )
 }
 
-export function ReleaseSection({ dashboard }: { dashboard: TodayDashboard }): React.ReactNode {
+function ReleaseSection({ dashboard }: { dashboard: TodayDashboard }): React.ReactNode {
   const r = dashboard.release
   if (!r) {
     const notConnected = dashboard.jira.state === 'not_connected' || dashboard.jira.state === 'no_project'
@@ -305,7 +305,7 @@ const JIRA_EMPTY: Record<Exclude<TodayDashboard['jira']['state'], 'ok'>, { text:
   error: { text: 'Jira 작업을 불러오지 못했어요.', kind: 'error' }
 }
 
-export function JiraSection({ jira }: { jira: TodayDashboard['jira'] }): React.ReactNode {
+function JiraSection({ jira }: { jira: TodayDashboard['jira'] }): React.ReactNode {
   const total = jira.rows.length + jira.moreCount
   return (
     <Section id="m-jira" title="내 Jira 작업" meta={jira.state === 'ok' && total > 0 ? `${total}건` : undefined}>
@@ -420,7 +420,7 @@ function ScheduleItem({ row }: { row: ScheduleRow }): React.ReactNode {
   )
 }
 
-export function ScheduleSection({ schedule, now }: { schedule: TodayDashboard['schedule']; now?: Date }): React.ReactNode {
+function ScheduleSection({ schedule, now }: { schedule: TodayDashboard['schedule']; now?: Date }): React.ReactNode {
   if (!schedule.connected) {
     return (
       <Section id="m-schedule" title="일정">

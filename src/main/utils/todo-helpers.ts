@@ -62,7 +62,7 @@ export function saveTodoHistory(
 // ── 목록 조회 (todo:list 와 같은 쿼리·정렬). 모바일 열람 서버가 쓴다 ──
 // todo.ipc.ts 의 todo:list·attachTags 와 같은 SQL 이다 — 한쪽을 바꾸면 다른 쪽도 바꾼다.
 
-export interface TodoTagRow {
+interface TodoTagRow {
   id: number
   name: string
   color: string
@@ -70,7 +70,7 @@ export interface TodoTagRow {
   updated_at: string
 }
 
-export interface TodoListRow {
+interface TodoListRow {
   id: number
   title: string
   priority: string
@@ -83,7 +83,7 @@ export interface TodoListRow {
   updated_at: string
 }
 
-export function attachTodoTags<T extends { id: number }>(
+function attachTodoTags<T extends { id: number }>(
   db: Database.Database,
   todos: T[]
 ): (T & { tags: TodoTagRow[] })[] {

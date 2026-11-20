@@ -122,9 +122,9 @@ export const SECRET_SETTING_KEYS: readonly string[] = [
 export const DEVICE_ONLY_SETTING_KEYS: readonly string[] = ['mobile_server_token', 'mobile_server_enabled']
 
 /** work 그룹에 속하는 app_settings 키. 옛 Jira 싱크업이 남긴 값이라 백업·복원 대상으로 유지한다 */
-export const WORK_SETTING_KEYS: readonly string[] = ['project_sync_created_keys']
+const WORK_SETTING_KEYS: readonly string[] = ['project_sync_created_keys']
 
-export type SettingKeyClass = 'work' | 'settings' | 'secret'
+type SettingKeyClass = 'work' | 'settings' | 'secret'
 
 /** app_settings 키를 분류한다. 분류되지 않은 키는 모두 settings 다(기본값). */
 export function classifySettingKey(key: string): SettingKeyClass {
@@ -169,7 +169,7 @@ export function groupOfTable(table: string): BackupGroupId | null {
  *   활성 계획에서 일치하지 않는 건수만 경고로 돌려준다.
  * X6(activity_log.entity_id)·X7(ai 본문 링크)·X8(외부 id)은 처리하지 않는다.
  */
-export interface CrossGroupRef {
+interface CrossGroupRef {
   id: 'X1' | 'X2' | 'X3' | 'X4' | 'X5'
   kind: 'fk' | 'json-todo' | 'candidate'
   childTable: string
@@ -199,7 +199,7 @@ export const REF_PARENT_TABLES: readonly string[] = Array.from(
  * - 다르면 식별 키를 백업 값으로 바꾸고 현재 자격(credentialKeys·credentialTables)을 지운다 + "다시 연결" 경고.
  * jira_token_expires_at·jira_account_name 은 평문이지만 현재 토큰을 설명하는 값이라 자격 쪽이다.
  */
-export interface CredentialBundle {
+interface CredentialBundle {
   id: 'jira' | 'bitbucket' | 'google' | 'notion'
   label: string
   identityKeys: readonly string[]

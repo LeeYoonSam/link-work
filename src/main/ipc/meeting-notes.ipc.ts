@@ -11,7 +11,7 @@ import {
 } from '../services/meeting-notes'
 
 // 회의록 — 요약 완료(status='summarized')된 회의를 목록·검색·Markdown으로 제공한다.
-// 새 테이블 없이 meetings + meeting_summaries 조인만 쓴다. (docs/MEETING_NOTES.md)
+// 새 테이블 없이 meetings + meeting_summaries 조인만 쓴다. (docs/MEETING_RECORDING.md §10)
 
 interface MeetingNoteFilter {
   q?: string
@@ -92,7 +92,7 @@ export function listMeetingNotes(db: Db, filter?: MeetingNoteFilter) {
   })
 }
 
-export function meetingNoteMarkdown(db: Db, id: number): string {
+function meetingNoteMarkdown(db: Db, id: number): string {
   const meeting = db.prepare('SELECT * FROM meetings WHERE id = ?').get(id) as
     | NoteDetail['meeting']
     | undefined

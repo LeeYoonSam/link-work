@@ -1,6 +1,6 @@
 export type AiModelName = 'opus' | 'sonnet' | 'haiku'
 
-// 'checkin' 은 제거된 작업 경계 체크인의 과거 행이다 (부록 L). 새 행을 만들지 않는다
+// 지금 새 행을 만드는 kind 는 meeting_briefing·morning_sync 뿐이다. 나머지는 제거된 기능이 남긴 과거 행이다 (docs/ASSISTANT.md §5.1)
 export type AssistantEventKind = 'start_nudge' | 'plan_update' | 'checkin' | 'meeting_briefing' | 'command' | 'morning_sync' | 'today_briefing'
 export type AssistantEventStatus = 'sent' | 'late' | 'skipped' | 'failed' | 'logged'
 export interface AssistantEvent {
@@ -17,9 +17,9 @@ export interface AssistantSettings {
   llmEnabled: boolean; llmModel: AiModelName   // 회의 전 브리핑의 AI 본문
   openAtLogin: boolean
   meetingLeadMin: number
-  startView: 'today' | 'projects' | 'calendar'   // 첫 화면 (부록 C, A24)
-  meetingBriefingEnabled: boolean              // 회의 전 브리핑 (부록 I)
-  morningSyncEnabled: boolean                  // 아침 자동 동기화 (A54)
+  startView: 'today' | 'projects' | 'calendar'   // 첫 화면
+  meetingBriefingEnabled: boolean              // 회의 전 브리핑
+  morningSyncEnabled: boolean                  // 아침 자동 동기화
   morningSyncTime: string                        // 아침 자동 동기화 시각 'HH:mm'
 }
 
@@ -30,11 +30,10 @@ export interface TodayPayload {
   aiAvailable: boolean; calendarConnected: boolean
 }
 export interface AssistantChangedEvent { date: string; reason: 'meeting' }
-export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'meeting'; id?: string } }
+// 메인이 보내는 focus 는 회의 브리핑 알림 클릭의 'meeting' 뿐이다 (docs/ASSISTANT.md §6.3)
+export interface AssistantNavigateEvent { view: 'today'; focus?: { kind: 'meeting'; id?: string } }
 
-// 명령 입력(부록 G)·최신화 알림·트레이 계획 요약 타입은 부록 O(오늘 대시보드 개편)에서 기능과 함께 제거됐다
-
-// ── MVP5 (부록 I) ──
+// ── 회의 전 브리핑 (docs/ASSISTANT.md §7) ──
 export interface MeetingRef { id: string; title: string; startAt: string; endAt: string }   // 'YYYY-MM-DD HH:mm:ss'. 종일 제외
 export interface MeetingDecisionInput {
   today: string; at: string                                   // at 은 'YYYY-MM-DD HH:mm:ss'
@@ -67,7 +66,7 @@ export interface SentMeetingNotice {
   focus: { kind: 'meeting'; id: string }
 }
 
-// ── 아침 자동 동기화 (A54) ──
+// ── 아침 자동 동기화 (docs/ASSISTANT.md §8) ──
 export type MorningSyncPartName = 'release'
 // deferred 는 미룬 상태다. 시도로 세지 않는다. 지금 릴리스 파트는 쓰지 않지만 옛 행을 읽으려고 남긴다
 export type MorningSyncPartStatus = 'running' | 'ok' | 'skipped' | 'failed' | 'deferred'

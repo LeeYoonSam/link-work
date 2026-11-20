@@ -11,7 +11,7 @@ import { startMobilePublisher, type MobilePublisher, type MobileTodayInputs } fr
 // 화면을 그리지 않는다. App 메인 창에 1번 마운트한다(트레이 패널 창에는 두지 않는다).
 
 /** 오늘 화면(TodayView)과 같은 입력을 스토어에서 읽는다 */
-export function readTodayInputs(): MobileTodayInputs {
+function readTodayInputs(): MobileTodayInputs {
   const today = useTodayStore.getState()
   const todo = useTodoStore.getState()
   const board = useJiraBoardStore.getState()

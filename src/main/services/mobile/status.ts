@@ -32,7 +32,7 @@ export function createQrCache(make: (text: string) => string = qrSvgDataUrl): {
   }
 }
 
-export interface StatusInput {
+interface StatusInput {
   enabled: boolean
   running: boolean
   port: number | null

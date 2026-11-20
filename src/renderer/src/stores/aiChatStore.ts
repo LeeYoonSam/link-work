@@ -18,7 +18,7 @@ export const FALLBACK_MODEL_OPTIONS: AiChatModelOption[] = [
   { value: 'haiku', label: 'Haiku', description: '가장 빠름' }
 ]
 
-export interface StartChatOptions {
+interface StartChatOptions {
   // 새 채팅의 쓰기 모드. 지정하면 전송 전에 바꾼다. 실패하면 전송하지 않는다
   writeMode?: AiWriteMode
 }

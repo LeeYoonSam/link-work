@@ -3,7 +3,7 @@ import MarkdownContent from '../memo/MarkdownContent'
 import { AlertTriangleIcon, Badge, button } from '../ui'
 import { openInternalLink } from '../../utils/openInternalLink'
 
-// 회의 전 브리핑의 읽기·표시 조각 (docs/ASSISTANT.md 부록 I.10.1, 부록 O).
+// 회의 전 브리핑의 읽기·표시 조각 (docs/ASSISTANT.md §11.5).
 // 오늘 대시보드에서는 일정 카드(ScheduleCard)의 회의 행 아래에 인라인으로 펼친다.
 // 짝짓기는 payload.meeting.id === CalendarEvent.id 다. 별도 카드는 두지 않는다.
 
@@ -51,7 +51,7 @@ export function parseMeetingPayload(payload: string | null): MeetingBriefingPayl
   }
 }
 
-// 카드에 그릴 회의 브리핑 행을 scheduled_at 오름차순으로 고른다 (부록 I.10.1)
+// 카드에 그릴 회의 브리핑 행을 scheduled_at 오름차순으로 고른다
 export function meetingBriefings(events: AssistantEvent[]): MeetingBriefingRow[] {
   const rows: MeetingBriefingRow[] = []
   for (const event of events) {
@@ -77,7 +77,7 @@ export function meetingStarted(startAt: string, now: string): boolean {
   return startAt !== '' && startAt <= now
 }
 
-// 시작 전 회의 중 가장 가까운 행의 이벤트 id. 없으면 null 이다 (부록 J.8).
+// 시작 전 회의 중 가장 가까운 행의 이벤트 id. 없으면 null 이다.
 // 카드는 이 1건만 기본으로 펼친다. 이유: 여러 브리핑이 화면을 밀어내지 않는다
 export function nearestUpcomingEventId(rows: MeetingBriefingRow[], now: string): number | null {
   let best: MeetingBriefingRow | null = null
@@ -141,7 +141,7 @@ function RegenerateButton({
   )
 }
 
-export function KindBadge({ status }: { status: MeetingLlmStatus }): React.ReactNode {
+function KindBadge({ status }: { status: MeetingLlmStatus }): React.ReactNode {
   return (
     <Badge color={status === 'done' ? 'bg-purple-50 text-purple-600' : 'bg-slate-100 text-slate-600'}>
       {briefingBadge(status)}
@@ -173,7 +173,7 @@ function BriefingContent({ payload }: { payload: MeetingBriefingPayload }): Reac
   )
 }
 
-// 일정 카드의 회의 행 아래에 펼치는 브리핑 본문이다 (부록 O).
+// 일정 카드의 회의 행 아래에 펼치는 브리핑 본문이다.
 // 회의 시각·제목은 일정 행에 있어 다시 쓰지 않는다. 배지·다시 만들기·안내·본문을 그린다
 export function MeetingBriefingBody({
   row,

@@ -11,7 +11,7 @@ const ENERGY_HOP_MS = 100
 const STEREO_DIFF_THRESHOLD = 0.05
 
 // 채널 에너지 envelope — main의 ChannelEnergy 타입과 형태를 일치시킨다.
-export interface ChannelEnergyPayload {
+interface ChannelEnergyPayload {
   hopMs: number
   left: number[]
   right: number[]

@@ -10,7 +10,7 @@
 const REQUEST_TIMEOUT_MS = 15_000
 const MAX_REDIRECTS = 5
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
-export const MAX_TEXT_CHARS = 12_000
+const MAX_TEXT_CHARS = 12_000
 
 const ALLOWED_CONTENT_TYPES = [
   'text/html',
@@ -63,7 +63,7 @@ export function getUrlBlockReason(rawUrl: string): string | null {
   return null
 }
 
-export interface FetchedPage {
+interface FetchedPage {
   url: string
   title: string | null
   content: string

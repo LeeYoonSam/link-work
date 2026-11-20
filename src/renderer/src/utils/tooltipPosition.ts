@@ -5,24 +5,24 @@
 /** 뷰포트 가장자리와 말풍선 사이 최소 여백 */
 export const TOOLTIP_MARGIN = 8
 
-export interface TriggerRect {
+interface TriggerRect {
   top: number
   bottom: number
   left: number
 }
 
-export interface TooltipSize {
+interface TooltipSize {
   width: number
   /** 트리거와의 간격을 덮는 투명 다리를 포함한 높이 */
   height: number
 }
 
-export interface Viewport {
+interface Viewport {
   width: number
   height: number
 }
 
-export interface TooltipPlacement {
+interface TooltipPlacement {
   top: number
   left: number
   /** 트리거 아래로 뒤집혔는지. 투명 다리를 붙일 방향을 정한다 */

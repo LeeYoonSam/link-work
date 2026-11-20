@@ -37,7 +37,7 @@ export function Section({
   )
 }
 
-export type EmptyKind = 'calm' | 'link' | 'wait' | 'error'
+type EmptyKind = 'calm' | 'link' | 'wait' | 'error'
 
 const EMPTY_ICON: Record<EmptyKind, ReactNode> = {
   // 체크 원: 할 일·신호 없음
@@ -132,7 +132,7 @@ export function Skeleton({ lines = 3 }: { lines?: number }): React.ReactNode {
   )
 }
 
-export function RefreshIcon({ spinning = false }: { spinning?: boolean }): React.ReactNode {
+function RefreshIcon({ spinning = false }: { spinning?: boolean }): React.ReactNode {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden className={spinning ? 'animate-spin' : ''}>
       <path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />

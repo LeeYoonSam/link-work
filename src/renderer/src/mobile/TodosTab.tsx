@@ -10,7 +10,7 @@ import type { TabProps } from './TodayTab'
 import { CheckButton, Empty, ErrorNote, PageHeader, RefreshButton, Skeleton } from './ui'
 
 /** 체크한 행이 빠지는 전환 시간(mobile.css .m-leaving 과 같다) */
-export const LEAVE_MS = 180
+const LEAVE_MS = 180
 
 const DUE_TONE = { overdue: 'danger', today: 'warn', later: undefined, none: undefined } as const
 

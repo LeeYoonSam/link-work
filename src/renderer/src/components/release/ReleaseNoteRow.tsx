@@ -22,12 +22,12 @@ const FALLBACK_TYPE = '기타'
 /** 한 릴리스에서 가져오는 이슈 상한 (services/jira.ts의 MAX_ISSUES와 같은 값) */
 export const MAX_ISSUES = 500
 
-export interface ReleaseItemRow {
+interface ReleaseItemRow {
   item: ReleaseNoteItem
   child: boolean
 }
 
-export interface ReleaseItemGroup {
+interface ReleaseItemGroup {
   type: string
   rows: ReleaseItemRow[]
 }
@@ -156,7 +156,7 @@ export function releaseItemStatusTone(status: string): string {
 }
 
 // 'YYYY-MM-DD HH:MM:SS'(localtime)는 Safari/Chrome 파싱이 갈려 T를 끼워 넣는다
-export function formatSyncedAt(value: string | null): string | null {
+function formatSyncedAt(value: string | null): string | null {
   if (!value) return null
   const parsed = new Date(value.replace(' ', 'T'))
   if (Number.isNaN(parsed.getTime())) return value

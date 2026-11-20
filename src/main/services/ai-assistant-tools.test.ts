@@ -47,15 +47,15 @@ vi.mock('../db/database', () => ({
   },
   getDatabase: () => {
     state.networkCalls.push('getDatabase')
-    throw new Error('A31: getDatabase 를 부르면 안 된다')
+    throw new Error('getDatabase 를 부르면 안 된다')
   }
 }))
 
-// 비서 모듈이 끌어올 수 있는 네트워크 모듈이다 (부록 F.13 위험 4). 호출되면 기록한다.
+// 비서 모듈이 끌어올 수 있는 네트워크 모듈이다. 호출되면 기록한다.
 vi.mock('./jira', () => {
   const record = (name: string) => () => {
     state.networkCalls.push(name)
-    throw new Error(`A31: ${name} 를 부르면 안 된다`)
+    throw new Error(`${name} 를 부르면 안 된다`)
   }
   return {
     getDefaultJiraProjectKey: () => null,
@@ -69,7 +69,7 @@ vi.mock('./google-auth', () => ({ isConnected: () => true }))
 vi.mock('./google-calendar', () => ({
   fetchEventsInRange: () => {
     state.networkCalls.push('fetchEventsInRange')
-    throw new Error('A31: 캘린더를 부르면 안 된다')
+    throw new Error('캘린더를 부르면 안 된다')
   }
 }))
 
@@ -115,7 +115,7 @@ async function call(name: string, args: Record<string, unknown> = {}): Promise<a
   return JSON.parse(res.content[0].text)
 }
 
-// 픽스처 행을 넣는다. A2 grep 이 원본 테이블 쓰기 문장을 찾지 않도록 테이블 이름을 인자로 받는다.
+// 픽스처 행을 넣는다. 원본 테이블 쓰기 문장을 grep 하는 검사에 걸리지 않도록 테이블 이름을 인자로 받는다.
 function seed(db: Database.Database, table: string, rows: string[]): void {
   for (const values of rows) db.exec(`INSERT INTO ${table} VALUES ${values}`)
 }
@@ -250,15 +250,15 @@ describe('list_meeting_action_items', () => {
   })
 })
 
-describe('A31 읽기 전용·네트워크 없음', () => {
-  it('A31: 소스는 getDatabase·jira·google-calendar·ai-headless 를 import 하지 않는다', () => {
+describe('읽기 전용·네트워크 없음', () => {
+  it('소스는 getDatabase·jira·google-calendar·ai-headless 를 import 하지 않는다', () => {
     const src = readFileSync(join(__dirname, 'ai-assistant-tools.ts'), 'utf-8')
     expect(src).not.toMatch(/from '\.\/jira'|from '\.\/google-calendar'|from '\.\/ai-headless'|\bgetDatabase\b/)
     expect(src).toMatch(/getAiReadOnlyDatabase/)
     expect(src).not.toMatch(/INSERT INTO|UPDATE |DELETE FROM/)
   })
 
-  it('A31: 도구는 SELECT 만 실행하고 Jira·캘린더·쓰기 커넥션을 부르지 않는다', async () => {
+  it('도구는 SELECT 만 실행하고 Jira·캘린더·쓰기 커넥션을 부르지 않는다', async () => {
     seed(db, 'meetings (id, title, started_at, project_id)', [`(1, '회의', '2026-11-01 10:00:00', NULL)`])
     seed(db, 'meeting_summaries (id, meeting_id, action_items, generated_at)', [
       `(1, 1, '[{"text":"a","todo_id":1}]', '2026-11-01 11:00:00')`

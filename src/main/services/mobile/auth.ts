@@ -4,7 +4,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
 
 export const MOBILE_COOKIE_NAME = 'lw_mobile'
 /** 30일 */
-export const MOBILE_COOKIE_MAX_AGE = 2592000
+const MOBILE_COOKIE_MAX_AGE = 2592000
 
 /** 페어링 토큰: 32바이트 난수 base64url */
 export function generateToken(): string {

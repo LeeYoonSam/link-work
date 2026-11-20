@@ -1,5 +1,5 @@
-// 논리 날짜·시각 변환 (docs/ASSISTANT.md §6).
-// 순수 모듈이다 (A3). 날짜·시각 형식은 A12 를 따른다.
+// 논리 날짜·시각 변환 (docs/ASSISTANT.md §3).
+// 순수 모듈이다. 저장 시각은 로컬 'YYYY-MM-DD HH:mm:ss' 다.
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 const DEFAULT_ROLLOVER = '04:00'

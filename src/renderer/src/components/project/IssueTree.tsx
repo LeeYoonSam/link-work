@@ -22,9 +22,9 @@ const INDENT: Record<1 | 2 | 3, string> = { 1: 'pl-3', 2: 'pl-8', 3: 'pl-14' }
 const URGENT = 'text-red-600 font-medium'
 
 /** 넓은 창 기준점. 이보다 좁으면 상세를 행 아래 인라인으로 펼친다 (ProjectBoardView 와 짝) */
-export const INLINE_DETAIL_HIDE = 'min-[1120px]:hidden'
+const INLINE_DETAIL_HIDE = 'min-[1120px]:hidden'
 
-export interface IssueTreeProps {
+interface IssueTreeProps {
   rows: VisibleRow[]
   /** 포커스가 사라진 행의 조상을 찾는 데 쓴다 */
   forest: BoardForest

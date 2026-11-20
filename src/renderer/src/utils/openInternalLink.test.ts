@@ -113,9 +113,16 @@ describe('openInternalLink', () => {
     expect(useNavigationStore.getState().view).toBe('notes')
   })
 
-  it('today/item/7: 오늘 화면 포커스를 정하고 오늘 화면으로 간다', async () => {
+  it('today/meeting/42: 회의 포커스를 정하고 오늘 화면으로 간다', async () => {
+    await openInternalLink('linkwork://today/meeting/42')
+    expect(useAssistantStore.getState().focus).toEqual({ kind: 'meeting', id: '42' })
+    expect(useNavigationStore.getState().view).toBe('today')
+  })
+
+  it('옛 today/item/7: 포커스를 비우고 오늘 화면으로 간다', async () => {
+    useAssistantStore.getState().setFocus({ kind: 'meeting', id: '1' })
     await openInternalLink('linkwork://today/item/7')
-    expect(useAssistantStore.getState().focus).toEqual({ kind: 'item', id: '7' })
+    expect(useAssistantStore.getState().focus).toBeNull()
     expect(useNavigationStore.getState().view).toBe('today')
   })
 

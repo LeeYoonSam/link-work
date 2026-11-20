@@ -60,7 +60,7 @@ vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] }
 }))
 
-// 회의 브리핑이 읽는 5분 캐시다 (I.3.1). 테스트가 일정을 넣는다
+// 회의 브리핑이 읽는 5분 캐시다. 테스트가 일정을 넣는다
 // isOwnCalendarEvent 는 google-calendar.ts 의 규칙과 같다: calendarId 가 없거나 'primary' 면 기본 캘린더다
 const calendar = vi.hoisted(() => ({
   getTodayEvents: vi.fn(async (): Promise<unknown[]> => []),
@@ -75,7 +75,7 @@ const jira = vi.hoisted(() => ({ isJiraConnected: vi.fn(() => false) }))
 vi.mock('./jira', () => jira)
 
 const headless = vi.hoisted(() => ({ isHeadlessAvailable: vi.fn(() => true), runHeadlessJson: vi.fn() }))
-// LLM 줄(runLlmSerialized)은 실제 구현을 쓴다. 에픽 요약과 같은 줄을 거치는지 본다 (A32)
+// LLM 줄(runLlmSerialized)은 실제 구현을 쓴다. 에픽 요약과 같은 줄을 거치는지 본다
 vi.mock('./ai-agent', () => ({ findClaudeExecutable: () => undefined }))
 vi.mock('./ai-headless', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./ai-headless')>()
@@ -84,7 +84,7 @@ vi.mock('./ai-headless', async (importOriginal) => {
 
 // 수집 모듈은 네트워크를 쓰므로 픽스처로 답한다
 const sources = vi.hoisted(() => ({
-  // 회의 브리핑 (부록 I.5). 변환·수집 규칙은 assistant-sources.test.ts 가 검증한다
+  // 회의 브리핑. 변환·수집 규칙은 assistant-sources.test.ts 가 검증한다
   toMeetingRef: vi.fn(),
   collectMeetingContext: vi.fn()
 }))
@@ -96,7 +96,7 @@ vi.mock('./assistant-briefing', async (importOriginal) => {
   return { ...actual, requestLlmMeetingBriefing: briefing.requestLlmMeetingBriefing }
 })
 
-// 회의 브리핑 판정은 실제 구현을 쓴다. UNIQUE 충돌 테스트만 결과를 고정한다 (부록 I)
+// 회의 브리핑 판정은 실제 구현을 쓴다. UNIQUE 충돌 테스트만 결과를 고정한다
 const schedule = vi.hoisted(() => ({ computeDueMeetingBriefings: vi.fn() }))
 vi.mock('./assistant-schedule', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./assistant-schedule')>()
@@ -126,9 +126,7 @@ import type {
   MeetingRef
 } from './assistant-types'
 
-// 부록 O(오늘 대시보드 개편, 2026-11-19): 하루 시작·퇴근·계획 항목 조작·후보·최신화·맥락 복구·명령 입력은
-// 제거됐다. 2026-11-19 에 과거 계획 읽기·지난 계획 닫기도 뺐다.
-// 이 파일은 남은 기능(오늘 화면 페이로드, 회의 전 브리핑, 설정, LLM 직렬화 줄)만 검증한다.
+// 이 파일은 서비스 기능(오늘 화면 페이로드, 회의 전 브리핑, 설정, LLM 직렬화 줄)만 검증한다.
 
 // 2026-11-02 는 월요일이다
 const MON_0940 = new Date(2026, 10, 2, 9, 40, 0)
@@ -197,7 +195,7 @@ describe('saveSettings', () => {
   })
 })
 
-describe('회의 전 브리핑 (부록 I)', () => {
+describe('회의 전 브리핑', () => {
   // 10:15 회의, lead 15분이면 창은 [10:00, 10:15) 다
   const MON_0955 = new Date(2026, 10, 2, 9, 55, 0)
   const MON_1001 = new Date(2026, 10, 2, 10, 1, 0)
@@ -246,7 +244,7 @@ describe('회의 전 브리핑 (부록 I)', () => {
     briefing.requestLlmMeetingBriefing.mockResolvedValue({ ok: true, markdown: '# AI 회의 브리핑', model: 'claude-sonnet-5-5' })
   })
 
-  describe('runDueMeetingBriefings (I.9.1)', () => {
+  describe('runDueMeetingBriefings', () => {
     it('M2: 추가 캘린더(Tech 등) 일정은 브리핑 대상과 하루 상한 계산에서 뺀다. 기본 캘린더 일정만 보낸다', async () => {
       const TECH = 'c_tech@group.calendar.google.com'
       // 추가 캘린더 회의 6건이 먼저 시작한다. 거르지 않으면 상한(6)을 다 써서 기본 캘린더 회의가 밀린다
@@ -268,7 +266,7 @@ describe('회의 전 브리핑 (부록 I)', () => {
       expect(sources.collectMeetingContext.mock.calls.map((c) => (c[1] as MeetingRef).id).sort()).toEqual(['legacy', 'mine'])
     })
 
-    it('A45: 창 안이면 규칙 본문을 INSERT 하고 알림을 돌려준다. LLM 은 그 뒤 같은 행에 쓴다', async () => {
+    it('창 안이면 규칙 본문을 INSERT 하고 알림을 돌려준다. LLM 은 그 뒤 같은 행에 쓴다', async () => {
       let rowAtLlm: MeetingBriefingPayload | null = null
       const gate = deferred()
       briefing.requestLlmMeetingBriefing.mockImplementation(async () => {
@@ -316,7 +314,7 @@ describe('회의 전 브리핑 (부록 I)', () => {
       })
     })
 
-    it('A45: LLM 이 실패해도 알림은 그대로 나가고 payload 에 failed 와 오류만 남는다', async () => {
+    it('LLM 이 실패해도 알림은 그대로 나가고 payload 에 failed 와 오류만 남는다', async () => {
       briefing.requestLlmMeetingBriefing.mockResolvedValue({ ok: false, error: 'Claude Code 로그인이 필요합니다.' })
       const notices = await runDueMeetingBriefings(MON_1001)
       expect(notices).toHaveLength(1)
@@ -327,14 +325,14 @@ describe('회의 전 브리핑 (부록 I)', () => {
       expect(getEventById(getDatabase(), notices[0].eventId)?.status).toBe('sent')
     })
 
-    it('A45: LLM 이 reject 해도 throw 하지 않고 failed 로 남긴다', async () => {
+    it('LLM 이 reject 해도 throw 하지 않고 failed 로 남긴다', async () => {
       briefing.requestLlmMeetingBriefing.mockRejectedValue(new Error('boom'))
       const notices = await runDueMeetingBriefings(MON_1001)
       await waitForAssistantBackground()
       expect(payloadOf(notices[0].eventId)).toMatchObject({ llmStatus: 'failed', llmError: 'boom' })
     })
 
-    it('A45: hasContext 가 false 면 LLM 을 부르지 않고 llmStatus 는 off 다', async () => {
+    it('hasContext 가 false 면 LLM 을 부르지 않고 llmStatus 는 off 다', async () => {
       sources.collectMeetingContext.mockImplementation((_db: unknown, meeting: MeetingRef) =>
         ctxOf(meeting, { openActionItems: [] })
       )
@@ -377,7 +375,7 @@ describe('회의 전 브리핑 (부록 I)', () => {
       expect(changed.filter((e) => e.reason === 'meeting')).toHaveLength(0)
     })
 
-    it('A47: 창이 지났으면 skipped 행을 fired_at null 로 남기고 알리지 않는다', async () => {
+    it('창이 지났으면 skipped 행을 fired_at null 로 남기고 알리지 않는다', async () => {
       expect(await runDueMeetingBriefings(MON_1020)).toEqual([])
       expect(meetingRows()).toEqual([
         expect.objectContaining({
@@ -395,7 +393,7 @@ describe('회의 전 브리핑 (부록 I)', () => {
       expect(meetingRows()).toHaveLength(1)
     })
 
-    it('A47: 하루 6건을 넘는 회의는 cap 으로 skipped 다', async () => {
+    it('하루 6건을 넘는 회의는 cap 으로 skipped 다', async () => {
       headless.isHeadlessAvailable.mockReturnValue(false)
       calendar.getTodayEvents.mockImplementation(async () =>
         ['10:02', '10:03', '10:04', '10:05', '10:06', '10:07', '10:08'].map((t, i) => calEvent(`c${i}`, t))
@@ -407,13 +405,13 @@ describe('회의 전 브리핑 (부록 I)', () => {
       expect(rows.find((r) => r.event_key.endsWith(':c6'))).toMatchObject({ status: 'skipped', fired_at: null, payload: JSON.stringify({ reason: 'cap' }) })
     })
 
-    it('A5: 같은 회의의 두 번째 틱은 행을 더 만들지 않고 빈 목록이다', async () => {
+    it('같은 회의의 두 번째 틱은 행을 더 만들지 않고 빈 목록이다', async () => {
       expect(await runDueMeetingBriefings(MON_1001)).toHaveLength(1)
       expect(await runDueMeetingBriefings(MON_1002)).toEqual([])
       expect(meetingRows()).toHaveLength(1)
     })
 
-    it('A5: 판정이 같은 키를 다시 돌려줘도 UNIQUE 충돌이면 알림 목록에 넣지 않고 LLM 을 부르지 않는다', async () => {
+    it('판정이 같은 키를 다시 돌려줘도 UNIQUE 충돌이면 알림 목록에 넣지 않고 LLM 을 부르지 않는다', async () => {
       const meeting: MeetingRef = { id: 'm1', title: '회의 m1', startAt: '2026-11-02 10:15:00', endAt: '2026-11-02 10:59:00' }
       const due: DueMeetingBriefing = { action: 'send', meeting, eventKey: 'meeting_briefing:2026-11-02:m1', scheduledAt: '2026-11-02 10:00:00', late: false }
       schedule.computeDueMeetingBriefings.mockReturnValueOnce([due]).mockReturnValueOnce([due])
@@ -451,7 +449,7 @@ describe('회의 전 브리핑 (부록 I)', () => {
       expect(calendar.getTodayEvents).not.toHaveBeenCalled()
     })
 
-    it('A46: 캘린더는 getTodayEvents 캐시만 쓰고, 조회가 reject 해도 throw 하지 않는다', async () => {
+    it('캘린더는 getTodayEvents 캐시만 쓰고, 조회가 reject 해도 throw 하지 않는다', async () => {
       calendar.getTodayEvents.mockRejectedValueOnce(new Error('network'))
       await expect(runDueMeetingBriefings(MON_1001)).resolves.toEqual([])
       expect(calendar.getTodayEvents).toHaveBeenCalledWith()
@@ -481,7 +479,7 @@ describe('회의 전 브리핑 (부록 I)', () => {
       expect(meetingRows()).toHaveLength(1)
     })
 
-    it('시각을 넘기지 않으면 줄 안에서 현재 시각을 잡는다 (H.16)', async () => {
+    it('시각을 넘기지 않으면 줄 안에서 현재 시각을 잡는다', async () => {
       vi.useFakeTimers({ toFake: ['Date'] })
       try {
         vi.setSystemTime(MON_1001)
@@ -493,8 +491,8 @@ describe('회의 전 브리핑 (부록 I)', () => {
     })
   })
 
-  describe('LLM 직렬화 (A32)', () => {
-    it('A32: 회의 LLM 은 runLlmSerialized 줄에서 앞 작업이 끝난 뒤 실행된다', async () => {
+  describe('LLM 직렬화', () => {
+    it('회의 LLM 은 runLlmSerialized 줄에서 앞 작업이 끝난 뒤 실행된다', async () => {
       const gate = deferred()
       const log: string[] = []
       briefing.requestLlmMeetingBriefing.mockImplementation(async () => {
@@ -522,7 +520,7 @@ describe('회의 전 브리핑 (부록 I)', () => {
       expect(payloadOf(notices[0].eventId).llmStatus).toBe('done')
     })
 
-    it('A32: 회의 브리핑 다시 만들기도 같은 줄을 거친다. 앞 작업이 reject 해도 실행된다', async () => {
+    it('회의 브리핑 다시 만들기도 같은 줄을 거친다. 앞 작업이 reject 해도 실행된다', async () => {
       headless.isHeadlessAvailable.mockReturnValue(false)
       const [n] = await runDueMeetingBriefings(MON_1001)
       headless.isHeadlessAvailable.mockReturnValue(true)
@@ -550,7 +548,7 @@ describe('회의 전 브리핑 (부록 I)', () => {
     })
   })
 
-  describe('regenerateMeetingBriefing (I.11.8)', () => {
+  describe('regenerateMeetingBriefing', () => {
     async function sentBriefing(): Promise<number> {
       headless.isHeadlessAvailable.mockReturnValue(false)
       const [n] = await runDueMeetingBriefings(MON_1001)

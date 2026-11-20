@@ -10,11 +10,11 @@ import { useMorningSyncStore } from './morningSyncStore'
 import { useTodayStore } from './todayStore'
 
 // focus 재로드 최소 간격이다
-export const FOCUS_RELOAD_MS = 30_000
+const FOCUS_RELOAD_MS = 30_000
 
 // 배경 갱신이다. 실패해도 throw 하지 않는다.
 // entity 는 ai:dataChanged 가 보내는 값이다. 모르는 값이면 아무것도 하지 않는다
-export async function refreshEntity(entity: string): Promise<void> {
+async function refreshEntity(entity: string): Promise<void> {
   const jobs: Promise<unknown>[] = []
   const add = (job: () => Promise<unknown> | unknown): void => {
     try {
@@ -76,7 +76,7 @@ async function reloadOnFocus(): Promise<void> {
   await Promise.allSettled(jobs)
 }
 
-export interface DataSyncDeps {
+interface DataSyncDeps {
   now?: () => number
   target?: Pick<Window, 'addEventListener' | 'removeEventListener'>
 }
@@ -98,7 +98,7 @@ export function installDataSync(deps: DataSyncDeps = {}): () => void {
     )
   }
 
-  // reason 과 무관하게 다시 읽는다. 'meeting' 도 같다 (부록 I.10.3)
+  // reason 과 무관하게 다시 읽는다. 'meeting' 도 같다 (docs/ASSISTANT.md §6.2)
   const assistant = api?.assistant
   if (assistant && typeof assistant.onChanged === 'function') {
     offs.push(

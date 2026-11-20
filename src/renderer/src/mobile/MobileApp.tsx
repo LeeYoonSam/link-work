@@ -18,12 +18,12 @@ import TodayTab from './TodayTab'
 import TodosTab from './TodosTab'
 import MemosTab from './MemosTab'
 
-export const EXPIRED_TITLE = '연결이 만료되었어요'
+const EXPIRED_TITLE = '연결이 만료되었어요'
 export const EXPIRED_TEXT = 'Mac 의 LinkWork 설정 → 모바일에서 QR 을 다시 스캔하세요.'
 export const OFFLINE_TEXT = 'Mac 에 연결할 수 없어요'
 
 /** 401: 화면 전체를 대신한다 */
-export function ExpiredScreen(): ReactNode {
+function ExpiredScreen(): ReactNode {
   return (
     <main data-testid="expired" className="m-center">
       <span className="m-center-icon" aria-hidden>
@@ -41,7 +41,7 @@ export function ExpiredScreen(): ReactNode {
 }
 
 /** 네트워크 실패 배너 */
-export function OfflineBanner({ onRetry }: { onRetry: () => void }): ReactNode {
+function OfflineBanner({ onRetry }: { onRetry: () => void }): ReactNode {
   return (
     <div role="alert" data-testid="offline" className="m-banner">
       <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="shrink-0">
@@ -79,7 +79,7 @@ const TAB_ICON: Record<MobileTab, ReactNode> = {
   )
 }
 
-export function TabBar({ tab, onTab }: { tab: MobileTab; onTab: (t: MobileTab) => void }): ReactNode {
+function TabBar({ tab, onTab }: { tab: MobileTab; onTab: (t: MobileTab) => void }): ReactNode {
   return (
     <nav aria-label="탭" className="m-tabbar">
       <ul>

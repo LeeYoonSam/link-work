@@ -59,7 +59,7 @@ export function isTailscaleIPv4(ip: string): boolean {
 }
 
 /** 169.254.0.0/16 링크 로컬(DHCP 실패 등) — 휴대폰이 닿을 수 없다 */
-export function isLinkLocalIPv4(ip: string): boolean {
+function isLinkLocalIPv4(ip: string): boolean {
   const o = octets(ip)
   return o !== null && o[0] === 169 && o[1] === 254
 }

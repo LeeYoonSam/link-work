@@ -9,7 +9,7 @@
 // 조립 순서는 "뒤로 갈수록 중요"다 — 224토큰을 넘으면 whisper가 앞에서부터 버리므로,
 // 가장 살리고 싶은 용어집 힌트를 맨 끝에 둔다.
 
-export interface InitialPromptInput {
+interface InitialPromptInput {
   kind: string // 'meeting' | 'interview'
   language: string // meetings.language, 기본 'ko'
   title?: string | null

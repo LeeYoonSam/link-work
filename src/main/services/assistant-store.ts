@@ -1,9 +1,6 @@
-// 비서 테이블 읽기·쓰기 (docs/ASSISTANT.md 부록 A.3).
-// A2: 비서 테이블 4개와 app_settings 의 assistant_* 키만 쓴다. 원본 테이블은 건드리지 않는다.
-// A12: datetime 인자는 로컬 'YYYY-MM-DD HH:mm:ss' 만 받는다. 형식이 틀리면 throw 한다.
-// 부록 O(오늘 대시보드 개편): 계획 만들기·항목 조작·브리핑·복구·제외 쓰기는 제거됐다.
-// 2026-11-19: 과거 계획 읽기·지난 계획 닫기·계속 제외 읽기도 뺐다(테이블과 과거 행은 남는다).
-// 남은 일: 설정, 비서 이벤트.
+// 비서 설정과 비서 이벤트 읽기·쓰기 (docs/ASSISTANT.md §4, §5.1).
+// assistant_events 와 app_settings 의 assistant_* 키만 쓴다. 원본 테이블은 건드리지 않는다.
+// datetime 인자는 로컬 'YYYY-MM-DD HH:mm:ss' 만 받는다. 형식이 틀리면 throw 한다.
 import type Database from 'better-sqlite3'
 import { parseAssistantSettings, serializeAssistantSettingsPatch } from './assistant-settings'
 import type {
@@ -65,7 +62,7 @@ export function writeAssistantSettings(db: Db, patch: unknown): AssistantSetting
 
 // ── 비서 이벤트 ─────────────────────────────────────────
 
-// A5: 같은 event_key 가 이미 있으면 null 이다. 호출자는 null 이면 알림을 보내지 않는다.
+// 같은 event_key 가 이미 있으면 null 이다. 호출자는 null 이면 알림을 보내지 않는다.
 export function insertEvent(db: Db, ev: NewAssistantEvent): AssistantEvent | null {
   assertDate(ev.plan_date, 'plan_date')
   assertDateTime(ev.scheduled_at, 'scheduled_at')
@@ -109,7 +106,7 @@ export function getEventById(db: Db, eventId: number): AssistantEvent | null {
   return row ? toEvent(row) : null
 }
 
-// 회의 브리핑 LLM 결과 기록 (부록 I.8). payload 만 바꾼다. 상태·시각 컬럼은 그대로 둔다.
+// 회의 브리핑 LLM 결과·아침 동기화 상태 기록. payload 만 바꾼다. 상태·시각 컬럼은 그대로 둔다.
 export function updateEventPayload(db: Db, eventId: number, payload: string): void {
   db.prepare('UPDATE assistant_events SET payload = ? WHERE id = ?').run(payload, eventId)
 }
@@ -121,7 +118,7 @@ export function listEventsByDate(db: Db, planDate: string): AssistantEvent[] {
   return rows.map(toEvent)
 }
 
-// 읽기 전용. kind 가 같은 행 가운데 마지막 논리 날짜의 행이다 (A54 아침 동기화 상태 표시).
+// 읽기 전용. kind 가 같은 행 가운데 마지막 논리 날짜의 행이다 (아침 동기화 상태 표시).
 export function findLatestEventByKind(db: Db, kind: AssistantEventKind): AssistantEvent | null {
   const row = db
     .prepare('SELECT * FROM assistant_events WHERE kind = ? ORDER BY plan_date DESC, id DESC LIMIT 1')

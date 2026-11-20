@@ -1136,7 +1136,7 @@ describe('에픽 AI 요약 실행기 (runEpicSummaryJson) — 헤드리스 LLM �
     headless.runHeadlessJson.mockReset()
   })
 
-  it('다른 헤드리스 작업(오늘 브리핑 등)이 줄에 있으면 실패하지 않고 끝난 뒤 실행된다', async () => {
+  it('다른 헤드리스 작업(회의 전 브리핑 등)이 줄에 있으면 실패하지 않고 끝난 뒤 실행된다', async () => {
     const log: string[] = []
     let release: () => void = () => {}
     const gate = new Promise<void>((resolve) => (release = resolve))

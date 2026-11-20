@@ -43,29 +43,29 @@ afterEach(() => {
 })
 
 describe('runHeadlessJson 출력 검증', () => {
-  it('A9: 스키마에 맞는 JSON 은 ok:true 로 값을 돌려준다', async () => {
+  it('스키마에 맞는 JSON 은 ok:true 로 값을 돌려준다', async () => {
     queryMock.mockReturnValue(textMessages('{"headline":"좋음","n":3}'))
     expect(await runHeadlessJson(spec())).toEqual({ ok: true, value: { headline: '좋음', n: 3 } })
   })
 
-  it('A9: 코드펜스로 감싼 JSON 도 읽는다', async () => {
+  it('코드펜스로 감싼 JSON 도 읽는다', async () => {
     queryMock.mockReturnValue(textMessages('설명\n```json\n{"headline":"a","n":1}\n```'))
     expect(await runHeadlessJson(spec())).toEqual({ ok: true, value: { headline: 'a', n: 1 } })
   })
 
-  it('A9: 스키마 위반 출력은 ok:false 다 (길이 초과)', async () => {
+  it('스키마 위반 출력은 ok:false 다 (길이 초과)', async () => {
     queryMock.mockReturnValue(textMessages('{"headline":"아주아주아주아주긴제목입니다","n":1}'))
     const result = await runHeadlessJson(spec())
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toContain('AI 응답 형식이 올바르지 않습니다')
   })
 
-  it('A9: 스키마 위반 출력은 ok:false 다 (필드 누락)', async () => {
+  it('스키마 위반 출력은 ok:false 다 (필드 누락)', async () => {
     queryMock.mockReturnValue(textMessages('{"headline":"a"}'))
     expect((await runHeadlessJson(spec())).ok).toBe(false)
   })
 
-  it('A9: JSON 이 아닌 출력은 ok:false 다', async () => {
+  it('JSON 이 아닌 출력은 ok:false 다', async () => {
     queryMock.mockReturnValue(textMessages('JSON 을 만들 수 없습니다'))
     const result = await runHeadlessJson(spec())
     expect(result.ok).toBe(false)
@@ -79,7 +79,7 @@ describe('runHeadlessJson 출력 검증', () => {
 })
 
 describe('runHeadlessJson 옵션', () => {
-  it('A9·A10: 도구 0개(tools [], allowedTools []), settingSources [], mcpServers {}, maxTurns 1 로 실행한다', async () => {
+  it('도구 0개(tools [], allowedTools []), settingSources [], mcpServers {}, maxTurns 1 로 실행한다', async () => {
     queryMock.mockReturnValue(textMessages('{"headline":"a","n":1}'))
     await runHeadlessJson(spec())
 
@@ -87,7 +87,7 @@ describe('runHeadlessJson 옵션', () => {
     expect(prompt).toBe('입력')
     expect(options.systemPrompt).toBe('시스템')
     expect(options.model).toBe('claude-sonnet-5-5')
-    // A9: tools [] 가 내장 도구 전부를 끈다
+    // tools [] 가 내장 도구 전부를 끈다
     expect(options.tools).toEqual([])
     expect(options.allowedTools).toEqual([])
     expect(options.settingSources).toEqual([])
@@ -101,7 +101,7 @@ describe('runHeadlessJson 옵션', () => {
     expect(options.abortController).toBeInstanceOf(AbortController)
   })
 
-  it('A10: 과금 환경 변수를 SDK 에 넘기지 않는다', async () => {
+  it('과금 환경 변수를 SDK 에 넘기지 않는다', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'sk-test')
     vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'tok')
     vi.stubEnv('LINKWORK_KEEP', 'yes')
@@ -116,7 +116,7 @@ describe('runHeadlessJson 옵션', () => {
 })
 
 describe('runHeadlessJson 잠금과 실패', () => {
-  it("A11: 동시 2번째 호출은 '다른 AI 작업이 진행 중입니다.' 를 돌려준다", async () => {
+  it("동시 2번째 호출은 '다른 AI 작업이 진행 중입니다.' 를 돌려준다", async () => {
     let release: () => void = () => {}
     const gate = new Promise<void>((resolve) => (release = resolve))
     queryMock.mockImplementationOnce(() =>
@@ -136,7 +136,7 @@ describe('runHeadlessJson 잠금과 실패', () => {
     expect(queryMock).toHaveBeenCalledTimes(1)
   })
 
-  it('A11: 앞 실행이 끝나면 잠금이 풀린다 (실패로 끝나도 풀린다)', async () => {
+  it('앞 실행이 끝나면 잠금이 풀린다 (실패로 끝나도 풀린다)', async () => {
     queryMock.mockImplementationOnce(() => {
       throw new Error('boom')
     })
@@ -224,7 +224,7 @@ describe('toFriendlyAiError', () => {
   })
 })
 
-describe('runLlmSerialized (헤드리스 LLM 공용 줄, A32)', () => {
+describe('runLlmSerialized (헤드리스 LLM 공용 줄)', () => {
   it('앞 작업이 reject 해도 다음 작업을 실행하고 각자 결과를 돌려준다', async () => {
     const order: string[] = []
     const first = runLlmSerialized(async () => {

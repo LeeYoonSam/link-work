@@ -1,4 +1,4 @@
-// 오늘 대시보드의 '지금 챙길 것' (docs/ASSISTANT.md 부록 O).
+// 오늘 대시보드의 '지금 챙길 것' (docs/ASSISTANT.md §11.4).
 // 신호는 규칙(todayModel)이 만든다. 이 컴포넌트는 그리기와 근거 이동만 한다. 닫기는 없다.
 import type { SignalSeverity } from '../../types'
 import type { SignalRef, TodaySignal } from './todayModel'
@@ -54,7 +54,7 @@ const REF_KIND_LABEL: Record<SignalRef['type'], string> = {
 }
 
 /** 근거 칩. 누르면 해당 화면으로 간다 */
-export function RefChip({ item: r, onOpen }: { item: SignalRef; onOpen: (ref: SignalRef) => void }): React.ReactNode {
+function RefChip({ item: r, onOpen }: { item: SignalRef; onOpen: (ref: SignalRef) => void }): React.ReactNode {
   return (
     <button
       type="button"
@@ -89,7 +89,7 @@ export function meetingSoonSuffix(
 }
 
 /** 신호 행 1개. 보이는 신호와 펼친 숨은 신호가 같은 모양을 쓴다 */
-export function SignalRow({
+function SignalRow({
   signal: s,
   now,
   meetingStarts,

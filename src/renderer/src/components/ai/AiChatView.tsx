@@ -24,7 +24,7 @@ export const WRITE_MODES: { value: AiWriteMode; label: string; title: string }[]
 ]
 
 // chat 이 없거나 write_mode 가 없으면 자동 모드로 본다
-export const DEFAULT_WRITE_MODE: AiWriteMode = 'auto'
+const DEFAULT_WRITE_MODE: AiWriteMode = 'auto'
 
 export function resolveWriteMode(chat: Pick<AiChat, 'write_mode'> | undefined | null): AiWriteMode {
   return chat?.write_mode ?? DEFAULT_WRITE_MODE
@@ -53,7 +53,7 @@ const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gi
 
 // 빈 화면 추천 질문. 클릭하면 새 채팅에 바로 보낸다.
 // 링크·대상이 필요한 질문은 넣지 않는다 (빈 값으로 전송되기 때문)
-export const EXAMPLE_PROMPTS = [
+const EXAMPLE_PROMPTS = [
   '오늘 마감인 할 일 알려줘',
   '끝나지 않은 회의 액션아이템 정리해줘',
   '이번 주 일정 알려줘',

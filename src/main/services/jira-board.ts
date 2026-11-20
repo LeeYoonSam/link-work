@@ -133,30 +133,30 @@ export interface JiraEpicAiSummary {
 
 export type JiraBoardErrorCode = 'not_connected' | 'no_default_project'
 
-export type JiraBoardFetchResult =
+type JiraBoardFetchResult =
   | { success: true; snapshot: JiraBoardSnapshot; sync: JiraBoardSyncInfo }
   | { success: false; error: string; code?: JiraBoardErrorCode }
 
-export type JiraBoardCachedResult =
+type JiraBoardCachedResult =
   | { success: true; snapshot: JiraBoardSnapshot | null }
   | { success: false; error: string; code?: JiraBoardErrorCode }
 
-export type JiraEpicSummaryResult =
+type JiraEpicSummaryResult =
   | { success: true; summary: JiraEpicAiSummary }
   | { success: false; error: string }
 
 /** 최근 완료로 포함하는 기간(일) */
 export const RECENT_DONE_DAYS = 14
 /** auto: 마지막 동기화가 이보다 최근이면 Jira를 부르지 않는다 */
-export const AUTO_SKIP_MS = 60_000
+const AUTO_SKIP_MS = 60_000
 /** auto: 마지막 전체 동기화가 이보다 오래됐으면 전체 동기화를 한다(삭제·이동은 증분으로 못 잡는다) */
-export const AUTO_FULL_MS = 24 * 60 * 60_000
+const AUTO_FULL_MS = 24 * 60 * 60_000
 /** 증분: 마지막 동기화가 이보다 오래됐으면 전체 동기화로 넘어간다 */
-export const INCREMENTAL_MAX_AGE_MS = 7 * 24 * 60 * 60_000
+const INCREMENTAL_MAX_AGE_MS = 7 * 24 * 60 * 60_000
 /** 증분 조회 기간 여유(분). 시계 차이와 경계 누락을 덮는다 */
-export const INCREMENTAL_MARGIN_MIN = 10
+const INCREMENTAL_MARGIN_MIN = 10
 /** 설명 발췌 최대 길이 */
-export const EXCERPT_MAX = 600
+const EXCERPT_MAX = 600
 /** 조상 보강 반복 상한. 하위작업 → 작업 → 에픽 */
 const ANCESTOR_ROUNDS = 2
 /** 조상 보강 한 번에 묻는 키 수. jira.ts 의 key in (...) 묶음과 같다 */
@@ -164,7 +164,7 @@ const ANCESTOR_CHUNK = 50
 /** 한 번의 동기화에서 웹링크(remotelink)를 묻는 이슈 상한. 이슈당 GET 1회라 좁힌다 */
 export const WEB_LINK_MAX_ISSUES = 150
 /** 웹링크 동시 조회 수 */
-export const WEB_LINK_CONCURRENCY = 4
+const WEB_LINK_CONCURRENCY = 4
 
 const NOT_CONNECTED_MESSAGE = 'Jira에 연결되어 있지 않습니다. 설정에서 Jira를 연결해 주세요.'
 const NO_DEFAULT_PROJECT_MESSAGE = 'Jira 기본 프로젝트가 설정되지 않았습니다. 설정에서 기본 프로젝트를 골라 주세요.'
@@ -272,7 +272,7 @@ function toExcerpt(description: unknown): string | null {
 }
 
 /** URL 로 출처 라벨을 정한다. Jira 이슈 URL 은 키와 무관하게 'Jira' 로 묶는다(출처 필터가 키마다 갈리지 않게) */
-export function linkSourceOf(url: string): string {
+function linkSourceOf(url: string): string {
   const name = guessLinkName(url)
   return name.startsWith('Jira 티켓') ? 'Jira' : name
 }
@@ -292,7 +292,7 @@ export function mergeLinks(...groups: JiraIssueLink[][]): JiraIssueLink[] {
 }
 
 /** 검색 응답에서 바로 나오는 링크(첨부·본문·연결 이슈). 웹링크는 attachWebLinks 가 붙인다 */
-export function searchLinksOf(
+function searchLinksOf(
   raw: JiraSearchIssue,
   issueUrl: (key: string) => string | null
 ): JiraIssueLink[] {
@@ -329,7 +329,7 @@ export function searchLinksOf(
   return mergeLinks(attachments, description, issues)
 }
 
-export function webLinksOf(remote: JiraRemoteLink[]): JiraIssueLink[] {
+function webLinksOf(remote: JiraRemoteLink[]): JiraIssueLink[] {
   return remote.map((r) => ({ kind: 'web', title: r.title, url: r.url, source: linkSourceOf(r.url) }))
 }
 
@@ -361,7 +361,7 @@ export function toBoardIssue(
 }
 
 /** 웹링크를 묻는 대상: inScope 인 에픽·표준 이슈(하위작업 제외) */
-export function isWebLinkTarget(issue: JiraBoardIssue): boolean {
+function isWebLinkTarget(issue: JiraBoardIssue): boolean {
   return issue.inScope && (issue.level === 'epic' || issue.level === 'standard')
 }
 
@@ -555,7 +555,7 @@ export function inCollectScope(issue: JiraBoardIssue, now: Date, recentDoneDays:
 }
 
 /** 저장본 → 스냅샷. 파생 값(inScope 등)은 저장된 JSON 그대로 쓴다 */
-export function snapshotOf(stored: StoredJiraBoard): JiraBoardSnapshot {
+function snapshotOf(stored: StoredJiraBoard): JiraBoardSnapshot {
   return {
     projectKey: stored.sync.projectKey,
     myAccountId: stored.sync.myAccountId,
@@ -641,7 +641,7 @@ function promptIssue(i: JiraBoardIssue): Record<string, unknown> {
   }
 }
 
-export function buildEpicSummaryPrompt(
+function buildEpicSummaryPrompt(
   epic: JiraBoardIssue,
   descendants: JiraBoardIssue[],
   today: string
@@ -663,12 +663,12 @@ function localDate(d: Date): string {
 
 // ── 저장본을 가진 서비스 ──
 
-export interface JiraBoardSyncOutcome {
+interface JiraBoardSyncOutcome {
   snapshot: JiraBoardSnapshot
   sync: JiraBoardSyncInfo
 }
 
-export interface JiraBoardService {
+interface JiraBoardService {
   /** DB 저장본만 읽는다. Jira를 부르지 않는다. 저장본이 없으면 null */
   cached: () => JiraBoardSnapshot | null
   /** Jira와 동기화한다. 같은 프로젝트의 진행 중 요청은 공유한다 */

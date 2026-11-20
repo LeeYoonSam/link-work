@@ -19,36 +19,7 @@ beforeEach(() => {
   useAssistantStore.setState({ today: null, error: '', focus: null, meetingRegeneratingIds: [] })
 })
 
-describe('assistantStore (오늘 대시보드 개편 후)', () => {
-  it('계획 조작 액션이 없다', () => {
-    const s = useAssistantStore.getState() as unknown as Record<string, unknown>
-    for (const k of [
-      'startDay',
-      'closeDay',
-      'reopenDay',
-      'saveWrapup',
-      'skipWrapup',
-      'refresh',
-      'refreshBriefing',
-      'generateRecovery',
-      'loadCandidates',
-      'addItem',
-      'setItemStatus',
-      'focusItem',
-      'excludeItem',
-      'interpretCommand',
-      'applyCommand',
-      'completeOrigin',
-      // 쓰지 않아 지운 것 (2026-11-19)
-      'saveSettings',
-      'clearError',
-      'subscribe',
-      'loading'
-    ]) {
-      expect(s[k]).toBeUndefined()
-    }
-  })
-
+describe('assistantStore', () => {
   it('load 는 getToday 결과를 반영한다. 실패하면 error 를 둔다', async () => {
     await useAssistantStore.getState().load()
     expect(useAssistantStore.getState().today).toBe(payload)

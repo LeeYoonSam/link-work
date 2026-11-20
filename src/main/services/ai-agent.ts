@@ -71,7 +71,8 @@ const CLAUDE_AI_ATLASSIAN_READ_TOOLS = [
 // claude.ai Slack 커넥터 (Notion·Atlassian 과 같이 구독 계정 레벨에서 헤드리스 쿼리에 자동 로드됨).
 // 사용자가 준 Slack 링크의 스레드·채널을 읽는 경로. **읽기 도구 2종만** 허용하고
 // 전송·검색·캔버스·리액션 등 나머지 Slack 도구는 canUseTool 기본 거부에 걸린다.
-// 도구 이름은 서버명 "claude.ai Slack"의 정규화 결과다.
+// 도구 이름은 서버명 "claude.ai Slack"의 정규화 결과를 커넥터 이름 규칙에 맞춰 적은 값이다.
+// 실제 앱 감사 로그(tool_call·tool_denied)로는 아직 실측하지 않았다. 이름이 다르면 catch-all 거부된다.
 const CLAUDE_AI_SLACK_READ_TOOLS = [
   'mcp__claude_ai_Slack__slack_read_thread',
   'mcp__claude_ai_Slack__slack_read_channel'
@@ -116,12 +117,12 @@ interface ActiveQuery {
 const activeQueries = new Map<number, ActiveQuery>()
 
 // 승인 요청 종류. write 는 쓰기 도구, fetch 는 웹 페이지 읽기, plan 은 plan mode 의 계획 승인이다.
-export type AiApprovalKind = 'write' | 'fetch' | 'plan'
+type AiApprovalKind = 'write' | 'fetch' | 'plan'
 
 // 쓰기 도구 승인 요청 — renderer에 미리보기 카드로 표시된다.
 // current는 수정(update) 도구의 "변경 전 현재 값" (생성 도구는 null)
 // kind 가 plan 이면 name 은 'ExitPlanMode', input 은 { plan: string } 이다.
-export interface AiApprovalRequestPayload {
+interface AiApprovalRequestPayload {
   requestId: string
   kind: AiApprovalKind
   name: string
@@ -131,7 +132,7 @@ export interface AiApprovalRequestPayload {
 }
 
 // 계획 승인 시 사용자가 고른 실행 모드. 지정이 없으면 auto 로 실행한다.
-export type AiPlanExecutionMode = 'auto' | 'ask'
+type AiPlanExecutionMode = 'auto' | 'ask'
 
 export interface AiApprovalOptions {
   mode?: AiPlanExecutionMode
@@ -214,10 +215,10 @@ export function resolveAiApproval(
   return true
 }
 
-// plan mode 계획 승인 응답 처리. 테스트가 SDK 없이 검증할 수 있도록 분리한다.
+// plan mode 계획 승인 응답 처리.
 // 승인하면 채팅 모드를 바꾸고, CLI 가 plan mode 를 빠져나가도록 setMode 를 돌려준다.
 // 거절하면 모드는 plan 그대로 둔다.
-export function buildPlanDecisionResult(
+function buildPlanDecisionResult(
   chatId: number,
   decision: AiApprovalDecision,
   input: Record<string, unknown>,
@@ -240,7 +241,7 @@ export function buildPlanDecisionResult(
 // plan mode 워크플로. CLI 가 읽기 전용 안내문과 ExitPlanMode 규약으로 감싼다.
 // 실측: CLI 는 ExitPlanMode 의 plan 인자를 canUseTool input 에서 뺀다.
 // 그래서 runAiQuery 가 tool_use 블록에서 plan 을 따로 잡는다.
-export const PLAN_MODE_INSTRUCTIONS = `이 채팅은 LinkWork 계획 모드입니다. 아래 순서를 따르세요.
+const PLAN_MODE_INSTRUCTIONS = `이 채팅은 LinkWork 계획 모드입니다. 아래 순서를 따르세요.
 1. mcp__linkwork__ 조회 도구로 관련 데이터의 현황을 먼저 파악합니다.
 2. 어떤 데이터를 생성하거나 수정할지 항목별 계획을 마크다운으로 작성합니다. 항목마다 대상, 쓸 도구, 바꿀 값을 적습니다.
 3. 계획 파일을 만들지 않습니다. Write 도구는 없습니다.

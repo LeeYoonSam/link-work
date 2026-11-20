@@ -10,7 +10,7 @@
 // 매핑도 순수 함수로 두어 테스트에서 그대로 검증한다. 실제 다이얼로그·창 조작은 index.ts.
 import { randomUUID } from 'crypto'
 
-export interface RecorderStatePayload {
+interface RecorderStatePayload {
   active: boolean
   draftId: number | null
 }
@@ -21,19 +21,19 @@ export interface RecorderCommandPayload {
   process: boolean
 }
 
-export interface RecorderCommandDonePayload {
+interface RecorderCommandDonePayload {
   requestId: string
   success: boolean
   error?: string
 }
 
-export interface StopAndSaveResult {
+interface StopAndSaveResult {
   success: boolean
   error?: string
 }
 
 // 렌더러가 저장(WAV 변환 + 파일 쓰기)을 끝낼 때까지 기다리는 기본 시간
-export const STOP_AND_SAVE_TIMEOUT_MS = 60000
+const STOP_AND_SAVE_TIMEOUT_MS = 60000
 
 interface PendingRequest {
   resolve: (r: StopAndSaveResult) => void
@@ -118,7 +118,7 @@ export class RecordingGuard {
 
 // 녹음 중 창 닫기: ['녹음 계속 (창 숨기기)', '저장하고 닫기', '돌아가기']
 export const CLOSE_BUTTONS = ['녹음 계속 (창 숨기기)', '저장하고 닫기', '돌아가기']
-export type CloseAction = 'hide' | 'save-and-close' | 'cancel'
+type CloseAction = 'hide' | 'save-and-close' | 'cancel'
 export function closeChoiceToAction(index: number): CloseAction {
   if (index === 0) return 'hide'
   if (index === 1) return 'save-and-close'
@@ -127,13 +127,13 @@ export function closeChoiceToAction(index: number): CloseAction {
 
 // 녹음 중 앱 종료: ['저장하고 종료', '돌아가기']
 export const QUIT_BUTTONS = ['저장하고 종료', '돌아가기']
-export type QuitAction = 'save-and-quit' | 'cancel'
+type QuitAction = 'save-and-quit' | 'cancel'
 export function quitChoiceToAction(index: number): QuitAction {
   return index === 0 ? 'save-and-quit' : 'cancel'
 }
 
 // 저장 실패 후 재확인: ['그래도 닫기'|'그래도 종료', '돌아가기']
-export type ForceAction = 'force' | 'cancel'
+type ForceAction = 'force' | 'cancel'
 export function forceChoiceToAction(index: number): ForceAction {
   return index === 0 ? 'force' : 'cancel'
 }
