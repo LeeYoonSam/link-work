@@ -1,11 +1,10 @@
 // 창 없이 Claude 를 1회 실행하고 JSON 출력을 zod 로 검증하는 공용 파일.
-// SSOT: docs/ASSISTANT.md §9.2
+// 쓰는 곳: 회의 전 브리핑(docs/ASSISTANT.md §7.5), 에픽 AI 요약(docs/PROJECT_BOARD.md §5.1).
 //
 // [가드레일]
-// - A9: 도구는 0개다. 출력은 zod 스키마로 검증한다. 검증에 실패하면 ok:false 다.
-// - A10: sanitizedEnv() 와 settingSources: [] 로 토큰당 과금 경로를 막는다 (AI_GUARDRAILS §9).
-// - A11: 모듈 수준 잠금으로 동시에 1개만 실행한다.
-// meeting-summary.ts 의 인증·환경 패턴을 옮겨 왔다. meeting-summary.ts 는 이번에 전환하지 않는다.
+// - 도구 차단: 도구는 0개다. 출력은 zod 스키마로 검증한다. 검증에 실패하면 ok:false 다.
+// - 과금 차단: sanitizedEnv() 와 settingSources: [] 로 토큰당 과금 경로를 막는다 (AI_GUARDRAILS §9).
+// - 단일 실행: 모듈 수준 잠금으로 동시에 1개만 실행한다.
 import { app } from 'electron'
 import type { z } from 'zod'
 import { findClaudeExecutable } from './ai-agent'
@@ -48,7 +47,7 @@ export function toFriendlyAiError(raw: string): string {
     return 'Claude Code에 로그인되어 있지 않습니다. 터미널에서 `claude`를 실행해 로그인(/login)한 뒤 다시 시도해 주세요.'
   }
   if (/(native binary|executable) not found|ENOENT/i.test(raw)) {
-    return 'Claude Code가 설치되어 있지 않습니다. AI 브리핑을 사용하려면 Claude Code 설치 및 로그인이 필요합니다. (https://claude.com/claude-code)'
+    return 'Claude Code가 설치되어 있지 않습니다. AI 기능을 사용하려면 Claude Code 설치 및 로그인이 필요합니다. (https://claude.com/claude-code)'
   }
   if (/credit balance|billing|payment/i.test(raw)) {
     return 'Claude 계정의 사용 한도/결제 상태를 확인해 주세요.'
@@ -84,10 +83,24 @@ export interface HeadlessJsonSpec<T> {
 
 export type HeadlessJsonResult<T> = { ok: true; value: T } | { ok: false; error: string }
 
-// A11: 단일 실행 잠금. await 전에 동기로 잡는다.
+// 단일 실행 잠금. await 전에 동기로 잡는다.
 let running = false
 // 진행 중인 실행의 abort 핸들. cancelAllHeadless 가 쓴다.
 let active: { controller: AbortController; cancelled: boolean } | null = null
+
+// 직렬화(docs/ASSISTANT.md §13): 헤드리스 LLM 을 부르는 기능(회의 전 브리핑·에픽 AI 요약)은 이 줄로 한 번에 하나씩 실행한다.
+// 단일 실행 잠금은 줄 밖의 동시 호출을 BUSY 로 막는 안전장치로 남는다. 줄을 거치면 BUSY 로 실패하지 않고 기다린다.
+let llmChain: Promise<unknown> = Promise.resolve()
+
+/**
+ * fn 을 공용 LLM 줄 끝에 세워 앞 작업이 끝난 뒤 실행한다.
+ * 앞 작업의 실패(reject)는 뒤 작업을 막지 않는다. 각 호출은 자기 fn 의 결과를 그대로 받는다.
+ */
+export function runLlmSerialized<T>(fn: () => Promise<T>): Promise<T> {
+  const run = llmChain.then(fn)
+  llmChain = run.catch(() => undefined)
+  return run
+}
 
 /** 진행 중인 헤드리스 실행을 중단한다. 앱 종료(before-quit) 때 부른다 */
 export function cancelAllHeadless(): void {
@@ -170,7 +183,7 @@ async function runOnce<T>(spec: HeadlessJsonSpec<T>): Promise<HeadlessJsonResult
     return { ok: false, error: resultError ? toFriendlyAiError(resultError) : EMPTY_MESSAGE }
   }
 
-  // A9: JSON 파싱과 zod 검증. 실패하면 원문 앞부분만 오류에 붙인다.
+  // JSON 파싱과 zod 검증. 실패하면 원문 앞부분만 오류에 붙인다.
   let raw: unknown
   try {
     raw = JSON.parse(extractJson(responseText))

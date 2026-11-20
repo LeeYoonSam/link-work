@@ -11,10 +11,13 @@ import { RECOGNITION_AIDS_SCHEMA } from '../services/recognition-aids'
 import { ASSISTANT_SCHEMA, migrateAssistantSchema } from '../services/assistant-schema'
 
 /**
- * 프로젝트 보드 캐시(services/jira-board-store.ts). Jira에서 다시 받을 수 있는 값이라 백업하지 않는다
+ * 프로젝트 보드 캐시(services/jira-board-store.ts). Jira에서 다시 받거나 다시 만들 수 있는 값이라 백업하지 않는다
  * (backup-groups.ts NON_GROUP_TABLES). 행은 기본 Jira 프로젝트 키로 나뉜다.
  * - jira_board_issues.data: JiraBoardIssue JSON. updated 는 Jira updated, synced_at 은 받은 시각(ISO)
  * - jira_board_sync.last_sync_at: 마지막 동기화(전체·증분) 시작 시각. 증분 조회의 기준점이다
+ * - jira_epic_summaries: 에픽 AI 요약(버튼으로만 만든다). 에픽당 1행. data 는 JiraEpicAiSummary JSON,
+ *   fingerprint 는 날짜 + 에픽·자손 상태 지문의 SHA-256. 지문이 같으면 저장본을 돌려준다.
+ *   전체 동기화의 이슈 교체와 따로 둔다(교체 때 지워지지 않게). 프로젝트당 최대 50행, 오래된 것부터 지운다.
  */
 export const JIRA_BOARD_SCHEMA = `
   CREATE TABLE IF NOT EXISTS jira_board_issues (
@@ -32,6 +35,14 @@ export const JIRA_BOARD_SCHEMA = `
     last_sync_at       TEXT,
     truncated          INTEGER NOT NULL DEFAULT 0,
     recent_done_days   INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS jira_epic_summaries (
+    project_key   TEXT NOT NULL,
+    epic_key      TEXT NOT NULL,
+    fingerprint   TEXT NOT NULL,
+    data          TEXT NOT NULL,
+    generated_at  TEXT NOT NULL,
+    PRIMARY KEY (project_key, epic_key)
   );
 `
 
@@ -310,7 +321,7 @@ export function applySchema(db: Database.Database): void {
       audio_compacted INTEGER NOT NULL DEFAULT 0,
       original_duration_ms INTEGER,
       -- 처리 파이프라인 버전. 0=구 파이프라인/미처리,
-      -- 2=무음 컷편집·용어집·참석자 힌트 파이프라인(전체 처리 시 meeting-pipeline이 기록).
+      -- 2=무음 컷편집·용어집·참석자 힌트 파이프라인, 3=현재(전체 처리 시 meeting-pipeline이 기록).
       -- 요약 재생성 UI가 재분석 필요 여부 판단에 사용.
       pipeline_version INTEGER NOT NULL DEFAULT 0,
       project_id INTEGER,

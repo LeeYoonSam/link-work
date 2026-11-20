@@ -166,7 +166,7 @@ function saveTokens(tokens: { access_token?: string | null; refresh_token?: stri
   )
 }
 
-export function loadTokens(): Record<string, unknown> | null {
+function loadTokens(): Record<string, unknown> | null {
   const db = getDatabase()
   const row = db.prepare("SELECT * FROM auth_tokens WHERE provider = 'google'").get() as
     | { access_token: string; refresh_token: string; expiry_date: string }

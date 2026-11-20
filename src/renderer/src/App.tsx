@@ -6,17 +6,18 @@ import CalendarView from './components/calendar/CalendarView'
 import VariableList from './components/variable/VariableList'
 import MemoView from './components/memo/MemoView'
 import TodoView from './components/todo/TodoView'
-import WeeklyReport from './components/report/WeeklyReport'
 import TrayPanel from './components/tray/TrayPanel'
 import AiChatView from './components/ai/AiChatView'
 import RecordingView from './components/recording/RecordingView'
 import MeetingNotesView from './components/notes/MeetingNotesView'
 import TodayView from './components/today/TodayView'
 import SettingsView from './components/settings/SettingsView'
+import MobileTodayPublisher from './components/mobile/MobileTodayPublisher'
 import { useNavigationStore } from './stores/navigationStore'
 import { useAssistantStore } from './stores/assistantStore'
 import { installRecorderBridge } from './stores/recorderSession'
 import { installDataSync } from './stores/dataSync'
+import { installAiStreamSync } from './stores/aiChatStore'
 import { resolveStartView } from './utils/startView'
 import type { AssistantNavigateEvent } from './types'
 
@@ -40,6 +41,9 @@ function App(): React.ReactNode {
   // 다른 경로의 변경(ai:dataChanged, assistant:changed, 창 focus)을 열린 화면에 반영한다(메인 창에서 1회).
   useEffect(() => installDataSync(), [])
 
+  // AI 응답 스트림을 화면과 무관하게 받는다. 다른 화면에서 시작한 대화의 초기 이벤트를 놓치지 않는다(메인 창에서 1회).
+  useEffect(() => installAiStreamSync(), [])
+
   // 비서 알림 클릭 → 오늘 화면으로 이동한다(assistant:navigate)
   useEffect(() => {
     const api = window.api?.assistant
@@ -49,7 +53,7 @@ function App(): React.ReactNode {
       useAssistantStore.getState().setFocus(p.focus ?? null)
     }
     const unsubscribe = api.onNavigate(goToday)
-    // 구독 전에 도착한 이동 신호를 가져간다 (§12.1).
+    // 구독 전에 도착한 이동 신호를 가져간다 (docs/ASSISTANT.md §6.3).
     // cleanup 후 결과도 적용한다. StrictMode 재마운트 때 신호를 잃지 않기 위해서다
     if (typeof api.takePendingNavigate === 'function') {
       api
@@ -62,7 +66,7 @@ function App(): React.ReactNode {
     return unsubscribe
   }, [])
 
-  // 첫 화면 선택 (docs/ASSISTANT.md 부록 C.1, A24). 기본 첫 화면은 today 다.
+  // 첫 화면 선택 (docs/ASSISTANT.md §4). 기본 첫 화면은 today 다.
   // 설정이 projects·calendar 이면 그 화면으로 옮긴다.
   // 판정 중 사용자 이동이나 assistant:navigate 로 화면이 바뀌면 결과를 버린다.
   // 실패하면 아무것도 하지 않는다. 첫 화면은 today 로 남는다.
@@ -104,8 +108,6 @@ function App(): React.ReactNode {
         return <MemoView />
       case 'calendar':
         return <CalendarView />
-      case 'reports':
-        return <WeeklyReport />
       case 'ai':
         return <AiChatView />
       case 'recordings':
@@ -121,6 +123,7 @@ function App(): React.ReactNode {
 
   return (
     <div className="flex h-screen bg-gray-50">
+      <MobileTodayPublisher />
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header />

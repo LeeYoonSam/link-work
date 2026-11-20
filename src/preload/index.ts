@@ -1,6 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
-import type { CommandOp } from '../main/services/assistant-types'
 
 const api = {
   tray: {
@@ -20,7 +18,13 @@ const api = {
     disconnect: () => ipcRenderer.invoke('calendar:disconnect'),
     status: () => ipcRenderer.invoke('calendar:status'),
     saveSettings: (clientId: string, clientSecret: string) =>
-      ipcRenderer.invoke('calendar:saveSettings', clientId, clientSecret)
+      ipcRenderer.invoke('calendar:saveSettings', clientId, clientSecret),
+    // 가져올 캘린더 목록과 현재 선택(app_settings 'google_calendar_ids')
+    listCalendars: () => ipcRenderer.invoke('calendar:listCalendars'),
+    setSelectedCalendars: (ids: string[]) => ipcRenderer.invoke('calendar:setSelectedCalendars', ids),
+    // 임의 구간(최대 45일) 일정. force 면 5분 캐시를 무시한다
+    range: (fromISO: string, toISO: string, force?: boolean) =>
+      ipcRenderer.invoke('calendar:range', fromISO, toISO, force)
   },
   variable: {
     create: (input: Record<string, unknown>) => ipcRenderer.invoke('variable:create', input),
@@ -49,15 +53,6 @@ const api = {
       ipcRenderer.invoke('memoCategory:update', id, input),
     delete: (id: number) => ipcRenderer.invoke('memoCategory:delete', id)
   },
-  report: {
-    weeklyActivities: (weekStart: string, weekEnd: string) =>
-      ipcRenderer.invoke('report:weeklyActivities', weekStart, weekEnd),
-    weeklySummary: (weekStart: string, weekEnd: string) =>
-      ipcRenderer.invoke('report:weeklySummary', weekStart, weekEnd),
-    dailyStats: (weekStart: string, weekEnd: string) =>
-      ipcRenderer.invoke('report:dailyStats', weekStart, weekEnd),
-    weeklyTrend: (weeks: number) => ipcRenderer.invoke('report:weeklyTrend', weeks)
-  },
   todo: {
     create: (input: Record<string, unknown>) => ipcRenderer.invoke('todo:create', input),
     list: (completed?: boolean) => ipcRenderer.invoke('todo:list', completed),
@@ -70,7 +65,6 @@ const api = {
       ipcRenderer.invoke('todo:setCompletedAt', id, completedAt),
     restore: (id: number) => ipcRenderer.invoke('todo:restore', id),
     delete: (id: number) => ipcRenderer.invoke('todo:delete', id),
-    history: (todoId: number) => ipcRenderer.invoke('todo:history', todoId),
     listActive: () => ipcRenderer.invoke('todo:listActive')
   },
   todoTag: {
@@ -172,7 +166,7 @@ const api = {
       return () => ipcRenderer.removeListener('recording:stream', handler)
     }
   },
-  // 회의록 — 요약 완료된 회의 목록·검색·Markdown (docs/MEETING_NOTES.md)
+  // 회의록 — 요약 완료된 회의 목록·검색·Markdown (docs/MEETING_RECORDING.md §10)
   meetingNotes: {
     list: (filter?: { q?: string; kind?: string }) =>
       ipcRenderer.invoke('meetingNotes:list', filter),
@@ -225,8 +219,7 @@ const api = {
       ipcRenderer.invoke('export:saveMarkdown', content, defaultFileName)
   },
   releaseNote: {
-    // deployVersion을 주면 그 배포 버전과 이름이 같은 릴리스만
-    list: (deployVersion?: string) => ipcRenderer.invoke('releaseNote:list', deployVersion),
+    list: () => ipcRenderer.invoke('releaseNote:list'),
     get: (id: number) => ipcRenderer.invoke('releaseNote:get', id),
     sync: (id: number) => ipcRenderer.invoke('releaseNote:sync', id),
     syncAll: () => ipcRenderer.invoke('releaseNote:syncAll'),
@@ -247,6 +240,19 @@ const api = {
     verifyIntegration: (id: 'google' | 'jira' | 'bitbucket' | 'notion') =>
       ipcRenderer.invoke('settings:verifyIntegration', id)
   },
+  // 휴대폰 열람 서버 — 켜기·QR·토큰 재발급, 오늘 대시보드 스냅샷 발행
+  mobile: {
+    getStatus: () => ipcRenderer.invoke('mobile:getStatus'),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('mobile:setEnabled', enabled),
+    regenerateToken: () => ipcRenderer.invoke('mobile:regenerateToken'),
+    publishToday: (snapshot: unknown) => ipcRenderer.invoke('mobile:publishToday', snapshot),
+    // 휴대폰이 오늘 화면을 열면 메인이 재발행을 요청한다. 구독 해제 함수를 돌려준다
+    onPublishRequested: (callback: () => void) => {
+      const handler = (): void => callback()
+      ipcRenderer.on('mobile:publishRequested', handler)
+      return () => ipcRenderer.removeListener('mobile:publishRequested', handler)
+    }
+  },
   // Jira 티켓 계층 보드 (docs/PROJECT_BOARD.md). Jira는 GET만 하고 DB는 보드 캐시 테이블에만 쓴다
   jiraBoard: {
     // 로컬 DB 에 저장된 스냅샷만 읽는다. Jira 를 부르지 않는다
@@ -258,7 +264,7 @@ const api = {
     // 저장된 스냅샷의 links 에 든 http(s) URL 만 연다. 검증은 main 이 한다
     openLink: (url: string) => ipcRenderer.invoke('jiraBoard:openLink', url)
   },
-  // 아침 자동 동기화(A54) 상태. 읽기 전용이다
+  // 아침 자동 동기화 상태(docs/ASSISTANT.md §8.3). 읽기 전용이다
   morningSync: {
     status: () => ipcRenderer.invoke('morningSync:status')
   },
@@ -281,32 +287,10 @@ const api = {
       return () => ipcRenderer.removeListener('backup:progress', handler)
     }
   },
-  // 개인 비서 — 오늘 계획·브리핑·최신화. 응답은 { success, error } 로 감싼다(getSettings 제외)
+  // 개인 비서 — 오늘 데이터·회의 브리핑·설정. 응답은 { success, error } 로 감싼다(getSettings 제외)
   assistant: {
     getToday: () => ipcRenderer.invoke('assistant:getToday'),
-    startDay: () => ipcRenderer.invoke('assistant:startDay'),
-    closeDay: (note?: string) => ipcRenderer.invoke('assistant:closeDay', note),
-    reopenDay: () => ipcRenderer.invoke('assistant:reopenDay'),
-    saveWrapup: (note: string, date: string) => ipcRenderer.invoke('assistant:saveWrapup', note, date),
-    skipWrapup: (date: string) => ipcRenderer.invoke('assistant:skipWrapup', date),
-    refresh: () => ipcRenderer.invoke('assistant:refresh'),
-    refreshBriefing: () => ipcRenderer.invoke('assistant:refreshBriefing'),
-    generateRecovery: () => ipcRenderer.invoke('assistant:generateRecovery'),
-    listCandidates: () => ipcRenderer.invoke('assistant:listCandidates'),
-    addItem: (candidateId: string) => ipcRenderer.invoke('assistant:addItem', candidateId),
-    acceptSuggestion: (itemId: number) => ipcRenderer.invoke('assistant:acceptSuggestion', itemId),
-    dismissSuggestion: (itemId: number) => ipcRenderer.invoke('assistant:dismissSuggestion', itemId),
-    setItemStatus: (itemId: number, status: string, note?: string) =>
-      ipcRenderer.invoke('assistant:setItemStatus', itemId, status, note),
-    focusItem: (itemId: number) => ipcRenderer.invoke('assistant:focusItem', itemId),
-    // 계속 제외 (부록 M.5.6)
-    excludeItem: (itemId: number) => ipcRenderer.invoke('assistant:excludeItem', itemId),
-    removeExclusion: (candidateId: string) => ipcRenderer.invoke('assistant:removeExclusion', candidateId),
-    // 명령 입력 (부록 G.9). 조작 형식 검증은 서비스가 한다
-    interpretCommand: (text: string, scopeItemId?: number) =>
-      ipcRenderer.invoke('assistant:interpretCommand', text, scopeItemId),
-    applyCommand: (ops: CommandOp[], text: string) => ipcRenderer.invoke('assistant:applyCommand', ops, text),
-    // 회의 브리핑 AI 본문 다시 만들기 (부록 I.11.10)
+    // 회의 브리핑 AI 본문 다시 만들기 (docs/ASSISTANT.md §7.7)
     regenerateMeetingBriefing: (eventId: number) => ipcRenderer.invoke('assistant:regenerateMeetingBriefing', eventId),
     getSettings: () => ipcRenderer.invoke('assistant:getSettings'),
     saveSettings: (patch: Record<string, unknown>) => ipcRenderer.invoke('assistant:saveSettings', patch),
@@ -326,14 +310,11 @@ const api = {
 
 if (process.contextIsolated) {
   try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
     contextBridge.exposeInMainWorld('api', api)
   } catch (error) {
     console.error(error)
   }
 } else {
-  // @ts-ignore
-  window.electron = electronAPI
   // @ts-ignore
   window.api = api
 }

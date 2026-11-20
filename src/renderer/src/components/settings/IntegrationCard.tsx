@@ -17,7 +17,7 @@ const BADGE: Record<CardTone, string> = {
   red: 'bg-red-100 text-red-700'
 }
 
-export interface IntegrationCardProps {
+interface IntegrationCardProps {
   title: string
   purpose: string
   state: CardState

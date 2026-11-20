@@ -22,9 +22,9 @@ const INDENT: Record<1 | 2 | 3, string> = { 1: 'pl-3', 2: 'pl-8', 3: 'pl-14' }
 const URGENT = 'text-red-600 font-medium'
 
 /** 넓은 창 기준점. 이보다 좁으면 상세를 행 아래 인라인으로 펼친다 (ProjectBoardView 와 짝) */
-export const INLINE_DETAIL_HIDE = 'min-[1120px]:hidden'
+const INLINE_DETAIL_HIDE = 'min-[1120px]:hidden'
 
-export interface IssueTreeProps {
+interface IssueTreeProps {
   rows: VisibleRow[]
   /** 포커스가 사라진 행의 조상을 찾는 데 쓴다 */
   forest: BoardForest
@@ -54,6 +54,21 @@ function Toggle({ row, onToggle }: { row: VisibleRow; onToggle: IssueTreeProps['
     >
       <ChevronDownIcon size={14} className={row.expanded ? '' : '-rotate-90'} />
     </button>
+  )
+}
+
+/** 닫힌 항목 묶음 행. 선택 대상이 아니라 펼침 단추 역할만 한다 */
+function FoldRowBody({ row, onToggle }: { row: VisibleRow } & Pick<IssueTreeProps, 'onToggle'>): ReactNode {
+  const fold = row.fold
+  if (!fold) return null
+  const label = fold.scope === 'closedGroups' ? `닫힌 상위 티켓 ${fold.count}건` : `닫힘 ${fold.count}건`
+  return (
+    <div role="gridcell" className="col-span-2 min-w-0">
+      <div className="flex items-center gap-1.5 min-w-0 text-xs text-gray-500">
+        <Toggle row={row} onToggle={onToggle} />
+        <span>{label}</span>
+      </div>
+    </div>
   )
 }
 
@@ -191,6 +206,7 @@ function IssueRowBody({
  * 에픽 그룹 트리(treegrid). WAI-ARIA APG 를 따른다 — roving tabindex 로 탭 정지점은 하나,
  * ↑↓ Home End 로 이동, →/← 로 펼침·접힘, Enter 로 상세, ⌘Enter·o 로 Jira 열기.
  * 토글 화살표 클릭은 펼침만, 행 나머지 클릭은 선택만 한다(실수로 외부 브라우저가 열리지 않게).
+ * 닫힌 항목 묶음(fold) 행은 선택 대상이 아니다 — 행 어디를 눌러도 펼침·접힘만 한다.
  */
 export default function IssueTree({
   rows,
@@ -242,6 +258,36 @@ export default function IssueTree({
   return (
     <div role="treegrid" aria-label="Jira 티켓 계층" onKeyDown={onKeyDown} className="divide-y divide-gray-100">
       {rows.map((r) => {
+        if (r.kind === 'fold') {
+          const section = r.fold?.scope === 'closedGroups'
+          return (
+            <div
+              key={r.id}
+              ref={(el) => {
+                if (el) rowRefs.current.set(r.id, el)
+                else rowRefs.current.delete(r.id)
+              }}
+              id={`board-row-${r.id}`}
+              role="row"
+              aria-level={r.level}
+              aria-posinset={r.posinset}
+              aria-setsize={r.setsize}
+              aria-expanded={r.hasChildren ? r.expanded : undefined}
+              tabIndex={r.id === activeId ? 0 : -1}
+              data-row-kind="fold"
+              onFocus={() => setFocusedId(r.id)}
+              onClick={() => {
+                setFocusedId(r.id)
+                onToggle(r.id, !r.expanded)
+              }}
+              className={`${ROW_GRID} ${INDENT[r.level]} pr-3 py-1.5 border-l-[3px] border-l-transparent cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 ${
+                section ? 'bg-gray-50 hover:bg-gray-100' : 'hover:bg-gray-50'
+              }`}
+            >
+              <FoldRowBody row={r} onToggle={onToggle} />
+            </div>
+          )
+        }
         const selected = r.id === selectedId
         const missing = r.group?.kind === 'missingEpic'
         return (

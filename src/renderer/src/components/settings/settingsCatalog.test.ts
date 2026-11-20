@@ -6,12 +6,13 @@ import {
 } from './settingsCatalog'
 
 describe('settingsCatalog', () => {
-  it('섹션은 integrations·ai·assistant·recording·data 순서다', () => {
+  it('섹션은 integrations·ai·assistant·recording·mobile·data 순서다', () => {
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       'integrations',
       'ai',
       'assistant',
       'recording',
+      'mobile',
       'data'
     ])
     expect([...SETTINGS_SECTION_IDS]).toEqual(SETTINGS_SECTIONS.map((s) => s.id))
@@ -28,6 +29,7 @@ describe('settingsCatalog', () => {
   it('normalizeSettingsSection 은 모르는 값을 integrations 로 바꾼다', () => {
     expect(normalizeSettingsSection('ai')).toBe('ai')
     expect(normalizeSettingsSection('data')).toBe('data')
+    expect(normalizeSettingsSection('mobile')).toBe('mobile')
     expect(normalizeSettingsSection('unknown')).toBe('integrations')
     expect(normalizeSettingsSection(undefined)).toBe('integrations')
     expect(normalizeSettingsSection(3)).toBe('integrations')

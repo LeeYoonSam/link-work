@@ -96,9 +96,6 @@ export interface VadAdapter {
   detectSilence(audioPath: string, opts?: { minSilenceMs?: number }): Promise<VadRegion[]>
 }
 
-// 녹음 종류 — 요약 스키마와 상세 UI가 이 값으로 갈린다 (meetings.kind)
-export type MeetingKind = 'meeting' | 'interview'
-
 // AI 요약 5분류 (meeting_summaries에 JSON 직렬화되어 저장)
 export interface SummaryActionItem {
   text: string

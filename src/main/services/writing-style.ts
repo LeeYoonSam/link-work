@@ -6,8 +6,8 @@
 // - interview-summary.ts 의 INTERVIEW_SPEC: 면접 기록 요약 JSON 의 문자열 값
 // 규칙을 바꿀 때는 이 파일만 고친다. 각 프롬프트에 규칙 문장을 복사하지 않는다.
 //
-// 비서 말투 규칙(ASSISTANT_SPEECH_RULES)은 개인 비서 브리핑·맥락 복구·회의 전 브리핑이 쓴다 (부록 J.7, A52).
-// 이 규칙은 해요체다. 채팅·회의 요약·면접 요약·명령 해석은 위 글쓰기 규칙을 그대로 쓴다.
+// 비서 말투 규칙(ASSISTANT_SPEECH_RULES)은 회의 전 브리핑(assistant-briefing.ts)이 쓴다 (docs/ASSISTANT.md §13).
+// 이 규칙은 해요체다. 채팅·회의 요약·면접 요약은 위 글쓰기 규칙을 그대로 쓴다.
 
 export const WRITING_STYLE_RULES = `## 글쓰기 규칙 (ASD-STE100)
 - 한 문장에 한 가지 정보만 쓴다.

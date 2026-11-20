@@ -1,47 +1,31 @@
-// 비서 설정의 키·기본값·검증 (docs/ASSISTANT.md §3.2, 부록 C.2).
-// 순수 모듈이다 (A3). DB 읽기·쓰기는 assistant-store.ts 가 한다.
+// 비서 설정의 키·기본값·검증 (docs/ASSISTANT.md §4).
+// 순수 모듈이다. DB 읽기·쓰기는 assistant-store.ts 가 한다.
 import type { AiModelName, AssistantSettings } from './assistant-types'
 
 export const ASSISTANT_SETTING_KEYS: Record<keyof AssistantSettings, string> = {
   enabled: 'assistant_enabled',
   dayRollover: 'assistant_day_rollover',
-  startNudge: 'assistant_start_nudge',
-  workEnd: 'assistant_work_end',
-  planSize: 'assistant_plan_size',
   llmEnabled: 'assistant_llm_enabled',
   llmModel: 'assistant_llm_model',
-  jiraScope: 'assistant_jira_scope',
   openAtLogin: 'assistant_open_at_login',
-  refreshCalendarMin: 'assistant_refresh_calendar_min',
-  refreshJiraMin: 'assistant_refresh_jira_min',
-  refreshNotify: 'assistant_refresh_notify',
   meetingLeadMin: 'assistant_meeting_lead_min',
   startView: 'assistant_start_view',
   meetingBriefingEnabled: 'assistant_meeting_briefing_enabled',
   morningSyncEnabled: 'assistant_morning_sync_enabled',
-  morningSyncTime: 'assistant_morning_sync_time',
-  completeOriginOnDone: 'assistant_complete_origin_on_done'
+  morningSyncTime: 'assistant_morning_sync_time'
 }
 
 export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
   enabled: true,
   dayRollover: '04:00',
-  startNudge: true,
-  workEnd: '18:00',
-  planSize: 5,
   llmEnabled: true,
   llmModel: 'sonnet',
-  jiraScope: 'all',
   openAtLogin: false,
-  refreshCalendarMin: 5,
-  refreshJiraMin: 15,
-  refreshNotify: true,
   meetingLeadMin: 15,
   startView: 'today',
   meetingBriefingEnabled: true,
   morningSyncEnabled: true,
-  morningSyncTime: '08:00',
-  completeOriginOnDone: false
+  morningSyncTime: '08:00'
 }
 
 type FieldSpec =
@@ -53,27 +37,19 @@ type FieldSpec =
 const AI_MODELS: readonly AiModelName[] = ['opus', 'sonnet', 'haiku']
 const START_VIEWS: readonly AssistantSettings['startView'][] = ['today', 'projects', 'calendar']
 
-// 정수 범위는 설계 문서에 없다. 화면 입력의 상식적 범위로 정한다.
+// 허용 범위는 docs/ASSISTANT.md §4 의 설정 표와 같다. 바꾸면 문서도 함께 고친다.
 const FIELD_SPECS: Record<keyof AssistantSettings, FieldSpec> = {
   enabled: { kind: 'bool' },
   dayRollover: { kind: 'time' },
-  startNudge: { kind: 'bool' },
-  workEnd: { kind: 'time' },
-  planSize: { kind: 'int', min: 1, max: 20 },
   llmEnabled: { kind: 'bool' },
   llmModel: { kind: 'enum', values: AI_MODELS },
-  jiraScope: { kind: 'enum', values: ['all', 'default_project'] },
   openAtLogin: { kind: 'bool' },
-  refreshCalendarMin: { kind: 'int', min: 1, max: 240 },
-  refreshJiraMin: { kind: 'int', min: 1, max: 240 },
-  refreshNotify: { kind: 'bool' },
   meetingLeadMin: { kind: 'int', min: 1, max: 120 },
-  // A24: 이전 값 auto·dashboard 는 허용값이 아니므로 읽을 때 기본값 today 가 된다. DB 행은 다시 쓰지 않는다
+  // 이전 값 auto·dashboard 는 허용값이 아니므로 읽을 때 기본값 today 가 된다. DB 행은 다시 쓰지 않는다
   startView: { kind: 'enum', values: START_VIEWS },
   meetingBriefingEnabled: { kind: 'bool' },
   morningSyncEnabled: { kind: 'bool' },
-  morningSyncTime: { kind: 'time' },
-  completeOriginOnDone: { kind: 'bool' }
+  morningSyncTime: { kind: 'time' }
 }
 
 const FIELD_NAMES = Object.keys(ASSISTANT_SETTING_KEYS) as (keyof AssistantSettings)[]
@@ -120,8 +96,7 @@ function serializeValue(spec: FieldSpec, value: unknown): string | undefined {
 }
 
 // app_settings 행 → 설정. 없는 키와 잘못된 값은 기본값이다.
-// 3판에서 없앤 키 (assistant_slot_min) 는 FIELD_NAMES 에 없으므로 무시한다 (부록 B.6).
-// 제거된 작업 경계 체크인의 설정 행도 같은 이유로 무시한다 (부록 L).
+// 제거된 기능의 설정 행(assistant_slot_min, 체크인·하루 계획 설정 등)은 FIELD_NAMES 에 없으므로 무시한다.
 export function parseAssistantSettings(rows: { key: string; value: string }[]): AssistantSettings {
   const byKey = new Map<string, string>()
   for (const row of rows) {

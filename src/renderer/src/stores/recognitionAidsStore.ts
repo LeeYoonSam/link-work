@@ -28,7 +28,7 @@ interface MemberUpsertInput {
   sort_order?: number
 }
 
-export interface ImportResult {
+interface ImportResult {
   added: number
   updated: number
   skipped: number

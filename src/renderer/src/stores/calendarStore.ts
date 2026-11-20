@@ -31,9 +31,6 @@ interface CalendarStore {
   fetchEvents: (weekStart?: Date) => Promise<void>
   refreshEvents: (weekStart?: Date) => Promise<void>
   fetchStatus: () => Promise<void>
-  connect: () => Promise<{ success: boolean; error?: string }>
-  disconnect: () => Promise<void>
-  saveSettings: (clientId: string, clientSecret: string) => Promise<void>
 }
 
 export const useCalendarStore = create<CalendarStore>((set, get) => ({
@@ -61,25 +58,6 @@ export const useCalendarStore = create<CalendarStore>((set, get) => ({
   fetchStatus: async () => {
     const status = await window.api.calendar.status()
     set({ status })
-  },
-
-  connect: async () => {
-    const result = await window.api.calendar.auth()
-    if (result.success) {
-      set({ status: { connected: true, hasCredentials: true } })
-      await get().fetchEvents()
-    }
-    return result
-  },
-
-  disconnect: async () => {
-    await window.api.calendar.disconnect()
-    set({ eventsByWeek: {}, status: { connected: false, hasCredentials: true } })
-  },
-
-  saveSettings: async (clientId: string, clientSecret: string) => {
-    await window.api.calendar.saveSettings(clientId, clientSecret)
-    set((state) => ({ status: { ...state.status, hasCredentials: true } }))
   }
 }))
 

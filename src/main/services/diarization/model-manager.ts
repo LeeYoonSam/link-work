@@ -6,21 +6,21 @@ import { createWriteStream, existsSync } from 'fs'
 import { mkdir, rename, unlink, stat } from 'fs/promises'
 import { join } from 'path'
 
-export interface DiarModelInfo {
+interface DiarModelInfo {
   file: string
   url: string
   approxBytes: number
 }
 
 // segmentation: pyannote segmentation 3.0 (huggingface raw .onnx — tar.bz2 압축해제 회피)
-export const SEGMENTATION_MODEL: DiarModelInfo = {
+const SEGMENTATION_MODEL: DiarModelInfo = {
   file: 'sherpa-segmentation.onnx',
   url: 'https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/main/model.onnx',
   approxBytes: 5_992_913
 }
 
 // embedding: 3D-Speaker CAM++ (중·영 혼합 학습, 다국어 회의에 무난, 28MB)
-export const EMBEDDING_MODEL: DiarModelInfo = {
+const EMBEDDING_MODEL: DiarModelInfo = {
   file: 'sherpa-embedding.onnx',
   url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx',
   approxBytes: 28_281_164
@@ -42,7 +42,7 @@ export function areDiarizationModelsReady(): boolean {
   return existsSync(segmentationModelPath()) && existsSync(embeddingModelPath())
 }
 
-export type DiarModelProgress = (info: { ratio: number; label: string }) => void
+type DiarModelProgress = (info: { ratio: number; label: string }) => void
 
 async function downloadModel(
   model: DiarModelInfo,

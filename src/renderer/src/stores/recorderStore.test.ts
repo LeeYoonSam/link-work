@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 class FakeTrack {
   stopped = false
+  constructor(public readyState: 'live' | 'ended' = 'live') {}
   private listeners: Record<string, Array<() => void>> = {}
   stop(): void {
     this.stopped = true
@@ -17,15 +18,18 @@ class FakeTrack {
 }
 
 class FakeStream {
-  constructor(public tracks: FakeTrack[] = [new FakeTrack()]) {}
+  constructor(
+    public tracks: FakeTrack[] = [new FakeTrack()],
+    public videoTracks: FakeTrack[] = []
+  ) {}
   getTracks(): FakeTrack[] {
-    return this.tracks
+    return [...this.tracks, ...this.videoTracks]
   }
   getAudioTracks(): FakeTrack[] {
     return this.tracks
   }
   getVideoTracks(): FakeTrack[] {
-    return []
+    return this.videoTracks
   }
 }
 
@@ -102,6 +106,7 @@ class FakeAudioContext {
 
 let micStream: FakeStream
 const getUserMedia = vi.fn()
+const getDisplayMedia = vi.fn()
 
 type StoreModule = typeof import('./recorderStore')
 
@@ -121,6 +126,8 @@ beforeEach(() => {
   micStream = new FakeStream()
   getUserMedia.mockReset()
   getUserMedia.mockImplementation(async () => micStream)
+  getDisplayMedia.mockReset()
+  getDisplayMedia.mockImplementation(async () => new FakeStream())
 
   vi.stubGlobal('MediaRecorder', FakeMediaRecorder)
   vi.stubGlobal('MediaStream', FakeStream)
@@ -128,7 +135,7 @@ beforeEach(() => {
   vi.stubGlobal('navigator', {
     mediaDevices: {
       getUserMedia,
-      getDisplayMedia: vi.fn(async () => new FakeStream())
+      getDisplayMedia
     }
   })
   vi.stubGlobal('window', {
@@ -307,5 +314,79 @@ describe('recorderStore', () => {
     mod.useRecorderStore.getState().reset()
     expect(rec.stopCalls).toBe(1)
     expect(mod.useRecorderStore.getState().lastResult).toBeNull()
+  })
+
+  it('getUserMedia는 noiseSuppression:false·echoCancellation:true·mono로 호출된다', async () => {
+    const mod = await loadStore()
+    await startRecording(mod)
+    expect(getUserMedia).toHaveBeenCalledWith({
+      audio: { echoCancellation: true, noiseSuppression: false, channelCount: 1 }
+    })
+  })
+
+  it('mic+system: live 시스템 트랙이면 스테레오로 녹음하고 비디오 트랙은 즉시 정지한다', async () => {
+    const mod = await loadStore()
+    const sysTrack = new FakeTrack('live')
+    const videoTrack = new FakeTrack('live')
+    getDisplayMedia.mockImplementationOnce(async () => new FakeStream([sysTrack], [videoTrack]))
+
+    const ok = await mod.useRecorderStore.getState().start({ source: 'mic+system', draftId: 1 })
+    expect(ok).toBe(true)
+    expect(getDisplayMedia).toHaveBeenCalledWith({ audio: true, video: true })
+    expect(videoTrack.stopped).toBe(true)
+    expect(sysTrack.stopped).toBe(false)
+    expect(mod.useRecorderStore.getState().error).toBeNull()
+
+    // 정지 시 시스템 트랙도 정리된다
+    lastRecorder().autoFireStop = true
+    await mod.useRecorderStore.getState().stop()
+    expect(sysTrack.stopped).toBe(true)
+  })
+
+  it('mic+system: 시스템 오디오 트랙이 처음부터 ended면 마이크만으로 녹음하고 권한 안내를 띄운다', async () => {
+    const mod = await loadStore()
+    const deadTrack = new FakeTrack('ended')
+    getDisplayMedia.mockImplementationOnce(async () => new FakeStream([deadTrack]))
+
+    const ok = await mod.useRecorderStore.getState().start({ source: 'mic+system', draftId: 2 })
+    expect(ok).toBe(true)
+    const s = mod.useRecorderStore.getState()
+    expect(s.state).toBe('recording')
+    expect(s.error).toBe(mod.SYSTEM_AUDIO_PERMISSION_ERROR)
+    expect(deadTrack.stopped).toBe(true)
+    expect(FakeMediaRecorder.instances).toHaveLength(1)
+  })
+
+  it('mic+system: 녹음 중 시스템 트랙이 끝나도 녹음은 유지되고 경고만 띄운다', async () => {
+    const mod = await loadStore()
+    const sysTrack = new FakeTrack('live')
+    getDisplayMedia.mockImplementationOnce(async () => new FakeStream([sysTrack]))
+
+    await mod.useRecorderStore.getState().start({ source: 'mic+system', draftId: 3 })
+    await vi.advanceTimersByTimeAsync(1000)
+    const before = mod.useRecorderStore.getState().elapsedMs
+
+    sysTrack.readyState = 'ended'
+    sysTrack.fire('ended')
+    let s = mod.useRecorderStore.getState()
+    expect(s.state).toBe('recording')
+    expect(s.error).toBe(mod.SYSTEM_AUDIO_LOST_ERROR)
+    expect(lastRecorder().state).toBe('recording')
+
+    // 타이머는 계속 흐른다 (마이크 중단 처리와 달리 멈추지 않음)
+    await vi.advanceTimersByTimeAsync(1000)
+    s = mod.useRecorderStore.getState()
+    expect(s.elapsedMs).toBeGreaterThan(before)
+  })
+
+  it('mic+system: reset 이후 늦게 온 시스템 트랙 ended는 무시한다', async () => {
+    const mod = await loadStore()
+    const sysTrack = new FakeTrack('live')
+    getDisplayMedia.mockImplementationOnce(async () => new FakeStream([sysTrack]))
+
+    await mod.useRecorderStore.getState().start({ source: 'mic+system', draftId: 4 })
+    mod.useRecorderStore.getState().reset()
+    sysTrack.fire('ended')
+    expect(mod.useRecorderStore.getState().error).toBeNull()
   })
 })

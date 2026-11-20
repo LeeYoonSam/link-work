@@ -7,17 +7,17 @@
 // - 외부 호출은 probe.verify() 가 하고, 이 모듈은 electron·DB 를 모른다(의존성 주입). 그래서 단위 테스트가 쉽다.
 
 export type IntegrationId = 'google' | 'jira' | 'bitbucket' | 'notion'
-export type IntegrationVerifyCode =
+type IntegrationVerifyCode =
   | 'not_connected'
   | 'auth_failed'
   | 'expired'
   | 'unreachable'
   | 'unknown'
-export type IntegrationVerifyResult =
+type IntegrationVerifyResult =
   | { ok: true; account: string | null; checkedAt: string }
   | { ok: false; code: IntegrationVerifyCode; error: string; checkedAt: string }
 
-export const INTEGRATION_IDS: readonly IntegrationId[] = ['google', 'jira', 'bitbucket', 'notion']
+const INTEGRATION_IDS: readonly IntegrationId[] = ['google', 'jira', 'bitbucket', 'notion']
 
 export interface IntegrationProbe {
   /** 저장된 자격 증명이 있는지. 외부 호출을 하지 않는다 */
@@ -40,7 +40,7 @@ const LABELS: Record<IntegrationId, string> = {
   notion: 'Notion'
 }
 
-export function isIntegrationId(value: unknown): value is IntegrationId {
+function isIntegrationId(value: unknown): value is IntegrationId {
   return typeof value === 'string' && (INTEGRATION_IDS as readonly string[]).includes(value)
 }
 

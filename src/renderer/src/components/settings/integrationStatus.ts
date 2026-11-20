@@ -49,7 +49,7 @@ export interface CardState {
   actions: CardActionId[]
 }
 
-export const CARD_STATE_LABELS: Record<CardStateKind, string> = {
+const CARD_STATE_LABELS: Record<CardStateKind, string> = {
   checking: '확인 중',
   auth_failed: '인증 실패',
   expired: '만료됨',

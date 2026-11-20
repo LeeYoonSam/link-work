@@ -15,6 +15,9 @@ disallowedTools: Edit, Write, NotebookEdit
 
 ## 작업 방식
 - **명령 실행으로 판정**: 각 완료 조건에 해당하는 명령(`npx vitest run`, `npm run typecheck`, `npm run build` 등)을 실제로 실행한다. 코드를 눈으로만 보고 판단하지 않는다.
+- **문서 동기화 판정**: 다음 두 항목을 판정 항목에 넣는다.
+  - `npm run check:docs` 종료 코드 0(문서 경로·IPC 채널·매핑 검사).
+  - `npm run check:docs -- --changed`가 알려 주는 확인 대상 문서를 열어, 바뀐 코드에 대한 서술이 현재 코드와 맞는지 대조한다. 고치지 않은 문서는 implementer가 밝힌 근거가 타당한지 본다. 문서에 변경 이력이나 지운 기능의 서술이 남아 있으면 미충족으로 본다.
 - **코드를 직접 수정하지 않는다**(Edit/Write/NotebookEdit 비활성). 수정은 implementer의 몫이다.
 - **항목별 보고**: 완료 조건 체크리스트의 각 항목에 대해 충족/미충족과 근거(실행한 명령과 그 출력)를 남긴다.
 - **미충족 전달**: 미충족 항목은 해당 implementer에게 전달해 수정하게 하고, 수정 후 재검증한다.

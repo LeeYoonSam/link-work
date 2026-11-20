@@ -26,13 +26,23 @@ const DURATION_TOLERANCE_MS = 50
 const VAD_PROGRESS_SHARE = 0.85
 const WRITE_DONE_PROGRESS = 0.95
 
-export interface CompactionResult {
+// 컷편집용 VAD 발화 임계값(전사용 기본값 0.5보다 낮춤).
+// 컷편집은 원본을 보관하지 않아 되돌릴 수 없으므로, "발화를 놓쳐 잘라내는 것"이 "잡음을 남기는 것"보다
+// 훨씬 비싸다 — 작은 목소리·원거리 화자의 발화가 2초 이상 침묵 구간으로 오판되면 영구 삭제된다.
+// 공개 근거는 NVIDIA NeMo Curator 문서가 조용한 화자용 관대한(lenient) 값으로 0.3을 제시한 것뿐이라,
+// 기본값 0.5와 0.3 사이에서 보수적으로 0.35를 택했다(실측 튜닝값 아님).
+// 낮은 임계로 잡힌 잡음 구간을 전사하면 환각이 늘어나므로 이 구간은 STT에 쓰지 않는다
+// — 전사용 VAD는 whisper-adapter가 컷편집된 파일에 기본 임계값으로 다시 돌린다.
+const COMPACTION_VAD_THRESHOLD = 0.35
+
+interface CompactionResult {
   applied: boolean
   originalMs: number
   compactedMs: number
   removedMs: number
-  // 발화 구간. applied면 컷편집 타임라인 기준, 아니면 원본 타임라인 기준.
-  // STT가 VAD를 다시 돌리지 않도록 그대로 넘긴다. VAD 자체가 실패했으면 null.
+  // 발화 구간(COMPACTION_VAD_THRESHOLD로 검출). applied면 컷편집 타임라인 기준, 아니면 원본 타임라인 기준.
+  // 낮은 임계값으로 검출한 구간이라 STT 입력으로는 쓰지 않는다(전사용 VAD는 어댑터가 다시 돌린다).
+  // VAD 자체가 실패했으면 null.
   speechRegions: Region[] | null
   // applied일 때만 채워진다(원본 타임라인 기준 유지 구간).
   keep: Region[] | null
@@ -119,7 +129,7 @@ async function writeCompactionSidecar(
 /**
  * 녹음 WAV에서 긴 침묵을 잘라내고 파일을 제자리에서 교체한다.
  *
- * 반환값의 speechRegions는 STT에 그대로 넘겨 VAD 중복 실행을 막는 용도다.
+ * 반환값의 speechRegions는 컷편집용 낮은 임계값(COMPACTION_VAD_THRESHOLD)으로 검출한 구간이다.
  * 취소(AbortError)만 전파하고, 그 밖의 어떤 실패도 applied:false로 흡수한다.
  */
 export async function compactRecording(
@@ -159,6 +169,7 @@ export async function compactRecording(
 
     const detected = await detectSpeechRegions(audioPath, dataRange, {
       ...opts,
+      threshold: COMPACTION_VAD_THRESHOLD,
       onProgress: (p) => opts.onProgress?.(p * VAD_PROGRESS_SHARE)
     })
     if (!detected) {

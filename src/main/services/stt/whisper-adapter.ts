@@ -4,12 +4,20 @@
 //
 // VAD 선분할: 무음·잡음 구간에서 Whisper가 문장을 지어내는 환각을 억제하기 위해,
 // VAD 모델로 발화 구간만 검출해 구간별 raw PCM을 잘라 전사하고 절대시간으로 복원한다.
-// 검출 자체는 stt/vad-detect.ts가 담당하며(무음 컷편집 단계와 공유), opts.speechRegionsMs로
-// 이미 검출된 구간을 받으면 VAD를 생략한다. VAD 실패나 WAV 포맷 불일치 시에는 전체 파일 전사로 폴백한다.
+// 검출 자체는 stt/vad-detect.ts가 담당한다(무음 컷편집 단계와 공유). opts.speechRegionsMs로
+// 이미 검출된 구간을 받으면 VAD를 생략하지만, 파이프라인은 이제 컷편집 결과의 구간을 넘기지 않는다
+// — 컷편집은 발화를 놓치지 않으려 낮은 임계값(0.35)으로 검출하므로, 그 구간을 그대로 전사하면
+// 잡음 구간까지 전사해 환각이 늘어난다. 그래서 전사용 VAD는 여기서 기본 임계값(0.5)으로 다시 돌린다.
+// VAD 실패나 WAV 포맷 불일치 시에는 전체 파일 전사로 폴백한다.
+//
+// 세그먼트 분할: 화자 귀속이 세그먼트 단위라 긴 세그먼트 안의 화자 교대가 사라진다. 그래서
+// tokenTimestamps + maxLen으로 세그먼트를 짧게 자르고, 깨진 글자가 나오면 분할 없이 1회 재전사한다
+// (판정·보정 로직은 stt/segment-split.ts).
 import { readFile } from 'fs/promises'
 import type { SttAdapter, SttSegment } from '../meeting-types'
 import { ensureModel } from './model-manager'
 import { detectSpeechRegions, consumeVadCrashGuard } from './vad-detect'
+import { hasBrokenText, sanitizeSegmentTimes } from './segment-split'
 import {
   coalesceRegions,
   sliceSampleRange,
@@ -26,6 +34,10 @@ interface WhisperTranscribeOptions {
   temperature?: number
   temperatureInc?: number
   beamSize?: number
+  // true일 때만 maxLen이 작동한다(whisper.node 1.0.22 바인딩 소스 확인).
+  tokenTimestamps?: boolean
+  // 세그먼트 최대 길이. 단위는 UTF-8 글자 수(한글 1음절=1). 0이면 무제한.
+  maxLen?: number
   // whisper initial_prompt (native의 prompt 키). 도메인 컨텍스트를 디코딩에 주입.
   prompt?: string
   onProgress?: (progress: number) => void
@@ -101,6 +113,15 @@ const COALESCE_OPTIONS = { joinGapMs: 2000, maxChunkMs: 28000 }
 // (컷편집 단계가 VAD를 이미 돌려 speechRegionsMs를 넘겨준 경로에는 적용하지 않는다 —
 //  그쪽은 compact 단계가 자기 진행률을 따로 보고하므로 전사는 0→1을 그대로 쓴다.)
 const VAD_PROGRESS_SHARE = 0.08
+
+// 세그먼트 분할 길이(글자 수). whisper.node 1.0.22는 tokenTimestamps:true일 때만 maxLen을 적용하고,
+// 누적 글자 수가 maxLen을 넘으면 그 토큰 앞에서 세그먼트를 자른다(split_on_word는 노출되지 않음).
+// 실데이터에서 세그먼트가 평균 3~5초, 최장 30~120초로 길어 세그먼트 안의 화자 교대가 사라졌다.
+// 이미 짧은 세그먼트는 그대로 두고 긴 세그먼트만 화자 귀속이 가능한 크기로 쪼갠다.
+// 실측으로 확인됨(2026-11-18, 실제 녹음 3건·28초 청크 128개·약 60분, large-v3-turbo-q8_0, 옵션 유무 비교):
+// 최장 세그먼트 12~16초 → 7.5~8초, 세그먼트 수 +8~13%, 처리 시간 차이 없음, 비정상 타임스탬프 0건.
+// 단, 한 파일에서 깨진 글자(U+FFFD)가 세그먼트 566개 중 8개 나왔다 → decodeWithSplitFallback의 재전사 방어가 필수다.
+const SEGMENT_MAX_LEN = 30
 
 export class WhisperAdapter implements SttAdapter {
   readonly name = 'whisper'
@@ -191,7 +212,8 @@ export class WhisperAdapter implements SttAdapter {
   }
 
   // 본 모델·구간 전사에 공통으로 쓰는 디코딩 옵션.
-  private buildTranscribeOptions(opts: TranscribeOpts): WhisperTranscribeOptions {
+  // split=true면 세그먼트 분할 옵션(tokenTimestamps + maxLen)을 켠다. 깨진 글자 재전사 때는 false.
+  private buildTranscribeOptions(opts: TranscribeOpts, split = true): WhisperTranscribeOptions {
     return {
       language: opts.language,
       // maxContext:0 → 직전 텍스트를 컨텍스트로 쓰지 않아 무음 구간 반복 환각을 억제.
@@ -199,22 +221,68 @@ export class WhisperAdapter implements SttAdapter {
       maxContext: 0,
       temperature: 0,
       temperatureInc: 0.2,
-      // beamSize 5 빔서치 — greedy 대비 한국어 정확도가 개선된다(속도는 소폭 희생).
+      // beamSize 5 — 주의: whisper.node 1.0.22는 샘플링 전략을 GREEDY로 고정해 이 값이 적용되지 않는다
+      // (사실상 greedy 디코딩). 1.2.0에서 수정 예정이라 그때 그대로 효과가 나도록 값은 유지한다.
       beamSize: 5,
       // prompt(=initial_prompt)는 있을 때만 전달. undefined 키가 native에 새지 않도록 조건부 spread.
-      ...(opts.prompt ? { prompt: opts.prompt } : {})
+      ...(opts.prompt ? { prompt: opts.prompt } : {}),
+      ...(split ? { tokenTimestamps: true, maxLen: SEGMENT_MAX_LEN } : {})
     }
   }
 
   // 전사 결과 세그먼트(ms 단위) → SttSegment. 빈 텍스트는 버린다.
-  private toSttSegments(result: WhisperTranscribeResult): SttSegment[] {
-    return result.segments
+  // 분할로 흔들릴 수 있는 타임스탬프를 보정(음수·역전·상한 초과)하고 start 오름차순으로 정렬한다.
+  // maxMs: 이 호출이 전사한 오디오 길이(청크 길이). 알 수 없으면(전체 파일) 생략.
+  private toSttSegments(result: WhisperTranscribeResult, maxMs?: number): SttSegment[] {
+    const mapped = result.segments
       .map((s) => ({
         start_ms: Math.round(s.t0),
         end_ms: Math.round(s.t1),
         text: s.text.trim()
       }))
       .filter((s) => s.text.length > 0)
+    return sanitizeSegmentTimes(mapped, maxMs)
+  }
+
+  /**
+   * 네이티브 전사 1회 + 깨진 글자 방어.
+   * 분할 옵션으로 전사한 결과에 U+FFFD가 든 세그먼트가 하나라도 있으면(토큰 경계가 한 글자의
+   * UTF-8 바이트 중간에 걸린 경우) 같은 오디오를 분할 옵션 없이 정확히 1회 다시 전사해 그 결과를 쓴다.
+   * 재전사 결과에 다시 깨진 글자가 있더라도(모델 자체 출력) 더 반복하지 않는다.
+   * 취소는 두 호출 모두 runNativeWithAbort로 처리한다.
+   */
+  private async decodeWithSplitFallback(
+    start: (options: WhisperTranscribeOptions) => {
+      stop: () => Promise<void>
+      promise: Promise<WhisperTranscribeResult>
+    },
+    opts: TranscribeOpts,
+    progress: {
+      onProgress?: (p: number) => void
+      // 재전사 때 쓸 진행률 콜백. 생략하면 재전사 중에는 진행률을 보고하지 않는다(역행 방지).
+      onRetryProgress?: (p: number) => void
+      // 재전사 직전 1회 호출(안내 메시지용).
+      onRetry?: () => void
+    },
+    maxMs?: number
+  ): Promise<SttSegment[]> {
+    const first = await this.runNativeWithAbort(
+      start({ ...this.buildTranscribeOptions(opts, true), onProgress: progress.onProgress }),
+      opts.signal
+    )
+    if (!hasBrokenText(first.segments)) return this.toSttSegments(first, maxMs)
+
+    if (opts.signal?.aborted) throw abortError()
+    progress.onRetry?.()
+    const retry = await this.runNativeWithAbort(
+      start({
+        ...this.buildTranscribeOptions(opts, false),
+        // undefined 키가 native에 새지 않도록 콜백이 있을 때만 전달.
+        ...(progress.onRetryProgress ? { onProgress: progress.onRetryProgress } : {})
+      }),
+      opts.signal
+    )
+    return this.toSttSegments(retry, maxMs)
   }
 
   /**
@@ -231,7 +299,6 @@ export class WhisperAdapter implements SttAdapter {
     opts: TranscribeOpts
   ): Promise<SttSegment[]> {
     const totalSpeechMs = regions.reduce((a, r) => a + (r.endMs - r.startMs), 0) || 1
-    const baseOptions = this.buildTranscribeOptions(opts)
     const out: SttSegment[] = []
     let doneMs = 0
 
@@ -256,14 +323,18 @@ export class WhisperAdapter implements SttAdapter {
       new Uint8Array(slice).set(pcm)
 
       const base = doneMs
-      const call = ctx.transcribeData(slice, {
-        ...baseOptions,
-        // 구간 내부 진행률(0~100)을 전체 발화시간 기준으로 환산해 매끄럽게 보고.
-        onProgress: (p) => opts.onProgress?.(clamp01((base + regionMs * (p / 100)) / totalSpeechMs))
-      })
-      const result = await this.runNativeWithAbort(call, opts.signal)
+      const segments = await this.decodeWithSplitFallback(
+        (options) => ctx.transcribeData(slice, options),
+        opts,
+        {
+          // 구간 내부 진행률(0~100)을 전체 발화시간 기준으로 환산해 매끄럽게 보고.
+          // 재전사(최대 28초 청크) 중에는 진행률을 보고하지 않아 바가 뒤로 가지 않게 한다.
+          onProgress: (p) => opts.onProgress?.(clamp01((base + regionMs * (p / 100)) / totalSpeechMs))
+        },
+        regionMs
+      )
       // 슬라이스 상대 ms → region 시작 ms를 더해 절대시간 복원.
-      out.push(...mapSegmentsToAbsolute(this.toSttSegments(result), region.startMs))
+      out.push(...mapSegmentsToAbsolute(segments, region.startMs))
 
       doneMs += regionMs
       opts.onProgress?.(clamp01(doneMs / totalSpeechMs))
@@ -281,13 +352,18 @@ export class WhisperAdapter implements SttAdapter {
     opts: TranscribeOpts
   ): Promise<SttSegment[]> {
     if (opts.signal?.aborted) throw abortError()
-    const call = ctx.transcribeFile(audioPath, {
-      ...this.buildTranscribeOptions(opts),
-      // whisper onProgress: 0~100 → 0~1
-      onProgress: (p) => opts.onProgress?.(clamp01(p / 100))
-    })
-    const result = await this.runNativeWithAbort(call, opts.signal)
-    return this.toSttSegments(result)
+    // whisper onProgress: 0~100 → 0~1
+    const onProgress = (p: number): void => opts.onProgress?.(clamp01(p / 100))
+    return await this.decodeWithSplitFallback(
+      (options) => ctx.transcribeFile(audioPath, options),
+      opts,
+      {
+        onProgress,
+        // 전체 파일 재전사는 길 수 있어 진행률을 다시 보고한다(바가 처음부터 다시 찬다는 안내를 먼저 띄움).
+        onRetryProgress: onProgress,
+        onRetry: () => opts.onMessage?.('글자 깨짐이 감지되어 세그먼트 분할 없이 다시 인식 중…')
+      }
+    )
   }
 
   /**

@@ -16,7 +16,7 @@ const UNKNOWN_LINK_MESSAGE = '보드에 없는 링크라 열 수 없습니다. �
  * 보드 링크를 기본 브라우저로 연다. 렌더러가 보낸 값은 믿지 않는다:
  * http(s)이고 저장된 스냅샷의 어떤 이슈 links 에 든 URL 일 때만 열고, 마지막으로 open-target 검사를 거친다.
  */
-export async function openJiraBoardLink(url: unknown): Promise<{ success: true } | { success: false; error: string }> {
+async function openJiraBoardLink(url: unknown): Promise<{ success: true } | { success: false; error: string }> {
   const target = resolveOpenTarget(url, 'link')
   if (!target.ok) return { success: false, error: target.error }
   if (target.kind !== 'external' || !/^https?:\/\//i.test(target.target)) {

@@ -4,9 +4,9 @@ import { getDatabase } from '../db/database'
 //
 // 패밀리 정의는 이 배열 한 곳에만 둔다.
 // name·hint 는 SDK 라벨을 아직 받지 못했을 때 쓰는 폴백이다.
-export type AiModelFamily = 'fable' | 'opus' | 'sonnet' | 'haiku'
+type AiModelFamily = 'fable' | 'opus' | 'sonnet' | 'haiku'
 
-export interface AiModelFamilyDef {
+interface AiModelFamilyDef {
   id: AiModelFamily
   name: string
   hint: string
@@ -25,10 +25,10 @@ function isAiModelFamily(value: unknown): value is AiModelFamily {
   return typeof value === 'string' && AI_MODEL_FAMILY_IDS.includes(value)
 }
 
-// ── 개인 비서용 고정 모델 ID (동작 유지) ──
+// ── 헤드리스 호출용 고정 모델 ID (동작 유지) ──
 //
-// 오늘 화면 비서(assistant-briefing.ts, assistant-command-llm.ts)는 결과에 modelId 를 기록한다.
-// 그래서 이 매핑은 바꾸지 않는다.
+// 회의 전 브리핑(assistant-briefing.ts)과 에픽 AI 요약(jira-board.ts)이 쓴다.
+// 회의 전 브리핑은 결과에 modelId 를 기록한다. 그래서 이 매핑은 바꾸지 않는다.
 export type AiModelChoice = 'opus' | 'sonnet' | 'haiku'
 
 const AI_MODEL_IDS: Record<AiModelChoice, string> = {
@@ -45,7 +45,7 @@ export function resolveAiModelId(choice: AiModelChoice): string {
 //
 // app_settings 에는 패밀리 별칭만 저장한다.
 // 쿼리는 별칭을 SDK model 옵션에 그대로 넘긴다. CLI 가 별칭을 최신 버전으로 해석한다.
-export type AiChatModelChoice = 'fable' | 'opus' | 'haiku'
+type AiChatModelChoice = 'fable' | 'opus' | 'haiku'
 
 export const AI_CHAT_MODEL_CHOICES: readonly AiChatModelChoice[] = ['fable', 'opus', 'haiku']
 
@@ -88,12 +88,12 @@ export function setAiChatModel(choice: AiChatModelChoice): void {
 // SDK Query.supportedModels() 의 패밀리 별칭 항목에서 displayName·description 을 캐시한다.
 // 예: { value: 'fable', displayName: 'Fable 5.1', description: '...' }
 // 캐시는 메모리와 app_settings 'ai_model_labels' 에 둔다. 재시작 직후에도 라벨을 쓴다.
-export interface AiModelLabel {
+interface AiModelLabel {
   displayName: string
   description: string
 }
 
-export type AiModelLabelCache = Partial<Record<AiModelFamily, AiModelLabel>>
+type AiModelLabelCache = Partial<Record<AiModelFamily, AiModelLabel>>
 
 export interface AiChatModelOption {
   value: AiChatModelChoice

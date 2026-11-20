@@ -55,7 +55,7 @@ export const RECOGNITION_AIDS_SCHEMA = `
     ON meeting_attendees(meeting_id);
 `
 
-export interface GlossaryEntry {
+interface GlossaryEntry {
   id: number
   term: string
   aliases: string[]
@@ -67,7 +67,7 @@ export interface GlossaryEntry {
   updated_at: string
 }
 
-export interface Member {
+interface Member {
   id: number
   name: string
   aliases: string[]
@@ -214,7 +214,7 @@ export function removeGlossary(db: Db, id: number): void {
   db.prepare('DELETE FROM stt_glossary WHERE id = ?').run(id)
 }
 
-export interface ParsedGlossaryLine {
+interface ParsedGlossaryLine {
   term: string
   aliases: string[]
   note: string | null

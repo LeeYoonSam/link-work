@@ -50,7 +50,7 @@ const BLOCKED_FILE_EXTENSIONS = new Set([
 /** URL 스킴처럼 보이는 접두어 (`smb:`, `http:` …). 2글자 이상이라 Windows 드라이브 문자와 겹치지 않는다. */
 const SCHEME_PATTERN = /^[a-z][a-z0-9+.-]+:/i
 
-export type OpenTarget =
+type OpenTarget =
   | { ok: true; kind: 'external'; target: string }
   | { ok: true; kind: 'path'; target: string }
   | { ok: false; error: string }

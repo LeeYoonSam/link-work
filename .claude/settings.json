@@ -1,5 +1,19 @@
 {
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "export PATH=\"/opt/homebrew/opt/node@22/bin:$PATH\"; command -v node >/dev/null 2>&1 || exit 0; [ -f \"$CLAUDE_PROJECT_DIR/scripts/docs-stop-hook.mjs\" ] || exit 0; node \"$CLAUDE_PROJECT_DIR/scripts/docs-stop-hook.mjs\"",
+            "timeout": 30,
+            "statusMessage": "문서 동기화 확인 중"
+          }
+        ]
+      }
+    ]
   }
 }

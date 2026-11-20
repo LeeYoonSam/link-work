@@ -20,7 +20,7 @@ vi.mock('../db/database', () => ({
 vi.mock('./ai-headless', () => ({ runHeadlessJson: vi.fn() }))
 
 import { buildSystemPrompt } from './ai-agent'
-import { BRIEFING_SYSTEM_PROMPT, MEETING_SYSTEM_PROMPT, RECOVERY_SYSTEM_PROMPT } from './assistant-briefing'
+import { MEETING_SYSTEM_PROMPT } from './assistant-briefing'
 import { INTERVIEW_SPEC } from './interview-summary'
 import { MEETING_SPEC } from './meeting-summary'
 import {
@@ -84,10 +84,10 @@ describe('buildSystemPrompt', () => {
   )
 })
 
-// ── 비서 말투 규칙 (부록 J.7) ──
+// ── 비서 말투 규칙 ──
 
 describe('ASSISTANT_SPEECH_RULES', () => {
-  it('A52: 해요체·권유 형태·금지 문구·데이터 밖 사실 금지를 포함한다', () => {
+  it('해요체·권유 형태·금지 문구·데이터 밖 사실 금지를 포함한다', () => {
     for (const phrase of [
       '## 비서 말투 규칙',
       '해요체로 쓴다.',
@@ -101,15 +101,15 @@ describe('ASSISTANT_SPEECH_RULES', () => {
     expect(ASSISTANT_SPEECH_JSON_NOTE).toContain('위 말투 규칙')
   })
 
-  it('A52: 비서 프롬프트 3개는 말투 규칙을 쓰고 글쓰기 규칙을 쓰지 않는다', () => {
-    for (const prompt of [BRIEFING_SYSTEM_PROMPT, RECOVERY_SYSTEM_PROMPT, MEETING_SYSTEM_PROMPT]) {
+  it('회의 전 브리핑 프롬프트는 말투 규칙을 쓰고 글쓰기 규칙을 쓰지 않는다', () => {
+    for (const prompt of [MEETING_SYSTEM_PROMPT]) {
       expect(prompt).toContain(ASSISTANT_SPEECH_RULES)
       expect(prompt).toContain(ASSISTANT_SPEECH_JSON_NOTE)
       expect(prompt).not.toContain(WRITING_STYLE_RULES)
     }
   })
 
-  it('A52: 기존 글쓰기 규칙은 말투 규칙과 섞이지 않는다', () => {
+  it('기존 글쓰기 규칙은 말투 규칙과 섞이지 않는다', () => {
     expect(WRITING_STYLE_RULES).not.toContain('해요체')
     expect(ASSISTANT_SPEECH_RULES).not.toContain('ASD-STE100')
   })

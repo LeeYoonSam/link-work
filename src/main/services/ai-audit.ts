@@ -3,7 +3,7 @@ import { getDatabase } from '../db/database'
 // AI 대화 가드레일 감사 로그.
 // 쿼리 라이프사이클(시작/완료/오류/취소), 도구 호출/오류, 화이트리스트 외 도구
 // 사용 시도(거부)를 ai_audit_log 테이블에 기록해 사후 추적을 가능하게 한다.
-export type AiAuditEvent =
+type AiAuditEvent =
   | 'query_start'
   | 'query_done'
   | 'query_error'

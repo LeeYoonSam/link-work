@@ -3,21 +3,26 @@
 //
 // [가드레일]
 // - Jira는 읽기만 한다. 호출은 전부 jira.ts(GET 전용 jiraRequest)를 거친다. 여기서 fetch를 부르지 않는다.
-// - DB 는 보드 캐시 두 테이블(jira_board_issues·jira_board_sync)에만 쓴다(jira-board-store.ts).
-//   화면은 저장본을 먼저 보이고, 그 뒤 바뀐 이슈만 받아 갱신한다. AI 요약은 메모리에만 둔다.
+// - DB 는 보드 캐시 두 테이블(jira_board_issues·jira_board_sync)과 에픽 AI 요약(jira_epic_summaries)에만 쓴다
+//   (jira-board-store.ts). 화면은 저장본을 먼저 보이고, 그 뒤 바뀐 이슈만 받아 갱신한다.
+// - 에픽 AI 요약은 버튼으로만 만든다. 헤드리스 LLM 공용 줄(runLlmSerialized)을 거쳐 다른 AI 작업이 끝난 뒤 실행한다.
 // - 상태 이름을 JQL에 넣지 않는다. 번역 이름("할 일")은 JQL에서 오류 없이 0건이 된다.
 //   그래서 statusCategory로 넓게 받고 백로그 여부는 응답의 상태 이름으로 가른다.
 // - 수집·동기화 로직은 Jira 호출·시계·저장소를 주입받는다(JiraBoardDeps). 네트워크 없이 테스트한다.
+import { createHash } from 'crypto'
 import { z } from 'zod'
-import { runHeadlessJson, type HeadlessJsonResult, type HeadlessJsonSpec } from './ai-headless'
+import { runHeadlessJson, runLlmSerialized, type HeadlessJsonResult, type HeadlessJsonSpec } from './ai-headless'
 import { getDatabase } from '../db/database'
 import { resolveAiModelId } from './ai-model'
 import { adfToPlainText, extractAdfLinks, guessLinkName, isHttpUrl } from './jira-adf'
 import {
   clearStoredBoards,
+  readEpicSummary,
   readStoredBoard,
   replaceStoredBoard,
   upsertStoredIssues,
+  writeEpicSummary,
+  type StoredEpicSummary,
   type StoredJiraBoard,
   type StoreWriteMeta
 } from './jira-board-store'
@@ -128,30 +133,30 @@ export interface JiraEpicAiSummary {
 
 export type JiraBoardErrorCode = 'not_connected' | 'no_default_project'
 
-export type JiraBoardFetchResult =
+type JiraBoardFetchResult =
   | { success: true; snapshot: JiraBoardSnapshot; sync: JiraBoardSyncInfo }
   | { success: false; error: string; code?: JiraBoardErrorCode }
 
-export type JiraBoardCachedResult =
+type JiraBoardCachedResult =
   | { success: true; snapshot: JiraBoardSnapshot | null }
   | { success: false; error: string; code?: JiraBoardErrorCode }
 
-export type JiraEpicSummaryResult =
+type JiraEpicSummaryResult =
   | { success: true; summary: JiraEpicAiSummary }
   | { success: false; error: string }
 
 /** 최근 완료로 포함하는 기간(일) */
 export const RECENT_DONE_DAYS = 14
 /** auto: 마지막 동기화가 이보다 최근이면 Jira를 부르지 않는다 */
-export const AUTO_SKIP_MS = 60_000
+const AUTO_SKIP_MS = 60_000
 /** auto: 마지막 전체 동기화가 이보다 오래됐으면 전체 동기화를 한다(삭제·이동은 증분으로 못 잡는다) */
-export const AUTO_FULL_MS = 24 * 60 * 60_000
+const AUTO_FULL_MS = 24 * 60 * 60_000
 /** 증분: 마지막 동기화가 이보다 오래됐으면 전체 동기화로 넘어간다 */
-export const INCREMENTAL_MAX_AGE_MS = 7 * 24 * 60 * 60_000
+const INCREMENTAL_MAX_AGE_MS = 7 * 24 * 60 * 60_000
 /** 증분 조회 기간 여유(분). 시계 차이와 경계 누락을 덮는다 */
-export const INCREMENTAL_MARGIN_MIN = 10
+const INCREMENTAL_MARGIN_MIN = 10
 /** 설명 발췌 최대 길이 */
-export const EXCERPT_MAX = 600
+const EXCERPT_MAX = 600
 /** 조상 보강 반복 상한. 하위작업 → 작업 → 에픽 */
 const ANCESTOR_ROUNDS = 2
 /** 조상 보강 한 번에 묻는 키 수. jira.ts 의 key in (...) 묶음과 같다 */
@@ -159,7 +164,7 @@ const ANCESTOR_CHUNK = 50
 /** 한 번의 동기화에서 웹링크(remotelink)를 묻는 이슈 상한. 이슈당 GET 1회라 좁힌다 */
 export const WEB_LINK_MAX_ISSUES = 150
 /** 웹링크 동시 조회 수 */
-export const WEB_LINK_CONCURRENCY = 4
+const WEB_LINK_CONCURRENCY = 4
 
 const NOT_CONNECTED_MESSAGE = 'Jira에 연결되어 있지 않습니다. 설정에서 Jira를 연결해 주세요.'
 const NO_DEFAULT_PROJECT_MESSAGE = 'Jira 기본 프로젝트가 설정되지 않았습니다. 설정에서 기본 프로젝트를 골라 주세요.'
@@ -200,14 +205,29 @@ export interface JiraBoardStorePort {
   read: (projectKey: string) => StoredJiraBoard | null
   replace: (projectKey: string, issues: JiraBoardIssue[], meta: StoreWriteMeta) => void
   upsert: (projectKey: string, issues: JiraBoardIssue[], meta: StoreWriteMeta) => void
+  /** 저장본·에픽 요약을 모두 지운다 */
   clear: () => void
+  /** 에픽 하나의 저장된 AI 요약. 없거나 깨졌으면 null */
+  readSummary: (projectKey: string, epicKey: string) => StoredEpicSummary | null
+  /** 에픽 AI 요약을 저장한다. 프로젝트당 상한을 넘으면 오래된 것부터 지운다 */
+  writeSummary: (projectKey: string, fingerprint: string, summary: JiraEpicAiSummary) => void
 }
 
 const dbStore: JiraBoardStorePort = {
   read: (projectKey) => readStoredBoard(getDatabase(), projectKey),
   replace: (projectKey, issues, meta) => replaceStoredBoard(getDatabase(), projectKey, issues, meta),
   upsert: (projectKey, issues, meta) => upsertStoredIssues(getDatabase(), projectKey, issues, meta),
-  clear: () => clearStoredBoards(getDatabase())
+  clear: () => clearStoredBoards(getDatabase()),
+  readSummary: (projectKey, epicKey) => readEpicSummary(getDatabase(), projectKey, epicKey),
+  writeSummary: (projectKey, fingerprint, summary) => writeEpicSummary(getDatabase(), projectKey, fingerprint, summary)
+}
+
+/**
+ * 에픽 AI 요약의 기본 실행기. 헤드리스 LLM 공용 줄(ai-headless runLlmSerialized)에 선다.
+ * 회의 전 브리핑 등 다른 헤드리스 작업이 도는 중이면 BUSY 로 실패하지 않고 끝나기를 기다렸다가 실행한다.
+ */
+export function runEpicSummaryJson<T>(spec: HeadlessJsonSpec<T>): Promise<HeadlessJsonResult<T>> {
+  return runLlmSerialized(() => runHeadlessJson(spec))
 }
 
 const defaultDeps: JiraBoardDeps = {
@@ -221,7 +241,7 @@ const defaultDeps: JiraBoardDeps = {
   listUpdated: listUpdatedProjectIssues,
   listRemoteLinks,
   issueUrl: getJiraIssueUrl,
-  runJson: runHeadlessJson,
+  runJson: runEpicSummaryJson,
   now: () => new Date(),
   store: dbStore
 }
@@ -252,7 +272,7 @@ function toExcerpt(description: unknown): string | null {
 }
 
 /** URL 로 출처 라벨을 정한다. Jira 이슈 URL 은 키와 무관하게 'Jira' 로 묶는다(출처 필터가 키마다 갈리지 않게) */
-export function linkSourceOf(url: string): string {
+function linkSourceOf(url: string): string {
   const name = guessLinkName(url)
   return name.startsWith('Jira 티켓') ? 'Jira' : name
 }
@@ -272,7 +292,7 @@ export function mergeLinks(...groups: JiraIssueLink[][]): JiraIssueLink[] {
 }
 
 /** 검색 응답에서 바로 나오는 링크(첨부·본문·연결 이슈). 웹링크는 attachWebLinks 가 붙인다 */
-export function searchLinksOf(
+function searchLinksOf(
   raw: JiraSearchIssue,
   issueUrl: (key: string) => string | null
 ): JiraIssueLink[] {
@@ -309,7 +329,7 @@ export function searchLinksOf(
   return mergeLinks(attachments, description, issues)
 }
 
-export function webLinksOf(remote: JiraRemoteLink[]): JiraIssueLink[] {
+function webLinksOf(remote: JiraRemoteLink[]): JiraIssueLink[] {
   return remote.map((r) => ({ kind: 'web', title: r.title, url: r.url, source: linkSourceOf(r.url) }))
 }
 
@@ -341,7 +361,7 @@ export function toBoardIssue(
 }
 
 /** 웹링크를 묻는 대상: inScope 인 에픽·표준 이슈(하위작업 제외) */
-export function isWebLinkTarget(issue: JiraBoardIssue): boolean {
+function isWebLinkTarget(issue: JiraBoardIssue): boolean {
   return issue.inScope && (issue.level === 'epic' || issue.level === 'standard')
 }
 
@@ -535,7 +555,7 @@ export function inCollectScope(issue: JiraBoardIssue, now: Date, recentDoneDays:
 }
 
 /** 저장본 → 스냅샷. 파생 값(inScope 등)은 저장된 JSON 그대로 쓴다 */
-export function snapshotOf(stored: StoredJiraBoard): JiraBoardSnapshot {
+function snapshotOf(stored: StoredJiraBoard): JiraBoardSnapshot {
   return {
     projectKey: stored.sync.projectKey,
     myAccountId: stored.sync.myAccountId,
@@ -553,7 +573,6 @@ const EPIC_SUMMARY_TIMEOUT_MS = 60_000
 /** 프롬프트에 넣는 자손 상한. 큰 에픽에서 프롬프트가 무한정 커지지 않게 자른다 */
 const MAX_PROMPT_DESCENDANTS = 150
 const PROMPT_EXCERPT_MAX = 200
-const MAX_SUMMARY_CACHE = 50
 
 const EpicSummarySchema = z.object({
   headline: z.string().trim().min(1).max(200),
@@ -596,12 +615,14 @@ function descendantsOf(snapshot: JiraBoardSnapshot, epicKey: string): JiraBoardI
   return out
 }
 
-// 자손 상태가 바뀌면 다시 만든다. 같은 상태면 캐시를 돌려준다
-function fingerprintOf(epic: JiraBoardIssue, descendants: JiraBoardIssue[]): string {
+// 자손 상태나 날짜가 바뀌면 다시 만든다. 같은 상태·같은 날이면 저장본을 돌려준다.
+// 프롬프트가 today 로 "기한 지남" 같은 날짜 의존 문장을 쓰므로 프롬프트와 같은 로컬 날짜를 지문에 넣는다.
+// 원문은 자손 수만큼 길어진다. DB 에는 SHA-256 으로 줄여 둔다(비교 규칙은 원문과 같다)
+function fingerprintOf(epic: JiraBoardIssue, descendants: JiraBoardIssue[], today: string): string {
   const rows = [epic, ...descendants].map(
     (i) => `${i.key}:${i.status}:${i.assigneeAccountId ?? ''}:${i.duedate ?? ''}:${i.summary}`
   )
-  return rows.sort().join('|')
+  return createHash('sha256').update(`${today}\n${rows.sort().join('|')}`).digest('hex')
 }
 
 function promptIssue(i: JiraBoardIssue): Record<string, unknown> {
@@ -620,7 +641,7 @@ function promptIssue(i: JiraBoardIssue): Record<string, unknown> {
   }
 }
 
-export function buildEpicSummaryPrompt(
+function buildEpicSummaryPrompt(
   epic: JiraBoardIssue,
   descendants: JiraBoardIssue[],
   today: string
@@ -642,12 +663,12 @@ function localDate(d: Date): string {
 
 // ── 저장본을 가진 서비스 ──
 
-export interface JiraBoardSyncOutcome {
+interface JiraBoardSyncOutcome {
   snapshot: JiraBoardSnapshot
   sync: JiraBoardSyncInfo
 }
 
-export interface JiraBoardService {
+interface JiraBoardService {
   /** DB 저장본만 읽는다. Jira를 부르지 않는다. 저장본이 없으면 null */
   cached: () => JiraBoardSnapshot | null
   /** Jira와 동기화한다. 같은 프로젝트의 진행 중 요청은 공유한다 */
@@ -655,7 +676,7 @@ export interface JiraBoardService {
   summarizeEpic: (epicKey: unknown) => Promise<JiraEpicSummaryResult>
   /** 저장된 스냅샷의 어떤 이슈 links 에 든 http(s) URL 인가 */
   isKnownLink: (url: unknown) => boolean
-  /** 저장본·진행 중 요청·AI 요약을 모두 버린다 */
+  /** 저장본·진행 중 요청·저장된 AI 요약을 모두 버린다 */
   clear: () => void
 }
 
@@ -675,7 +696,8 @@ export function createJiraBoardService(deps: JiraBoardDeps = defaultDeps): JiraB
   const inflight = new Map<string, { mode: JiraBoardSyncMode; promise: Promise<JiraBoardSyncOutcome> }>()
   // clear 뒤에 끝난 옛 동기화가 저장하지 않게 세대를 센다
   let generation = 0
-  const summaries = new Map<string, JiraEpicAiSummary>()
+  // 같은 에픽·같은 지문의 요약 요청이 줄에 겹쳐 서면 LLM 을 두 번 부르지 않고 결과를 나눈다
+  const summaryInflight = new Map<string, Promise<JiraEpicSummaryResult>>()
 
   function cached(): JiraBoardSnapshot | null {
     const projectKey = requireProjectKey(deps)
@@ -847,41 +869,58 @@ export function createJiraBoardService(deps: JiraBoardDeps = defaultDeps): JiraB
     if (!epic) return { success: false, error: NOT_IN_SNAPSHOT_MESSAGE }
     if (epic.level !== 'epic') return { success: false, error: NOT_EPIC_MESSAGE }
 
+    const projectKey = snapshot.projectKey
     const descendants = descendantsOf(snapshot, epic.key)
-    const cacheKey = `${epic.key}#${fingerprintOf(epic, descendants)}`
-    const cachedSummary = summaries.get(cacheKey)
-    if (cachedSummary) return { success: true, summary: cachedSummary }
+    // 지문과 프롬프트가 같은 날짜를 쓰게 한 번만 읽는다
+    const today = localDate(deps.now())
+    const fingerprint = fingerprintOf(epic, descendants, today)
+    // 지문이 같으면 저장본을 돌려준다. 앱을 다시 켠 뒤에도 그대로다
+    const stored = deps.store.readSummary(projectKey, epic.key)
+    if (stored && stored.fingerprint === fingerprint) return { success: true, summary: stored.summary }
+
+    const flightKey = `${projectKey}#${epic.key}#${fingerprint}`
+    const running = summaryInflight.get(flightKey)
+    if (running) return running
 
     const gen = generation
-    const result = await deps.runJson({
-      systemPrompt: EPIC_SYSTEM_PROMPT,
-      prompt: buildEpicSummaryPrompt(epic, descendants, localDate(deps.now())),
-      model: resolveAiModelId('sonnet'),
-      schema: EpicSummarySchema,
-      timeoutMs: EPIC_SUMMARY_TIMEOUT_MS
-    })
-    if (!result.ok) return { success: false, error: result.error }
+    const task = (async (): Promise<JiraEpicSummaryResult> => {
+      const result = await deps.runJson({
+        systemPrompt: EPIC_SYSTEM_PROMPT,
+        prompt: buildEpicSummaryPrompt(epic, descendants, today),
+        model: resolveAiModelId('sonnet'),
+        schema: EpicSummarySchema,
+        timeoutMs: EPIC_SUMMARY_TIMEOUT_MS
+      })
+      if (!result.ok) return { success: false, error: result.error }
 
-    const summary: JiraEpicAiSummary = {
-      epicKey: epic.key,
-      headline: result.value.headline,
-      bullets: result.value.bullets.slice(0, 4),
-      generatedAt: deps.now().toISOString()
-    }
-    if (gen === generation) {
-      if (summaries.size >= MAX_SUMMARY_CACHE) {
-        const oldest = summaries.keys().next().value
-        if (oldest !== undefined) summaries.delete(oldest)
+      const summary: JiraEpicAiSummary = {
+        epicKey: epic.key,
+        headline: result.value.headline,
+        bullets: result.value.bullets.slice(0, 4),
+        generatedAt: deps.now().toISOString()
       }
-      summaries.set(cacheKey, summary)
-    }
-    return { success: true, summary }
+      // 기다리는 사이 연동 해제·계정 변경(clear)이 있었으면 저장하지 않는다
+      if (gen === generation) {
+        try {
+          deps.store.writeSummary(projectKey, fingerprint, summary)
+        } catch (err) {
+          // 저장에 실패해도 만든 요약은 보여 준다. 다음 버튼에서 다시 만든다
+          console.error('[jira-board] 에픽 요약 저장 실패', err)
+        }
+      }
+      return { success: true, summary }
+    })()
+    const tracked = task.finally(() => {
+      if (summaryInflight.get(flightKey) === tracked) summaryInflight.delete(flightKey)
+    })
+    summaryInflight.set(flightKey, tracked)
+    return tracked
   }
 
   function clear(): void {
     generation++
     inflight.clear()
-    summaries.clear()
+    summaryInflight.clear()
     deps.store.clear()
   }
 

@@ -2,11 +2,6 @@
 
 Jira 릴리스(Version)를 가져와 그 릴리스에 묶인 작업 내용을 릴리스 노트로 보여준다.
 
-> 초안에서 한 번 뒤집힌 곳이 있다. 처음에는 프로젝트에 릴리스를 **연결**하는 구조였는데,
-> 대응 프로젝트가 없는 릴리스가 목록에서 사라지고 같은 배포 버전을 쓰는 프로젝트 수만큼 같은
-> 릴리스가 중복으로 뜨는 문제가 드러나 **Jira 릴리스 하나당 한 행**으로 바꿨다 (§3).
-> 아래 본문은 바뀐 뒤의 구조를 기준으로 한다.
-
 - 관련 문서: [AI_GUARDRAILS.md](AI_GUARDRAILS.md) (외부 접근 8절)
 - 관련 코드: `src/main/services/notion.ts` (외부 REST 연동 선례)
 
@@ -17,7 +12,7 @@ Jira 릴리스(Version)를 가져와 그 릴리스에 묶인 작업 내용을 �
 | 항목 | 결정 |
 |------|------|
 | 릴리스 노트 항목의 출처 | **Jira 단일 출처.** LinkWork 작업(`tasks`)은 릴리스 노트에 넣지 않는다 |
-| 동기화 방식 | **변경분 동기화 + 전체 동기화.** 프로젝트 화면의 릴리스 탭을 열면 마지막 확인 이후 바뀐 이슈만 자동 반영한다(§4.7). 전체 동기화는 수동 버튼과 하루 1회 아침 자동 실행(설정으로 끔)이다. 아침 자동 실행은 비서 스케줄러의 기존 틱이 부른다. 새 타이머·폴링은 없다 (§4.6) |
+| 동기화 방식 | **변경분 동기화 + 전체 동기화.** 프로젝트 화면의 릴리스 탭을 열면 마지막 확인 이후 바뀐 이슈만 자동 반영한다(§4.7). 전체 동기화는 수동 버튼과 하루 1회 아침 자동 실행(설정으로 끔)이다. 아침 자동 실행은 비서 스케줄러의 틱이 부른다. 새 타이머·폴링은 없다 (§4.6) |
 | 앱에서 문구 편집 | **없음 (순수 미러링).** 전체·개별 동기화는 항목 전체 교체, 변경분 동기화는 바뀐 이슈만 upsert·삭제 |
 | 릴리스와 프로젝트의 관계 | **없음.** 릴리스 노트는 Jira 릴리스 하나당 한 행이며 프로젝트에 속하지 않는다 (§3) |
 | AI 대화 | **조회 도구 2종만.** 쓰기 도구 없음 |
@@ -42,7 +37,7 @@ Jira 단일 출처 + 편집 없음으로 두면 그 문제군이 통째로 사�
 
 ---
 
-## 2. Jira 연동 리서치 결론 (2026-08 기준)
+## 2. Jira 연동 리서치 결론
 
 ### 2.1 인증 — API 토큰 + Basic Auth
 
@@ -126,10 +121,9 @@ Jira 버전 **이름은 언제든 바뀔 수 있다**(`v1.2.0` → `1.2.0 (hotfi
 
 ## 3. 데이터 모델
 
-**릴리스 노트는 프로젝트에 속하지 않는다.** 처음에는 `project_id`로 프로젝트에 묶었는데
-두 방향으로 어긋났다. 대응 프로젝트가 없는 릴리스는 Jira에 멀쩡히 있어도 목록에 나타나지
-않았고(4.163.0·4.159.0·4.158.0), 반대로 같은 배포 버전을 쓰는 프로젝트가 셋이면 같은 릴리스가
-목록에 세 번 떴다. 릴리스는 Jira의 것이지 프로젝트의 것이 아니므로 **릴리스 하나당 한 행**이다.
+**릴리스 노트는 프로젝트에 속하지 않는다.** 릴리스는 Jira의 것이므로 **릴리스 하나당 한 행**이다.
+프로젝트에 묶으면 대응 프로젝트가 없는 릴리스가 목록에서 빠지고, 같은 배포 버전을 쓰는
+프로젝트 수만큼 같은 릴리스가 중복으로 뜬다.
 
 ```sql
 CREATE TABLE IF NOT EXISTS release_notes (
@@ -172,23 +166,10 @@ CREATE INDEX IF NOT EXISTS idx_release_note_items_note
 
 `UNIQUE (jira_project_key, jira_version_id)`가 같은 릴리스를 두 번 가져오는 것을 막는다.
 
-### 3.1 프로젝트와 이어 보는 법 — 배포 버전 이름 대조
+### 3.1 마이그레이션
 
-> 로컬 프로젝트 기능과 함께 프로젝트 상세의 Release Notes 카드도 없앴다(프로젝트 메뉴는 Jira 티켓 보드다,
-> [PROJECT_BOARD.md](PROJECT_BOARD.md)). 아래 대조 규칙은 `listReleaseNotes(deployVersion)` 에 남아 있다.
-
-저장된 연결이 없으므로, 옛 Release Notes 카드는 그 프로젝트의
-`projects.deploy_version`과 **이름이 같은** 릴리스를 조회 시점에 찾아 읽기만 했다
-(`listReleaseNotes(deployVersion)`). 배포 버전을 바꾸면 짝지어 보이는 릴리스도 따라 바뀌었다.
-
-`deploy_version`은 한 칸에 여러 버전이 적힐 수 있다 — 실제 데이터에 `2.8.1 , 4.155.0`
-(두 앱 동시 배포)이 있다. `splitDeployVersions`가 쉼표·슬래시·줄바꿈으로 나눠
-각각 맞춰 본다. 공백으로는 나누지 않는다: `4.164.0 (핫픽스)`를 쪼개면 엉뚱한 릴리스에 걸린다.
-
-### 3.2 마이그레이션
-
-`project_id`를 걷어낼 때 중복 행을 합친다. 남길 행은 **가져온 이슈가 가장 많은 것**이다 —
-중복 행들은 같은 릴리스를 가리키므로 내용이 같아야 하지만, 이슈 조회 상한(§4.4)에 걸려
+옛 DB 의 `release_notes` 에 `project_id` 가 있으면 걷어내며 중복 행을 합친다. 남길 행은 **가져온 이슈가 가장 많은 것**이다 —
+중복 행들은 같은 릴리스를 가리키므로 내용이 같아야 하지만, 이슈 조회 상한(§4.3)에 걸려
 어떤 행은 메타만 있을 수 있다. SQLite에는 컬럼 제약만 바꾸는 ALTER가 없어 테이블을 다시
 만드는데, 이때 **FK를 꺼야 한다.** 켠 채로 `DROP TABLE`하면 `release_note_items`가
 CASCADE로 함께 지워진다. `migrateReleaseNotesDropProject`가 이 순서를 지킨다.
@@ -244,15 +225,25 @@ Jira가 0건을 반환하는 것은 **정상 상태일 수 있다**(아직 이�
 - **진행 중 promise 공유.** `syncAllReleases` 가 이미 돌고 있으면, 두 번째 호출은 새로 시작하지 않고 진행 중인 promise 를 돌려받는다.
   끝나면 공유를 해제한다. 이유: 아침 자동 실행과 수동 버튼이 겹치면 같은 릴리스를 두 번 쓰고 Jira 를 두 배로 부른다.
 
+### 4.5 목록 정렬 — 릴리스일이 아니라 버전 번호
+
+`sortReleaseNotes`가 **시맨틱 버전 내림차순**으로 세운다. 릴리스일로 세우면 두 가지가
+어긋난다. 날짜가 아직 안 잡힌 버전은 비교할 값이 없어 목록 꼭대기나 끝으로 튕기고, Jira에서 릴리스일을 나중에 손보면 같은 목록이 다시 흔들린다.
+
+정렬을 SQL이 아니라 JS에서 하는 이유는 **문자열 비교로는 버전을 잴 수 없기** 때문이다.
+사전순으로는 `4.46.0`이 `4.166.0`보다 커서 낮은 버전이 맨 위에 앉는다. `compareVersionDesc`가
+마디를 숫자로 갈라 앞에서부터 잰다. 화면 목록과 AI 도구(§7)가 같은 함수를 쓴다 — 같은 질문에
+화면과 AI가 다른 순서로 답하면 안 된다.
+
 ### 4.6 아침 자동 전체 동기화
 
 `src/main/services/morning-sync.ts` 의 `runMorningSyncIfDue` 가 하루 1회 `syncAllReleases` 를 부른다.
-비서 스케줄러가 60초 틱과 잠자기 복귀 때 이 함수를 부른다. 실행 시점·재시도 규칙은 ASSISTANT.md 부록 K 의 A54 다.
+비서 스케줄러가 60초 틱과 잠자기 복귀 때 이 함수를 부른다. 실행 시점·재시도 규칙은 [ASSISTANT.md](ASSISTANT.md) §8 이다.
 
-- 설정: `assistant_morning_sync_enabled`(기본 `1`)가 `0` 이면 실행하지 않는다. 시각은 `assistant_morning_sync_time`(기본 `08:00`)이다. 두 설정은 비서 설정 모달에 있다.
+- 설정: `assistant_morning_sync_enabled`(기본 `1`)가 `0` 이면 실행하지 않는다. 시각은 `assistant_morning_sync_time`(기본 `08:00`)이다. 두 설정은 설정 화면의 비서 섹션(`AssistantSection`)에 있다.
 - Jira 가 연결되지 않았거나 기본 프로젝트 키가 없으면, 실행기는 `syncAllReleases` 를 부르지 않고 `skipped` 로 남긴다. 이유: 기본 키가 없으면 `syncAllReleases` 가 throw 한다.
 - `net.isOnline()` 이 false 면 실행하지 않고 시도로 세지 않는다. 다음 틱에서 다시 판정한다.
-- 토큰 만료(401)와 네트워크 오류는 `failed` 다. 30분 간격으로 하루 3회까지 다시 한다.
+- 토큰 만료(401)와 네트워크 오류는 `failed` 다. 30분 간격(`MORNING_SYNC_RETRY_MIN`)으로 하루 3회(`MORNING_SYNC_MAX_ATTEMPTS`)까지 시도한다.
 - 받은 릴리스가 0건이고 실패만 있으면 그 시도는 `failed` 다. 일부만 실패하면 `ok` 이고, 실패 수는 `failedCount` 로 남는다.
 - 결과는 `assistant_events` 의 `morning_sync` 행 payload 에 둔다. 필드는 `assistant-types.ts` 의 `MorningSyncPart` 다. `newCount` 는 `linked`, `updatedCount` 는 `synced` 수다.
 - 아침 릴리스 동기화는 비서 최신화를 일으키지 않는다. `release_note` 활동은 스케줄러가 무시한다.
@@ -323,11 +314,24 @@ Jira 는 GET 만 쓴다.
 **한계.** Jira 에서 삭제된 이슈와 다른 프로젝트로 옮겨진 이슈는 변경분 조회(`project = <KEY>`)에 나오지 않는다.
 그 항목은 변경분 동기화로는 지워지지 않는다. 하루 1회 아침 전체 동기화(§4.6)와 릴리스 행의 개별 동기화가 항목을 통째로 교체하며 정리한다.
 
-**IPC.** 기존 `releaseNote:sync`(한 릴리스), `releaseNote:syncAll`(전체)은 그대로다.
+**IPC.** 핸들러는 `src/main/ipc/release-note.ipc.ts` 다. Jira 가 얽힌 채널은 throw 하지 않고 `{ success, … }` 로 감싼다.
 
 | 채널 | preload | 응답 |
 |---|---|---|
-| `releaseNote:syncChanges` | `window.api.releaseNote.syncChanges(force?: boolean)` | `{ success: true, result: ReleaseChangeSyncResult }` 또는 `{ success: false, error }` |
+| `releaseNote:list` | `window.api.releaseNote.list()` | 인자 없음. 모든 릴리스 노트(항목 수 `item_count` 포함)를 버전 내림차순으로(§4.5) |
+| `releaseNote:get` | `window.api.releaseNote.get(id)` | 릴리스 노트와 항목(`items`). 없으면 `null` |
+| `releaseNote:sync` | `window.api.releaseNote.sync(id)` | `{ success: true, itemCount, truncated }` 또는 `{ success: false, error }` |
+| `releaseNote:syncAll` | `window.api.releaseNote.syncAll()` | `{ success: true, result: SyncAllResult }` 또는 `{ success: false, error }` |
+| `releaseNote:syncChanges` | `window.api.releaseNote.syncChanges(force?: boolean)` | `{ success: true, result: ReleaseChangeSyncResult }` 또는 `{ success: false, error }`. `force` 는 `true` 일 때만 강제다 |
+
+```ts
+interface SyncAllResult {
+  synced: Array<{ noteId: number; version: string; itemCount: number }>   // 이슈까지 받은 릴리스
+  metaOnly: Array<{ noteId: number; version: string }>                    // 상한 밖이라 이슈를 미룬 릴리스
+  failed: Array<{ version: string; error: string }>
+  linked: number                                                          // 새로 만든 릴리스 노트 행 수
+}
+```
 
 ```ts
 interface ReleaseChangeSyncResult {
@@ -339,23 +343,12 @@ interface ReleaseChangeSyncResult {
 }
 ```
 
-### 4.5 목록 정렬 — 릴리스일이 아니라 버전 번호
-
-`sortReleaseNotes`가 **시맨틱 버전 내림차순**으로 세운다. 릴리스일로 세우면 두 가지가
-어긋난다. 날짜가 아직 안 잡힌 버전은 비교할 값이 없어 목록 꼭대기나 끝으로 튕기고(릴리스일이
-빈 4.46.0이 실제로 최상단에 앉았다), Jira에서 릴리스일을 나중에 손보면 같은 목록이 다시 흔들린다.
-
-정렬을 SQL이 아니라 JS에서 하는 이유는 **문자열 비교로는 버전을 잴 수 없기** 때문이다.
-사전순으로는 `4.46.0`이 `4.166.0`보다 커서 낮은 버전이 맨 위에 앉는다. `compareVersionDesc`가
-마디를 숫자로 갈라 앞에서부터 잰다. 화면 목록과 AI 도구(§7)가 같은 함수를 쓴다 — 같은 질문에
-화면과 AI가 다른 순서로 답하면 안 된다.
-
 ---
 
 ## 5. Jira 서비스 (`src/main/services/jira.ts`)
 
 `notion.ts` 패턴을 따른다. **Jira REST 호출은 전부 이 파일에만 둔다** — 엔드포인트가
-또 바뀌어도(구 `/search` 제거 전례) 수정 지점이 하나다.
+바뀌어도 수정 지점이 하나다.
 
 ```
 app_settings 키:
@@ -366,7 +359,7 @@ app_settings 키:
 ```
 
 - 저장 시 `GET /rest/api/3/myself`로 **검증에 성공해야만** 기록한다
-- renderer에는 **연결 여부·계정 표시명·만료일만** 노출하고 토큰 값은 내보내지 않는다
+- renderer에는 연결 상태(`jira:status`: 연결 여부·사이트 주소·계정 표시명·이메일·기본 프로젝트·만료일·만료 임박/만료 여부)만 노출하고 토큰 값은 내보내지 않는다
 - 요청 타임아웃 15초
 - 오류 매핑 (한국어 메시지):
   - `401` → 토큰이 만료됐거나 유효하지 않음, 재등록 안내
@@ -389,7 +382,7 @@ app_settings 키:
 API 토큰이 1년 안에 반드시 만료되므로:
 
 - 토큰 등록 시 **만료일을 함께 입력**받아 저장
-- 만료 **30일 전부터** 설정과 릴리스 노트 화면에 갱신 안내 배너
+- 만료 **30일 전부터**(`EXPIRING_SOON_DAYS`) 설정의 Jira 카드와 릴리스 탭(`JiraTokenWarning`)에 갱신 안내
 - 만료 후 401이 오면 연결 상태를 "만료됨"으로 표시하고 재등록을 안내
 
 조용히 실패해서 "왜 동기화가 안 되지" 상태로 방치되는 것을 막는 것이 목적이다.
@@ -398,13 +391,13 @@ API 토큰이 1년 안에 반드시 만료되므로:
 
 ## 7. AI 대화 — 조회 도구 2종
 
-`ai-tools.ts`에 추가하고 `LINKWORK_TOOL_NAMES`(자동 허용)에 등재한다.
+`ai-tools.ts`에 있고 `LINKWORK_TOOL_NAMES`(자동 허용)에 등재돼 있다.
 읽기 전용 커넥션(`getAiReadOnlyDatabase`)만 쓰므로 쓰기 게이트가 필요 없다.
 
 | 도구 | 용도 |
 |------|------|
 | `list_release_notes` | 릴리스 노트 목록 — 버전, 릴리스 여부, 항목 수, 마지막 동기화 시각. `version`으로 버전 이름 부분 검색 |
-| `get_release_note` | 단건 상세 — 이슈 키·유형·상태·제목 목록 |
+| `get_release_note` | 단건 상세 — 이슈 키·유형·상태·해결 여부·제목·상위 이슈 키 목록(최대 200건). `query` 에 ID 또는 버전 이름 |
 
 - **Jira를 직접 호출하지 않는다.** 이미 동기화된 로컬 DB만 읽으므로 AI 대화가 느려지거나
   토큰 상태에 영향받지 않는다
@@ -412,7 +405,7 @@ API 토큰이 1년 안에 반드시 만료되므로:
 - 도구가 반환하는 이슈 제목은 **신뢰할 수 없는 외부 입력**이다 (가드레일 6절).
   기존 도구와 같이 결과는 표시용 데이터로만 취급되며, 조회 전용이라 인젝션이 성공해도
   피해 범위는 "잘못된 답변 표시"로 한정된다
-- `TOOL_LABELS`에 한국어 라벨 추가 (`릴리스 노트 조회` 등)
+- `ai-agent.ts` 의 `TOOL_LABELS` 에 한국어 라벨이 있다 (`릴리스 노트 조회`·`릴리스 노트 상세 조회`)
 
 ---
 
@@ -420,7 +413,7 @@ API 토큰이 1년 안에 반드시 만료되므로:
 
 ### 8.1 화면 — 프로젝트 화면의 릴리스 탭
 
-사이드바 **프로젝트** 화면의 **릴리스** 탭이 전체 목록이다. 2026-11-18 전에는 사이드바 릴리스 메뉴(이전 레이블 `Releases`)였다.
+사이드바 **프로젝트** 화면의 **릴리스** 탭이 전체 목록이다.
 탭은 선택할 때만 마운트한다. 그래서 탭에 들어올 때마다 아래 자동 갱신이 돈다.
 옛 링크 `linkwork://view/releases` 와 `linkwork://release/{id}` 는 이 탭을 연다(뒤의 것은 그 릴리스로 포커스한다).
 
@@ -434,7 +427,7 @@ API 토큰이 1년 안에 반드시 만료되므로:
 **버튼.** 주 버튼 "새로고침"은 `syncChanges(true)`, 보조 버튼 "전체 동기화"는 `syncAll()` 이다. 둘은 동시에 돌지 않게 서로 비활성화한다.
 
 **상태 줄.** 헤더 오른쪽 한 자리에 "갱신 중…" > 방금 받은 변경분 결과 > 아침 동기화 상태 순으로 하나만 보인다.
-변경분 결과는 "릴리스 n개에서 m건 갱신 · 신규 릴리스 k개" 꼴이다(`describeChangeSync`). 변경이 없거나 `skipped` 면 표시하지 않는다.
+변경분 결과는 "릴리스 n개에서 m건 갱신 · 신규 릴리스 k개 · 릴리스 정보 j개 갱신" 꼴이다(해당하는 부분만 잇는다)(`describeChangeSync`). 변경이 없거나 `skipped` 면 표시하지 않는다.
 화면을 열 때마다 "변경 없음"이 아침 동기화 줄을 가리지 않게 하기 위해서다.
 `full` 이면 전체 동기화 결과 표시(`SyncAllSummary`)를 쓴다. 펼쳐 둔 릴리스의 상세는 변경 뒤 다시 읽는다.
 
@@ -442,7 +435,6 @@ API 토큰이 1년 안에 반드시 만료되므로:
 사이드바 프로젝트 메뉴와 릴리스 탭 라벨의 배지는 새 항목 수다. 릴리스 탭을 열 때 본 것으로 친다. 데이터는 `morningSync:status`(`window.api.morningSync.status()`) 다.
 자동 실행이 꺼져 있거나 오늘 실행 전이면 상태 줄은 그 사실을 보여 준다.
 
-프로젝트 상세의 Release Notes 카드는 로컬 프로젝트 기능과 함께 없앴다(§3.1).
 행은 `components/release/ReleaseNoteRow` 다.
 
 - 행 어디를 눌러도 이슈가 펼쳐진다. 화살표 버튼도 남긴다 — 키보드로 여닫는 통로이자
@@ -464,28 +456,59 @@ API 토큰이 1년 안에 반드시 만료되므로:
 
 ### 8.3 Jira 연동 설정
 
-AI 대화의 Notion 연동 UI와 같은 자리에 사이트 URL·이메일·토큰·만료일 입력.
+설정 > 연동의 Jira 카드(`JiraConnectDialog`)에서 사이트 URL·이메일·토큰·만료일을 입력한다.
+프로젝트 화면 릴리스 탭에서는 `JiraSettingsModal` 이 같은 팝업을 그 자리에서 띄운다([SETTINGS.md](SETTINGS.md)).
 연결 상태와 만료 임박 경고를 함께 표시한다.
+
+### 8.4 오늘 화면의 다음 배포 판정
+
+오늘 대시보드의 "다음 배포" 카드와 배포 관련 신호는 렌더러 순수 모델 `components/today/releaseModel.ts` 가 정한다
+(조립은 `todayModel.ts`, 화면 전체는 [ASSISTANT.md](ASSISTANT.md) §11). 입력은 Google 캘린더 일정(오늘 0시 ~ +21일, 선택한 캘린더 전부),
+릴리스 목록(`releaseNote.list()`), 프로젝트 보드 스냅샷이다. 별도 설정은 없다.
+
+**캘린더 일정 분류(`classifyReleaseEvent`).** 종일 일정만 본다. 제목은 앞뒤 공백을 지운 뒤 판정한다.
+
+| 종류 | 제목 규칙 | 예 |
+|------|-----------|-----|
+| 배포 | `/^app\s*release\b/i`. 버전은 `/v?(\d+\.\d+\.\d+)/` 로 읽고 없으면 null | ` App Release(v4.177.0)`, ` App Release` |
+| QA | `/^\[qa\]/i` 또는 `/release\s*train/i` | `[QA] Release Train` |
+
+Google 종일 일정의 `end.date` 는 배타적이라 포함 종료일은 하루 뺀다(11/19~11/24 → 11/19~11/23).
+
+**버전 정규화(`normalizeVersion`).** `v4.177.0`·`4.177.0` → `4.177.0`. 접미사가 붙은 이름(`4.177.0-alpha02`)과 그 밖의 형식은 null 이며 다음 배포 후보가 아니다.
+
+**다음 배포 고르기(`resolveNextRelease`).**
+
+1. 후보 (a) 오늘 이후 가장 가까운 캘린더 배포 일정, (b) 릴리스 날짜가 오늘 이후이고 보관되지 않았으며 정식 버전 이름인 가장 가까운 릴리스.
+   **`released` 플래그는 보지 않는다** — 날짜가 미래인데 `released=1` 인 릴리스가 실제로 있다.
+2. 캘린더 일정이 있으면 그것이 기준(날짜)이다. 릴리스는 버전 일치가 먼저, 같은 날짜가 다음으로 매칭한다(버전 없는 ` App Release` 는 날짜로 붙는다).
+   둘 다 실패하면 `linked:false` — 카드는 "Jira 릴리스와 연결 안 됨"과 일정만 보이고 포함 이슈·위험을 말하지 않는다.
+3. 캘린더 일정이 없으면 릴리스 단독이다(QA 정보 없음, `linked:true`). 둘 다 없으면 다음 배포 없음.
+4. QA 구간: 시작이 배포일 이하이고 포함 종료일이 배포일 − 4일 이상인 QA 일정 중 시작이 가장 늦은 것.
+5. 단계: 배포일 = 오늘 → `release_day`, QA 시작 ≤ 오늘 → `qa`, 그 밖 → `dev`. D-day 는 로컬 날짜 차이다.
+
+**포함 이슈.** 연결됐을 때만 센다. 스냅샷에서 fixVersion 의 id 가 릴리스의 `jira_version_id` 와 같거나 정규화한 이름이 버전과 같은 이슈 중
+내 담당·에픽 아님. "내 작업" 집계는 완료 / 리뷰(진행 중 + 리뷰·QA 계열 상태명) / 진행 / 할 일이다. 카드 행은 완료를 빼고 위험 행 전부 + 나머지 3건, 넘치면 "외 n건".
+
+**위험(`release_risk`).** 거짓 경보를 막는 쪽으로 좁게 잡는다.
+
+- 연결됐고 내 계정을 알 때만, 그 배포에 포함된 내 이슈 중 (QA 시작 ≤ 오늘 ≤ 배포일 이면서 할 일 또는 리뷰가 아닌 진행 중) 또는 (D-1·D-day 인데 미완료).
+- 여러 건이면 신호 1건으로 합치고 근거 이슈를 ref 로 붙인다. D-1 이하면 critical, 아니면 warn.
+- 매칭 실패(`linked:false`), 내 계정 모름, fixVersion 이 없는 진행 중 이슈는 위험을 만들지 않는다.
+
+배포 관련 신호는 그 밖에 `qa_start`(오늘 = QA 시작, info), `release_day`(오늘 = 배포일, warn)가 있다.
 
 ---
 
-## 9. 완료 조건 (기계 판정)
+## 9. 테스트
 
-| 조건 | 판정 |
-|------|------|
-| 단위 테스트 | `npx vitest run` 종료 코드 0, 실패 0건 |
-| 타입체크 | `npm run typecheck` 에러 0건 |
-| 빌드 | `npm run build` 종료 코드 0 |
-
-신규 테스트 필수 항목:
-
-1. **`jira.test.ts`** (fetch 모킹)
+1. **`src/main/services/jira.test.ts`** (fetch 모킹)
    - `nextPageToken` 페이지네이션 루프가 토큰이 사라지면 종료하는지
    - 500건 상한에서 멈추는지
    - `PageBeanVersion` 파싱 (`startAt`/`maxResults`/`isLast`)
    - 401/403/404/410/429 → 한국어 메시지 매핑
    - 429 백오프가 `Retry-After`를 존중하는지
-2. **`release-note-sync.test.ts`**
+2. **`src/main/services/release-note-sync.test.ts`**
    - 이슈 조회 실패 시 기존 항목이 **그대로 남는지** (§4.1의 핵심 보장)
    - 성공 시 항목이 전체 교체되는지 (이전 항목 잔존 없음)
    - 0건 결과가 정상 반영되는지
@@ -494,16 +517,5 @@ AI 대화의 Notion 연동 UI와 같은 자리에 사이트 URL·이메일·토�
    - 변경분 동기화(`syncReleaseChanges`, 순수 계획 `planReleaseChanges`): 10분 생략과 force, 기준 없음·7일 초과·상한 초과 시 전체 전환,
      조회 실패 시 DB·기준 시각 보존, upsert(값이 같으면 세지 않음)·sort_order, 다른 버전으로 옮긴 이슈와 fixVersion 이 비워진 이슈 삭제,
      이슈를 받지 않은 릴리스는 건드리지 않음, 새 버전 연결(보관 제외), 메타만 갱신, 변경 없을 때 활동 로그 없음, 전체 동기화와 겹치지 않음
-3. **`releaseNoteExport.test.ts`**
+3. **`src/renderer/src/utils/releaseNoteExport.test.ts`**
    - 이슈 유형별 그룹핑, 하위 이슈 들여쓰기, 빈 릴리스 처리
-
----
-
-## 10. 구현 순서
-
-1. 스키마 + 타입 + `jira.ts`(토큰 저장·검증·오류 매핑) + 테스트
-2. 버전/이슈 조회 + 동기화 로직 + 테스트
-3. IPC(`release-note.ipc.ts`) + preload + store
-4. UI — 연동 설정, Releases 목록·검색, 동기화 버튼, 항목 표시
-5. 마크다운 내보내기 + 테스트
-6. AI 조회 도구 2종 + 가드레일 문서 갱신

@@ -96,7 +96,3 @@ export const rehypeStripEmptyParagraphs: Plugin<[], Root> = () => {
   }
 }
 
-export default rehypeLinkifyBareUrls
-
-// 테스트용으로 내부 함수 노출
-export { textToNodes }

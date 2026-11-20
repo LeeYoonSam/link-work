@@ -216,7 +216,7 @@ export default function CalendarView(): React.ReactNode {
 }
 
 // Google 캘린더가 연결되지 않았을 때의 빈 상태 카드다
-export function CalendarNotConnected({
+function CalendarNotConnected({
   checking,
   onConnect,
   onOpenSettings

@@ -1,5 +1,6 @@
-// 비서 테이블 DDL. database.ts 의 initDatabase() 와 테스트가 같은 정의를 쓴다 (docs/ASSISTANT.md §3.1).
-// 이후 MVP 가 쓸 컬럼도 함께 만든다. 이유: ALTER TABLE 마이그레이션 수를 줄인다.
+// 비서 테이블 DDL. db/schema.ts 의 applySchema() 와 테스트가 같은 정의를 쓴다 (docs/ASSISTANT.md §5).
+// 지금 코드가 쓰는 테이블은 assistant_events 뿐이다. daily_plans·plan_items·assistant_exclusions 는
+// 제거된 하루 계획 기능의 과거 기록이라 남겨 둔다. 컬럼도 바꾸지 않는다.
 export const ASSISTANT_SCHEMA = `
   CREATE TABLE IF NOT EXISTS daily_plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,7 +27,7 @@ export const ASSISTANT_SCHEMA = `
     updated_at TEXT DEFAULT (datetime('now','localtime'))
   );
 
-  -- A17: active 계획은 동시에 1개다
+  -- active 계획은 동시에 1개다
   CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_plans_one_active
     ON daily_plans(status) WHERE status = 'active';
 
@@ -74,7 +75,7 @@ export const ASSISTANT_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_assistant_events_date ON assistant_events(plan_date, kind);
 
-  -- 계속 제외 기록 (부록 M, A58). jira_key 로 같은 티켓의 다른 후보 id 도 맞춘다
+  -- 제거된 '계속 제외' 기능의 기록
   CREATE TABLE IF NOT EXISTS assistant_exclusions (
     candidate_id TEXT PRIMARY KEY,
     jira_key TEXT,
@@ -84,15 +85,15 @@ export const ASSISTANT_SCHEMA = `
   );
 `
 
-// 기존 DB 에 없는 비서 컬럼을 더한다. 여러 번 실행해도 결과가 같다 (부록 G.7.1).
-// database.ts 가 db.exec(ASSISTANT_SCHEMA) 다음 줄에서 부른다. 새 DB 는 DDL 에 이미 컬럼이 있다.
+// 기존 DB 에 없는 비서 컬럼을 더한다. 여러 번 실행해도 결과가 같다.
+// db/schema.ts 가 db.exec(ASSISTANT_SCHEMA) 다음 줄에서 부른다. 새 DB 는 DDL 에 이미 컬럼이 있다.
 const ADDED_DAILY_PLAN_COLUMNS: { name: string; ddl: string }[] = [
   { name: 'briefing_instruction', ddl: 'ALTER TABLE daily_plans ADD COLUMN briefing_instruction TEXT' },
   // 어제 메모 입력 '건너뛰기' 기록. 값이 있으면 그 날짜의 메모 입력 칸을 다시 보여 주지 않는다
   { name: 'wrapup_skipped_at', ddl: 'ALTER TABLE daily_plans ADD COLUMN wrapup_skipped_at TEXT' }
 ]
 
-// 업무 유형·묶음 컬럼 (부록 J.5, A50).
+// 업무 유형·묶음 컬럼. 제거된 기능의 컬럼이지만 옛 DB 를 같은 모양으로 맞춘다.
 const ADDED_PLAN_ITEM_COLUMNS: { name: string; ddl: string }[] = [
   { name: 'work_type', ddl: "ALTER TABLE plan_items ADD COLUMN work_type TEXT NOT NULL DEFAULT 'etc'" },
   { name: 'work_version', ddl: 'ALTER TABLE plan_items ADD COLUMN work_version TEXT' },

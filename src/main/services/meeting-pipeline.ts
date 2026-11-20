@@ -1,4 +1,4 @@
-// 녹음 처리 파이프라인(회의·면접 공통): compact → STT → VAD → Diarization → merge → DB 저장
+// 녹음 처리 파이프라인(회의·면접 공통): compact → STT → 정제(clean·환각 필터·용어집) → VAD → Diarization → merge → DB 저장
 // SSOT: docs/MEETING_RECORDING.md §5
 import { app } from 'electron'
 import { join } from 'path'
@@ -12,29 +12,37 @@ import { diarizeWithFallback } from './diarization/index'
 import { ensureDiarizationModels } from './diarization/model-manager'
 import { cleanSegments } from './transcript-cleaner'
 import { applyGlossary } from './stt/glossary-correct'
+import { filterHallucinations } from './stt/hallucination-filter'
 import { compactRecording } from './audio-compaction'
 import { mapMsToCompacted, type Region } from './stt/audio-compactor'
 import { loadPromptContext, type PromptContext } from './recognition-aids'
 import { wavDurationMs } from './wav-util'
 import { postprocessTurns } from './diarization/postprocess'
 import { beginPipeline, endPipeline, PipelineCancelledError } from './pipeline-abort'
+import { assignSpeaker, resolvePostprocessOptions } from './speaker-assign'
+import {
+  planSpeakerCarryover,
+  matchCorrectedSpeakers,
+  planSpeakerRows,
+  mergeByTime,
+  type OldSpeakerRow,
+  type OldSegmentRow,
+  type CorrectedSpeaker
+} from './speaker-carryover'
 
-// 현재 파이프라인 버전. 2 = 무음 컷편집 + 용어집 후보정/프롬프트 힌트 + 참석자 힌트.
+// 현재 파이프라인 버전.
+//  2 = 무음 컷편집 + 용어집 후보정/프롬프트 힌트 + 참석자 힌트.
+//  3 = 세그먼트 분할(maxLen) + 환각 필터 + 화자 centroid 병합 + 컷편집 VAD 이원화 + 화자 속성 승계.
 // 파이프라인 동작이 결과에 영향을 줄 만큼 바뀌면 올린다. meetings.pipeline_version에 기록해,
 // 옛 버전으로 처리된 녹음을 골라 다시 돌릴 수 있게 한다(0 = 이 컬럼이 생기기 전 처리분).
-export const CURRENT_PIPELINE_VERSION = 2
+const CURRENT_PIPELINE_VERSION = 3
 
-// 화자 색상 팔레트 (순환) — 수동 화자 추가(recording.ipc)에서도 사용
-export const SPEAKER_COLORS = [
-  '#4F8EF7',
-  '#F7844F',
-  '#4FBF7A',
-  '#C84FF7',
-  '#F7C84F',
-  '#4FF7F0',
-  '#F74F6F',
-  '#A0A0A0'
-]
+// 정제를 거치는 작업용 세그먼트. 빠른 재적용에서 사용자가 수정한 발언은 text_corrected=1로 표시해
+// 정제·환각 필터·용어집 후보정을 건너뛰고 플래그도 그대로 다시 저장한다.
+type WorkSegment = SttSegment & { text_corrected?: number }
+
+// 화자 색상 팔레트 — speaker-assign.ts로 옮겼고, 수동 화자 추가(recording.ipc)가 여기서 import하므로 재수출한다.
+export { SPEAKER_COLORS } from './speaker-assign'
 
 interface MeetingRow {
   id: number
@@ -54,68 +62,6 @@ interface MeetingRow {
   original_duration_ms: number | null
   // 이 녹음을 처리한 파이프라인 버전 (0 = 이 컬럼 도입 전 처리분)
   pipeline_version: number
-}
-
-/**
- * segment와 turn의 겹침 ms를 계산
- */
-function overlapMs(
-  segStart: number,
-  segEnd: number,
-  turnStart: number,
-  turnEnd: number
-): number {
-  return Math.max(0, Math.min(segEnd, turnEnd) - Math.max(segStart, turnStart))
-}
-
-/**
- * STT segment를 가장 많이 겹치는 diar turn의 speaker_key에 귀속.
- * turns가 비어 있으면 기본 키('spk_0') 반환.
- */
-function assignSpeaker(seg: SttSegment, turns: DiarTurn[]): string {
-  if (turns.length === 0) return 'spk_0'
-
-  let bestKey = 'spk_0'
-  let bestOverlap = -1
-
-  for (const turn of turns) {
-    const ov = overlapMs(seg.start_ms, seg.end_ms, turn.start_ms, turn.end_ms)
-    if (ov > bestOverlap) {
-      bestOverlap = ov
-      bestKey = turn.speaker_key
-    }
-  }
-  return bestKey
-}
-
-/**
- * speaker_key → 라벨/색상/sort_order 결정.
- * mic → '나', system → '상대', sys_N → '상대 N+1'(2-스테이지 분리), spk_N → '화자 N+1'
- */
-function resolveSpeakerMeta(
-  speakerKey: string,
-  index: number
-): { label: string; color: string } {
-  if (speakerKey === 'mic') {
-    return { label: '나', color: SPEAKER_COLORS[0] }
-  }
-  if (speakerKey === 'system') {
-    return { label: '상대', color: SPEAKER_COLORS[1] }
-  }
-  // 2-스테이지 재정합: 'sys_N' → '상대 1', '상대 2' … (system 안에서 분리된 상대편들).
-  // 색상은 mic('나')=팔레트[0] 다음부터 순환시켜 상대 1이 기존 '상대'(팔레트[1])와 일치.
-  const sysMatch = /^sys_(\d+)$/.exec(speakerKey)
-  if (sysMatch) {
-    const n = Number(sysMatch[1])
-    return {
-      label: `상대 ${n + 1}`,
-      color: SPEAKER_COLORS[(n + 1) % SPEAKER_COLORS.length]
-    }
-  }
-  return {
-    label: `화자 ${index + 1}`,
-    color: SPEAKER_COLORS[index % SPEAKER_COLORS.length]
-  }
 }
 
 /**
@@ -304,13 +250,25 @@ export async function runMeetingPipeline(
   const aids = loadAids(db, meetingId)
 
   try {
+    // whisper initial_prompt: 회의 도메인 컨텍스트(주제·참석자 실명·용어집)를 주입해
+    // 고유명사 오인식을 줄인다. 환각 필터(프롬프트 에코 검출)도 같은 값을 쓰므로 STT 실행 여부와
+    // 무관하게 여기서 조립한다(순수·저비용, 조회 실패는 무해하게 생략된다).
+    const prompt = buildInitialPrompt({
+      kind: meeting.kind,
+      language: meeting.language || 'ko',
+      title: meeting.title,
+      calendarEventTitle: meeting.calendar_event_title,
+      // 이전 처리에서 지정한 화자 실명 + 이 회의에 지정된 참석자(구성원) 이름.
+      speakerNames: [...loadSpeakerNames(db, meetingId), ...aids.attendees.map((a) => a.name)],
+      glossaryTerms: aids.glossary.map((g) => g.term)
+    })
+
     // ── 1.5 무음 컷편집 (compact) ──
     // 처리 전에 긴 침묵을 잘라내 whisper 청크 수·화자분리 입력 길이·파일 크기를 함께 줄인다.
     // 컷편집된 파일이 그 녹음의 파일이 되므로(원본 별도 보관 없음) 한 번만 적용한다.
     //  - skipTranscribe(빠른 재적용)에서는 절대 하지 않는다 — 기존 세그먼트 타임스탬프가 어긋난다.
     //  - 이미 컷편집된 회의(재처리)도 건너뛴다(audio_compacted 멱등 가드).
     //  - 16k/mono/16bit WAV가 아니면 audio-compaction이 알아서 applied:false로 돌아온다.
-    let speechRegionsMs: Region[] | undefined
     const isWav =
       /wav/i.test(meeting.audio_mime ?? '') || /\.wav$/i.test(meeting.audio_path ?? '')
 
@@ -366,9 +324,9 @@ export async function runMeetingPipeline(
         })
       }
 
-      // 컷편집 단계가 이미 VAD를 돌렸으므로 그 결과를 STT에 넘겨 중복 실행을 막는다.
-      // applied=false여도 원본 타임라인 기준이라 그대로 유효하다.
-      speechRegionsMs = compaction.speechRegions ?? undefined
+      // 컷편집 발화 구간은 STT에 넘기지 않는다. 컷편집용 VAD는 되돌릴 수 없는 삭제에서 작은
+      // 목소리를 지키려고 임계값을 낮게(0.35) 잡아 잡음 구간까지 포함하는데, 그 구간을 그대로
+      // 전사하면 환각이 늘어난다. STT 어댑터가 컷편집된 파일에 전사용 임계값(0.5)으로 VAD를 직접 돈다.
     }
 
     if (signal.aborted) throw new PipelineCancelledError()
@@ -381,18 +339,40 @@ export async function runMeetingPipeline(
       message: opts?.skipTranscribe ? '기존 전사 재사용 중…' : '음성 인식 중…'
     })
 
-    let rawSegments: SttSegment[] = []
+    let rawSegments: WorkSegment[] = []
     let sttName = 'whisper'
+    // 빠른 재적용에서 실제로 재사용한 기존 세그먼트(수동 화자 지정 보존용). 재전사로 폴백하면 비운다.
+    let reusedSegments: OldSegmentRow[] = []
 
     // 빠른 재적용: 재전사 없이 기존 meeting_segments를 재사용 (정제/화자분리만 다시 수행)
     if (opts?.skipTranscribe) {
       const existing = db
         .prepare(
-          'SELECT start_ms, end_ms, text FROM meeting_segments WHERE meeting_id = ? ORDER BY start_ms, sort_order'
+          `SELECT id, start_ms, end_ms, text, speaker_id, speaker_corrected, text_corrected
+             FROM meeting_segments WHERE meeting_id = ? ORDER BY start_ms, sort_order`
         )
-        .all(meetingId) as { start_ms: number; end_ms: number; text: string }[]
+        .all(meetingId) as {
+        id: number
+        start_ms: number
+        end_ms: number
+        text: string
+        speaker_id: number | null
+        speaker_corrected: number
+        text_corrected: number
+      }[]
+      reusedSegments = existing.map((s) => ({
+        start_ms: s.start_ms,
+        end_ms: s.end_ms,
+        speaker_id: s.speaker_id,
+        speaker_corrected: s.speaker_corrected
+      }))
       rawSegments = existing
-        .map((s) => ({ start_ms: s.start_ms, end_ms: s.end_ms, text: s.text }))
+        .map((s) => ({
+          start_ms: s.start_ms,
+          end_ms: s.end_ms,
+          text: s.text,
+          ...(s.text_corrected === 1 ? { text_corrected: 1 } : {})
+        }))
         .filter((s) => s.text && s.text.trim())
 
       // 박제 차단: 기존 세그먼트의 끝시각이 실제 WAV 길이를 크게 초과하면(과거 ×10 오염 등)
@@ -408,6 +388,7 @@ export async function runMeetingPipeline(
             message: '기존 전사가 오디오 길이와 어긋나 전체 재전사로 전환합니다.'
           })
           rawSegments = []
+          reusedSegments = []
         }
       }
     }
@@ -416,25 +397,12 @@ export async function runMeetingPipeline(
     if (rawSegments.length === 0) {
       const sttAdapter = await getSttAdapter()
       sttName = sttAdapter.name
-
-      // whisper initial_prompt: 회의 도메인 컨텍스트(주제·참석자 실명·용어집)를 주입해
-      // 고유명사 오인식을 줄인다. 재전사가 실제로 실행되는 이 경로에서만 조립하므로
-      // 빠른 재적용(skipTranscribe) 경로에는 영향이 없다. 조회 실패는 무해하게 생략된다.
-      const prompt = buildInitialPrompt({
-        kind: meeting.kind,
-        language: meeting.language || 'ko',
-        title: meeting.title,
-        calendarEventTitle: meeting.calendar_event_title,
-        // 이전 처리에서 지정한 화자 실명 + 이 회의에 지정된 참석자(구성원) 이름.
-        speakerNames: [...loadSpeakerNames(db, meetingId), ...aids.attendees.map((a) => a.name)],
-        glossaryTerms: aids.glossary.map((g) => g.term)
-      })
+      reusedSegments = []
 
       rawSegments = await sttAdapter.transcribe(audioPath, {
         language: meeting.language || 'ko',
         prompt,
         signal,
-        speechRegionsMs,
         onProgress: (p) => {
           send({ meetingId, phase: 'transcribe', progress: p })
         },
@@ -449,21 +417,33 @@ export async function runMeetingPipeline(
     // 들어가지 않게 한다. 단계 사이 이 체크들이 취소 시 DB 무손상을 보장하는 핵심 방어선이다.
     if (signal.aborted) throw new PipelineCancelledError()
 
+    // 사용자가 직접 고친 발언(text_corrected=1, 빠른 재적용에서만 존재)은 정제·환각 필터·
+    // 용어집 후보정을 건너뛰고 원문 그대로 유지한다. 나머지만 정제한 뒤 시간 순으로 다시 합친다.
+    const lockedSegments = rawSegments.filter((s) => s.text_corrected === 1)
+    let freeSegments: WorkSegment[] = rawSegments.filter((s) => s.text_corrected !== 1)
+
     // 환각/반복/filler 후처리 정제 (manual 폴백/빈 결과는 변화 없음)
-    const beforeClean = rawSegments.length
-    rawSegments = cleanSegments(rawSegments)
-    if (beforeClean !== rawSegments.length) {
+    const beforeClean = freeSegments.length
+    freeSegments = cleanSegments(freeSegments)
+    if (beforeClean !== freeSegments.length) {
       send({
         meetingId,
         phase: 'transcribe',
-        message: `정제 완료 (${beforeClean} → ${rawSegments.length} segment)`
+        message: `정제 완료 (${beforeClean} → ${freeSegments.length} segment)`
       })
+    }
+
+    // 환각 의심 문구 제거 — 블록리스트·프롬프트 에코 등. 정제 직후, 용어집 후보정 전.
+    const filtered = filterHallucinations(freeSegments, { prompt })
+    freeSegments = filtered.segments
+    if (filtered.removed > 0) {
+      send({ meetingId, phase: 'transcribe', message: `환각 의심 문구 ${filtered.removed}건 제거` })
     }
 
     // 용어집 후보정 — 사용자가 등록한 오인식 표기를 정답 표기로 결정론적으로 치환한다.
     // 정제의 일부이므로 빠른 재적용(skipTranscribe) 경로에도 적용된다.
-    const corrected = applyGlossary(rawSegments, aids.rules)
-    rawSegments = corrected.segments
+    const corrected = applyGlossary(freeSegments, aids.rules)
+    freeSegments = corrected.segments
     if (corrected.replacements > 0) {
       send({
         meetingId,
@@ -471,6 +451,8 @@ export async function runMeetingPipeline(
         message: `용어집 후보정 ${corrected.replacements}건`
       })
     }
+
+    rawSegments = lockedSegments.length > 0 ? mergeByTime(freeSegments, lockedSegments) : freeSegments
 
     // 타임스탬프 방어: 실제 WAV 길이(ground truth)를 넘는 비정상 타임스탬프를 클램프한다.
     // (과거 회귀로 STT 타임스탬프가 ×10로 부풀려져 타임라인이 실제 오디오보다 길게
@@ -532,11 +514,12 @@ export async function runMeetingPipeline(
     send({ meetingId, phase: 'diarize', progress: 0, message: '화자 분리 중…' })
 
     // 참석 인원(expected_speakers)을 지정하면 sherpa가 정확히 그 수로 클러스터링(numClusters).
-    // 미지정 시 threshold(0.85) 자동 추정 + postprocessTurns 후처리(smoothing + 소수화자 흡수)로 보정.
+    // 미지정 시 threshold 자동 추정 + centroid 병합(diarization 내부) + postprocessTurns 후처리로 보정.
     // mic+system은 채널 분리를 우선하되, 채널 에너지가 없거나 단일 화자로만 나오면 sherpa로 폴백한다.
     // sherpa 모델은 폴백 직전(ensureModels 콜백)에만 다운로드한다.
     let turns: DiarTurn[] = []
     let diarAdapter = 'none'
+    let diarNote: string | undefined
     try {
       const result = await diarizeWithFallback(audioPath, {
         source: meeting.source,
@@ -553,20 +536,29 @@ export async function runMeetingPipeline(
       })
       turns = result.turns
       diarAdapter = result.adapter
-    } catch {
+      // 강등·병합 안내(있을 때만). 화자분리가 조용히 품질을 낮추지 않도록 사용자에게 알린다.
+      diarNote = result.note
+    } catch (err) {
+      // 취소는 아래 signal.aborted 체크가 끊는다. 그 외 실패는 단일 화자로 계속하되 원인을 알린다.
       turns = []
+      if (!signal.aborted && !(err instanceof PipelineCancelledError)) {
+        const reason = err instanceof Error ? err.message : String(err)
+        diarNote = `화자분리에 실패해 화자를 구분하지 않았습니다. (${reason})`
+      }
     }
+    if (diarNote) send({ meetingId, phase: 'diarize', message: diarNote })
 
-    // 후처리: smoothing + 소수 화자 흡수로 과분할 감소.
-    // 단, 2-스테이지 재정합('two-stage') 결과는 상대편을 이미 정밀 분리했으므로
-    // 소수화자 흡수(absorbMinority)를 끈다. 흡수를 켜면 짧게 말한 상대 화자가
-    // 통째로 흡수돼 분리가 무의미해진다.
+    // 후처리: smoothing(+ 자동 추정이면 소수 화자 흡수)로 과분할 감소. 옵션은 근거 있는 결과를
+    // 덮어쓰지 않도록 분기한다(speaker-assign.ts resolvePostprocessOptions):
+    //  - 채널 기반('channel'/'two-stage'): 같은 화자 병합만, 흡수 끔(채널로 확정한 짧은 발화 보존)
+    //  - 참석 인원 지정: 흡수 끔(지정 인원이 줄어드는 현상 방지)
+    //  - 자동 추정: sandwich 300ms(짧은 응답 보존) + 흡수 유지
     if (turns.length > 0) {
       const beforeCount = new Set(turns.map((t) => t.speaker_key)).size
-      turns = postprocessTurns(turns, {
-        smooth: { minTurnMs: 200, sandwichMs: 600, gapFillMs: 500 },
-        absorb: diarAdapter === 'two-stage' ? false : { minRatio: 0.02, minDurationMs: 60_000 }
-      })
+      turns = postprocessTurns(
+        turns,
+        resolvePostprocessOptions({ adapter: diarAdapter, expectedSpeakers: meeting.expected_speakers })
+      )
       const afterCount = new Set(turns.map((t) => t.speaker_key)).size
       if (beforeCount !== afterCount) {
         send({
@@ -608,42 +600,77 @@ export async function runMeetingPipeline(
       }
     }
 
+    // 빠른 재적용: 정제 후 세그먼트마다 대응하는 옛 세그먼트의 수동 화자 지정을 찾는다(시간 기준).
+    const corrections: CorrectedSpeaker[] =
+      reusedSegments.length > 0 ? matchCorrectedSpeakers(reusedSegments, rawSegments) : []
+
     // DB 트랜잭션으로 저장
     const tx = db.transaction(() => {
+      // 화자 속성 승계: 지우기 직전의 옛 화자·세그먼트를 새 귀속 결과와 시간 겹침으로 대조해
+      // 실명·색상·사용자 라벨을 이어받는다. 전체 재처리에서 컷편집이 이번에 적용됐어도 옛 세그먼트
+      // 시각은 remapExistingTimelines가 이미 새 타임라인으로 옮겨 두었다.
+      const oldSpeakers = db
+        .prepare(
+          'SELECT id, speaker_key, label, display_name, color, sort_order FROM meeting_speakers WHERE meeting_id = ?'
+        )
+        .all(meetingId) as OldSpeakerRow[]
+      const oldSegments = db
+        .prepare('SELECT start_ms, end_ms, speaker_id FROM meeting_segments WHERE meeting_id = ?')
+        .all(meetingId) as OldSegmentRow[]
+      const carry = planSpeakerCarryover(
+        oldSegments,
+        oldSpeakers,
+        rawSegments.map((seg, i) => ({
+          start_ms: seg.start_ms,
+          end_ms: seg.end_ms,
+          speaker_key: segmentAssignments[i]
+        }))
+      )
+      const plan = planSpeakerRows({
+        speakerKeyOrder,
+        segmentKeys: segmentAssignments,
+        carry,
+        corrections,
+        oldSpeakers
+      })
+
       // 기존 데이터 정리 (재처리 시)
       db.prepare('DELETE FROM meeting_speakers WHERE meeting_id = ?').run(meetingId)
       db.prepare('DELETE FROM meeting_segments WHERE meeting_id = ?').run(meetingId)
       db.prepare('DELETE FROM meeting_cuts WHERE meeting_id = ?').run(meetingId)
 
       // meeting_speakers INSERT
-      const speakerIdMap = new Map<string, number>()
-      speakerKeyOrder.forEach((key, index) => {
-        const { label, color } = resolveSpeakerMeta(key, index)
-        const result = db
-          .prepare(
-            `INSERT INTO meeting_speakers
-               (meeting_id, speaker_key, label, color, sort_order)
-             VALUES (?, ?, ?, ?, ?)`
-          )
-          .run(meetingId, key, label, color, index)
-        speakerIdMap.set(key, Number(result.lastInsertRowid))
-      })
+      const insertSpeaker = db.prepare(
+        `INSERT INTO meeting_speakers
+           (meeting_id, speaker_key, label, display_name, color, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      const speakerIds = plan.speakers.map((sp) =>
+        Number(
+          insertSpeaker.run(meetingId, sp.speaker_key, sp.label, sp.display_name, sp.color, sp.sort_order)
+            .lastInsertRowid
+        )
+      )
 
       // meeting_segments INSERT
+      const insertSegment = db.prepare(
+        `INSERT INTO meeting_segments
+           (meeting_id, start_ms, end_ms, speaker_id, text, confidence,
+            speaker_corrected, text_corrected, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
       rawSegments.forEach((seg, i) => {
-        const key = segmentAssignments[i]
-        const speakerId = speakerIdMap.get(key) ?? null
-        db.prepare(
-          `INSERT INTO meeting_segments
-             (meeting_id, start_ms, end_ms, speaker_id, text, confidence, sort_order)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
-        ).run(
+        const link = plan.segments[i]
+        const speakerId = link.speakerIndex !== null ? speakerIds[link.speakerIndex] : null
+        insertSegment.run(
           meetingId,
           seg.start_ms,
           seg.end_ms,
           speakerId,
           seg.text,
           seg.confidence ?? null,
+          link.speakerCorrected ? 1 : 0,
+          seg.text_corrected === 1 ? 1 : 0,
           i
         )
       })

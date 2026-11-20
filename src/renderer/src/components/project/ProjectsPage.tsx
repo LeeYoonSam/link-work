@@ -6,7 +6,7 @@ import ReleasesView from '../release/ReleasesView'
 import ProjectBoardView from './ProjectBoardView'
 import DocsTab from './DocsTab'
 
-export const PROJECT_TABS: { id: ProjectsTab; label: string }[] = [
+const PROJECT_TABS: { id: ProjectsTab; label: string }[] = [
   { id: 'tickets', label: '티켓' },
   { id: 'releases', label: '릴리스' },
   { id: 'docs', label: '문서' }

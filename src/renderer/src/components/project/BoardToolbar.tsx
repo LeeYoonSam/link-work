@@ -13,7 +13,7 @@ import {
 
 const CATEGORIES: StatusCategory[] = ['indeterminate', 'new', 'done']
 
-export interface BoardToolbarProps {
+interface BoardToolbarProps {
   filter: BoardFilter
   facets: BoardFacets
   sort: BoardSort

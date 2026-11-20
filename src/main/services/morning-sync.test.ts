@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// A54 아침 자동 동기화 실행기. 판정 규칙은 assistant-schedule.test.ts 가 검증한다.
+// 아침 자동 동기화 실행기 (docs/ASSISTANT.md §8.2). 판정 규칙은 assistant-schedule.test.ts 가 검증한다.
 // 여기서는 선점·격리·건너뜀·오프라인·발송을 본다. 사용자 DB 를 쓰지 않는다. 저장소는 메모리 Map 이다.
 
 const electron = vi.hoisted(() => {
@@ -107,12 +107,12 @@ beforeEach(() => {
   releaseOk()
 })
 
-describe('A54: 아침 자동 동기화 실행기', () => {
-  it('A54: 행 키는 morning_sync:<논리 날짜> 다', () => {
+describe('아침 자동 동기화 실행기', () => {
+  it('행 키는 morning_sync:<논리 날짜> 다', () => {
     expect(morningSyncEventKey('2026-11-05')).toBe(KEY)
   })
 
-  it('A54: 설정 시각이 지나면 행 1개를 만들고 릴리스 부분을 실행해 payload 에 기록한다', async () => {
+  it('설정 시각이 지나면 행 1개를 만들고 릴리스 부분을 실행해 payload 에 기록한다', async () => {
     await runMorningSyncIfDue(false, NOW)
     expect(release.syncAllReleases).toHaveBeenCalledTimes(1)
     const row = store.rows.get(KEY)
@@ -123,26 +123,26 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(p.release?.finishedAt).toBe('2026-11-05 08:10:00')
   })
 
-  it('A54: 이미 ok 인 날은 다시 실행하지 않는다', async () => {
+  it('이미 ok 인 날은 다시 실행하지 않는다', async () => {
     await runMorningSyncIfDue(false, NOW)
     await runMorningSyncIfDue(false, new Date(2026, 10, 5, 9, 0, 0))
     expect(release.syncAllReleases).toHaveBeenCalledTimes(1)
   })
 
-  it('A54: 설정 시각 이전이면 행을 만들지 않는다', async () => {
+  it('설정 시각 이전이면 행을 만들지 않는다', async () => {
     await runMorningSyncIfDue(false, new Date(2026, 10, 5, 7, 59, 0))
     expect(store.insertEvent).not.toHaveBeenCalled()
     expect(release.syncAllReleases).not.toHaveBeenCalled()
   })
 
-  it('A54: 꺼져 있으면 실행하지 않는다', async () => {
+  it('꺼져 있으면 실행하지 않는다', async () => {
     store.state.settings = { morningSyncEnabled: false }
     await runMorningSyncIfDue(false, NOW)
     expect(store.insertEvent).not.toHaveBeenCalled()
     expect(release.syncAllReleases).not.toHaveBeenCalled()
   })
 
-  it('A54·A5: 선점 INSERT 가 충돌하면 실행하지 않는다', async () => {
+  it('선점 INSERT 가 충돌하면 실행하지 않는다', async () => {
     store.state.insertConflict = true
     await runMorningSyncIfDue(false, NOW)
     expect(store.insertEvent).toHaveBeenCalledTimes(1)
@@ -150,7 +150,7 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(syncStatusSends()).toBe(0)
   })
 
-  it('A54: 진행 중이면 두 번째 호출은 바로 돌아간다', async () => {
+  it('진행 중이면 두 번째 호출은 바로 돌아간다', async () => {
     let resolve: (v: unknown) => void = () => undefined
     release.syncAllReleases.mockImplementation(() => new Promise((r) => (resolve = r)))
     const first = runMorningSyncIfDue(false, NOW)
@@ -164,7 +164,7 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(getMorningSyncStatus().inFlight).toBe(false)
   })
 
-  it('A54·A13: 릴리스 부분이 throw 하면 failed 로 기록하고 throw 하지 않는다', async () => {
+  it('릴리스 부분이 throw 하면 failed 로 기록하고 throw 하지 않는다', async () => {
     release.syncAllReleases.mockRejectedValue(new Error('Jira 토큰이 만료되었습니다.'))
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     await expect(runMorningSyncIfDue(false, NOW)).resolves.toBeUndefined()
@@ -172,7 +172,7 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(payloadOf().release).toMatchObject({ status: 'failed', attempts: 1, error: 'Jira 토큰이 만료되었습니다.' })
   })
 
-  it('A54: 실패한 부분만 30분 뒤에 다시 하고 시도 수를 센다', async () => {
+  it('실패한 부분만 30분 뒤에 다시 하고 시도 수를 센다', async () => {
     release.syncAllReleases.mockRejectedValueOnce(new Error('timeout'))
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     await runMorningSyncIfDue(false, NOW)
@@ -184,7 +184,7 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(payloadOf().release).toMatchObject({ status: 'ok', attempts: 2 })
   })
 
-  it('A54: 릴리스가 모두 실패하면 failed, 일부만 실패하면 ok 에 실패 수를 남긴다', async () => {
+  it('릴리스가 모두 실패하면 failed, 일부만 실패하면 ok 에 실패 수를 남긴다', async () => {
     release.syncAllReleases.mockResolvedValueOnce({
       synced: [],
       metaOnly: [],
@@ -205,7 +205,7 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(payloadOf().release).toMatchObject({ status: 'ok', failedCount: 1, updatedCount: 1 })
   })
 
-  it('A54: Jira 미연결이면 skipped 이고 동기화를 부르지 않는다', async () => {
+  it('Jira 미연결이면 skipped 이고 동기화를 부르지 않는다', async () => {
     jira.isJiraConnected.mockReturnValue(false)
     await runMorningSyncIfDue(false, NOW)
     expect(release.syncAllReleases).not.toHaveBeenCalled()
@@ -216,14 +216,14 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(release.syncAllReleases).not.toHaveBeenCalled()
   })
 
-  it('A54: 기본 프로젝트 키가 없으면 skipped 다', async () => {
+  it('기본 프로젝트 키가 없으면 skipped 다', async () => {
     jira.getDefaultJiraProjectKey.mockReturnValue(null)
     await runMorningSyncIfDue(false, NOW)
     expect(release.syncAllReleases).not.toHaveBeenCalled()
     expect(payloadOf().release).toMatchObject({ status: 'skipped', error: 'Jira 기본 프로젝트가 설정되지 않았습니다.' })
   })
 
-  it('A54·D8: 오프라인이면 행을 만들지 않고 시도로 세지 않는다', async () => {
+  it('오프라인이면 행을 만들지 않고 시도로 세지 않는다', async () => {
     electron.net.isOnline.mockReturnValue(false)
     await runMorningSyncIfDue(false, NOW)
     expect(store.insertEvent).not.toHaveBeenCalled()
@@ -235,13 +235,13 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(payloadOf().release).toMatchObject({ status: 'ok', attempts: 1 })
   })
 
-  it('A54: 선점 뒤와 부분마다 ai:dataChanged sync_status 를 보낸다', async () => {
+  it('선점 뒤와 부분마다 ai:dataChanged sync_status 를 보낸다', async () => {
     await runMorningSyncIfDue(false, NOW)
     // 선점 1회 + 부분 1회
     expect(syncStatusSends()).toBe(2)
   })
 
-  it('A13: getDatabase 가 throw 해도 throw 하지 않는다', async () => {
+  it('getDatabase 가 throw 해도 throw 하지 않는다', async () => {
     database.getDatabase.mockImplementation(() => {
       throw new Error('Database not initialized')
     })
@@ -251,7 +251,7 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(release.syncAllReleases).not.toHaveBeenCalled()
   })
 
-  it('A13: 창 발송이 throw 해도 throw 하지 않는다', async () => {
+  it('창 발송이 throw 해도 throw 하지 않는다', async () => {
     const broken = { isDestroyed: () => false, webContents: { send: () => { throw new Error('gone') } } }
     electron.windows.push(broken)
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -261,7 +261,7 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(payloadOf().release).toMatchObject({ status: 'ok' })
   })
 
-  it('A54: 상태 조회는 마지막 행과 설정을 돌려준다. 행이 없으면 부분이 null 이다', async () => {
+  it('상태 조회는 마지막 행과 설정을 돌려준다. 행이 없으면 부분이 null 이다', async () => {
     expect(getMorningSyncStatus()).toEqual({
       enabled: true, at: '08:00', inFlight: false, date: null, release: null
     })
@@ -272,7 +272,7 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     expect(s).not.toHaveProperty('project')
   })
 
-  it('A54: 실행 중이 아닌데 남은 running 은 상태 조회에서 failed 로 보여 준다', () => {
+  it('실행 중이 아닌데 남은 running 은 상태 조회에서 failed 로 보여 준다', () => {
     store.rows.set(KEY, {
       id: 9, event_key: KEY, kind: 'morning_sync', plan_date: '2026-11-05',
       scheduled_at: '2026-11-05 08:00:00', fired_at: '2026-11-05 08:00:00', status: 'logged', ref_id: null,
@@ -284,7 +284,7 @@ describe('A54: 아침 자동 동기화 실행기', () => {
     })
     expect(getMorningSyncStatus().release).toMatchObject({ status: 'failed', error: '동기화가 중단되었습니다.' })
   })
-  it('A54: 옛 행에 project 부분이 남아 있어도 무시하고 릴리스만 판정한다', async () => {
+  it('옛 행에 project 부분이 남아 있어도 무시하고 릴리스만 판정한다', async () => {
     store.rows.set(KEY, {
       id: 9, event_key: KEY, kind: 'morning_sync', plan_date: '2026-11-05',
       scheduled_at: '2026-11-05 08:00:00', fired_at: '2026-11-05 08:00:00', status: 'logged', ref_id: null,

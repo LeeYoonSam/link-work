@@ -10,7 +10,7 @@ import {
   MAX_UPDATED_MINUTES
 } from './jira'
 import type { JiraIssueSummary, JiraReleaseChangeIssue, JiraVersionSummary } from './jira'
-import { compareVersionDesc, matchesDeployVersion } from '../utils/version-match'
+import { compareVersionDesc } from '../utils/version-match'
 
 /**
  * 릴리스 노트 = Jira 릴리스(Version)의 순수 미러다. 앱에서 문구를 편집하지 않으므로
@@ -35,7 +35,7 @@ export interface ReleaseNoteRow {
   updated_at: string
 }
 
-export interface ReleaseNoteItemRow {
+interface ReleaseNoteItemRow {
   id: number
   release_note_id: number
   issue_key: string
@@ -69,12 +69,8 @@ export function sortReleaseNotes<T extends ReleaseNoteRow>(notes: T[]): T[] {
   })
 }
 
-/**
- * @param deployVersion 주면 이 배포 버전과 이름이 같은 릴리스만 돌려준다(프로젝트 상세 화면용).
- *   `2.8.1 , 4.155.0`처럼 한 칸에 여러 버전이 적힌 경우도 각각 맞춰 본다.
- *   릴리스 노트는 프로젝트와 저장된 연결을 갖지 않으므로, 이건 **조회 시점의 이름 대조**일 뿐이다.
- */
-export function listReleaseNotes(deployVersion?: string): ReleaseNoteSummary[] {
+/** 저장된 릴리스 노트 전체(항목 수 포함). 버전 번호 내림차순 */
+export function listReleaseNotes(): ReleaseNoteSummary[] {
   const db = getDatabase()
   // 정렬은 SQL이 아니라 sortReleaseNotes가 한다 — 버전 번호 비교는 마디를 숫자로 갈라
   // 앞에서부터 재야 해서(4.46.0 < 4.166.0) SQL 문자열 정렬로는 표현할 수 없다.
@@ -87,11 +83,7 @@ export function listReleaseNotes(deployVersion?: string): ReleaseNoteSummary[] {
     )
     .all() as ReleaseNoteSummary[]
 
-  const filtered =
-    deployVersion === undefined
-      ? rows
-      : rows.filter((note) => matchesDeployVersion(deployVersion, note.version_name))
-  return sortReleaseNotes(filtered)
+  return sortReleaseNotes(rows)
 }
 
 export function getReleaseNote(id: number): ReleaseNoteWithItems | null {
@@ -428,9 +420,9 @@ export interface ReleaseChangeSyncResult {
 /** 변경분 동기화 기준 시각(ISO). 마지막 동기화(전체·변경분)의 시작 시각이다 */
 export const RELEASE_SYNC_CHECKED_KEY = 'release_sync_checked_at'
 /** force 가 아니면 마지막 확인 뒤 이만큼은 Jira를 부르지 않는다 */
-export const RELEASE_CHANGES_SKIP_MS = 10 * 60_000
+const RELEASE_CHANGES_SKIP_MS = 10 * 60_000
 /** 기준 시각이 이보다 오래됐으면 전체 동기화로 넘어간다 */
-export const RELEASE_CHANGES_MAX_AGE_MS = 7 * 24 * 60 * 60_000
+const RELEASE_CHANGES_MAX_AGE_MS = 7 * 24 * 60 * 60_000
 /** 변경분 조회 기간 여유(분). 시계 차이와 경계 누락을 덮는다 */
 const RELEASE_CHANGES_MARGIN_MIN = 10
 
@@ -478,7 +470,7 @@ export function clearReleaseSyncCheckpoint(): void {
 }
 
 /** 변경분 반영 대상: 이슈까지 받아 둔 릴리스(last_synced_at 이 있다) */
-export interface ReleaseChangeTarget {
+interface ReleaseChangeTarget {
   noteId: number
   versionId: string
   items: Pick<
@@ -487,7 +479,7 @@ export interface ReleaseChangeTarget {
   >[]
 }
 
-export interface ReleaseChangePlan {
+interface ReleaseChangePlan {
   noteId: number
   /** 추가하거나 갱신할 항목. 기존 항목과 값이 같으면 넣지 않는다 */
   upserts: JiraIssueSummary[]

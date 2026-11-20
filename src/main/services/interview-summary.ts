@@ -92,7 +92,7 @@ function validate(raw: unknown): InterviewSummaryResult {
 }
 
 // overview는 회의 요약의 tldr 컬럼을 재사용한다(둘 다 "한 문단 개요"라 의미가 겹침).
-// 회의 전용 3분류(decisions/action_items/next_steps)는 빈 배열로 덮어써, 종류를
+// 회의 전용 4개 컬럼(key_points/decisions/action_items/next_steps)은 빈 배열로 덮어써, 종류를
 // 바꿔 재요약했을 때 이전 종류의 잔여 데이터가 남지 않게 한다.
 function persist(
   db: Database.Database,

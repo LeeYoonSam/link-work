@@ -33,7 +33,7 @@ export function toPlainText(markdown: string): string {
   return out.join(' ').replace(/\s+/g, ' ').trim()
 }
 
-export interface ParsedMemoTitle {
+interface ParsedMemoTitle {
   title: string
   // 제목 줄 다음부터의 마크다운 원문
   body: string

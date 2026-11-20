@@ -9,7 +9,7 @@ import JiraSettingsModal from './JiraSettingsModal'
 import JiraTokenWarning from './JiraTokenWarning'
 import ReleaseNoteRow from './ReleaseNoteRow'
 import SyncAllSummary from './SyncAllSummary'
-import { morningStatusLine, parseMorningPart } from '../today/ChangeLog'
+import { morningStatusLine, parseMorningPart } from './morningStatus'
 import { Badge, Card, EmptyState, IconButton, SearchIcon, XIcon, button } from '../ui'
 
 // 검색 — 버전 이름과 Jira 프로젝트 키를 한 상자에서 찾는다.

@@ -11,7 +11,6 @@ import type { ProcessingState } from '../utils/processing-progress'
 
 // 진행 상태의 형태와 이벤트 병합 규칙은 utils/processing-progress.ts가 갖는다.
 // 화면들이 스토어를 통해 그대로 쓸 수 있도록 다시 내보낸다.
-export type { ProcessingState }
 
 // 목록 필터 — 'all'이면 회의·면접을 함께 본다
 export type KindFilter = 'all' | MeetingKind

@@ -1,13 +1,10 @@
-import { Tray, BrowserWindow, nativeImage, screen, ipcMain, app } from 'electron'
+import { Tray, BrowserWindow, nativeImage, screen, ipcMain } from 'electron'
 import { join } from 'path'
 import { getDatabase } from '../db/database'
 import { getTodayEvents, CalendarEvent } from './google-calendar'
 import { format } from 'date-fns'
 import { is } from '@electron-toolkit/utils'
-import { getToday } from './assistant-service'
 import { navigateToToday } from './assistant-scheduler'
-import { toTraySummary } from './assistant-tray'
-import type { TrayAssistant } from './assistant-types'
 
 let tray: Tray | null = null
 let panelWindow: BrowserWindow | null = null
@@ -21,9 +18,9 @@ interface TrayEvent {
   isCompleted: boolean
 }
 
-interface TrayData {
+// 트레이 패널 데이터. 오늘 일정과 오늘의 할 일만 보낸다 (docs/ASSISTANT.md §10)
+export interface TrayData {
   events: TrayEvent[]
-  assistant: TrayAssistant | null
 }
 
 function hasTime(dueDate: string): boolean {
@@ -80,22 +77,7 @@ function getTodayTodoScheduleItems(): TrayEvent[] {
   return items
 }
 
-/**
- * 트레이 '오늘 계획' 요약 (부록 E.4.1). 비서 테이블을 직접 읽지 않고 getToday 를 투영한다 (A28).
- * 백업 복원 중 DB 가 닫혀 있으면 throw 하므로 null 로 넘긴다 (A13).
- */
-async function getTrayAssistant(): Promise<TrayAssistant | null> {
-  try {
-    const today = await getToday()
-    if (!today.settings.enabled) return null
-    return toTraySummary(today)
-  } catch {
-    return null
-  }
-}
-
-async function getTrayData(): Promise<TrayData> {
-  const assistant = await getTrayAssistant()
+export async function getTrayData(): Promise<TrayData> {
   const calEvents = await getTodayEvents()
   const calItems: TrayEvent[] = calEvents.map((e: CalendarEvent) => ({
     summary: e.summary,
@@ -114,7 +96,7 @@ async function getTrayData(): Promise<TrayData> {
     return a.time.localeCompare(b.time)
   })
 
-  return { events, assistant }
+  return { events }
 }
 
 function createPanelWindow(): BrowserWindow {
@@ -237,7 +219,7 @@ export function createTrayWidget(onOpenApp: () => void): void {
     panelWindow?.hide()
   })
 
-  // 트레이 '오늘 보기' (부록 E.4.3)
+  // 트레이 '오늘 보기'. 메인 창의 오늘 화면을 연다
   ipcMain.handle('tray:openToday', () => {
     navigateToToday()
     panelWindow?.hide()

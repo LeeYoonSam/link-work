@@ -6,7 +6,7 @@ import { inputClass } from '../ConnectDialog'
 // 전체 동기화는 이 프로젝트의 릴리스 중에서 배포 버전과 이름이 같은 것을 찾는다.
 // 프로젝트 목록은 연결돼 있으면 처음 그릴 때 한 번 당긴다. 포커스 때 당기면 열린 select 가 로딩 중 비활성으로 바뀌어 한 번 더 눌러야 한다.
 
-export interface JiraDefaultProjectSelectProps {
+interface JiraDefaultProjectSelectProps {
   status: JiraConnectionStatus | null
   onChanged: () => void
 }

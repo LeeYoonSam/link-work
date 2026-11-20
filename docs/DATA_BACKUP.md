@@ -13,8 +13,9 @@
 | `recordings/` (`<id>.wav`, `<id>.channels.json`, `<id>.compaction.json`) | **포함** | `meetings` | DB는 파일명만 저장하므로 경로 독립 |
 | `ai-attachments/` (AI 대화 이미지) | **포함** | `ai` | |
 | `models/` (whisper·silero·sherpa, 1.4GB) | 제외 | — | 첫 실행 시 자동 다운로드 |
-| `Cache`, `GPUCache`, `Cookies`, `Session Storage`, `Local Storage` … | 제외 | — | Electron 캐시. 렌더러의 localStorage(아침 동기화 상태 등)도 여기라 백업되지 않는다 |
+| `Cache`, `GPUCache`, `Cookies`, `Session Storage`, `Local Storage` … | 제외 | — | Electron 캐시. 렌더러의 localStorage(메모 화면 상태 등)도 여기라 백업되지 않는다 |
 | `auth_tokens`(Google OAuth), `app_settings`의 `notion_token`·`jira_api_token`·`google_client_secret`·`bitbucket_api_token`. 모두 `safeStorage` 암호문이다 | **제외** | — | macOS 키체인 키로 암호화돼 다른 기기에서 복호화 불가 → 새 PC에서 다시 연결. 복원해도 **이 기기의 값은 유지**한다(§3 연동 묶음 규칙) |
+| `app_settings`의 `mobile_server_token`(휴대폰 열람 페어링 토큰, `safeStorage` 암호문)·`mobile_server_enabled`(켜짐 여부) | **제외** | — | 기기 종속이다(`DEVICE_ONLY_SETTING_KEYS`). 백업 사본에서 지우고 복원해도 **이 기기의 값을 유지**한다 — 새 PC 로 복원했을 때 서버가 저절로 켜지지 않는다. 새 PC에서는 설정 > 모바일에서 다시 켜고 QR 을 새로 스캔한다([MOBILE_VIEW.md](MOBILE_VIEW.md)) |
 
 ### 1.1 백업 그룹
 
@@ -23,18 +24,18 @@
 
 | 그룹 ID | 화면 이름 (메뉴) | 테이블 | `app_settings` 키 | 파일 |
 |---|---|---|---|---|
-| `work` | 오늘·업무 (오늘, 프로젝트, 할 일, 릴리스, 주간 보고) | projects, tasks, todos, todo_tags, todo_tag_map, todo_history, release_notes, release_note_items, activity_log, daily_plans, plan_items, assistant_events, assistant_exclusions | `project_sync_created_keys` | 없음 |
+| `work` | 오늘·업무 (오늘, 프로젝트(릴리스 탭 포함), 할 일). `activity_log` 는 화면에 보이지 않지만 활동 기록으로 계속 쌓이고 이 그룹에 든다 | projects, tasks, todos, todo_tags, todo_tag_map, todo_history, release_notes, release_note_items, activity_log, daily_plans, plan_items, assistant_events, assistant_exclusions | `project_sync_created_keys` | 없음 |
 | `meetings` | 회의 (녹음, 회의록, 용어집·구성원) | meetings, meeting_speakers, meeting_segments, meeting_cuts, meeting_summaries, meeting_attendees, meeting_members, stt_glossary | 없음 | `recordings/` |
-| `library` | 자료 (문서, 메모, 변수) | documents, memos, memo_categories, variables | 없음 | 없음 |
-
-> 문서 메뉴는 2026-11-18 에 없앴다. `documents` 테이블은 남아 있어 기존 데이터는 계속 `library` 그룹으로 백업·복원된다. 화면 라벨의 "문서"는 이 테이블을 가리킨다.
+| `library` | 자료 (메모, 변수, 예전 문서 메뉴의 문서) | documents, memos, memo_categories, variables | 없음 | 없음 |
 | `ai` | AI 대화 | ai_chats, ai_messages, ai_audit_log | 없음 | `ai-attachments/` |
 | `settings` | 설정·연동 | (없음 — `app_settings` 를 키 단위로) | `assistant_*`, `ai_model`, `ai_model_labels`, `google_client_id`, `jira_site_url`, `jira_email`, `jira_token_expires_at`, `jira_account_name`, `jira_default_project_key`, `bitbucket_email`, 그리고 분류되지 않은 모든 키(기본값) | 없음 |
-| (백업 제외) | — | auth_tokens, jira_board_issues, jira_board_sync | 시크릿 4개(위 표) | models/, Electron 캐시 |
+| (백업 제외) | — | auth_tokens, jira_board_issues, jira_board_sync, jira_epic_summaries | 시크릿 4개(위 표), `mobile_server_token`, `mobile_server_enabled` | models/, Electron 캐시 |
 
-- **오늘(비서)이 업무와 같은 그룹인 이유**: 계획 항목(`plan_items.candidate_id`)이 `todo:<id>` 로 할 일을 가리키고(옛 행은 `task:<id>` 로 작업을 가리킨다), 화면의 "원본 완료"가 그 id 로 할 일 완료를 직접 호출한다. 따로 복원하면 엉뚱한 할 일이 완료될 수 있다.
+- `documents` 는 메뉴가 없는 옛 문서 테이블이다. 남은 데이터를 `library` 그룹으로 백업·복원한다. 화면 라벨의 "예전 문서 메뉴의 문서"가 이 테이블이다.
+- 비서 테이블(`daily_plans`·`plan_items`·`assistant_events`·`assistant_exclusions`)은 업무와 같은 그룹이다. 옛 계획 항목(`plan_items.candidate_id`)이 `todo:<id>`(더 옛 행은 `task:<id>`)로 할 일을 가리키기 때문이다.
 - `jira_board_issues`·`jira_board_sync` 는 프로젝트 보드의 Jira 캐시다(docs/PROJECT_BOARD.md §3). Jira 에서 다시 받을 수 있어 백업하지 않는다(`NON_GROUP_TABLES`, `CACHE_TABLES`).
-  내보낼 때 사본에서 두 테이블의 행을 지운다(`stripCaches`). 복원은 이 기기의 캐시를 그대로 두되, 복원으로 Jira 계정이 바뀌면 함께 지운다(아래 연동 묶음 규칙). 캐시가 비면 다음 화면 진입 때 보드가 전체 동기화를 한다.
+- `jira_epic_summaries` 는 보드 캐시로 만든 에픽 AI 요약이다(docs/PROJECT_BOARD.md §5.1). 버튼으로 다시 만들 수 있어 보드 캐시와 같이 취급한다(`NON_GROUP_TABLES`, `CACHE_TABLES`).
+  내보낼 때 사본에서 세 테이블의 행을 지운다(`stripCaches`). 복원은 이 기기의 캐시를 그대로 두되, 복원으로 Jira 계정이 바뀌면 함께 지운다(아래 연동 묶음 규칙). 캐시가 비면 다음 화면 진입 때 보드가 전체 동기화를 한다.
 - `meeting_members`·`stt_glossary` 는 회의 그룹이다. `meeting_attendees` 가 `meeting_members` 를 FK 로 가리키고, 둘 다 회의 인식 보조다.
 - **새 테이블을 만들면 반드시 한 그룹(또는 백업 제외)에 넣는다.** 빠지면 테스트 G1 이 실패한다. 그룹을 추가·변경하면 `formatVersion` 을 올린다.
 
@@ -46,7 +47,7 @@
 | X2 | `stt_glossary.project_id` → projects | 같음 |
 | X3 | `documents.project_id` → projects | 같음 |
 | X4 | `meeting_summaries.action_items[*].todo_id` → todos (JSON) | 일치하지 않으면 JSON 안의 `todo_id` 를 null |
-| X5 | `plan_items.candidate_id` `action_item:<meetingId>:<i>` → meetings | 값은 바꾸지 않는다(NOT NULL·UNIQUE). 활성 계획에서 일치하지 않는 건수를 경고로 알린다 |
+| X5 | `plan_items.candidate_id` `action_item:<meetingId>:<i>` → meetings | 값은 바꾸지 않는다(NOT NULL·UNIQUE). `status='active'` 인 계획에서 일치하지 않는 건수를 경고로 알린다 |
 | X6 | `activity_log.entity_id` | 처리하지 않는다(표시는 `entity_name` 을 쓴다) |
 | X7 | AI 메시지 본문의 `linkwork://` 링크 | 처리하지 않는다(약한 링크) |
 | X8 | `ai_chats.session_id`(~/.claude), `assistant_events.ref_id`(캘린더) | 외부 id — 지금과 같다 |
@@ -95,7 +96,7 @@ LinkWork-backup-YYYYMMDD-HHmmss.zip
 1. 그룹 검증(빈 배열·모르는 id 는 거부) → 저장 위치 선택(시스템 저장 다이얼로그) → `LinkWork-backup-<시각>.zip`
 2. 라이브 DB에 `VACUUM INTO`(임시 파일, WAL 안전 일관 스냅샷) → 사본을 연다.
 3. 사본에서 **`PRAGMA foreign_keys=OFF` 를 먼저** 건다 — 켠 채로 projects 를 지우면 사본 안의 `meetings.project_id` 가 SET NULL 로 지워진다.
-4. `stripSecrets`(`SECRET_TABLES`, `SECRET_SETTING_KEYS`) → `stripCaches`(`CACHE_TABLES`: 보드 캐시 행 삭제) → `filterSnapshotGroups`: 빠진 그룹의 테이블을 DELETE(스키마는 남김), 빠진 그룹의 `app_settings` 키 삭제, 필요하면 `linkwork_backup_refs` 채우기 → `VACUUM` → 행 수 집계 → zip 엔트리로 기록
+4. `stripSecrets`(`SECRET_TABLES`, `SECRET_SETTING_KEYS`) → `stripCaches`(`CACHE_TABLES`: 보드 캐시·에픽 AI 요약 행 삭제) → `filterSnapshotGroups`: 빠진 그룹의 테이블을 DELETE(스키마는 남김), 빠진 그룹의 `app_settings` 키 삭제, 필요하면 `linkwork_backup_refs` 채우기 → `VACUUM` → 행 수 집계 → zip 엔트리로 기록
 5. 고른 그룹의 폴더(`recordings/`·`ai-attachments/`)만 스트리밍으로 zip에 추가(바이트 누적 진행률) → `manifest.json`을 마지막 엔트리로 기록
 6. 실패 시 만들다 만 zip을 삭제하고 오류 표시
 
@@ -129,7 +130,7 @@ LinkWork-backup-YYYYMMDD-HHmmss.zip
 
 | 묶음 | 식별 키 | 자격(이 기기 값) |
 |---|---|---|
-| jira | `jira_site_url`, `jira_email` | `jira_api_token`, `jira_token_expires_at`, `jira_account_name`, `jira_board_issues`·`jira_board_sync` 테이블(보드 캐시. 계정마다 볼 수 있는 이슈가 다르다) |
+| jira | `jira_site_url`, `jira_email` | `jira_api_token`, `jira_token_expires_at`, `jira_account_name`, `jira_board_issues`·`jira_board_sync`·`jira_epic_summaries` 테이블(보드 캐시와 그 AI 요약. 계정마다 볼 수 있는 이슈가 다르다) |
 | bitbucket | `bitbucket_email` | `bitbucket_api_token` |
 | google | `google_client_id` | `google_client_secret`, `auth_tokens` 테이블 |
 | notion | (없음) | `notion_token` — 늘 유지 |
@@ -156,6 +157,7 @@ LinkWork-backup-YYYYMMDD-HHmmss.zip
 1. 기존 PC: 앱에서 **내보내기** → 생성된 zip 파일을 외장 디스크/AirDrop 등으로 새 PC에 복사
 2. 새 PC: 소스 clone → `npm install` → `npm run deploy` → 앱 실행(첫 실행 시 빈 DB 생성)
 3. 앱에서 **가져오기** → 백업 zip 선택 → 복원할 항목 확인(새 PC 는 보통 전체) → 확인 → 재시작(경고가 없으면 자동, 있으면 경고를 읽고 [확인 후 재시작])
-4. Google 캘린더·Notion·Jira 다시 연결, Claude Code 로그인, 마이크/시스템 오디오 권한 허용
-   - Google 캘린더: client secret이 백업에서 빠지므로 캘린더 설정 화면에 Client ID·Client Secret 입력 폼이 다시 나온다. Google Cloud 콘솔의 OAuth 클라이언트 값을 다시 입력한 뒤 연결한다.
+4. 설정 > 연동에서 Google 캘린더·Jira·Bitbucket·Notion 을 다시 연결하고, Claude Code 로그인, 마이크/시스템 오디오 권한을 허용한다([SETTINGS.md](SETTINGS.md))
+   - Google 캘린더: client secret 이 백업에서 빠지므로 카드가 "설정 필요"로 보인다. [연결]을 눌러 Google Cloud 콘솔의 OAuth Client ID·Secret 을 다시 입력한 뒤 로그인한다.
+   - 휴대폰 열람을 쓰면 설정 > 모바일에서 다시 켜고 QR 을 새로 스캔한다.
 5. 회의 처리 시 음성 모델은 자동 다운로드(약 1.4GB)

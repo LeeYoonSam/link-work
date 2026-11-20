@@ -6,7 +6,7 @@ import CategoryBadge from './CategoryBadge'
 import { formatDbTime, formatRelative, isValidDate, parseDbTime } from './memoText'
 import type { MemoListItem } from './memoSearch'
 
-export interface MemoListRowProps {
+interface MemoListRowProps {
   item: MemoListItem
   category: MemoCategory | null
   selected: boolean

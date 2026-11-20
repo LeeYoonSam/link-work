@@ -5,7 +5,7 @@ import { createWriteStream, existsSync } from 'fs'
 import { mkdir, rename, unlink, stat } from 'fs/promises'
 import { join } from 'path'
 
-export interface WhisperModelInfo {
+interface WhisperModelInfo {
   id: string
   file: string
   url: string
@@ -16,7 +16,7 @@ export interface WhisperModelInfo {
 // 한국어 기본 모델: large-v3-turbo q8_0 (약 874MB).
 // 더 낮은 비트로 양자화한 모델은 영어 전용에서만 권장되고 한국어는 CER이 눈에 띄게 나빠진다.
 // q8_0은 fp16급 품질을 유지하면서 크기만 절반이라 ggml 공식이 비영어권에 권고한다.
-export const DEFAULT_MODEL: WhisperModelInfo = {
+const DEFAULT_MODEL: WhisperModelInfo = {
   id: 'large-v3-turbo-q8_0',
   file: 'ggml-large-v3-turbo-q8_0.bin',
   url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin',
@@ -38,15 +38,11 @@ export function modelsDir(): string {
   return join(app.getPath('userData'), 'models')
 }
 
-export function modelPath(model: WhisperModelInfo = DEFAULT_MODEL): string {
+function modelPath(model: WhisperModelInfo = DEFAULT_MODEL): string {
   return join(modelsDir(), model.file)
 }
 
-export function isModelReady(model: WhisperModelInfo = DEFAULT_MODEL): boolean {
-  return existsSync(modelPath(model))
-}
-
-export type ModelProgress = (info: {
+type ModelProgress = (info: {
   ratio: number
   downloadedBytes: number
   totalBytes: number

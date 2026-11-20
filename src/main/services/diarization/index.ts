@@ -1,22 +1,26 @@
 // 화자분리 오케스트레이션 — 폴백 체인
 // mic+system: 채널 기반 분리(모델 불필요)를 우선 시도 → 2화자 미만/실패면 sherpa 임베딩 분리 → none(단일).
 // mic 단독: sherpa 임베딩 다화자 분리 → none.
-// 과거엔 mic+system이면 channel만 단독 시도(early return)라, 채널 에너지가 없으면(.channels.json 부재)
-// 곧장 단일 화자로 붕괴했다. 이제는 어떤 경우에도 sherpa로 폴백해 다화자 분리를 보장한다.
+// 채널 에너지(.channels.json)가 없어도 sherpa 로 폴백하므로 mic+system 녹음이 단일 화자로 무너지지 않는다.
 import type { DiarTurn, SttSegment } from '../meeting-types'
 import { SherpaAdapter } from './sherpa-adapter'
 import { ChannelAdapter } from './channel-adapter'
 import { combineTwoStage } from './two-stage'
+import {
+  errorMessage,
+  mergeNote,
+  sherpaEmptyNote,
+  sherpaFailedNote,
+  sherpaUnavailableNote,
+  twoStageDegradedNote
+} from './notes'
 
-export type { DiarizationAdapter } from '../meeting-types'
-export type { DiarTurn } from '../meeting-types'
-export { ChannelAdapter } from './channel-adapter'
 
-export interface DiarizeOptions {
+interface DiarizeOptions {
   source: string
   segments: SttSegment[]
   numSpeakers?: number
-  // sherpa 폴백 직전에 모델을 보장(다운로드)하는 콜백. 실패해도 무시하고 none으로 폴백한다.
+  // sherpa 폴백 직전에 모델을 보장(다운로드)하는 콜백. 실패하면 원인을 note에 남기고 폴백한다.
   ensureModels?: () => Promise<void>
   // 취소 신호. sherpa 화자분리로 전달되며, abort 시 폴백 체인을 계속 타지 않고 AbortError를 전파한다.
   signal?: AbortSignal
@@ -30,15 +34,24 @@ function abortError(): Error {
 }
 
 /**
+ * 화자분리 결과.
+ * - turns/adapter: 기존 의미 그대로.
+ * - note: 사용자에게 보여줄 한국어 한 문장. 품질이 강등됐거나(모델 준비 실패·sherpa 실패 등)
+ *   알릴 것이 있을 때(centroid 정제로 화자 수가 줄어든 경우)만 채운다.
+ */
+interface DiarizeResult {
+  turns: DiarTurn[]
+  adapter: string
+  note?: string
+}
+
+/**
  * 화자분리를 폴백 체인으로 수행한다.
  * 1) mic+system이고 채널 에너지로 2화자 이상 분리되면 channel 결과 사용 (모델 불필요).
  * 2) 그 외/실패/단일화자 결과면 sherpa 임베딩 기반 다화자 분리 (모델 필요 → ensureModels).
- * 3) 모두 실패하면 빈 배열(merge 단계에서 단일 화자 spk_0로 귀속).
+ * 3) 모두 실패하면 빈 배열(merge 단계에서 단일 화자 spk_0로 귀속) + 강등 이유 note.
  */
-export async function diarizeWithFallback(
-  audioPath: string,
-  opts: DiarizeOptions
-): Promise<{ turns: DiarTurn[]; adapter: string }> {
+export async function diarizeWithFallback(audioPath: string, opts: DiarizeOptions): Promise<DiarizeResult> {
   if (opts.signal?.aborted) throw abortError()
   // numSpeakers는 파이프라인에서 meetings.expected_speakers를 그대로 전달한다.
   const expected = opts.numSpeakers
@@ -69,18 +82,15 @@ export async function diarizeWithFallback(
     } catch {
       // 취소는 sherpa 폴백으로 삼키지 않고 그대로 전파한다.
       if (opts.signal?.aborted) throw abortError()
-      // 채널 분리 실패 → sherpa로 폴백
+      // 채널 분리 실패 → sherpa로 폴백. sherpa가 성공하면 강등이 아니므로 note를 남기지 않는다.
     }
   }
 
   // 2. sherpa 임베딩 기반 다화자 분리 (모델 필요)
-  try {
-    await opts.ensureModels?.()
-  } catch {
-    // 모델 다운로드 실패 → sherpa.isAvailable()이 false면 아래에서 none으로
-  }
+  const ensureError = await runEnsureModels(opts)
   const sherpa = new SherpaAdapter()
-  if (await sherpa.isAvailable()) {
+  const unavailable = await sherpa.unavailableReason()
+  if (unavailable === null) {
     try {
       const turns = await sherpa.diarize(audioPath, {
         source: opts.source,
@@ -88,16 +98,41 @@ export async function diarizeWithFallback(
         numSpeakers: opts.numSpeakers,
         signal: opts.signal
       })
-      if (turns.length > 0) return { turns, adapter: 'sherpa' }
-    } catch {
+      if (turns.length > 0) {
+        const note = mergeNote(sherpa.lastInfo)
+        return note ? { turns, adapter: 'sherpa', note } : { turns, adapter: 'sherpa' }
+      }
+      return { turns: [], adapter: 'none', note: sherpaEmptyNote() }
+    } catch (err) {
       // 취소는 none 폴백으로 삼키지 않고 그대로 전파한다.
-      if (opts.signal?.aborted) throw abortError()
-      // sherpa 실패 → none
+      if (opts.signal?.aborted || isAbortError(err)) throw abortError()
+      // sherpa 실패 → none (원인 메시지를 note에 보존)
+      return { turns: [], adapter: 'none', note: sherpaFailedNote(errorMessage(err)) }
     }
   }
 
-  // 3. 단일 화자 폴백
-  return { turns: [], adapter: 'none' }
+  // 3. 단일 화자 폴백 — sherpa를 쓸 수 없는 이유를 note로 남긴다.
+  //    모델 준비가 실패했으면 그 원인이 가장 직접적이므로 우선한다.
+  const kind = ensureError !== undefined ? 'ensure-failed' : unavailable
+  return { turns: [], adapter: 'none', note: sherpaUnavailableNote(kind, ensureError) }
+}
+
+/**
+ * ensureModels를 실행하고 실패하면 원인 메시지를 돌려준다(성공·미지정이면 undefined).
+ * 취소는 삼키지 않고 전파한다.
+ */
+async function runEnsureModels(opts: DiarizeOptions): Promise<string | undefined> {
+  try {
+    await opts.ensureModels?.()
+    return undefined
+  } catch (err) {
+    if (opts.signal?.aborted || isAbortError(err)) throw abortError()
+    return errorMessage(err)
+  }
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'AbortError'
 }
 
 /**
@@ -105,9 +140,9 @@ export async function diarizeWithFallback(
  *  1) channel-adapter로 STT segment별 mic/system turn 확보.
  *     실패·단일 채널(채널 에너지 없음)이면 null → 호출측이 기존 sherpa 폴백으로.
  *  2) 전체 파일을 sherpa로 numSpeakers=참석 인원 클러스터링.
- *     sherpa 불가/실패면 채널 2화자 결과를 그대로 반환(무해).
+ *     sherpa 불가/실패면 채널 2화자 결과를 그대로 반환(무해) + 강등 note.
  *  3) combineTwoStage로 시간축 재정합. sys_N 키가 생기면 상대 분리 성공 → 'two-stage',
- *     아니면(2화자 이하로 폴백) 'channel'.
+ *     아니면(2화자 이하로 폴백) 'channel' + 강등 note.
  *
  * adapter='two-stage'는 파이프라인이 postprocess의 소수화자 흡수(absorbMinority)를
  * 건너뛰도록 하는 판별자다. 흡수를 켜면 짧게 말한 상대 화자가 통째로 흡수돼 분리가
@@ -117,7 +152,7 @@ async function tryTwoStage(
   audioPath: string,
   opts: DiarizeOptions,
   expected: number
-): Promise<{ turns: DiarTurn[]; adapter: string } | null> {
+): Promise<DiarizeResult | null> {
   // 1. 채널 기반 mic/system turn (모델 불필요).
   let channelTurns: DiarTurn[]
   try {
@@ -129,6 +164,7 @@ async function tryTwoStage(
     })
   } catch {
     // 취소는 그대로 전파하고, 그 외 실패는 null(→ 기존 sherpa 폴백)로 처리한다.
+    // 이 경우 강등 여부는 이어지는 기존 폴백 체인이 note로 판단한다.
     if (opts.signal?.aborted) throw abortError()
     return null
   }
@@ -136,15 +172,13 @@ async function tryTwoStage(
   if (channelTurns.length === 0) return null
 
   // 2. 전체 파일 sherpa 클러스터링 (numSpeakers = 참석 인원).
-  try {
-    await opts.ensureModels?.()
-  } catch {
-    // 모델 준비 실패 → sherpa.isAvailable()이 false면 아래에서 채널 결과로.
-  }
+  const ensureError = await runEnsureModels(opts)
   const sherpa = new SherpaAdapter()
-  if (!(await sherpa.isAvailable())) {
+  const unavailable = await sherpa.unavailableReason()
+  if (unavailable !== null) {
     // sherpa 불가 → 재정합 불가. 채널 2화자 결과 그대로.
-    return { turns: channelTurns, adapter: 'channel' }
+    const kind = ensureError !== undefined ? 'ensure-failed' : unavailable
+    return { turns: channelTurns, adapter: 'channel', note: twoStageDegradedNote(kind, ensureError) }
   }
   let sherpaTurns: DiarTurn[]
   try {
@@ -154,14 +188,19 @@ async function tryTwoStage(
       numSpeakers: expected,
       signal: opts.signal
     })
-  } catch {
+  } catch (err) {
     // 취소는 채널 결과 폴백으로 삼키지 않고 그대로 전파한다.
-    if (opts.signal?.aborted) throw abortError()
-    return { turns: channelTurns, adapter: 'channel' }
+    if (opts.signal?.aborted || isAbortError(err)) throw abortError()
+    return {
+      turns: channelTurns,
+      adapter: 'channel',
+      note: twoStageDegradedNote('failed', errorMessage(err))
+    }
   }
 
   // 3. 시간축 재정합. 2화자 이하로 나오면 combineTwoStage가 channelTurns를 그대로 반환한다.
   const combined = combineTwoStage(channelTurns, sherpaTurns)
   const split = combined.some((t) => t.speaker_key.startsWith('sys_'))
-  return { turns: combined, adapter: split ? 'two-stage' : 'channel' }
+  if (split) return { turns: combined, adapter: 'two-stage' }
+  return { turns: combined, adapter: 'channel', note: twoStageDegradedNote('not-split') }
 }

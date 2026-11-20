@@ -9,7 +9,7 @@ export interface Region {
   endMs: number
 }
 
-export interface VadSegmentsToRegionsOptions {
+interface VadSegmentsToRegionsOptions {
   // 간격이 이 값 이하인 인접 구간은 하나로 병합한다(과분할로 문맥이 끊기는 것 방지).
   mergeGapMs?: number
   // 병합 후 길이가 이 값 미만인 구간은 버린다.
@@ -62,7 +62,7 @@ export function vadSegmentsToRegions(
   return merged.filter((r) => r.endMs - r.startMs >= minRegionMs)
 }
 
-export interface CoalesceRegionsOptions {
+interface CoalesceRegionsOptions {
   // 인접 구간 사이 간격이 이 값 이하이면 그 침묵째 이어 붙여 한 청크로 만든다.
   // 대화의 자연스러운 쉼(보통 0.5~2초)까지 한 청크에 담아 짧은 조각 남발을 막는다.
   joinGapMs?: number

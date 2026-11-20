@@ -58,3 +58,65 @@ export function saveTodoHistory(
     snapshot
   )
 }
+
+// ── 목록 조회 (todo:list 와 같은 쿼리·정렬). 모바일 열람 서버가 쓴다 ──
+// todo.ipc.ts 의 todo:list·attachTags 와 같은 SQL 이다 — 한쪽을 바꾸면 다른 쪽도 바꾼다.
+
+interface TodoTagRow {
+  id: number
+  name: string
+  color: string
+  created_at: string
+  updated_at: string
+}
+
+interface TodoListRow {
+  id: number
+  title: string
+  priority: string
+  due_date: string | null
+  due_reminder: number
+  is_completed: number
+  completed_at: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+function attachTodoTags<T extends { id: number }>(
+  db: Database.Database,
+  todos: T[]
+): (T & { tags: TodoTagRow[] })[] {
+  if (todos.length === 0) return []
+  const ids = todos.map((t) => t.id)
+  const placeholders = ids.map(() => '?').join(',')
+  const allTags = db
+    .prepare(
+      `SELECT m.todo_id, t.* FROM todo_tags t
+       JOIN todo_tag_map m ON m.tag_id = t.id
+       WHERE m.todo_id IN (${placeholders})`
+    )
+    .all(...ids) as (TodoTagRow & { todo_id: number })[]
+  const tagMap = new Map<number, TodoTagRow[]>()
+  for (const tag of allTags) {
+    const list = tagMap.get(tag.todo_id) || []
+    list.push({ id: tag.id, name: tag.name, color: tag.color, created_at: tag.created_at, updated_at: tag.updated_at })
+    tagMap.set(tag.todo_id, list)
+  }
+  return todos.map((todo) => ({ ...todo, tags: tagMap.get(todo.id) || [] }))
+}
+
+export function listTodosByCompletion(
+  db: Database.Database,
+  completed: boolean
+): (TodoListRow & { tags: TodoTagRow[] })[] {
+  const todos = db
+    .prepare(
+      `SELECT * FROM todos WHERE is_completed = ?
+       ORDER BY
+         CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END,
+         created_at ASC`
+    )
+    .all(completed ? 1 : 0) as TodoListRow[]
+  return attachTodoTags(db, todos)
+}

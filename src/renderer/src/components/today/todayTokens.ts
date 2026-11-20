@@ -1,63 +1,52 @@
-// 오늘 화면 전용 시각 상수 (docs/ASSISTANT.md 부록 M.4).
-// 공용 ui/tokens.ts 는 다른 화면도 쓴다. 그래서 오늘 화면의 정렬·강조 규칙은 이 파일에만 둔다.
+// 오늘 대시보드 전용 시각 상수 (docs/ASSISTANT.md §11.3).
+// 공용 ui/tokens.ts 는 다른 화면도 쓴다. 그래서 대시보드의 위계·강조 규칙은 이 파일에만 둔다.
+//
+// 정보 위계: 헤드라인(lg) > 신호(sm medium) > 카드 제목(sm semibold) > 행(sm) > 메타(xs).
+// 색 뜻: 빨강 = 지금 막는 위험·마감 지남, 앰버 = 주의, 파랑 = 정보·지금, 보라 = 회의, 초록 = 완료.
+// 색만으로 뜻을 전하지 않는다. severity 는 아이콘 모양(◆ ▲ ●)과 글자 라벨도 함께 쓴다.
+import type { SignalSeverity } from '../../types'
 
-// 할 일 행은 2열이다. 1열 제목·메타, 2열 버튼이다.
-// 순위 숫자 열은 두지 않는다. 이유: 집중 항목이 맨 위로 올라가 숫자와 순서가 어긋났다 (부록 M.9)
-export const TASK_ROW_GRID = 'grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 items-start'
-
-// 회의 행은 캘린더 일정 행과 같은 배치다 (부록 M.10).
-// 1열 오른쪽 정렬 시각, 2열 세로 막대, 3열 제목·메모·장소, 4열 버튼이다
-export const MEETING_ROW_GRID = 'grid grid-cols-[6.5rem_0.125rem_minmax(0,1fr)_auto] gap-x-3 items-stretch'
-
-// 회의 행 세로 막대. 진행 중이거나 다음 회의 1건만 보라다. 나머지는 회색이다
-export const MEETING_BAR = 'w-0.5 rounded-full bg-gray-200'
-export const MEETING_BAR_NEXT = 'w-0.5 rounded-full bg-purple-400'
-
-// 행 바깥 여백. 왼쪽 막대 3px 를 항상 그려 막대 유무와 무관하게 x 좌표가 같다
-export const ROW_BOX = 'px-5 py-3 border-b border-gray-100 last:border-b-0 border-l-[3px]'
-
-// 강조는 아래 5가지만 쓴다. 다른 강조를 더하지 않는다. 이유: 강조가 늘면 강조가 묻힌다
-export const EMPHASIS = {
-  // 1. 지금 하는 작업. 채도 높은 파랑은 이 1곳만 쓴다
-  focusRow: 'border-l-blue-600 bg-blue-50',
-  focusTitle: 'font-semibold',
-  // 2. 마감 오늘·지남·긴급. 빨강은 이 뜻 1가지만 가진다
-  urgentText: 'text-red-600 font-medium',
-  // 3. 진행 중이거나 다음 회의 1건. 임박(15분 이내)은 보라 굵은 글자다. 빨강을 쓰지 않는다
-  nextMeetingRow: 'border-l-purple-400',
-  soonMeetingText: 'text-purple-700 font-semibold',
-  // 4. 후보 카드의 제안 건수
-  suggestionCount: 'bg-amber-100 text-amber-700',
-  // 5. 끝난 것·지난 것은 흐리게 한다. 강조가 아니다
-  dimmed: 'opacity-60'
-} as const
-
-// 막대가 없는 행. ROW_BOX 와 함께 쓴다
-export const NO_BAR = 'border-l-transparent'
-
-// 시각 글자. 작은 고정폭 숫자다. 줄바꿈하지 않는다
-export const TIME_TEXT = 'text-sm text-gray-500 tabular-nums whitespace-nowrap'
-
-// 2열 글자. 제목은 base, 메타는 sm 2단계만 쓴다
-export const TITLE_TEXT = 'min-w-0 break-words text-base text-gray-900'
-export const META_TEXT = 'mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500 tabular-nums'
-
-// 카드 안 구역 머리. 카드 제목보다 한 단계 작다
-export const SUBSECTION_TITLE = 'px-5 pt-4 pb-2 text-sm font-semibold text-gray-600'
-
-// 출처 배지의 중립색. 출처는 판단 신호가 아니다. 액션아이템·임시만 연한 색을 남긴다
-export const NEUTRAL_BADGE = 'bg-gray-100 text-gray-600'
-
-// 요약 타일 색. 타일마다 뜻에 맞는 색 1개를 쓴다. 강조 색 체계와 같은 뜻이다 (부록 M.9)
-// 남은 할 일은 작업(파랑), 완료는 초록, 다음 회의는 보라, 집중 가능 시간은 청록이다
-export interface TileTone {
-  box: string // 카드 배경·테두리
-  label: string // 라벨 글자
-  value: string // 값 글자
+export interface SeverityStyle {
+  // 보조기술·툴팁용 라벨
+  label: string
+  // 모양. 색을 못 봐도 구분된다
+  shape: 'diamond' | 'triangle' | 'circle'
+  // 아이콘 색
+  icon: string
+  // 신호 행 배경·왼쪽 막대
+  row: string
 }
-export const TILE_TONE: Record<'remaining' | 'done' | 'meeting' | 'free', TileTone> = {
-  remaining: { box: 'bg-blue-50 border-blue-200', label: 'text-blue-700', value: 'text-blue-900' },
-  done: { box: 'bg-green-50 border-green-200', label: 'text-green-700', value: 'text-green-900' },
-  meeting: { box: 'bg-purple-50 border-purple-200', label: 'text-purple-700', value: 'text-purple-900' },
-  free: { box: 'bg-teal-50 border-teal-200', label: 'text-teal-700', value: 'text-teal-900' }
+
+export const SEVERITY_STYLE: Record<SignalSeverity, SeverityStyle> = {
+  critical: { label: '긴급', shape: 'diamond', icon: 'text-red-600', row: 'bg-red-50/70 border-l-red-500' },
+  warn: { label: '주의', shape: 'triangle', icon: 'text-amber-500', row: 'bg-amber-50/60 border-l-amber-400' },
+  info: { label: '참고', shape: 'circle', icon: 'text-blue-500', row: 'bg-white border-l-blue-300' }
 }
+
+// 카드 머리. 제목 왼쪽, 메타·링크 오른쪽. 좁으면 줄바꿈한다
+export const CARD_HEAD = 'flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-4 pt-4 pb-2'
+// 카드 제목 옆 건수
+export const CARD_COUNT = 'ml-1.5 text-xs font-normal text-gray-400 tabular-nums'
+
+// 행. 좁은 창에서도 가로 스크롤이 없도록 min-w-0 과 break-words 를 쓴다
+export const ROW = 'flex items-start gap-2 px-4 py-2 min-w-0'
+// 한글은 낱말 단위로 줄바꿈하고(break-keep), 마지막 줄에 한 글자만 남지 않게 한다(text-pretty).
+// 띄어쓰기 없는 긴 낱말은 overflow-wrap:anywhere 로 넘친다
+export const ROW_TITLE = 'min-w-0 flex-1 break-keep text-pretty [overflow-wrap:anywhere] text-sm text-gray-800'
+
+// 카드 아래 '외 n건 →' 링크
+export const MORE_LINK =
+  'inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline'
+
+// 신호에 올라간 항목 표식. 강조는 이 표식 1가지만 쓴다
+export const SIGNALED_MARK = 'inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500'
+
+// 마감 글자
+export const DUE_OVERDUE = 'text-red-600 font-medium'
+export const DUE_TODAY = 'text-amber-700 font-medium'
+
+// 지난 것은 흐리게. 강조가 아니다
+export const DIMMED = 'opacity-55'
+
+// 이슈 키 칩. 프로젝트 화면 taskTag.issue 와 같은 톤이다
+export const ISSUE_KEY = 'shrink-0 rounded px-1 text-[11px] font-mono bg-indigo-50 text-indigo-600'

@@ -8,7 +8,7 @@ import type { Todo } from '../types'
 // 종일 이벤트의 날짜 문자열("YYYY-MM-DD")을 로컬 자정 Date로 파싱한다.
 // new Date("YYYY-MM-DD")는 UTC 자정으로 해석돼 KST 등 동쪽 타임존에서 하루 경계가
 // 밀리는(어제 종일 일정이 오늘로 새어 들어오는) 문제가 생기므로 직접 분해해 로컬 기준으로 만든다.
-export function parseAllDayDate(s: string): Date {
+function parseAllDayDate(s: string): Date {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
   if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
   return new Date(s)
@@ -18,7 +18,7 @@ export function parseAllDayDate(s: string): Date {
 // 종일 이벤트: Google의 종료일(end.date)은 배타적(exclusive)이므로 반열린 구간
 //   [시작일, 종료일)로 판정한다. 그래야 여러 날에 걸친 종일 일정이 중간 날에도 보인다.
 // 시간 지정 이벤트: 시작 시각이 같은 날인지로 판정한다.
-export function occursOnDay(event: CalendarEvent, day: Date): boolean {
+function occursOnDay(event: CalendarEvent, day: Date): boolean {
   if (!event.start) return false
   const d = startOfDay(day)
   if (event.allDay) {
@@ -32,7 +32,7 @@ export function occursOnDay(event: CalendarEvent, day: Date): boolean {
 // 중복 제거 키
 // - 종일: 동일 제목이 같은 날을 덮으면 1개로 합침 (서로 다른 다중일 범위로 겹치는 경우까지 처리)
 // - 시간 지정: 제목+시작+종료가 모두 같을 때만 중복으로 본다
-export function eventDedupKey(e: CalendarEvent): string {
+function eventDedupKey(e: CalendarEvent): string {
   return e.allDay ? `ad|${e.summary}` : `t|${e.summary}|${e.start}|${e.end}`
 }
 

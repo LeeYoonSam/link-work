@@ -4,7 +4,7 @@ import MarkdownContent from '../memo/MarkdownContent'
 import { formatUtcDbTime } from '../../utils/date'
 import { SectionTitle, StarIcon } from '../ui'
 
-// 홈의 중요 메모 구역 (부록 M.11 Q1). 중요 메모만 읽는다 (Q5).
+// 오늘 화면 아래의 중요 메모 구역 (docs/ASSISTANT.md §11.3). 중요 메모만 읽는다.
 // 중요 메모가 0건이면 아무것도 그리지 않는다
 export function HomeMemos(): React.ReactNode {
   const { importantMemos, fetchImportantMemos } = useMemoStore()
@@ -29,7 +29,7 @@ export function HomeMemos(): React.ReactNode {
             <div className="break-words">
               <MarkdownContent content={memo.content} compact />
             </div>
-            {/* 오늘 화면은 ISO 날짜를 보이지 않는다 (A53). 그래서 'M/d HH:mm' 으로 줄인다 */}
+            {/* 오늘 화면은 ISO 날짜를 보이지 않는다. 그래서 'M/d HH:mm' 으로 줄인다 */}
             <div className="text-xs text-gray-500 mt-2 tabular-nums">
               {formatUtcDbTime(memo.created_at, 'M/d HH:mm')}
             </div>

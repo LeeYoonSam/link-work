@@ -47,7 +47,7 @@ interface WhisperVadModuleLike {
   }): Promise<WhisperVadContextLike>
 }
 
-// silero VAD 검출 파라미터.
+// silero VAD 검출 파라미터. threshold는 호출측이 opts.threshold로 덮어쓸 수 있다(컷편집 전용 낮은 값).
 const VAD_PARAMS: VadDetectOptions = {
   threshold: 0.5,
   minSpeechDurationMs: 250,
@@ -101,7 +101,7 @@ function vadCrashGuardPath(): string {
   return join(modelsDir(), '.vad-crash-guard')
 }
 
-export function writeVadCrashGuard(): void {
+function writeVadCrashGuard(): void {
   try {
     // 네이티브 abort 직전 확실히 디스크에 남도록 동기 기록(타임스탬프).
     writeFileSync(vadCrashGuardPath(), new Date().toISOString())
@@ -110,7 +110,7 @@ export function writeVadCrashGuard(): void {
   }
 }
 
-export function clearVadCrashGuard(): void {
+function clearVadCrashGuard(): void {
   try {
     unlinkSync(vadCrashGuardPath())
   } catch {
@@ -137,7 +137,7 @@ export function consumeVadCrashGuard(): boolean {
   return existed
 }
 
-export interface VadDetectResult {
+interface VadDetectResult {
   // 절대시간 발화 구간(ms). vadSegmentsToRegions까지만 적용된 상태로, 전사 청크로 뭉치는
   // coalesceRegions는 호출측(whisper-adapter)이 필요할 때 적용한다.
   regions: Region[]
@@ -145,11 +145,22 @@ export interface VadDetectResult {
   audioMs: number
 }
 
-export interface VadDetectOpts {
+interface VadDetectOpts {
   signal?: AbortSignal
   onMessage?: (m: string) => void
   // 0~1. 네이티브가 중간 진행을 알려주지 않으므로 경과 시간 기반 추정치다(estimateVadProgress).
   onProgress?: (p: number) => void
+  // 발화 확률 임계값(0~1, 경계 제외). 미지정·범위 밖이면 기본값(VAD_PARAMS.threshold = 0.5).
+  // 다른 VAD 파라미터는 호출측이 바꿀 수 없다.
+  threshold?: number
+}
+
+// 유효한 임계값이면 그대로, 아니면 기본값.
+function resolveThreshold(threshold: number | undefined): number | undefined {
+  if (typeof threshold === 'number' && Number.isFinite(threshold) && threshold > 0 && threshold < 1) {
+    return threshold
+  }
+  return VAD_PARAMS.threshold
 }
 
 /**
@@ -205,7 +216,10 @@ export async function detectSpeechRegions(
 
     let segments: VadSegmentCs[]
     try {
-      segments = await vadCtx.detectSpeechFile(audioPath, VAD_PARAMS)
+      segments = await vadCtx.detectSpeechFile(audioPath, {
+        ...VAD_PARAMS,
+        threshold: resolveThreshold(opts.threshold)
+      })
     } finally {
       clearInterval(ticker)
       await vadCtx.release().catch(() => {})

@@ -8,6 +8,7 @@ import type {
   AiStreamEvent,
   AiWriteMode
 } from '../types'
+import { useNavigationStore } from './navigationStore'
 
 // main 의 모델 선택지를 받기 전에 보여 줄 폴백 목록이다.
 // main 이 받은 목록으로 교체하므로, 버전 표기가 바뀌어도 이 목록은 고치지 않는다.
@@ -16,6 +17,14 @@ export const FALLBACK_MODEL_OPTIONS: AiChatModelOption[] = [
   { value: 'opus', label: 'Opus', description: '정확, 균형' },
   { value: 'haiku', label: 'Haiku', description: '가장 빠름' }
 ]
+
+interface StartChatOptions {
+  // 새 채팅의 쓰기 모드. 지정하면 전송 전에 바꾼다. 실패하면 전송하지 않는다
+  writeMode?: AiWriteMode
+}
+
+// startChatWith 실행 중 잠금. 연타로 채팅이 2개 생기지 않게 한다
+let startingChat = false
 
 interface AiChatStore {
   chats: AiChat[]
@@ -39,7 +48,8 @@ interface AiChatStore {
   closeChat: () => void
   sendMessage: (text: string, attachments?: AiAttachmentInput[]) => Promise<void>
   cancelStream: () => Promise<void>
-  setWriteMode: (chatId: number, mode: AiWriteMode) => Promise<void>
+  // 성공 여부를 돌려준다 (startChatWith 가 실패 시 전송을 멈춘다)
+  setWriteMode: (chatId: number, mode: AiWriteMode) => Promise<boolean>
   loadModel: () => Promise<void>
   loadModelOptions: () => Promise<void>
   setModel: (model: string) => Promise<void>
@@ -47,6 +57,10 @@ interface AiChatStore {
   // 계획 승인 카드 응답. 승인하면 mode 로 쓰기 모드를 바꾸고 실행을 이어 간다
   respondPlan: (requestId: string, approved: boolean, mode?: 'auto' | 'ask') => Promise<void>
   handleStreamEvent: (event: AiStreamEvent) => void
+  // 다른 화면에서 AI 대화를 연다: 새 채팅 생성 → (writeMode 지정 시) 모드 변경 → prompt 전송 → AI 화면 이동.
+  // AI 를 쓸 수 없으면(ai:status) 전송하지 않고 AI 화면만 연다 (화면이 안내 카드를 보인다).
+  // 실패는 throw 하지 않고 error 상태로 남긴다. 진행 중에 다시 부르면 화면 이동만 한다
+  startChatWith: (prompt: string, options?: StartChatOptions) => Promise<void>
 }
 
 export const useAiChatStore = create<AiChatStore>((set, get) => ({
@@ -165,6 +179,7 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
         chats: s.chats.map((c) => (c.id === chatId ? { ...c, write_mode: mode } : c))
       }))
     }
+    return result.success === true
   },
 
   loadModel: async () => {
@@ -241,6 +256,63 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
     }
   },
 
+  startChatWith: async (prompt, options) => {
+    const goAi = (): void => useNavigationStore.getState().setView('ai')
+    if (startingChat) {
+      goAi()
+      return
+    }
+    startingChat = true
+    try {
+      const text = prompt.trim()
+      let available = false
+      try {
+        available = (await window.api.ai.status()).available
+      } catch {
+        available = false
+      }
+      if (!available) {
+        // 채팅을 닫아야 AI 화면이 사용 불가 안내 카드를 보인다
+        get().closeChat()
+        return
+      }
+      if (!text) return
+
+      let chatId: number
+      try {
+        chatId = await get().createChat()
+      } catch (e) {
+        // 채팅이 없으면 AI 화면 빈 화면이 error 를 보인다
+        set({ error: `새 대화를 만들지 못했습니다: ${errorText(e)}` })
+        return
+      }
+
+      const mode = options?.writeMode
+      if (mode) {
+        let ok = false
+        try {
+          ok = await get().setWriteMode(chatId, mode)
+        } catch {
+          ok = false
+        }
+        if (!ok) {
+          set({ error: '대화의 쓰기 모드를 바꾸지 못해 메시지를 보내지 않았습니다. 모드를 확인한 뒤 직접 보내 주세요.' })
+          return
+        }
+      }
+
+      try {
+        await get().sendMessage(text)
+      } catch (e) {
+        set({ isStreaming: false, error: `메시지 전송에 실패했습니다: ${errorText(e)}` })
+      }
+    } finally {
+      startingChat = false
+      // 실패해도 AI 화면을 연다. 오류는 AI 화면(채팅 안 또는 빈 화면)에 보인다
+      goAi()
+    }
+  },
+
   handleStreamEvent: (event) => {
     const { currentChatId } = get()
     // 모드 변경은 채팅 목록 상태라서 보고 있지 않은 채팅에도 적용한다
@@ -290,3 +362,16 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
     }
   }
 }))
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+// AI 응답 스트림(ai:stream)을 앱 수준에서 1번 구독한다.
+// AI 화면 마운트 전에 보낸 초기 이벤트(start·text)를 놓치지 않기 위해서다.
+// App 메인 창이 설치하고 해제 함수를 돌려준다. 화면별 구독을 두지 않는다 (중복 반영 방지)
+export function installAiStreamSync(): () => void {
+  const api = window.api?.ai
+  if (!api?.onStream) return () => {}
+  return api.onStream((event) => useAiChatStore.getState().handleStreamEvent(event as AiStreamEvent))
+}

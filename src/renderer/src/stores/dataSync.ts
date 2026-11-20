@@ -5,16 +5,16 @@
 import { useNavigationStore } from './navigationStore'
 import { useTodoStore } from './todoStore'
 import { useMemoStore } from './memoStore'
-import { useVariableStore } from './variableStore'
 import { useAssistantStore } from './assistantStore'
 import { useMorningSyncStore } from './morningSyncStore'
+import { useTodayStore } from './todayStore'
 
 // focus 재로드 최소 간격이다
-export const FOCUS_RELOAD_MS = 30_000
+const FOCUS_RELOAD_MS = 30_000
 
 // 배경 갱신이다. 실패해도 throw 하지 않는다.
 // entity 는 ai:dataChanged 가 보내는 값이다. 모르는 값이면 아무것도 하지 않는다
-export async function refreshEntity(entity: string): Promise<void> {
+async function refreshEntity(entity: string): Promise<void> {
   const jobs: Promise<unknown>[] = []
   const add = (job: () => Promise<unknown> | unknown): void => {
     try {
@@ -37,19 +37,18 @@ export async function refreshEntity(entity: string): Promise<void> {
     add(() => memoStore.fetchCategories())
     // 홈의 중요 메모 섹션이 이 목록을 그린다
     add(() => memoStore.fetchImportantMemos())
-  } else if (entity === 'variable') {
-    add(() => useVariableStore.getState().fetchVariables())
   } else if (entity === 'sync_status') {
-    // 아침 자동 동기화가 끝났다. 배지·상태 줄과 오늘 화면 변경 내역을 다시 읽는다
+    // 아침 자동 동기화가 끝났다. 배지·상태 줄을 다시 읽는다.
+    // 릴리스가 바뀌었을 수 있어 오늘 대시보드가 열려 있으면 다시 읽는다(캐시 허용)
     add(() => useMorningSyncStore.getState().load())
-    add(() => useAssistantStore.getState().load())
+    if (useNavigationStore.getState().view === 'today') add(() => useTodayStore.getState().load())
   }
 
   await Promise.allSettled(jobs)
 }
 
-// focus 때 다시 읽는다. 오늘 화면은 열려 있을 때만 다시 읽는다.
-// 이유: getToday 는 수집을 부를 수 있어 목록 조회보다 무겁다
+// focus 때 다시 읽는다. 오늘 대시보드는 열려 있을 때만 다시 읽는다.
+// 이유: 대시보드는 캘린더·Jira·릴리스를 한꺼번에 읽어 목록 조회보다 무겁다
 async function reloadOnFocus(): Promise<void> {
   const view = useNavigationStore.getState().view
   const jobs: Promise<void>[] = [
@@ -60,8 +59,9 @@ async function reloadOnFocus(): Promise<void> {
       .catch(() => undefined)
   ]
   if (view === 'today') {
+    // 캐시를 허용한다. 강제 갱신은 화면의 ↻ 만 한다
     jobs.push(
-      useAssistantStore
+      useTodayStore
         .getState()
         .load()
         .catch(() => undefined)
@@ -76,7 +76,7 @@ async function reloadOnFocus(): Promise<void> {
   await Promise.allSettled(jobs)
 }
 
-export interface DataSyncDeps {
+interface DataSyncDeps {
   now?: () => number
   target?: Pick<Window, 'addEventListener' | 'removeEventListener'>
 }
@@ -98,7 +98,7 @@ export function installDataSync(deps: DataSyncDeps = {}): () => void {
     )
   }
 
-  // reason 과 무관하게 다시 읽는다. 'meeting' 도 같다 (부록 I.10.3)
+  // reason 과 무관하게 다시 읽는다. 'meeting' 도 같다 (docs/ASSISTANT.md §6.2)
   const assistant = api?.assistant
   if (assistant && typeof assistant.onChanged === 'function') {
     offs.push(

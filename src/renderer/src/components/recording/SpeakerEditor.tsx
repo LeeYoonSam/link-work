@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
 import type { Attendee, MeetingKind, MeetingSpeaker } from '../../types'
-import { IconButton, TrashIcon } from '../ui'
 
 interface Props {
   speakers: MeetingSpeaker[]

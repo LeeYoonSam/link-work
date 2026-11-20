@@ -18,11 +18,11 @@ function RailLeading({ item }: { item: RailItem }): React.ReactNode {
   )
 }
 
-export function railItemLabel(item: RailItem): string {
+function railItemLabel(item: RailItem): string {
   return item.count === null ? item.label : `${item.label} ${item.count}`
 }
 
-export interface MemoRailProps {
+interface MemoRailProps {
   items: RailItem[]
   selected: RailKey
   // 검색 중이면 레일은 범위를 정하지 않는다. 흐리게 보여 "지금은 전체 검색"임을 알린다

@@ -74,19 +74,21 @@ export const GROUP_FILE_DIRS: Record<BackupGroupId, readonly BackupFileDir[]> = 
  * - app_settings: 키 단위로 work/settings/secret 에 나뉜다(classifySettingKey).
  * - auth_tokens: 기기 종속 시크릿. 백업에서 늘 뺀다.
  * - jira_board_issues·jira_board_sync: 프로젝트 보드 캐시(CACHE_TABLES). Jira에서 다시 받는다.
+ * - jira_epic_summaries: 보드 캐시에서 만든 에픽 AI 요약(CACHE_TABLES). 버튼으로 다시 만든다.
  */
 export const NON_GROUP_TABLES: readonly string[] = [
   'app_settings',
   'auth_tokens',
   'jira_board_issues',
-  'jira_board_sync'
+  'jira_board_sync',
+  'jira_epic_summaries'
 ]
 
 /**
  * 원본에서 다시 받을 수 있는 캐시 테이블. 백업 사본에서 행을 지운다(테이블은 남긴다).
  * 복원 뒤 캐시가 비어 있으면 화면이 전체 동기화를 한다.
  */
-export const CACHE_TABLES: readonly string[] = ['jira_board_issues', 'jira_board_sync']
+export const CACHE_TABLES: readonly string[] = ['jira_board_issues', 'jira_board_sync', 'jira_epic_summaries']
 
 /** 부분 백업에서 빠진 부모 테이블의 (id, created_at) 만 담는 테이블. 내용은 넣지 않는다. */
 export const BACKUP_REFS_TABLE = 'linkwork_backup_refs'
@@ -100,19 +102,29 @@ export const SECRET_TABLES: readonly string[] = ['auth_tokens']
  * - `jira_api_token`: services/jira.ts (TOKEN_KEY, encrypt로 저장)
  * - `google_client_secret`: services/google-auth.ts saveSettings (encrypt로 저장 — 새 PC에서 다시 입력)
  * - `bitbucket_api_token`: services/bitbucket.ts (TOKEN_KEY, encrypt로 저장)
+ * - 기기 전용 키(DEVICE_ONLY_SETTING_KEYS)도 여기에 포함한다 — 연동 자격은 아니지만 다른 PC 로 옮기면 안 된다.
  * google_client_id, jira_site_url 같은 평문 설정은 기기 종속이 아니라 **남긴다**.
  */
 export const SECRET_SETTING_KEYS: readonly string[] = [
   'notion_token',
   'jira_api_token',
   'google_client_secret',
-  'bitbucket_api_token'
+  'bitbucket_api_token',
+  'mobile_server_token',
+  'mobile_server_enabled'
 ]
 
-/** work 그룹에 속하는 app_settings 키. 옛 Jira 싱크업이 남긴 값이라 백업·복원 대상으로 유지한다 */
-export const WORK_SETTING_KEYS: readonly string[] = ['project_sync_created_keys']
+/**
+ * 연동 자격이 아닌 기기 전용 키(SECRET_SETTING_KEYS 의 부분집합). 백업 사본에서 지우고 복원 때 가져오지 않는다.
+ * - `mobile_server_token`: services/mobile/settings.ts 페어링 토큰(safeStorage 암호문)
+ * - `mobile_server_enabled`: 휴대폰 열람 서버 켜짐 여부. 새 PC 로 복원했을 때 서버가 저절로 켜지면 안 된다
+ */
+export const DEVICE_ONLY_SETTING_KEYS: readonly string[] = ['mobile_server_token', 'mobile_server_enabled']
 
-export type SettingKeyClass = 'work' | 'settings' | 'secret'
+/** work 그룹에 속하는 app_settings 키. 옛 Jira 싱크업이 남긴 값이라 백업·복원 대상으로 유지한다 */
+const WORK_SETTING_KEYS: readonly string[] = ['project_sync_created_keys']
+
+type SettingKeyClass = 'work' | 'settings' | 'secret'
 
 /** app_settings 키를 분류한다. 분류되지 않은 키는 모두 settings 다(기본값). */
 export function classifySettingKey(key: string): SettingKeyClass {
@@ -157,7 +169,7 @@ export function groupOfTable(table: string): BackupGroupId | null {
  *   활성 계획에서 일치하지 않는 건수만 경고로 돌려준다.
  * X6(activity_log.entity_id)·X7(ai 본문 링크)·X8(외부 id)은 처리하지 않는다.
  */
-export interface CrossGroupRef {
+interface CrossGroupRef {
   id: 'X1' | 'X2' | 'X3' | 'X4' | 'X5'
   kind: 'fk' | 'json-todo' | 'candidate'
   childTable: string
@@ -187,7 +199,7 @@ export const REF_PARENT_TABLES: readonly string[] = Array.from(
  * - 다르면 식별 키를 백업 값으로 바꾸고 현재 자격(credentialKeys·credentialTables)을 지운다 + "다시 연결" 경고.
  * jira_token_expires_at·jira_account_name 은 평문이지만 현재 토큰을 설명하는 값이라 자격 쪽이다.
  */
-export interface CredentialBundle {
+interface CredentialBundle {
   id: 'jira' | 'bitbucket' | 'google' | 'notion'
   label: string
   identityKeys: readonly string[]
@@ -201,8 +213,8 @@ export const CREDENTIAL_BUNDLES: readonly CredentialBundle[] = [
     label: 'Jira',
     identityKeys: ['jira_site_url', 'jira_email'],
     credentialKeys: ['jira_api_token', 'jira_token_expires_at', 'jira_account_name'],
-    // 프로젝트 보드 캐시는 계정마다 볼 수 있는 이슈가 다르다. 계정이 바뀌면 함께 지운다
-    credentialTables: ['jira_board_issues', 'jira_board_sync']
+    // 프로젝트 보드 캐시와 그 AI 요약은 계정마다 볼 수 있는 이슈가 다르다. 계정이 바뀌면 함께 지운다
+    credentialTables: ['jira_board_issues', 'jira_board_sync', 'jira_epic_summaries']
   },
   {
     id: 'bitbucket',

@@ -75,7 +75,7 @@ export default function Sidebar(): React.ReactNode {
         ))}
       </nav>
 
-      {/* 하루에 몇 번 쓰지 않는 화면이라 nav 목록에 섞지 않고 하단에 따로 둔다. 백업·복원은 설정 > 데이터로 옮겼다 */}
+      {/* 하루에 몇 번 쓰지 않는 화면이라 nav 목록에 섞지 않고 하단에 따로 둔다 */}
       <div className="mt-auto border-t border-gray-700">
         {NAV_FOOTER.map((item) => (
           <button

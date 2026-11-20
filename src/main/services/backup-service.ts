@@ -50,17 +50,13 @@ import {
   tableExists
 } from './backup-restore-db'
 
-// 시크릿 정의는 backup-groups.ts로 옮겼다. 기존 import 경로를 지키려고 같은 이름으로 다시 내보낸다.
-export { SECRET_SETTING_KEYS, SECRET_TABLES }
-export type { BackupGroupId }
-
 /**
  * 형식 v2: manifest.groups가 생겼다(선택 백업). v1은 언제나 전체 백업이었다.
  * **그룹을 추가할 때는 이 값을 반드시 올린다** — 구버전 앱이 모르는 그룹을 조용히 버리지 않도록.
  */
 export const BACKUP_FORMAT_VERSION = 2
-export const BACKUP_FILE_PREFIX = 'LinkWork-backup-'
-export const BACKUP_FILE_EXTENSION = '.zip'
+const BACKUP_FILE_PREFIX = 'LinkWork-backup-'
+const BACKUP_FILE_EXTENSION = '.zip'
 export const MANIFEST_ENTRY = 'manifest.json'
 export const DB_FILE = 'linkwork.db'
 
@@ -73,7 +69,7 @@ const FILE_GROUPS: ReadonlyArray<{ dir: FileDir; key: 'recordings' | 'attachment
 ]
 
 /** 그룹 목록이 담는 파일 폴더(중복 없이) */
-export function fileDirsForGroups(groups: readonly BackupGroupId[]): FileDir[] {
+function fileDirsForGroups(groups: readonly BackupGroupId[]): FileDir[] {
   const dirs = new Set<FileDir>()
   for (const g of groups) for (const d of GROUP_FILE_DIRS[g]) dirs.add(d)
   return FILE_GROUPS.map((f) => f.dir).filter((d) => dirs.has(d))
@@ -103,7 +99,7 @@ export function parseGroupsArg(
  */
 const STORED_EXTENSIONS = ['.wav', '.ogg', '.webm', '.mp3', '.m4a', '.png', '.jpg', '.jpeg', '.gif', '.webp']
 
-export interface BackupManifest {
+interface BackupManifest {
   format: 'linkwork-backup'
   formatVersion: number
   appVersion: string
@@ -134,7 +130,7 @@ export interface BackupPaths {
   dbPath: string
 }
 
-export interface BackupSummary {
+interface BackupSummary {
   /** 백업 .zip 파일의 전체 경로 */
   path: string
   manifest: BackupManifest
@@ -153,14 +149,14 @@ export interface DatabaseLike {
   exec(sql: string): unknown
 }
 
-export interface FileCopyPlanEntry {
+interface FileCopyPlanEntry {
   src: string
   /** 백업 안에서의 상대 경로 (예: 'recordings/12.wav') */
   rel: string
   bytes: number
 }
 
-export interface ExportOptions {
+interface ExportOptions {
   paths?: BackupPaths
   onProgress?: (p: BackupProgress) => void
   /** 라이브 DB 핸들. 생략하면 db/database의 getDatabase()를 동적으로 가져온다(테스트 주입용). */
@@ -172,7 +168,7 @@ export interface ExportOptions {
 }
 
 /** 백업 화면에 그룹별로 보여 주는 현재 건수와 파일 용량 */
-export interface BackupGroupStat {
+interface BackupGroupStat {
   id: BackupGroupId
   /**
    * 그룹 테이블별 행 수. settings 그룹은 테이블이 없어서 `app_settings` 하나로,
@@ -182,7 +178,7 @@ export interface BackupGroupStat {
   files: { count: number; bytes: number }
 }
 
-export interface ImportResult {
+interface ImportResult {
   restoredDbBackupPath: string
   /** 실제로 복원한 그룹 */
   groups: BackupGroupId[]
@@ -190,7 +186,7 @@ export interface ImportResult {
   warnings: string[]
 }
 
-export interface ImportOptions {
+interface ImportOptions {
   /** 복원할 그룹. 생략하면 백업에 든 그룹 전부. manifest.groups의 부분집합이어야 한다. */
   groups?: readonly BackupGroupId[]
   paths?: BackupPaths
@@ -209,7 +205,7 @@ export interface ImportOptions {
 // ── 순수 함수 ──
 
 /** 'YYYYMMDD-HHmmss' (로컬 시각) */
-export function backupStamp(now: Date = new Date()): string {
+function backupStamp(now: Date = new Date()): string {
   const p = (n: number, w = 2): string => String(n).padStart(w, '0')
   return (
     `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}` +
@@ -432,7 +428,7 @@ export function stripSecrets(db: DatabaseLike): string[] {
 }
 
 /** sqlite_master를 돌며 테이블별 행 수를 센다 (manifest.db.tables). */
-export function readTableCounts(db: DatabaseLike): Record<string, number> {
+function readTableCounts(db: DatabaseLike): Record<string, number> {
   const tables = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
     .all() as { name: string }[]
@@ -522,7 +518,7 @@ export function stripCaches(db: DatabaseLike): void {
  * WAL이 켜져 있어도 안전하다(파일 복사와 달리 -wal을 신경 쓸 필요가 없다).
  * groups를 주면 빠지는 그룹의 행·설정 키를 사본에서 지운다(스키마는 남긴다).
  */
-export function snapshotDatabase(
+function snapshotDatabase(
   destPath: string,
   sourceDb: DatabaseLike,
   groups: readonly BackupGroupId[] = BACKUP_GROUP_IDS
@@ -949,7 +945,7 @@ async function copyFilesWithBackup(
  *   4) 커밋 뒤 선택 그룹의 파일을 복사(같은 이름은 <dir>.bak-<시각>/로 먼저 옮긴다)
  * DB를 다시 열지 않는다 — 호출측이 app.relaunch()로 재시작한다.
  */
-export async function restoreFromFolder(dir: string, opts: ImportOptions): Promise<ImportResult> {
+async function restoreFromFolder(dir: string, opts: ImportOptions): Promise<ImportResult> {
   const paths = opts.paths ?? (await resolveDefaultPaths())
   const report = (p: BackupProgress): void => opts.onProgress?.(p)
 

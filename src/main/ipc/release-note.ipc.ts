@@ -26,11 +26,7 @@ function toMessage(err: unknown): string {
 }
 
 export function registerReleaseNoteIpc(): void {
-  // deployVersion을 주면 그 배포 버전과 이름이 같은 릴리스만 — 프로젝트 상세 화면이 쓴다.
-  // 릴리스 노트는 프로젝트와 저장된 연결이 없어 이름 대조가 유일한 통로다.
-  ipcMain.handle('releaseNote:list', (_event, deployVersion?: string) =>
-    listReleaseNotes(deployVersion)
-  )
+  ipcMain.handle('releaseNote:list', () => listReleaseNotes())
 
   ipcMain.handle('releaseNote:get', (_event, id: number) => getReleaseNote(id))
 

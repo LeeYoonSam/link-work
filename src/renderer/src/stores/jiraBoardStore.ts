@@ -6,9 +6,13 @@ import type {
   JiraEpicAiSummary
 } from '../types'
 import {
+  CLOSED_SECTION_ID,
   DEFAULT_FILTER,
   EMPTY_FILTER,
   ancestorIds,
+  doneFoldId,
+  flattenVisible,
+  shouldFoldDone,
   buildIssueForest,
   filterForest,
   findIssue,
@@ -283,7 +287,14 @@ export const useJiraBoardStore = create<JiraBoardState>((set, get) => ({
       if (!findIssue(filterForest(forest, next, my), key)) next = { ...EMPTY_FILTER, showPastDone: next.showPastDone }
     }
     const open = { ...expanded }
-    for (const id of ancestorIds(forest, key)) open[id] = true
+    const ancestors = ancestorIds(forest, key)
+    for (const id of ancestors) open[id] = true
+    // 조상만 펼쳐도 닫힘 묶음·닫힌 그룹 섹션 속에 숨어 있으면 그것도 연다. 보이면 사용자가 접어 둔 묶음은 그대로 둔다
+    const rows = flattenVisible(filterForest(forest, next, my), open, { foldDone: shouldFoldDone(next) })
+    if (!rows.some((r) => r.id === key)) {
+      for (const id of ancestors) open[doneFoldId(id)] = true
+      open[CLOSED_SECTION_ID] = true
+    }
     const changed = next !== filter
     set({
       filter: next,

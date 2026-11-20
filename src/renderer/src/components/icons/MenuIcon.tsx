@@ -7,7 +7,6 @@ export type MenuIconName =
   | 'variables'
   | 'memos'
   | 'calendar'
-  | 'reports'
   | 'ai'
   | 'recordings'
   | 'notes'
@@ -107,16 +106,6 @@ const PATHS: Record<MenuIconName, React.ReactNode> = {
         <circle cx="16" cy="14.5" r="1.4" />
         <circle cx="8" cy="18.2" r="1.4" />
         <circle cx="12" cy="18.2" r="1.4" />
-      </g>
-    </>
-  ),
-  reports: (
-    <>
-      <path d="M3 3v16a2 2 0 0 0 2 2h16" fill="none" stroke={INK} strokeWidth="2.2" strokeLinecap="round" />
-      <g stroke={INK} strokeWidth="1.8" strokeLinejoin="round">
-        <rect x="6.8" y="12" width="3.6" height="6" rx="1.2" fill="#FFD43B" />
-        <rect x="11.9" y="8.5" width="3.6" height="9.5" rx="1.2" fill="#63E6BE" />
-        <rect x="17" y="5" width="3.6" height="13" rx="1.2" fill="#4DABF7" />
       </g>
     </>
   ),

@@ -60,6 +60,13 @@ describe('navConfig', () => {
     expect(normalizeView('dashboard')).toBe('today')
   })
 
+  it('없앤 주간 보고(reports)는 화면 ID·메뉴에 없고 today 로 옮긴다', () => {
+    expect((VIEW_IDS as readonly string[]).includes('reports')).toBe(false)
+    const ids = [...NAV_GROUPS.flatMap((g) => g.items.map((i) => i.id)), ...NAV_FOOTER.map((i) => i.id)]
+    expect(ids as string[]).not.toContain('reports')
+    expect(normalizeView('reports')).toBe('today')
+  })
+
   it('normalizeView 는 모르는 값이면 null 이다', () => {
     for (const v of ['', 'auto', 'Today', 'project', 'unknown', null, undefined, 1, {}]) {
       expect(normalizeView(v)).toBeNull()

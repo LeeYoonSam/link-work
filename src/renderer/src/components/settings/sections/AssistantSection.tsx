@@ -25,7 +25,7 @@ const inputClass =
 const SAVED_FLASH_MS = 1500
 
 /** null 이면 성공, 문자열이면 사용자에게 보일 오류 문구 */
-export type SaveAssistantPatch = (patch: Partial<AssistantSettings>) => Promise<string | null>
+type SaveAssistantPatch = (patch: Partial<AssistantSettings>) => Promise<string | null>
 
 /** 비서 설정을 읽고 부분 patch 로 저장한다. 저장하면 오늘 화면이 들고 있는 설정도 맞춘다 */
 export function useAssistantSettings(): {
@@ -139,10 +139,10 @@ function Group({ title, children }: { title: string; children: ReactNode }): Rea
   )
 }
 
-export type AssistantFieldsGroup = 'assistant' | 'ai'
+type AssistantFieldsGroup = 'assistant' | 'ai'
 
 /**
- * 비서 설정 칸. group='assistant' 는 동작·시간·알림과 주기 3그룹, group='ai' 는 AI 브리핑과 비서 요약 모델.
+ * 비서 설정 칸. group='assistant' 는 동작·시간·알림 3그룹, group='ai' 는 AI 브리핑과 비서 요약 모델.
  * settings 가 null 이면 자리 표시 값으로 비활성 상태를 그린다.
  */
 export function AssistantSettingsFields({
@@ -236,7 +236,7 @@ export function AssistantSettingsFields({
     />
   )
 
-  const timeInput = (key: 'dayRollover' | 'workEnd' | 'morningSyncTime', extraDisabled = false): ReactNode => (
+  const timeInput = (key: 'dayRollover' | 'morningSyncTime', extraDisabled = false): ReactNode => (
     <input
       type="time"
       value={form[key]}
@@ -247,11 +247,7 @@ export function AssistantSettingsFields({
     />
   )
 
-  const numberInput = (
-    key: 'planSize' | 'refreshCalendarMin' | 'refreshJiraMin' | 'meetingLeadMin',
-    min: number,
-    max: number
-  ): ReactNode => (
+  const numberInput = (key: 'meetingLeadMin', min: number, max: number): ReactNode => (
     <input
       type="number"
       min={min}
@@ -273,8 +269,8 @@ export function AssistantSettingsFields({
   if (group === 'ai') {
     return (
       <div className="space-y-2">
-        {toggle('llmEnabled', 'AI 브리핑', '끄면 규칙 기반 브리핑만 만듭니다.')}
-        <Field label="비서 요약 모델" hint="오늘 화면의 브리핑과 회의 전 브리핑을 만드는 모델입니다" saved={flash === 'llmModel'}>
+        {toggle('llmEnabled', 'AI 브리핑', '끄면 회의 전 브리핑을 규칙으로만 만듭니다.')}
+        <Field label="비서 요약 모델" hint="회의 전 브리핑의 AI 본문을 만드는 모델입니다" saved={flash === 'llmModel'}>
           <select
             value={form.llmModel}
             disabled={disabled || !form.llmEnabled}
@@ -297,11 +293,6 @@ export function AssistantSettingsFields({
       <Group title="동작">
         <div className="space-y-1 mb-3">
           {toggle('enabled', '비서 사용')}
-          {toggle(
-            'completeOriginOnDone',
-            '완료하면 원본도 완료',
-            '오늘 할 일을 완료로 바꾸면 원본 TODO·작업도 완료로 바꿉니다. Jira 이슈는 바꾸지 않습니다'
-          )}
           {toggle('openAtLogin', '로그인 시 LinkWork 실행')}
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -319,9 +310,6 @@ export function AssistantSettingsFields({
               ))}
             </select>
           </Field>
-          <Field label="하루 계획 항목 수" hint="1~20" saved={flash === 'planSize'}>
-            {numberInput('planSize', 1, 20)}
-          </Field>
         </div>
       </Group>
 
@@ -329,9 +317,6 @@ export function AssistantSettingsFields({
         <div className="grid grid-cols-2 gap-3 mb-2">
           <Field label="날짜 경계" hint="이 시각 전까지는 전날로 봅니다" saved={flash === 'dayRollover'}>
             {timeInput('dayRollover')}
-          </Field>
-          <Field label="근무 종료 시각" saved={flash === 'workEnd'}>
-            {timeInput('workEnd')}
           </Field>
         </div>
         {toggle(
@@ -350,10 +335,8 @@ export function AssistantSettingsFields({
         </div>
       </Group>
 
-      <Group title="알림과 주기">
+      <Group title="알림">
         <div className="space-y-1 mb-3">
-          {toggle('startNudge', '시작 알림', "그날 첫 활동 때 '하루 시작'을 권하는 알림을 1회 보냅니다.")}
-          {toggle('refreshNotify', '최신화 알림', '지금·다음 블록이 바뀌거나 긴급한 일이 들어오면 알립니다')}
           {toggle(
             'meetingBriefingEnabled',
             '회의 전 브리핑',
@@ -367,23 +350,6 @@ export function AssistantSettingsFields({
             saved={flash === 'meetingLeadMin'}
           >
             {numberInput('meetingLeadMin', 1, 120)}
-          </Field>
-          <Field label="Jira 범위" saved={flash === 'jiraScope'}>
-            <select
-              value={form.jiraScope}
-              disabled={disabled}
-              onChange={(e) => setNow('jiraScope', e.target.value as FormSettings['jiraScope'])}
-              className={inputClass}
-            >
-              <option value="all">전체 프로젝트</option>
-              <option value="default_project">기본 프로젝트만</option>
-            </select>
-          </Field>
-          <Field label="캘린더 확인 주기 (분)" hint="1~240분. 권장 5분" saved={flash === 'refreshCalendarMin'}>
-            {numberInput('refreshCalendarMin', 1, 240)}
-          </Field>
-          <Field label="Jira 확인 주기 (분)" hint="1~240분. 기본 15분" saved={flash === 'refreshJiraMin'}>
-            {numberInput('refreshJiraMin', 1, 240)}
           </Field>
         </div>
       </Group>

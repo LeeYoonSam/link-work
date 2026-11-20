@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { format } from 'date-fns'
 import type { Memo } from '../../types'
 
-// 홈('오늘' 화면)의 중요 메모 구역을 마크업으로 잠근다 (메뉴 통합 D1).
+// 홈('오늘' 화면)의 중요 메모 구역을 마크업으로 잠근다.
 // zustand v5 는 서버 렌더에서 초기 상태만 돌려준다. 그래서 스토어 훅을 모킹한다.
 // 자동 클릭이 불가해 renderToStaticMarkup 으로 판정한다.
 
@@ -35,7 +35,7 @@ beforeEach(() => {
 })
 
 describe('HomeMemos 중요 메모', () => {
-  it('중요 메모가 있으면 제목과 본문을 보인다. 날짜는 ISO 가 아니다 (A53)', () => {
+  it('중요 메모가 있으면 제목과 본문을 보인다. 날짜는 ISO 가 아니다', () => {
     state.importantMemos = [memo({ id: 1, content: '배포 동결 기간 확인' })]
     const html = render()
     expect(html).toContain('id="home-overview"')

@@ -31,7 +31,7 @@ import {
 } from './backup-groups'
 
 /** better-sqlite3 와 테스트 shim(node:sqlite) 양쪽에 맞는 최소 인터페이스 (backup-service DatabaseLike 와 같은 모양) */
-export interface SnapshotDbLike {
+interface SnapshotDbLike {
   prepare(sql: string): {
     run(...params: unknown[]): unknown
     all(...params: unknown[]): unknown[]
@@ -39,13 +39,13 @@ export interface SnapshotDbLike {
   exec(sql: string): unknown
 }
 
-export interface MergeResult {
+interface MergeResult {
   warnings: string[]
   /** 정체성이 일치하지 않아 끊은 참조 수. 키는 'X1'~'X4' */
   nulledRefs: Record<string, number>
 }
 
-export interface MergeOptions {
+interface MergeOptions {
   /** 테스트 전용: COMMIT 직전에 불린다. 던지면 ROLLBACK 된다(M11). */
   beforeCommit?: (db: SnapshotDbLike) => void
 }

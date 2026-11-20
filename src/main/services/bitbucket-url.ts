@@ -11,7 +11,7 @@
 // 이 파서는 ?at= 값이 경로 앞부분과 맞으면 그 값을 ref 로 쓴다.
 // 그 외에는 첫 세그먼트를 ref 로 본다. 남은 모호성은 bitbucket.ts 가 404 재시도로 처리한다.
 
-export interface BitbucketLocation {
+interface BitbucketLocation {
   workspace: string
   repo: string
   ref: string | null

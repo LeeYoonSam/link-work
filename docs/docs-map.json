@@ -1,0 +1,250 @@
+{
+  "$comment": "코드 구역 → 문서 매핑. scripts/check-docs.mjs 와 Stop 훅이 읽는다. patterns 는 저장소 루트 기준 glob(** · * · {a,b}). docs 가 [] 인 구역은 해당 문서가 없다는 뜻이다. 한 파일이 여러 구역에 걸리면 모든 구역의 문서가 확인 대상이 된다. 새 문서를 만들면 여기와 CLAUDE.md 문서 목록에 추가한다.",
+  "ignore": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/__fixtures__/**",
+    "package-lock.json",
+    ".claude/worktrees/**",
+    ".claude/settings.local.json",
+    "docs/references/**",
+    "out/**",
+    "dist/**"
+  ],
+  "retiredIpcPrefixes": ["report", "today", "document", "project", "projectSync", "task"],
+  "$comment_retiredIpcPrefixes": "기능을 통째로 지워 코드에서 사라진 IPC 네임스페이스. 문서에 이 접두사의 `접두사:이름` 토큰이 남아 있으면 오류다(check:docs (b)). git 이력의 src/main·src/preload 채널에서 뽑았다",
+  "areas": [
+    {
+      "name": "AI 대화",
+      "patterns": [
+        "src/main/services/ai-{agent,tools,write-tools,assistant-tools,attachments,audit,model}.ts",
+        "src/main/services/web-fetch.ts",
+        "src/main/ipc/ai.ipc.ts",
+        "src/renderer/src/components/ai/**",
+        "src/renderer/src/stores/aiChatStore.ts",
+        "src/renderer/src/stores/focusStore.ts",
+        "src/renderer/src/utils/{internalLink,openInternalLink}.ts"
+      ],
+      "docs": ["docs/AI_CHAT_ARCHITECTURE.md", "docs/AI_GUARDRAILS.md"]
+    },
+    {
+      "name": "헤드리스 LLM",
+      "patterns": ["src/main/services/ai-headless.ts"],
+      "docs": ["docs/AI_GUARDRAILS.md"]
+    },
+    {
+      "name": "외부 연동(Notion·Bitbucket)",
+      "patterns": [
+        "src/main/services/notion.ts",
+        "src/main/services/notion-markdown.ts",
+        "src/main/services/bitbucket.ts",
+        "src/main/services/bitbucket-url.ts"
+      ],
+      "docs": ["docs/AI_CHAT_ARCHITECTURE.md", "docs/AI_GUARDRAILS.md", "docs/SETTINGS.md"]
+    },
+    {
+      "name": "개인 비서·오늘 화면",
+      "patterns": [
+        "src/main/services/assistant-*.ts",
+        "src/main/ipc/assistant.ipc.ts",
+        "src/main/services/tray-widget.ts",
+        "src/main/services/notification.ts",
+        "src/renderer/src/components/today/**",
+        "src/renderer/src/components/dashboard/**",
+        "src/renderer/src/components/tray/**",
+        "src/renderer/src/stores/{assistantStore,todayStore,dataSync}.ts",
+        "src/renderer/src/utils/{startView,schedule}.ts"
+      ],
+      "docs": ["docs/ASSISTANT.md"]
+    },
+    {
+      "name": "Google 캘린더",
+      "patterns": [
+        "src/main/services/google-auth.ts",
+        "src/main/services/google-calendar.ts",
+        "src/main/ipc/calendar.ipc.ts"
+      ],
+      "docs": ["docs/SETTINGS.md", "docs/ASSISTANT.md"]
+    },
+    {
+      "name": "캘린더 화면",
+      "patterns": ["src/renderer/src/components/calendar/**", "src/renderer/src/stores/calendarStore.ts"],
+      "docs": []
+    },
+    {
+      "name": "데이터 백업",
+      "patterns": [
+        "src/main/services/backup-*.ts",
+        "src/main/ipc/backup.ipc.ts",
+        "src/renderer/src/components/layout/{backupGroups.ts,BackupModal.tsx}",
+        "src/renderer/src/components/settings/sections/DataSection.tsx",
+        "src/renderer/src/stores/backupStore.ts"
+      ],
+      "docs": ["docs/DATA_BACKUP.md"]
+    },
+    {
+      "name": "DB 스키마",
+      "$comment": "테이블을 더하거나 바꾸면 백업 그룹 표와 테이블 정의를 옮겨 실은 문서를 확인한다. ASSISTANT.md 의 비서 테이블은 assistant-schema.ts 가 정의하므로 비서 구역에서 걸린다",
+      "patterns": ["src/main/db/schema.ts"],
+      "docs": ["docs/DATA_BACKUP.md", "docs/MEETING_RECORDING.md", "docs/PROJECT_BOARD.md", "docs/RELEASE_NOTES.md"]
+    },
+    {
+      "name": "DB 커넥션",
+      "$comment": "AI 읽기 전용 커넥션 규칙",
+      "patterns": ["src/main/db/database.ts"],
+      "docs": ["docs/AI_GUARDRAILS.md"]
+    },
+    {
+      "name": "회의 녹음·전사·요약",
+      "patterns": [
+        "src/main/services/{meeting-pipeline,meeting-summary,meeting-types,interview-summary,summary-spec,writing-style}.ts",
+        "src/main/services/{audio-compaction,wav-util,system-audio-loopback,pipeline-abort,transcript-cleaner}.ts",
+        "src/main/services/{recording-guard,recording-recovery,speaker-assign,speaker-carryover,recognition-aids}.ts",
+        "src/main/services/stt/**",
+        "src/main/services/vad/**",
+        "src/main/services/diarization/**",
+        "src/main/ipc/{recording,recognition-aids,export}.ipc.ts",
+        "src/renderer/src/components/recording/**",
+        "src/renderer/src/components/settings/sections/RecordingSection.tsx",
+        "src/renderer/src/stores/{recorderSession,recorderStore,recordingStore,recognitionAidsStore}.ts",
+        "src/renderer/src/utils/{audio,processing-progress}.ts"
+      ],
+      "docs": ["docs/MEETING_RECORDING.md"]
+    },
+    {
+      "name": "회의록",
+      "patterns": [
+        "src/main/services/meeting-notes.ts",
+        "src/main/ipc/meeting-notes.ipc.ts",
+        "src/renderer/src/components/notes/**",
+        "src/renderer/src/stores/meetingNotesStore.ts"
+      ],
+      "docs": ["docs/MEETING_RECORDING.md"]
+    },
+    {
+      "name": "휴대폰 열람",
+      "patterns": [
+        "src/main/services/mobile/**",
+        "src/main/ipc/mobile.ipc.ts",
+        "src/renderer/mobile.html",
+        "src/renderer/src/mobile/**",
+        "src/renderer/src/components/mobile/**",
+        "src/renderer/src/components/settings/sections/MobileSection.tsx",
+        "src/renderer/src/stores/mobileStore.ts"
+      ],
+      "docs": ["docs/MOBILE_VIEW.md"]
+    },
+    {
+      "name": "프로젝트 화면(티켓·문서 탭)",
+      "patterns": [
+        "src/main/services/jira-board.ts",
+        "src/main/services/jira-board-store.ts",
+        "src/main/services/jira-adf.ts",
+        "src/main/ipc/jira-board.ipc.ts",
+        "src/main/utils/open-target.ts",
+        "src/renderer/src/components/project/**",
+        "src/renderer/src/stores/jiraBoardStore.ts"
+      ],
+      "docs": ["docs/PROJECT_BOARD.md"]
+    },
+    {
+      "name": "Jira 연동 공통",
+      "patterns": ["src/main/services/jira.ts"],
+      "docs": ["docs/PROJECT_BOARD.md", "docs/RELEASE_NOTES.md", "docs/SETTINGS.md"]
+    },
+    {
+      "name": "릴리스 노트(릴리스 탭)",
+      "patterns": [
+        "src/main/services/release-note-sync.ts",
+        "src/main/services/morning-sync.ts",
+        "src/main/ipc/release-note.ipc.ts",
+        "src/main/ipc/morning-sync.ipc.ts",
+        "src/main/utils/version-match.ts",
+        "src/renderer/src/components/release/**",
+        "src/renderer/src/stores/{releaseNoteStore,morningSyncStore}.ts",
+        "src/renderer/src/utils/releaseNoteExport.ts"
+      ],
+      "docs": ["docs/RELEASE_NOTES.md"]
+    },
+    {
+      "name": "설정 화면",
+      "patterns": [
+        "src/main/ipc/settings.ipc.ts",
+        "src/main/services/integration-verify.ts",
+        "src/renderer/src/components/settings/*.{ts,tsx}",
+        "src/renderer/src/components/settings/integrations/**",
+        "src/renderer/src/components/settings/sections/{AiSection,AssistantSection,IntegrationsSection}.tsx",
+        "src/renderer/src/stores/settingsStore.ts"
+      ],
+      "docs": ["docs/SETTINGS.md"]
+    },
+    {
+      "name": "앱 셸·내비게이션",
+      "$comment": "사이드바 메뉴·화면 구성이 바뀌면 README 기능 소개와 CLAUDE.md 프로젝트 개요를 확인한다",
+      "patterns": [
+        "src/main/index.ts",
+        "src/renderer/src/App.tsx",
+        "src/renderer/src/components/layout/{navConfig.ts,Sidebar.tsx,Header.tsx}",
+        "src/renderer/src/components/icons/**",
+        "src/renderer/src/stores/navigationStore.ts"
+      ],
+      "docs": ["README.md", "CLAUDE.md"]
+    },
+    {
+      "name": "패키지·스크립트·의존성",
+      "patterns": ["package.json"],
+      "docs": ["README.md", "CLAUDE.md"]
+    },
+    {
+      "name": "에이전트·문서 검사 설정",
+      "patterns": [".claude/settings.json", ".claude/agents/**", ".claude/skills/**", "scripts/check-docs*.mjs", "scripts/docs-stop-hook.mjs", "docs/docs-map.json"],
+      "docs": ["CLAUDE.md"]
+    },
+    {
+      "name": "평가 하네스",
+      "patterns": ["scripts/eval/**"],
+      "docs": ["scripts/eval/README.md"]
+    },
+    {
+      "name": "빌드 엔트리",
+      "$comment": "모바일 페이지(mobile.html)와 화자 분리 워커(diarization-worker) 엔트리를 정의한다",
+      "patterns": ["electron.vite.config.ts"],
+      "docs": ["docs/MOBILE_VIEW.md", "docs/MEETING_RECORDING.md"]
+    },
+    {
+      "name": "IPC 계약 공통(preload·렌더러 타입)",
+      "$comment": "모든 기능이 거치는 파일이라 특정 문서에 묶지 않는다. 채널 이름은 check:docs 의 (b) 검사가 문서와 대조한다. 기능 구역의 문서를 함께 확인한다",
+      "patterns": ["src/preload/**", "src/renderer/src/types/**"],
+      "docs": []
+    },
+    {
+      "name": "할 일·메모·변수",
+      "$comment": "해당 문서 없음",
+      "patterns": [
+        "src/main/ipc/{todo,todo-tag,memo,memo-category,variable}.ipc.ts",
+        "src/main/utils/{todo-helpers,memo-helpers,activity-logger}.ts",
+        "src/renderer/src/components/{todo,memo,variable}/**",
+        "src/renderer/src/stores/{todoStore,memoStore,variableStore}.ts",
+        "src/renderer/src/hooks/**"
+      ],
+      "docs": []
+    },
+    {
+      "name": "공용 UI·유틸·빌드 설정",
+      "$comment": "해당 문서 없음",
+      "patterns": [
+        "src/renderer/src/components/ui/**",
+        "src/renderer/src/styles/**",
+        "src/renderer/src/utils/{date,tooltipPosition}.ts",
+        "src/renderer/src/{main.tsx,env.d.ts}",
+        "src/renderer/index.html",
+        "resources/**",
+        "vitest.config.ts",
+        "tsconfig*.json",
+        ".gitignore"
+      ],
+      "docs": []
+    }
+  ],
+  "unmappedDocs": {}
+}

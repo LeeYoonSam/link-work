@@ -65,11 +65,17 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()]
   },
   renderer: {
-    resolve: {
-      alias: {
-        '@renderer': resolve('src/renderer/src')
+    plugins: [react(), tailwindcss(), rendererCspPlugin()],
+    build: {
+      rollupOptions: {
+        // 데스크톱 창(index.html) + 휴대폰 열람 화면(mobile.html) → out/renderer/{index,mobile}.html, 자산은 out/renderer/assets/*.
+        // 렌더러 base 는 './' 라 자산 참조가 './assets/…' 상대 경로로 나온다 — 모바일 서버가 mobile.html 을 '/' 로,
+        // 자산을 '/assets/*' 로 서빙하면 그대로 풀린다. CSP meta 는 두 HTML 모두에 들어간다.
+        input: {
+          index: resolve('src/renderer/index.html'),
+          mobile: resolve('src/renderer/mobile.html')
+        }
       }
-    },
-    plugins: [react(), tailwindcss(), rendererCspPlugin()]
+    }
   }
 })

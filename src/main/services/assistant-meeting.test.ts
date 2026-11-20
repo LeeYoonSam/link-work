@@ -69,7 +69,7 @@ describe('hasMeetingContext', () => {
 })
 
 describe('buildMeetingBriefing', () => {
-  it('I.6 형식으로 모든 절을 만든다', () => {
+  it('규칙 본문 형식으로 모든 절을 만든다', () => {
     expect(buildMeetingBriefing(FULL).split('\n')).toEqual([
       '# LinkWork 주간 회의 14:00',
       '## 지난 회의',
@@ -118,7 +118,7 @@ describe('buildMeetingBriefing', () => {
     expect(meetingNoticeText(ctx({ meeting: { ...FULL.meeting, title: '[a](b)' } }), 15).title).toBe('[a](b) 15분 전')
   })
 
-  it('A14: 같은 입력에 같은 출력이고 입력을 바꾸지 않는다', () => {
+  it('같은 입력에 같은 출력이고 입력을 바꾸지 않는다', () => {
     const snapshot = JSON.parse(JSON.stringify(FULL))
     expect(buildMeetingBriefing(FULL)).toBe(buildMeetingBriefing(FULL))
     meetingNoticeText(FULL, 15)
@@ -151,12 +151,12 @@ describe('meetingNoticeText', () => {
 describe('순수 모듈 경계', () => {
   const source = readFileSync(fileURLToPath(new URL('./assistant-meeting.ts', import.meta.url)), 'utf8')
 
-  it('A3: assistant-types 만 import 한다', () => {
+  it('assistant-types 만 import 한다', () => {
     const froms = [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1])
     expect(new Set(froms)).toEqual(new Set(['./assistant-types']))
   })
 
-  it('A16: 셸 실행 경로가 없다', () => {
+  it('셸 실행 경로가 없다', () => {
     // 금지어를 쪼개 쓴다. 이 테스트 파일이 셸 실행 grep 조건에 걸리지 않게 한다
     const banned = ['child' + '_process', 'exec' + 'Sync', 'sp' + 'awn']
     for (const word of banned) expect(source).not.toContain(word)

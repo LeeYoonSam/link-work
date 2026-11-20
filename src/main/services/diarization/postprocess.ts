@@ -30,7 +30,7 @@ export interface SmoothOptions {
  *  2) 연속 동일화자 turn 병합 (갭 ≤ gapFillMs)
  *  3) 앞뒤 동일화자 사이에 낀 짧은 이질 turn 제거 (sandwich filter)
  */
-export function smoothTurns(turns: DiarTurn[], opts: SmoothOptions = {}): DiarTurn[] {
+function smoothTurns(turns: DiarTurn[], opts: SmoothOptions = {}): DiarTurn[] {
   const { minTurnMs = 200, sandwichMs = 600, gapFillMs = 500 } = opts
 
   if (turns.length === 0) return []
@@ -154,7 +154,7 @@ function computeStats(turns: DiarTurn[]): SpeakerStats[] {
  *
  * 주요 화자가 한 명도 없으면 흡수하지 않는다.
  */
-export function absorbMinority(turns: DiarTurn[], opts: AbsorbOptions = {}): DiarTurn[] {
+function absorbMinority(turns: DiarTurn[], opts: AbsorbOptions = {}): DiarTurn[] {
   if (turns.length === 0) return []
 
   const { minRatio = 0.02, minDurationMs = 60_000, absoluteFraction = 0.05 } = opts

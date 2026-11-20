@@ -11,7 +11,7 @@ import {
 //
 // [가드레일]
 // - 토큰은 app_settings에 safeStorage로 암호화해 저장한다 (google-auth.ts와 동일 패턴).
-// - 이 모듈은 조회 API(search, pages, blocks)만 호출한다 — 쓰기 API 호출 금지.
+// - 이 모듈은 조회 API(pages, blocks, databases)만 호출한다 — 쓰기 API 호출 금지.
 // - 페이지 본문은 글자 수 상한으로 잘라 토큰 낭비/과대 응답을 막는다.
 
 const NOTION_API = 'https://api.notion.com/v1'
@@ -42,7 +42,7 @@ function decrypt(value: string): string {
   return value
 }
 
-export function getNotionToken(): string | null {
+function getNotionToken(): string | null {
   const row = getDatabase()
     .prepare('SELECT value FROM app_settings WHERE key = ?')
     .get(TOKEN_KEY) as { value: string } | undefined
@@ -128,42 +128,7 @@ async function notionHttpError(res: Response): Promise<Error> {
   return new Error(`Notion API 오류 (${res.status}): ${body.slice(0, 200)}`)
 }
 
-export interface NotionSearchResult {
-  id: string
-  type: 'page' | 'database'
-  title: string
-  url: string
-  last_edited: string
-}
-
-export async function searchNotion(query: string): Promise<NotionSearchResult[]> {
-  const data = (await notionRequest('/search', {
-    method: 'POST',
-    body: { query, page_size: 20, sort: { direction: 'descending', timestamp: 'last_edited_time' } }
-  })) as {
-    results: Array<{
-      id: string
-      object: string
-      url?: string
-      last_edited_time?: string
-      properties?: Record<string, unknown>
-      title?: Array<{ plain_text?: string }>
-    }>
-  }
-
-  return data.results.map((r) => ({
-    id: r.id,
-    type: r.object === 'database' ? 'database' : 'page',
-    title:
-      r.object === 'database'
-        ? (r.title ?? []).map((t) => t.plain_text ?? '').join('') || '(제목 없음)'
-        : extractPageTitle(r.properties),
-    url: r.url ?? '',
-    last_edited: r.last_edited_time ?? ''
-  }))
-}
-
-export interface NotionPageContent {
+interface NotionPageContent {
   id: string
   title: string
   url: string

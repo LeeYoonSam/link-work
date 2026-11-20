@@ -1,8 +1,8 @@
-// 아침 자동 동기화 실행기 (docs/ASSISTANT.md A54, docs/RELEASE_NOTES.md §1). 지금은 릴리스 파트만 돈다.
+// 아침 자동 동기화 실행기 (docs/ASSISTANT.md §8, docs/RELEASE_NOTES.md §4.6). 지금은 릴리스 파트만 돈다.
 // 스케줄러 틱의 onTick 으로 돈다. 새 타이머를 만들지 않는다.
 // 하루 1회는 assistant_events 의 morning_sync:<날짜> 행 1개로 보장한다. 부분 상태는 payload 에 둔다.
-// A13: 이 모듈의 실행기는 throw 하지 않는다. 부분마다 try/catch 로 실패를 격리한다.
-// 이름에 assistant- 를 붙이지 않는다. 이유: A2 grep 대상은 원본 테이블을 쓰면 안 되는데, 릴리스 동기화는 release_* 를 쓴다.
+// 이 모듈의 실행기는 throw 하지 않는다. 부분마다 try/catch 로 실패를 격리한다.
+// 이름에 assistant- 를 붙이지 않는다. 이유: assistant-* 모듈은 원본 테이블을 쓰지 않는데, 릴리스 동기화는 release_* 를 쓴다.
 import { BrowserWindow, net } from 'electron'
 import { getDatabase } from '../db/database'
 import { logicalDate, toLocalDateTime } from './assistant-day'
@@ -90,7 +90,7 @@ function parsePart(v: unknown): MorningSyncPart | null {
 }
 
 /** payload 문자열을 읽는다. 형식이 틀리면 null 이다. */
-export function parseMorningSyncPayload(raw: string | null | undefined, date: string): MorningSyncPayload | null {
+function parseMorningSyncPayload(raw: string | null | undefined, date: string): MorningSyncPayload | null {
   if (!raw) return null
   try {
     const v: unknown = JSON.parse(raw)
@@ -123,7 +123,7 @@ function emptyOutcome(status: MorningSyncPartStatus, error: string | null = null
   return { status, error, newCount: 0, updatedCount: 0, reviewCount: 0, failedCount: 0 }
 }
 
-// 오프라인은 시도가 아니다 (D8). 판정할 수 없으면 온라인으로 본다
+// 오프라인은 시도가 아니다. 판정할 수 없으면 온라인으로 본다
 function isOnline(): boolean {
   try {
     return net.isOnline()
@@ -169,7 +169,7 @@ function decide(ctx: DayContext, payload: MorningSyncPayload | null): MorningSyn
 }
 
 /**
- * 오늘 행을 선점한다. 행이 없으면 INSERT 하고, 충돌이면 null 이다 (A5).
+ * 오늘 행을 선점한다. 행이 없으면 INSERT 하고, 충돌이면 null 이다.
  * 행이 있으면 같은 트랜잭션 안에서 다시 판정한 뒤 고른 부분을 running 으로 바꾼다.
  */
 function claim(db: Db, ctx: DayContext): Claimed | null {
@@ -253,7 +253,7 @@ async function runClaimed(claimed: Claimed, clock: () => Date): Promise<void> {
     try {
       outcome = await runReleasePart()
     } catch (err) {
-      // 토큰 만료·네트워크 오류는 failed 다 (D8)
+      // 토큰 만료·네트워크 오류는 failed 다
       logError(name, err)
       outcome = emptyOutcome('failed', messageOf(err))
     }
@@ -273,7 +273,7 @@ async function runClaimed(claimed: Claimed, clock: () => Date): Promise<void> {
 /**
  * 틱·wake 마다 부른다 (onTick). 할 일이 없으면 바로 돌아간다.
  * 순서: 진행 중 확인 → 판정 → 온라인 확인 → 선점 → 부분별 실행 → payload 기록 → sync_status 발송.
- * now 는 테스트가 주입하는 시각이다. 이 함수는 throw 하지 않는다 (A13).
+ * now 는 테스트가 주입하는 시각이다. 이 함수는 throw 하지 않는다.
  */
 export async function runMorningSyncIfDue(wake: boolean = false, now?: Date): Promise<void> {
   if (inFlight) return

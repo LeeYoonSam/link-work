@@ -10,7 +10,7 @@ export interface MemoListSection {
   items: MemoListItem[]
 }
 
-export interface MemoListProps {
+interface MemoListProps {
   listboxId: string
   sections: MemoListSection[]
   selectedId: number | null

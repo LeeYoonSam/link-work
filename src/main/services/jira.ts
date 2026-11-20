@@ -576,7 +576,7 @@ export interface JiraSearchIssue {
   issueLinks: JiraIssueLinkRef[]
 }
 
-export interface JiraAttachmentRef {
+interface JiraAttachmentRef {
   filename: string
   url: string
   mimeType: string | null
@@ -584,7 +584,7 @@ export interface JiraAttachmentRef {
   createdAt: string | null
 }
 
-export interface JiraIssueLinkRef {
+interface JiraIssueLinkRef {
   /** 이 이슈에서 본 관계 이름(Jira 표시 이름. 예: 관심, 선행 작업, blocks) */
   relation: string
   key: string
@@ -707,7 +707,7 @@ function toStatusCategory(key: string | undefined): JiraStatusCategory {
   return key === 'done' || key === 'indeterminate' ? key : 'new'
 }
 
-export function toSearchIssue(raw: RawSearchIssue): JiraSearchIssue {
+function toSearchIssue(raw: RawSearchIssue): JiraSearchIssue {
   const f = raw.fields ?? {}
   return {
     key: raw.key ?? '',
@@ -796,7 +796,7 @@ export async function listOpenProjectIssues(
 }
 
 /** 최근 완료 이슈 조회 기간 상한(일) */
-export const MAX_RECENT_DONE_DAYS = 90
+const MAX_RECENT_DONE_DAYS = 90
 
 /** 프로젝트에서 최근 days일 안에 완료된 이슈 */
 export async function listRecentlyDoneProjectIssues(
@@ -880,91 +880,4 @@ export async function listChildIssues(
   parentKeys: string[]
 ): Promise<{ issues: JiraSearchIssue[]; truncated: boolean }> {
   return searchByKeyChunks('parent', parentKeys)
-}
-
-// ── 개인 비서용 조회 (services/assistant-sources.ts, docs/ASSISTANT.md §11) ──
-// 비서는 Jira 를 읽기만 한다. 아래 함수도 GET 전용 jiraRequest 만 쓴다 (A1).
-
-/** 비서가 한 번에 가져오는 내 이슈 상한 */
-export const MAX_MY_ISSUES = 200
-
-const MY_ISSUE_FIELDS = 'summary,status,issuetype,priority,duedate,updated,parent'
-
-export interface JiraMyIssue {
-  key: string
-  summary: string
-  status: string
-  statusCategory: JiraStatusCategory
-  priority: string | null
-  duedate: string | null
-  /** Jira 원본 ISO 문자열. 시간대가 붙어 있다 */
-  updated: string
-  issueType: string
-  /** Jira 부모 키. 에픽 또는 상위 작업. 없으면 null */
-  parentKey: string | null
-  /** raw.fields.parent.fields.summary. 없으면 null */
-  parentSummary: string | null
-}
-
-interface RawMyIssue {
-  key?: string
-  fields?: {
-    summary?: string
-    status?: { name?: string; statusCategory?: { key?: string } | null } | null
-    issuetype?: { name?: string } | null
-    priority?: { name?: string } | null
-    duedate?: string | null
-    updated?: string | null
-    parent?: { key?: string; fields?: { summary?: string } } | null
-  }
-}
-
-function toMyIssue(raw: RawMyIssue): JiraMyIssue {
-  const f = raw.fields ?? {}
-  return {
-    key: raw.key ?? '',
-    summary: f.summary ?? '',
-    status: f.status?.name ?? '',
-    statusCategory: toStatusCategory(f.status?.statusCategory?.key),
-    priority: f.priority?.name ?? null,
-    duedate: f.duedate ?? null,
-    updated: f.updated ?? '',
-    issueType: f.issuetype?.name ?? '',
-    parentKey: f.parent?.key || null,
-    parentSummary: f.parent?.fields?.summary || null
-  }
-}
-
-function searchMyIssues(jql: string): Promise<{ issues: JiraMyIssue[]; truncated: boolean }> {
-  return searchJql<RawMyIssue, JiraMyIssue>(jql, MY_ISSUE_FIELDS, MAX_MY_ISSUES, (raw) =>
-    raw.key ? toMyIssue(raw) : null
-  )
-}
-
-/** 내게 할당된 미완료 이슈. projectKey 가 있으면 그 프로젝트로 좁힌다 */
-export async function listMyOpenIssues(
-  projectKey: string | null
-): Promise<{ issues: JiraMyIssue[]; truncated: boolean }> {
-  const scope = projectKey === null ? '' : `project = ${assertProjectKey(projectKey)} AND `
-  return searchMyIssues(
-    `${scope}assignee = currentUser() AND statusCategory != Done ORDER BY priority DESC, duedate ASC`
-  )
-}
-
-/** 맥락 복구가 조회하는 최근 변경 기간 상한(일) */
-export const MAX_RECENT_DAYS = 30
-
-/** 내게 할당된 이슈 중 최근 days 일 안에 바뀐 것. 맥락 복구가 쓴다 (부록 F.9.3) */
-export async function listMyRecentlyUpdatedIssues(
-  days: number,
-  projectKey: string | null
-): Promise<{ issues: JiraMyIssue[]; truncated: boolean }> {
-  // JQL 에 들어가는 값이다. 네트워크 전에 검증한다
-  if (!Number.isInteger(days) || days < 1 || days > MAX_RECENT_DAYS) {
-    throw new Error('잘못된 조회 기간')
-  }
-  const scope = projectKey === null ? '' : `project = ${assertProjectKey(projectKey)} AND `
-  return searchMyIssues(
-    `${scope}assignee = currentUser() AND updated >= -${days}d ORDER BY updated DESC`
-  )
 }

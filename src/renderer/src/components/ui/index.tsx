@@ -77,20 +77,6 @@ export function Badge({
   )
 }
 
-// 상태 도트. color에 tokens의 dot 클래스를 전달한다.
-export function StatusDot({
-  color,
-  size = 'sm',
-  title
-}: {
-  color: string
-  size?: 'sm' | 'md'
-  title?: string
-}): React.ReactNode {
-  const sizeCls = size === 'md' ? 'w-3 h-3' : 'w-2 h-2'
-  return <span className={`inline-block rounded-full flex-shrink-0 ${sizeCls} ${color}`} title={title} />
-}
-
 // 화이트 카드 컨테이너
 export function Card({
   children,
@@ -179,9 +165,8 @@ const CLOSE_DELAY = 120
 // WCAG 1.4.13 3요건을 지킨다 — Escape로 닫히고(dismissible),
 // 툴팁 위로 마우스를 옮겨도 유지되며(hoverable), 스스로 사라지지 않는다(persistent).
 //
-// body로 portal한다. absolute로 띄우면 overflow 조상에 잘리는데, 실제로
-// TaskList의 목록 컨테이너(padding 없는 overflow-hidden)와 대시보드 TODO 패널
-// (overflow-auto 스크롤 영역)에서 첫 행 말풍선이 잘려 원문을 볼 수단이 사라졌다.
+// body로 portal한다. absolute로 띄우면 overflow-hidden·overflow-auto 조상에 잘려
+// 첫 행 말풍선이 보이지 않는다.
 export function Tooltip({
   content,
   children,

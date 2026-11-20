@@ -88,21 +88,14 @@ beforeEach(() => {
 })
 
 describe('쓰기 도구 목록', () => {
-  it('프로젝트·작업·문서 쓰기 도구는 없다', async () => {
+  it('프로젝트·작업·문서·변수 쓰기 도구는 없다', async () => {
     const tools = (await buildWriteTools()) as unknown as Array<{ name: string }>
     const names = tools.map((t) => t.name)
     // 문서 메뉴를 없앴다. 이름을 그대로 적지 않고 패턴으로 확인한다
-    for (const name of names) expect(name).not.toMatch(/project|task|document/)
+    for (const name of names) expect(name).not.toMatch(/project|task|document|variable/)
     // 등록한 도구와 자동 허용 이름 목록이 어긋나지 않는다
     expect(LINKWORK_WRITE_TOOL_NAMES).toEqual(names.map((n) => `mcp__linkwork__${n}`))
-    expect(names).toEqual([
-      'create_todo',
-      'create_memo',
-      'create_variable',
-      'update_todo',
-      'update_memo',
-      'update_variable'
-    ])
+    expect(names).toEqual(['create_todo', 'create_memo', 'update_todo', 'update_memo'])
   })
 })
 

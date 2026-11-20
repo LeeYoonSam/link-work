@@ -104,7 +104,6 @@ import {
   BACKUP_FORMAT_VERSION,
   DB_FILE,
   MANIFEST_ENTRY,
-  SECRET_SETTING_KEYS,
   buildManifest,
   classifyEntry,
   collectGroupStats,
@@ -122,6 +121,7 @@ import {
   type BackupProgress,
   type DatabaseLike
 } from './backup-service'
+import { SECRET_SETTING_KEYS } from './backup-groups'
 
 const tempDirs: string[] = []
 
@@ -366,10 +366,15 @@ describe('stripSecrets', () => {
       INSERT INTO app_settings (key, value) VALUES ('google_client_secret', 'enc-google-secret');
       INSERT INTO app_settings (key, value) VALUES ('bitbucket_api_token', 'enc-bitbucket');
       INSERT INTO app_settings (key, value) VALUES ('bitbucket_email', 'me@example.com');
+      INSERT INTO app_settings (key, value) VALUES ('mobile_server_token', 'enc-mobile-token');
+      INSERT INTO app_settings (key, value) VALUES ('mobile_server_enabled', '1');
       INSERT INTO auth_tokens (id, provider, access_token) VALUES (1, 'google', 'enc-token');
     `)
 
     const removed = stripSecrets(db as unknown as DatabaseLike)
+    // 휴대폰 열람 서버의 토큰·켜짐 여부는 기기 전용이다 — 새 PC 에서 서버가 저절로 켜지면 안 된다
+    expect(removed).toContain('app_settings:mobile_server_token')
+    expect(removed).toContain('app_settings:mobile_server_enabled')
 
     expect(removed).toContain('auth_tokens')
     expect(removed).toContain('app_settings:notion_token')
@@ -474,6 +479,8 @@ describe('export → inspect → import 라운드트립 (.zip)', () => {
       INSERT INTO app_settings (key, value) VALUES ('google_client_id', 'plain-client-id');
       INSERT INTO app_settings (key, value) VALUES ('google_client_secret', 'enc-google-secret');
       INSERT INTO app_settings (key, value) VALUES ('bitbucket_api_token', 'enc-bitbucket');
+      INSERT INTO app_settings (key, value) VALUES ('mobile_server_token', 'enc-mobile-token');
+      INSERT INTO app_settings (key, value) VALUES ('mobile_server_enabled', '1');
       INSERT INTO auth_tokens (id, provider, access_token) VALUES (1, 'google', 'enc-access');
       INSERT INTO meetings (title, status, audio_path) VALUES ('회의', 'done', 'rec-1.wav');
     `)
@@ -554,6 +561,8 @@ describe('export → inspect → import 라운드트립 (.zip)', () => {
       (r) => r.key
     )
     expect(settings).toEqual(['google_client_id'])
+    expect(settings).not.toContain('mobile_server_token')
+    expect(settings).not.toContain('mobile_server_enabled')
     const auth = copy.prepare('SELECT COUNT(*) AS c FROM auth_tokens').all() as { c: number }[]
     expect(auth[0].c).toBe(0)
     const projects = copy.prepare('SELECT name FROM projects').all() as { name: string }[]

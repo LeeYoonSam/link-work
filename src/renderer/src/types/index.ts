@@ -1,7 +1,7 @@
 export interface TrayAPI {
   getData: () => Promise<unknown>
   openApp: () => Promise<void>
-  // 트레이 '오늘 보기'. 메인 창을 오늘 화면으로 연다 (부록 E.4.3)
+  // 트레이 '오늘 보기'. 메인 창을 오늘 화면으로 연다 (docs/ASSISTANT.md §10)
   openToday: () => Promise<void>
   onData: (callback: (data: unknown) => void) => () => void
 }
@@ -15,12 +15,24 @@ export interface CalendarEvent {
   allDay: boolean
   location?: string
   htmlLink?: string
+  // 일정이 온 Google 캘린더 id. 기본 캘린더는 'primary' 다
+  calendarId?: string
 }
 
 export interface CalendarStatus {
   connected: boolean
   hasCredentials: boolean
 }
+
+// Google 캘린더 목록 항목 (calendarList.list)
+export interface CalendarListEntry {
+  id: string
+  summary: string
+  primary: boolean
+  color: string | null
+}
+
+export type Fail = { success: false; error: string }
 
 export interface CalendarAPI {
   auth: () => Promise<{ success: boolean; error?: string }>
@@ -29,6 +41,47 @@ export interface CalendarAPI {
   disconnect: () => Promise<{ success: boolean }>
   status: () => Promise<CalendarStatus>
   saveSettings: (clientId: string, clientSecret: string) => Promise<{ success: boolean }>
+  // 가져올 캘린더 (docs/SETTINGS.md). 저장값이 없으면 ['primary']
+  listCalendars: () => Promise<
+    { success: true; calendars: CalendarListEntry[]; selectedIds: string[] } | Fail
+  >
+  setSelectedCalendars: (ids: string[]) => Promise<{ success: true; selectedIds: string[] } | Fail>
+  // 선택한 캘린더 전부의 일정을 범위로 받는다. 범위는 45일 이하
+  range: (
+    fromISO: string,
+    toISO: string,
+    force?: boolean
+  ) => Promise<{ success: true; events: CalendarEvent[]; fetchedAt: string } | Fail>
+}
+
+// ── 오늘 대시보드 신호 (docs/ASSISTANT.md §11). 한 줄 브리핑·신호 문구는 렌더러 규칙(todayModel)이 만든다 ──
+export type SignalKind =
+  | 'release_risk'
+  | 'release_day'
+  | 'overdue'
+  | 'due_today'
+  | 'meeting_soon'
+  | 'qa_start'
+export type SignalSeverity = 'critical' | 'warn' | 'info'
+
+/** 규칙 문구를 만든 사실(건수·연결 여부) */
+export interface TodayFacts {
+  // 미연결 영역을 "없음"으로 말하지 않으려고 둔다
+  calendarConnected: boolean
+  jiraConnected: boolean
+  meetingCount: number
+  overdueCount: number
+  dueTodayCount: number
+  // start 'HH:mm'
+  nextMeeting: { title: string; start: string } | null
+  release: {
+    version: string | null
+    date: string
+    dDay: number
+    qaStart: string | null
+    linked: boolean
+    mine: { total: number; done: number; review: number; progress: number; todo: number }
+  } | null
 }
 
 export type VariableViewType = 'general' | 'secret'
@@ -111,41 +164,6 @@ export interface MemoCategoryAPI {
   delete: (id: number) => Promise<{ success: boolean }>
 }
 
-export interface ActivityLog {
-  id: number
-  entity_type: 'project' | 'task' | 'document' | 'variable' | 'memo'
-  entity_id: number | null
-  entity_name: string | null
-  action: 'create' | 'update' | 'delete' | 'archive' | 'restore'
-  details: string | null
-  created_at: string
-}
-
-export interface WeeklySummary {
-  entity_type: string
-  action: string
-  count: number
-}
-
-export interface DailyStat {
-  date: string
-  entity_type: string
-  count: number
-}
-
-export interface WeeklyTrend {
-  week: string
-  entity_type: string
-  count: number
-}
-
-export interface ReportAPI {
-  weeklyActivities: (weekStart: string, weekEnd: string) => Promise<ActivityLog[]>
-  weeklySummary: (weekStart: string, weekEnd: string) => Promise<WeeklySummary[]>
-  dailyStats: (weekStart: string, weekEnd: string) => Promise<DailyStat[]>
-  weeklyTrend: (weeks: number) => Promise<WeeklyTrend[]>
-}
-
 // TODO types
 export type TodoPriority = 'low' | 'medium' | 'high'
 
@@ -185,14 +203,6 @@ export interface TodoTagInput {
   color?: string
 }
 
-export interface TodoHistory {
-  id: number
-  todo_id: number
-  action: 'complete' | 'restore' | 'create' | 'update' | 'delete'
-  snapshot: string
-  created_at: string
-}
-
 export interface TodoAPI {
   create: (input: TodoInput) => Promise<{ id: number }>
   list: (completed?: boolean) => Promise<Todo[]>
@@ -202,7 +212,6 @@ export interface TodoAPI {
   setCompletedAt: (id: number, completedAt: string) => Promise<{ success: boolean }>
   restore: (id: number) => Promise<{ success: boolean }>
   delete: (id: number) => Promise<{ success: boolean }>
-  history: (todoId: number) => Promise<TodoHistory[]>
   listActive: () => Promise<Todo[]>
 }
 
@@ -451,7 +460,7 @@ export interface Meeting {
   // 컷편집 전 길이. audio_compacted=0이면 null
   original_duration_ms: number | null
   // 이 회의를 처리한 파이프라인 버전. 0=구 파이프라인/미처리,
-  // 2=무음 컷편집·용어집·참석자 힌트 파이프라인.
+  // 2=무음 컷편집·용어집·참석자 힌트 파이프라인, 3=현재(docs/MEETING_RECORDING.md §13).
   // 요약 재생성 시 "새 파이프라인으로 재분석할지"를 이 값으로 판단한다.
   pipeline_version: number
   project_id: number | null
@@ -527,8 +536,8 @@ export interface MeetingSummary {
   meeting_id: number
   // 회의: TL;DR / 면접: 면접 개요
   tldr: string | null
+  // 회의 전용 4개 필드 — key_points 포함 (면접에서는 빈 배열)
   key_points: string[]
-  // 회의 전용 3분류 (면접에서는 빈 배열)
   decisions: string[]
   action_items: ActionItem[]
   next_steps: string[]
@@ -576,7 +585,7 @@ export interface ChannelEnergy {
   right: number[]
 }
 
-// ── 회의록 (요약 완료된 회의를 문서처럼 열람) — docs/MEETING_NOTES.md ──
+// ── 회의록 (요약 완료된 회의를 문서처럼 열람) — docs/MEETING_RECORDING.md §10 ──
 export interface MeetingNoteFilter {
   q?: string                      // 검색어(공백 trim, 빈 문자열은 무시)
   kind?: 'all' | MeetingKind      // 기본 'all'
@@ -765,8 +774,7 @@ export interface JiraCredentialsInput {
 }
 
 export interface ReleaseNoteAPI {
-  /** deployVersion을 주면 그 배포 버전과 이름이 같은 릴리스만 (프로젝트 상세용) */
-  list: (deployVersion?: string) => Promise<ReleaseNoteSummary[]>
+  list: () => Promise<ReleaseNoteSummary[]>
   get: (id: number) => Promise<ReleaseNoteWithItems | null>
   // 네트워크가 얽혀 있어 throw 대신 결과 객체로 감싼다 — 오류 문구를 그대로 표시해야 한다
   sync: (
@@ -943,7 +951,7 @@ export interface JiraBoardAPI {
   openLink: (url: string) => Promise<{ success: true } | { success: false; error: string }>
 }
 
-// ── 아침 자동 동기화 (docs/ASSISTANT.md A54) ──
+// ── 아침 자동 동기화 (docs/ASSISTANT.md §8) ──
 // main 의 assistant-types.ts 와 같은 모양이다. 한쪽만 바꾸면 배지와 상태 줄이 빈 값을 그린다.
 
 export type MorningSyncPartName = 'release'
@@ -1082,147 +1090,8 @@ export interface BackupAPI {
   onProgress: (cb: (p: BackupProgress) => void) => () => void
 }
 
-// ── 개인 비서 (docs/ASSISTANT.md 부록 A.1·A.5·B.7 복제) ──
+// ── 개인 비서 (docs/ASSISTANT.md §4·§5·§12) ──
 // main 의 src/main/services/assistant-types.ts 와 같은 모양을 유지한다.
-
-// 'manual' 은 명령으로 만든 임시 항목이다 (부록 G.6)
-export type CandidateSource = 'jira' | 'task' | 'todo' | 'action_item' | 'manual'
-export type CandidatePriority = 'high' | 'medium' | 'low'
-// 업무 유형 (부록 J.2·J.9.13)
-export type WorkType = 'qa' | 'sus' | 'trd' | 'prd' | 'etc'
-
-export interface Candidate {
-  id: string
-  source: CandidateSource
-  title: string
-  jiraKey: string | null
-  projectId: number | null
-  projectName: string | null
-  dueDate: string | null
-  dueTime: string | null
-  inProgress: boolean
-  priority: CandidatePriority | null
-  jiraPriority: string | null
-  lastTouchedAt: string | null
-  link: string | null
-  // Jira 부모 키. jira·task(머지) 만 (부록 J)
-  parentKey: string | null
-  // Jira 부모 요약 또는 WBS 프로젝트 이름
-  groupName: string | null
-  workType: WorkType
-  workVersion: string | null
-  // 계속 제외한 후보다. listCandidates 만 채운다 (부록 M.5.1)
-  excluded?: boolean
-}
-
-// 계속 제외 기록 (부록 M.5.1). jira·task 출처만 있다
-export interface PlanExclusion {
-  candidate_id: string
-  // 대문자. 없으면 null
-  jira_key: string | null
-  title: string
-  source: CandidateSource
-  // 'YYYY-MM-DD HH:mm:ss'
-  excluded_at: string
-}
-
-export type PlanStatus = 'active' | 'closed'
-export type PlanClosedBy = 'button' | 'auto'
-export type PlanItemStatus =
-  | 'suggested'
-  | 'planned'
-  | 'in_progress'
-  | 'done'
-  | 'deferred'
-  | 'dropped'
-  | 'dismissed'
-export type PlanAddedBy = 'start' | 'user' | 'refresh'
-
-export interface DailyPlan {
-  id: number
-  plan_date: string
-  status: PlanStatus
-  started_at: string
-  closed_at: string | null
-  closed_by: PlanClosedBy | null
-  // 렌더러는 출처 스냅샷을 쓰지 않는다
-  source_snapshot: unknown
-  briefing_text: string | null
-  briefing_source: 'rules' | 'llm' | null
-  briefing_model: string | null
-  briefing_error: string | null
-  briefing_at: string | null
-  // 사용자가 명령으로 저장한 브리핑 지시 (부록 G.7)
-  briefing_instruction: string | null
-  recovery_text: string | null
-  recovery_source: 'rules' | 'llm' | null
-  recovery_at: string | null
-  wrapup_note: string | null
-  wrapup_at: string | null
-  // 어제 메모 칸에서 '건너뛰기'를 누른 시각. 값이 있으면 다시 묻지 않는다
-  wrapup_skipped_at: string | null
-  last_refresh_at: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface PlanItem {
-  id: number
-  plan_id: number
-  candidate_id: string
-  source: CandidateSource
-  title: string
-  link: string | null
-  jira_issue_key: string | null
-  project_id: number | null
-  due_date: string | null
-  score: number
-  rank: number | null
-  slot_start: string | null
-  slot_end: string | null
-  pinned: boolean
-  added_by: PlanAddedBy
-  urgent: boolean
-  status: PlanItemStatus
-  status_note: string | null
-  status_at: string | null
-  // 같은 candidate_id 가 처음 계획에 오른 논리 날짜. 저장소가 조회 시 계산한다 (부록 B.5)
-  first_planned_date: string | null
-  // 업무 유형·묶음 (부록 J.5)
-  work_type: WorkType
-  work_version: string | null
-  parent_key: string | null
-  group_name: string | null
-}
-
-// 오늘 타임라인 (부록 B.7)
-export type TimelineEntry =
-  | {
-      kind: 'meeting'
-      start: string
-      end: string
-      title: string
-      // 장소·메모 (부록 M.9). 옛 스냅샷에는 없다. 없으면 null 로 본다
-      location?: string | null
-      note?: string | null
-    }
-  | {
-      kind: 'block'
-      start: string
-      end: string
-      minutes: number
-      state: 'past' | 'current' | 'future'
-      itemId: number | null
-      reason: 'focus' | 'deadline' | null
-      continued: boolean
-    }
-export interface DayTimeline {
-  // 시작 시각 오름차순
-  entries: TimelineEntry[]
-  freeMinutesLeft: number
-  focusItemId: number | null
-  unplacedDeadlineItemIds: number[]
-}
 
 export type AssistantEventKind =
   | 'start_nudge'
@@ -1231,6 +1100,7 @@ export type AssistantEventKind =
   | 'meeting_briefing'
   | 'command'
   | 'morning_sync'
+  | 'today_briefing'
 export type AssistantEventStatus = 'sent' | 'late' | 'skipped' | 'failed' | 'logged'
 export interface AssistantEvent {
   id: number
@@ -1247,148 +1117,48 @@ export interface AssistantEvent {
   created_at: string
 }
 
-// plan_update 이벤트 payload 의 변경 요약
-export interface RefreshSummary {
-  calendarAdded: number
-  calendarChanged: number
-  calendarRemoved: number
-  suggested: number
-  urgentSuggestedIds: string[]
-  completed: number
-  dropped: number
-  replaced: number
-  timelineChanged: boolean
-  currentOrNextChanged: boolean
-  // 변경 기록 행에서만 있다. INSERT 에 성공한 알림 종류 (부록 E.3.3)
-  notified?: Array<'slot' | 'urgent'>
-}
-
+// 비서 설정 (docs/ASSISTANT.md §4)
 export interface AssistantSettings {
   enabled: boolean
   dayRollover: string
-  startNudge: boolean
-  workEnd: string
-  planSize: number
+  // 회의 전 브리핑의 AI 본문 사용·모델
   llmEnabled: boolean
   llmModel: AiModelChoice
-  jiraScope: 'all' | 'default_project'
   openAtLogin: boolean
-  refreshCalendarMin: number
-  refreshJiraMin: number
-  refreshNotify: boolean
   meetingLeadMin: number
-  // 회의 전 브리핑 켜기 (부록 I.11.4)
+  // 회의 전 브리핑 켜기 (§7)
   meetingBriefingEnabled: boolean
-  // 첫 화면 (docs/ASSISTANT.md 부록 C, A24). 저장된 auto·dashboard 는 main 이 today 로 읽는다
+  // 첫 화면 (§4). 저장된 auto·dashboard 는 main 이 today 로 읽는다
   startView: 'today' | 'projects' | 'calendar'
-  // 아침 자동 동기화 켜기 (부록 K, A54)
+  // 아침 자동 동기화 켜기 (§8)
   morningSyncEnabled: boolean
   // 아침 자동 동기화 시각 'HH:mm'
   morningSyncTime: string
-  // 계획 항목을 완료하면 원본도 완료한다. 기본 false (D10)
-  completeOriginOnDone: boolean
 }
 
+// 오늘 화면(assistant:getToday)이 읽는 값 (docs/ASSISTANT.md §11.1)
 export interface TodayPayload {
-  logicalDate: string
-  plan: DailyPlan | null
-  items: PlanItem[]
+  // 오늘 논리 날짜의 비서 이벤트(회의 전 브리핑 카드)
   events: AssistantEvent[]
   settings: AssistantSettings
-  missingWrapupDate: string | null
   aiAvailable: boolean
-  jiraConnected: boolean
   calendarConnected: boolean
-  jiraTruncated: boolean
-  lastErrors: string[]
-  timeline: DayTimeline
-  // 맥락 복구 진행·실패 상태 (부록 F.6). 메모리 값이다
-  recovery: RecoveryState
-  // 계속 제외 기록. excluded_at 내림차순 (부록 M.5.1)
-  exclusions: PlanExclusion[]
-}
-
-// 맥락 복구 상태 (부록 F.9.1)
-export interface RecoveryState {
-  inFlight: boolean
-  error: string | null
 }
 
 export interface AssistantChangedEvent {
   date: string
-  reason: 'refresh' | 'briefing' | 'day' | 'recovery' | 'command' | 'meeting'
+  reason: 'meeting'
 }
+// 메인이 보내는 focus 는 회의 브리핑 알림 클릭의 'meeting' 뿐이다 (docs/ASSISTANT.md §6.3)
 export interface AssistantNavigateEvent {
   view: 'today'
   focus?: {
-    kind: 'inbox' | 'item' | 'briefing' | 'timeline' | 'meeting'
+    kind: 'meeting'
     id?: string
   }
 }
 
-// 트레이 오늘 계획 섹션 (부록 E.6.1 과 같은 모양)
-export interface TrayPlanItem {
-  id: number
-  title: string
-  rank: number | null
-  status: PlanItemStatus
-  isFocus: boolean
-}
-export interface TrayAssistant {
-  logicalDate: string
-  status: 'none' | 'active' | 'closed'
-  // 'HH:mm'
-  startedAt: string | null
-  // 활성 항목 rank 순 상위 3건
-  items: TrayPlanItem[]
-  activeCount: number
-  doneCount: number
-  suggestedCount: number
-  urgentSuggestedCount: number
-  freeMinutesLeft: number
-}
-
-// ── 명령 입력 (부록 G.3.1·G.3.4 복제) ──
-export type CommandStatus = 'planned' | 'in_progress' | 'done' | 'deferred' | 'dropped'
-export type CommandOp =
-  | { kind: 'set_status'; itemId: number; status: CommandStatus; note: string | null }
-  | { kind: 'focus'; itemId: number }
-  | { kind: 'accept_suggestion'; itemId: number }
-  | { kind: 'dismiss_suggestion'; itemId: number }
-  | { kind: 'add_candidate'; candidateId: string }
-  | { kind: 'add_manual'; title: string; dueDate: string | null }
-  | { kind: 'regenerate_briefing'; instruction: string | null }
-  | { kind: 'unsupported'; reason: string }
-export interface CommandPreviewOp {
-  op: CommandOp
-  label: string
-  executable: boolean
-}
-export interface CommandInterpretation {
-  // 공백 정리한 명령 원문
-  text: string
-  scopeItemId: number | null
-  ops: CommandPreviewOp[]
-  source: 'llm' | 'rules'
-  // LLM 실패 사유. 성공이거나 LLM 을 건너뛰면 null
-  error: string | null
-  // 검증에서 뺀 조작 수
-  dropped: number
-}
-export interface CommandOpResult {
-  op: CommandOp
-  label: string
-  ok: boolean
-  error: string | null
-}
-export interface CommandApplyOutcome {
-  today: TodayPayload
-  results: CommandOpResult[]
-  applied: number
-  failed: number
-}
-
-// ── 회의 전 브리핑 (부록 I.11.1 복제) ──
+// ── 회의 전 브리핑 (docs/ASSISTANT.md §7) ──
 // 시각은 'YYYY-MM-DD HH:mm:ss' 다. 종일 일정은 없다
 export interface MeetingRef {
   id: string
@@ -1415,41 +1185,26 @@ export type AssistantResult<T> = ({ success: true } & T) | { success: false; err
 export type TodayResult = AssistantResult<{ today: TodayPayload }>
 
 export interface AssistantAPI {
+  // 오늘 데이터·회의 브리핑·설정·이동 (docs/ASSISTANT.md §12)
   getToday: () => Promise<TodayResult>
-  startDay: () => Promise<TodayResult>
-  closeDay: (note?: string) => Promise<TodayResult>
-  reopenDay: () => Promise<TodayResult>
-  saveWrapup: (note: string, date: string) => Promise<AssistantResult<{ plan: DailyPlan }>>
-  // 어제 메모를 건너뛴 것을 기록한다. 이후 missingWrapupDate 가 null 이 된다
-  skipWrapup: (date: string) => Promise<TodayResult>
-  refresh: () => Promise<TodayResult>
-  refreshBriefing: () => Promise<TodayResult>
-  // 맥락 복구 본문을 만든다 (부록 F.7)
-  generateRecovery: () => Promise<TodayResult>
-  listCandidates: () => Promise<AssistantResult<{ candidates: Candidate[] }>>
-  addItem: (candidateId: string) => Promise<TodayResult>
-  acceptSuggestion: (itemId: number) => Promise<TodayResult>
-  dismissSuggestion: (itemId: number) => Promise<TodayResult>
-  setItemStatus: (itemId: number, status: PlanItemStatus, note?: string) => Promise<TodayResult>
-  focusItem: (itemId: number) => Promise<TodayResult>
-  // 계속 제외 (부록 M.5.6). jira·task 항목만 된다
-  excludeItem: (itemId: number) => Promise<TodayResult>
-  removeExclusion: (candidateId: string) => Promise<TodayResult>
   getSettings: () => Promise<AssistantSettings>
   saveSettings: (
     patch: Partial<AssistantSettings>
   ) => Promise<AssistantResult<{ settings: AssistantSettings }>>
   onNavigate: (cb: (p: AssistantNavigateEvent) => void) => () => void
   onChanged: (cb: (p: AssistantChangedEvent) => void) => () => void
-  // 명령 입력 (부록 G.9). 해석은 DB 를 쓰지 않는다
-  interpretCommand: (
-    text: string,
-    scopeItemId?: number
-  ) => Promise<AssistantResult<{ interpretation: CommandInterpretation }>>
-  applyCommand: (
-    ops: CommandOp[],
-    text: string
-  ) => Promise<AssistantResult<Omit<CommandApplyOutcome, never>>>
-  // 회의 브리핑의 AI 본문을 다시 만든다 (부록 I.11.10). 결과를 기다린다
+  // 회의 브리핑의 AI 본문을 다시 만든다 (docs/ASSISTANT.md §7.7). 결과를 기다린다
   regenerateMeetingBriefing: (eventId: number) => Promise<TodayResult>
+}
+
+// ── 휴대폰 열람 (docs/MOBILE_VIEW.md) ──
+// 상태·스냅샷 모양은 mobile/contract.ts 가 단일 출처다. preload 의 window.api.mobile 과 같은 모양이다.
+export interface MobileAPI {
+  getStatus: () => Promise<import('../mobile/contract').MobileServerStatus>
+  setEnabled: (enabled: boolean) => Promise<import('../mobile/contract').MobileServerStatus>
+  regenerateToken: () => Promise<import('../mobile/contract').MobileServerStatus>
+  /** 데스크톱이 조립한 오늘 대시보드 스냅샷(MobileTodaySnapshot)을 메인에 올린다 */
+  publishToday: (snapshot: unknown) => Promise<{ success: boolean; error?: string }>
+  /** 휴대폰이 /api/today 를 읽으면 메인이 재발행을 요청한다. 구독 해제 함수를 돌려준다 */
+  onPublishRequested: (cb: () => void) => () => void
 }

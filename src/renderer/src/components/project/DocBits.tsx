@@ -15,7 +15,7 @@ const SOURCE_TONE: Record<string, string> = {
   첨부: 'bg-amber-100 text-amber-700'
 }
 
-export function SourceMark({ source }: { source: string }): React.ReactNode {
+function SourceMark({ source }: { source: string }): React.ReactNode {
   const tone = SOURCE_TONE[source] ?? 'bg-slate-100 text-slate-600'
   return (
     <span
@@ -28,7 +28,7 @@ export function SourceMark({ source }: { source: string }): React.ReactNode {
 }
 
 // 종류 배지. 연결 이슈는 문서가 아니라 맥락이라 가장 옅게 둔다
-export const DOC_KIND_BADGE: Record<DocKind, string> = {
+const DOC_KIND_BADGE: Record<DocKind, string> = {
   web: 'bg-blue-50 text-blue-700',
   attachment: 'bg-amber-50 text-amber-700',
   description: 'bg-slate-100 text-slate-600',

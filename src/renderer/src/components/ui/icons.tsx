@@ -95,23 +95,6 @@ export function XIcon(p: IconProps): React.ReactNode {
   )
 }
 
-export function LinkIcon(p: IconProps): React.ReactNode {
-  return (
-    <Svg {...p}>
-      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-    </Svg>
-  )
-}
-
-export function FolderIcon(p: IconProps): React.ReactNode {
-  return (
-    <Svg {...p}>
-      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-    </Svg>
-  )
-}
-
 export function FileTextIcon(p: IconProps): React.ReactNode {
   return (
     <Svg {...p}>
