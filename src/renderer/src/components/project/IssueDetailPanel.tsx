@@ -1,6 +1,9 @@
-import { useId } from 'react'
+import { useEffect, useId } from 'react'
 import type { JiraEpicAiSummary } from '../../types'
 import { useAiChatStore } from '../../stores/aiChatStore'
+import { useQuickAddStore } from '../../stores/quickAddStore'
+import { useReleaseNoteStore } from '../../stores/releaseNoteStore'
+import { issueTodoPrefill } from '../todo/sourceLink'
 import { ClampedText, button, taskTag, typo } from '../ui'
 import {
   ExternalLinkIcon,
@@ -31,6 +34,11 @@ interface IssueDetailPanelProps {
   onShowAllDocs?: (query: string) => void
   /** [AI 대화로 열기] — 프롬프트로 새 AI 대화를 연다(aiChatStore.startChatWith) */
   onOpenChat?: (prompt: string) => void
+  /**
+   * 티켓 웹 주소를 만들 Jira 사이트 주소. 넘기지 않으면 Jira 연결 상태(releaseNoteStore.jiraStatus)의 siteUrl 을 쓴다.
+   * 주소를 모르면 [할 일로 만들기]를 숨긴다
+   */
+  jiraSiteUrl?: string | null
 }
 
 /**
@@ -49,6 +57,12 @@ export function aiChatPromptFor(key: string, isEpic: boolean): string {
   return isEpic
     ? `Jira 에픽 ${key} 와 하위 티켓의 현재 상태를 읽고, 내가 할 일의 일정 초안을 제안해줘. 할 일로 만들기 전에 먼저 초안을 보여줘.`
     : `Jira 티켓 ${key} 의 내용과 최근 진행 상황을 읽고 정리해줘.`
+}
+
+/** [할 일로 만들기]: '[KEY] 요약' 과 티켓 웹 주소로 빠른 추가 팝오버를 연다. 사이트 주소를 모르면 아무것도 하지 않는다 */
+export function openIssueTodo(key: string, summary: string, siteUrl: string | null | undefined): void {
+  const prefill = issueTodoPrefill(key, summary, siteUrl)
+  if (prefill) useQuickAddStore.getState().open(prefill)
 }
 
 /** 상세에 바로 보이는 관련 문서 수. 나머지는 문서 탭에서 본다 */
@@ -75,10 +89,19 @@ export default function IssueDetailPanel({
   onOpenRelease,
   onOpenLink,
   onShowAllDocs,
-  onOpenChat
+  onOpenChat,
+  jiraSiteUrl
 }: IssueDetailPanelProps): React.ReactNode {
   // 넓은 창 패널과 좁은 창 인라인이 함께 마운트될 수 있어 제목 id 를 고유하게 만든다
   const titleId = useId()
+  const storeSiteUrl = useReleaseNoteStore((s) => s.jiraStatus?.siteUrl ?? null)
+  const siteUrl = jiraSiteUrl === undefined ? storeSiteUrl : jiraSiteUrl
+  // 사이트 주소를 아직 읽지 않았으면 한 번 읽는다(외부 API 를 부르지 않는 로컬 상태 조회)
+  useEffect(() => {
+    if (jiraSiteUrl !== undefined) return
+    const store = useReleaseNoteStore.getState()
+    if (store.jiraStatus === null) void store.fetchJiraStatus().catch(() => undefined)
+  }, [jiraSiteUrl])
   if (!target) {
     return <p className={`${typo.metaFaint} py-6 text-center`}>행을 고르면 상세가 여기에 보여요</p>
   }
@@ -267,6 +290,16 @@ export default function IssueDetailPanel({
             Jira에서 열기
             <ExternalLinkIcon size={12} />
           </button>
+          {issueTodoPrefill(jiraKey, title, siteUrl) ? (
+            <button
+              type="button"
+              onClick={() => openIssueTodo(jiraKey, title, siteUrl)}
+              title="'[키] 요약' 과 티켓 링크를 채운 할 일 빠른 추가를 엽니다"
+              className={`px-3 py-1.5 text-sm ${button.subtle}`}
+            >
+              할 일로 만들기
+            </button>
+          ) : null}
           {onOpenChat ? (
             <button
               type="button"

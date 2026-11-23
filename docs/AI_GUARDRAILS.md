@@ -115,7 +115,12 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
    renderer에 보여준 뒤, 사용자가 승인 버튼을 눌러야 실행.
    예외는 사용자가 채팅별로 명시적으로 켠 자동 승인 모드뿐이다 (7.3절)
 2. **삭제는 소프트 삭제만**: 물리 DELETE 금지. `is_archived` 플래그 또는 휴지통 테이블 사용
-3. **일괄 변경 금지**: 도구 호출 1회당 논리적 1건만 변경 (bulk delete/update 도구 금지)
+3. **일괄 수정·삭제 금지**: 도구 호출 1회당 논리적 1건만 변경한다. 여러 건을 수정하거나 삭제하는 도구는 만들지 않는다.
+   예외는 `create_todos` 하나다. 조건은 다음과 같다.
+   - 생성만 한다. 수정·삭제는 하지 않는다.
+   - 한 번에 최대 20건이다. zod 스키마가 1~20건 밖의 입력을 거부한다.
+   - 승인 카드가 전 항목(제목·우선순위·마감·태그, 메모가 있으면 앞 120자)을 번호 목록으로 보여 준다. 승인 1회가 목록 전체를 승인한다.
+   - 한 트랜잭션으로 넣는다. 하나라도 실패하면 전부 되돌린다.
 4. **전용 쓰기 경로**: 읽기 전용 커넥션이 아닌 별도 모듈로 분리하고,
    입력 전문을 감사 로그(`input`)에 기록
 5. **채팅별 모드 게이트**: 쓰기 동작 방식은 채팅 단위로 제어한다
@@ -123,7 +128,7 @@ WHERE event = 'tool_call' ORDER BY id DESC LIMIT 50;
    사용자는 입력창 아래 모드 선택에서 채팅마다 readonly·ask·plan 으로 바꿀 수 있다
 6. 이 문서에 도구별 위험도와 승인 흐름을 먼저 추가한 뒤 구현
 
-### 7.1 현재 구현 — 생성(create) 2종 + 수정(update) 2종
+### 7.1 현재 구현 — 생성(create) 3종 + 수정(update) 2종
 
 `src/main/services/ai-write-tools.ts`. **생성과 수정만 지원**하며 delete 도구는 없다
 (삭제 요청 시 해당 메뉴로 안내. 단 메모 보관/TODO 완료 같은 **가역적 상태 변경**은
@@ -132,12 +137,15 @@ zod 스키마가 도구 호출 레벨에서 강제한다.
 
 | 도구 | 변경 내용 | 위험도 | 비고 |
 |---|---|---|---|
-| `create_todo` | todos 1건 (+ 미존재 태그 생성, 최대 5개) | 낮 | `todo_history` 스냅샷 기록 |
+| `create_todo` | todos 1건 (+ 미존재 태그 생성, 최대 5개) | 낮 | `todo_history` 스냅샷 기록. 선택 인자 `source_link` |
+| `create_todos` | todos 1~20건 (각 항목 규칙은 `create_todo` 와 같다) | 낮 | 한 트랜잭션(하나라도 실패하면 전부 롤백). 건마다 `todo_history` 스냅샷. 감사 로그 `write_executed` 1건(건수·id 목록). 선택 인자 `source_link` 는 모든 항목에 저장 |
 | `create_memo` | memos 1건 (+ 미존재 카테고리 생성) | 낮 | |
 | `update_todo` | todos 1건 부분 수정 (+ 태그 전체 교체, 완료/복원) | 낮 | `todo_history` 스냅샷(실제 완료 전이 시에만 complete/restore). notes 전체 교체. due_date 시각 포함 시 알람(due_reminder) 동기화 |
 | `update_memo` | memos 1건 부분 수정 (+ 카테고리 변경/해제, 보관/해제) | 중 | content는 전체 교체 — 수정 전 `get_memo`로 전문 확인 필수 |
 
-`LINKWORK_WRITE_TOOL_NAMES` 는 위 4종이다. 변수 쓰기 도구는 없다(5절).
+`LINKWORK_WRITE_TOOL_NAMES` 는 위 5종이다. 변수 쓰기 도구는 없다(5절).
+
+할 일 출처 링크(`source_link`): `create_todo`·`create_todos` 가 받는다. 값은 `linkwork://` 앱 내 링크 또는 `https://` URL(최대 500자)만 허용한다. `normalizeSourceLink`(`src/main/utils/todo-helpers.ts`)가 검증하고, 형식이 틀리면 아무것도 저장하지 않고 오류를 돌려준다. `list_todos`·`get_todo` 는 `source_link` 를 돌려준다. `update_todo` 는 `source_link` 를 바꾸지 않는다.
 
 AI 는 `documents` 테이블을 읽지도 쓰지도 않는다. Jira 티켓에 연결된 문서는 프로젝트 화면의 문서 탭이 보여 준다([PROJECT_BOARD.md](PROJECT_BOARD.md)).
 
@@ -145,7 +153,7 @@ AI 는 `documents` 테이블을 읽지도 쓰지도 않는다. Jira 티켓에 �
 
 - 대상 id가 존재하지 않으면 오류 반환 (잘못된 id로의 갱신 방지)
 - **전달된 필드만** 부분 업데이트 — 전달하지 않은 필드는 절대 변경하지 않는다
-- 도구 호출 1회 = 1건 수정 (여러 건 수정 시 건마다 별도 승인)
+- 도구 호출 1회 = 1건 수정 (여러 건 수정 시 건마다 별도 승인). 다건 도구는 생성 전용 `create_todos` 뿐이다
 - content/notes 같은 본문 필드는 전체 교체이므로, 목록 도구의 truncate된 내용을
   그대로 되돌려 써서 데이터가 유실되지 않도록 전문 조회 도구
   `get_memo`/`get_todo`(읽기 전용)를 함께 제공하고 시스템 프롬프트로 사용을 강제한다.
@@ -164,7 +172,7 @@ AI가 쓰기 도구 호출
   → readonly: 즉시 거부 (audit: tool_denied)
   → plan: 즉시 거부, AI에게 "ExitPlanMode 로 계획 제출" 메시지 (audit: tool_denied, 7.4절)
   → auto: 자동 승인 (audit: write_approved, 변경 전 스냅샷 기록) → 실행
-  → ask: renderer에 'approval' 이벤트 (입력 전문 미리보기 카드)
+  → ask: renderer에 'approval' 이벤트 (입력 전문 미리보기 카드. create_todos 는 전 항목 번호 목록)
      → 사용자 [승인] → 실행 (audit: write_approved → tool_call → write_executed)
         사용자 [이 채팅에서 항상 승인] → 채팅을 auto로 전환 + 승인 (이후 호출은 자동)
         사용자 [거절] → 거부, AI에게 "재시도 금지" 메시지 (audit: write_rejected)
@@ -185,7 +193,7 @@ AI가 쓰기 도구 호출
 |---|---|---|
 | `readonly` | 쓰기 도구 시도 자체를 거부 | 조회 전용 채팅 (audit: tool_denied) |
 | `ask` | 쓰기 호출마다 승인 카드 | 승인이 게이트. DB 값이 허용 밖이면 이 모드로 폴백한다 |
-| `auto` (새 채팅 기본) | 승인 카드 없이 즉시 실행 | 쓰기 도구 4종 모두 자동 승인. 예외 없음 |
+| `auto` (새 채팅 기본) | 승인 카드 없이 즉시 실행 | 쓰기 도구 5종 모두 자동 승인. 예외 없음 |
 | `plan` | 조회로 계획을 세우고 승인 전 쓰기를 거부 | 계획 승인 시 auto 또는 ask 로 전환 (7.4절) |
 
 새 채팅 기본값:
@@ -196,7 +204,7 @@ AI가 쓰기 도구 호출
 `auto` 모드 설계 근거와 안전장치:
 
 - 새 채팅의 기본값이다. 승인 카드의 "이 채팅에서 항상 승인" 버튼 또는 모드 선택으로도 진입한다
-- 쓰기 도구 4종(할 일·메모 생성·수정)은 모두 auto 모드에서 자동 승인된다. 예외 목록은 없다
+- 쓰기 도구 5종(할 일·메모 생성·수정, 할 일 여러 건 생성)은 모두 auto 모드에서 자동 승인된다. 예외 목록은 없다
 - 자동 승인 시 수정 도구는 **변경 전 스냅샷**을 `write_approved`의 detail에 기록해
   잘못된 변경의 수동 복구 근거를 남긴다 (특히 update_memo는 본문 전체 교체라 중요)
 - 프롬프트 인젝션으로 쓰기가 시도되는 경우에 대비해 "쓰기는 사용자가 대화에서 직접

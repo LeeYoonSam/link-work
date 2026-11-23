@@ -6,6 +6,7 @@ import { getAiReadOnlyDatabase, getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
 import { MEMO_WITH_CATEGORY_SELECT, setMemoArchived } from '../utils/memo-helpers'
 import {
+  normalizeSourceLink,
   saveTodoHistory,
   saveTodoTags,
   setTodoCompletion,
@@ -22,18 +23,22 @@ import { logAiAudit } from './ai-audit'
 //    (메모 보관/TODO 완료 같은 가역적 상태 변경은 update로 허용).
 // 3. 도구 호출 1회 = 논리적 1건 변경. 포맷은 zod 스키마가 호출 레벨에서 강제한다.
 //    수정은 전달된 필드만 부분 업데이트하며, 대상 id가 없으면 오류를 반환한다.
+//    예외는 create_todos 하나다. 생성만 하고, 최대 20건을 한 트랜잭션으로 넣는다.
+//    승인 카드가 전 항목을 보여 주므로 승인 1회가 목록 전체를 승인한다.
+//    일괄 수정·삭제 도구는 만들지 않는다.
 // 4. 실행 결과는 ai_audit_log에 write_executed로 기록한다.
 // 5. 변수(Variables)는 쓰기 도구를 두지 않는다. 사용자가 변수 메뉴에서 직접 관리한다.
 
 export const LINKWORK_WRITE_TOOL_NAMES = [
   'create_todo',
+  'create_todos',
   'create_memo',
   'update_todo',
   'update_memo'
 ].map((name) => `mcp__linkwork__${name}`)
 
 // TODO 마감일은 알람 시각을 포함할 수 있다: 'YYYY-MM-DD' 또는 'YYYY-MM-DD HH:mm'.
-// 시각이 포함되면 알람(due_reminder)이 켜진 것으로 간주한다 (UI의 TodoForm과 동일한 규약).
+// 시각이 포함되면 알람(due_reminder)이 켜진 것으로 간주한다 (할 일 화면과 todoModel.shiftDueDate 가 따르는 규약).
 // 초(:ss)는 레거시 데이터를 그대로 되돌려 쓸 수 있도록 선택적으로 허용한다.
 const todoDueField = (desc: string): z.ZodString =>
   z
@@ -52,6 +57,70 @@ function dueDateHasTime(due: string | null): boolean {
 // 잘림 표시 마커. 조회 도구가 본문을 자를 때 덧붙이며(ai-tools.ts truncate),
 // 쓰기 도구는 이 마커가 섞인 본문을 거부해 "잘린 내용 되쓰기"로 인한 데이터 유실을 막는다.
 export const TRUNCATION_MARKER = '…(생략)'
+
+// create_todos 한 번에 만들 수 있는 최대 건수 (docs/AI_GUARDRAILS.md 7절)
+export const CREATE_TODOS_MAX = 20
+
+// 할 일 1건의 입력 규칙. create_todo 와 create_todos 의 각 원소가 같이 쓴다
+const todoItemShape = {
+  title: z.string().min(1).max(200).describe('TODO 제목'),
+  priority: z.enum(['high', 'medium', 'low']).optional().describe('우선순위 (기본 medium)'),
+  due_date: todoDueField("마감일 — 시각을 넣으면 알람 설정('YYYY-MM-DD HH:mm')").optional(),
+  notes: z.string().max(2000).optional().describe('노트 (마크다운 가능)'),
+  tags: z
+    .array(z.string().min(1).max(30))
+    .max(5)
+    .optional()
+    .describe('태그 이름 목록 — 기존 태그와 정확히 같은 이름이면 연결, 없으면 생성')
+}
+
+interface TodoItemInput {
+  title: string
+  priority?: 'high' | 'medium' | 'low'
+  due_date?: string
+  notes?: string
+  tags?: string[]
+}
+
+const sourceLinkField = z
+  .string()
+  .max(500)
+  .optional()
+  .describe(
+    '출처 링크 — 메모·회의록 등에서 나온 할 일이면 그 앱 내 링크(예: linkwork://memo/12, linkwork://note/5), Jira 티켓이면 https URL'
+  )
+
+// 할 일 1건을 INSERT 한다(태그 연결·이력·활동 로그 포함). 트랜잭션은 호출자가 연다.
+// create_todo 와 create_todos 가 함께 쓴다
+function insertTodo(
+  db: Database.Database,
+  item: TodoItemInput,
+  sourceLink: string | null
+): { todoId: number; createdTags: string[] } {
+  const due = item.due_date ?? null
+  const reminder = dueDateHasTime(due) ? 1 : 0
+  const result = db
+    .prepare(
+      `INSERT INTO todos (title, priority, due_date, due_reminder, notes, source_link)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(item.title, item.priority ?? 'medium', due, reminder, item.notes ?? null, sourceLink)
+  const todoId = Number(result.lastInsertRowid)
+  const resolved = resolveTodoTagIds(db, item.tags ?? [])
+  if (resolved.tagIds.length > 0) saveTodoTags(db, todoId, resolved.tagIds)
+  saveTodoHistory(db, todoId, 'create')
+  logActivity('todo', 'create', todoId, item.title, 'AI 생성')
+  return { todoId, createdTags: resolved.createdTags }
+}
+
+// 출처 링크 검증. 형식이 틀리면 오류 문구를 돌려준다
+function parseSourceLink(value: unknown): { link: string | null } | { error: string } {
+  try {
+    return { link: normalizeSourceLink(value) }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) }
+  }
+}
 
 function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] } {
   return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 1) }] }
@@ -147,7 +216,7 @@ export function getUpdatePreview(
         const row = db
           .prepare(
             `SELECT t.id, t.title, t.priority, t.due_date, t.due_reminder, t.is_completed, t.notes,
-                    ${TODO_TAGS_SUBQUERY}
+                    t.source_link, ${TODO_TAGS_SUBQUERY}
              FROM todos t WHERE t.id = ?`
           )
           .get(args.todo_id) as ({ notes: string | null } & Record<string, unknown>) | undefined
@@ -181,48 +250,69 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
 
   const createTodo = tool(
     'create_todo',
-    '새 TODO를 생성한다. tags에 태그 이름을 전달하면 기존 태그는 연결하고 없는 태그는 새로 만든다. due_date에 시각(HH:mm)을 포함하면 마감 알람이 켜진다. 실행 전 사용자 승인이 필요하다.',
-    {
-      title: z.string().min(1).max(200).describe('TODO 제목'),
-      priority: z.enum(['high', 'medium', 'low']).optional().describe('우선순위 (기본 medium)'),
-      due_date: todoDueField("마감일 — 시각을 넣으면 알람 설정('YYYY-MM-DD HH:mm')").optional(),
-      notes: z.string().max(2000).optional().describe('노트 (마크다운 가능)'),
-      tags: z
-        .array(z.string().min(1).max(30))
-        .max(5)
-        .optional()
-        .describe('태그 이름 목록 — 기존 태그와 정확히 같은 이름이면 연결, 없으면 생성')
-    },
+    '새 TODO를 생성한다. tags에 태그 이름을 전달하면 기존 태그는 연결하고 없는 태그는 새로 만든다. due_date에 시각(HH:mm)을 포함하면 마감 알람이 켜진다. 메모·회의록 등에서 나온 할 일이면 source_link에 그 링크를 넣는다. 여러 건이면 create_todos를 쓴다. 실행 전 사용자 승인이 필요하다.',
+    { ...todoItemShape, source_link: sourceLinkField },
     async (args) => {
+      const parsed = parseSourceLink(args.source_link)
+      if ('error' in parsed) return jsonResult({ error: parsed.error })
+      const sourceLink = parsed.link
       const db = getDatabase()
-      const tagNames = args.tags ?? []
-      const createdTags: string[] = []
-      const due = args.due_date ?? null
-      const reminder = dueDateHasTime(due) ? 1 : 0
-      const insertTodo = db.transaction(() => {
-        const result = db
-          .prepare(
-            `INSERT INTO todos (title, priority, due_date, due_reminder, notes)
-             VALUES (?, ?, ?, ?, ?)`
-          )
-          .run(args.title, args.priority ?? 'medium', due, reminder, args.notes ?? null)
-        const todoId = result.lastInsertRowid
-        const resolved = resolveTodoTagIds(db, tagNames)
-        createdTags.push(...resolved.createdTags)
-        if (resolved.tagIds.length > 0) saveTodoTags(db, todoId, resolved.tagIds)
-        saveTodoHistory(db, todoId, 'create')
-        logActivity('todo', 'create', todoId, args.title, 'AI 생성')
-        return todoId
-      })
-      const todoId = insertTodo()
+      const run = db.transaction(() => insertTodo(db, args, sourceLink))
+      const { todoId, createdTags } = run()
       logWriteExecuted('create_todo', `id=${todoId}, title=${args.title.slice(0, 50)}`)
       notifyDataChanged('todo')
       return jsonResult({
         created: true,
-        todo_id: Number(todoId),
+        todo_id: todoId,
         title: args.title,
         new_tags: createdTags,
         link: `linkwork://todo/${todoId}`
+      })
+    }
+  )
+
+  // 할 일 여러 건 생성 — 쓰기 도구 중 유일한 다건 도구다(가드레일 7절 3번의 예외).
+  // 생성만 하고, 최대 20건을 한 트랜잭션으로 넣는다. 하나라도 실패하면 전부 되돌린다
+  const createTodos = tool(
+    'create_todos',
+    `할 일을 여러 건 한 번에 생성한다(1~${CREATE_TODOS_MAX}건). 사용자가 여러 할 일을 한 번에 요청하거나 글·회의 내용을 할 일로 나눠 달라고 할 때 쓴다. 1건이면 create_todo를 쓴다. 각 항목의 규칙은 create_todo와 같다. source_link는 모든 항목에 같이 저장된다. 승인 카드에 전 항목이 표시되고 승인 1회로 모두 실행된다. 하나라도 실패하면 아무것도 저장하지 않는다.`,
+    {
+      items: z
+        .array(z.object(todoItemShape))
+        .min(1)
+        .max(CREATE_TODOS_MAX)
+        .describe(`만들 할 일 목록 (1~${CREATE_TODOS_MAX}건)`),
+      source_link: sourceLinkField
+    },
+    async (args) => {
+      const parsed = parseSourceLink(args.source_link)
+      if ('error' in parsed) return jsonResult({ error: parsed.error })
+      const sourceLink = parsed.link
+      const db = getDatabase()
+      const run = db.transaction(() => {
+        const created: { todo_id: number; title: string; link: string }[] = []
+        const newTags: string[] = []
+        for (const item of args.items) {
+          const { todoId, createdTags } = insertTodo(db, item, sourceLink)
+          created.push({ todo_id: todoId, title: item.title, link: `linkwork://todo/${todoId}` })
+          newTags.push(...createdTags)
+        }
+        return { created, newTags }
+      })
+      let outcome: ReturnType<typeof run>
+      try {
+        outcome = run()
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        return jsonResult({ error: `할 일을 만들지 못했습니다. 아무것도 저장하지 않았습니다: ${message}` })
+      }
+      const ids = outcome.created.map((t) => t.todo_id)
+      logWriteExecuted('create_todos', `count=${ids.length}, ids=${ids.join(',')}`)
+      notifyDataChanged('todo')
+      return jsonResult({
+        created: outcome.created.length,
+        todos: outcome.created,
+        new_tags: outcome.newTags
       })
     }
   )
@@ -321,7 +411,7 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
         else if (args.completed === false && row.is_completed) completionChange = 'restore'
 
         const { set, values, keys } = buildSetClause(args, ['title', 'priority', 'due_date', 'notes'])
-        // due_date에 시각이 있으면 알람 on, 날짜만/비움이면 off — UI(TodoForm) 규약과 동기화
+        // due_date에 시각이 있으면 알람 on, 날짜만/비움이면 off — 할 일 화면(todoModel.shiftDueDate) 규약과 같다
         if (args.due_date !== undefined) {
           set.push('due_reminder = ?')
           values.push(dueDateHasTime(args.due_date ?? null) ? 1 : 0)
@@ -464,5 +554,5 @@ export async function buildWriteTools(): Promise<SdkMcpToolDefinition<any>[]> {
     }
   )
 
-  return [createTodo, createMemo, updateTodo, updateMemo]
+  return [createTodo, createTodos, createMemo, updateTodo, updateMemo]
 }

@@ -6,6 +6,8 @@ import {
   buildDocsView,
   docSource,
   formatSize,
+  isDocGroupOpen,
+  isDocsSearching,
   matchesDoc,
   mergeLinks,
   relatedDocs,
@@ -229,5 +231,27 @@ describe('relatedDocs (상세 패널)', () => {
   })
   it('대상이 없으면 빈 결과', () => {
     expect(relatedDocs(null)).toEqual({ items: [], total: 0 })
+  })
+})
+
+describe('isDocGroupOpen', () => {
+  it('기본은 펼침', () => {
+    expect(isDocGroupOpen({}, 'PROJ-1', '')).toBe(true)
+    expect(isDocGroupOpen({ 'PROJ-1': false }, 'PROJ-1', '')).toBe(true)
+  })
+
+  it('저장된 접힘을 따른다', () => {
+    expect(isDocGroupOpen({ 'PROJ-1': true }, 'PROJ-1', '')).toBe(false)
+    expect(isDocGroupOpen({ 'PROJ-1': true }, 'PROJ-2', '')).toBe(true)
+  })
+
+  it('검색어가 있으면 접힘을 무시하고 펼친다', () => {
+    expect(isDocGroupOpen({ 'PROJ-1': true }, 'PROJ-1', '기획')).toBe(true)
+  })
+
+  it('공백만 있는 검색어는 검색이 아니다', () => {
+    expect(isDocsSearching('   ')).toBe(false)
+    expect(isDocsSearching(' a ')).toBe(true)
+    expect(isDocGroupOpen({ 'PROJ-1': true }, 'PROJ-1', '  ')).toBe(false)
   })
 })

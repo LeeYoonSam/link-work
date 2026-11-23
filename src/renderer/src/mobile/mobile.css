@@ -828,6 +828,40 @@ html[data-m-full] .m-page {
 .m-search:focus-within {
   box-shadow: 0 0 0 2px var(--m-accent);
 }
+
+/* ── 할 일 추가 입력 줄 ─────────────────────────────── */
+.m-add {
+  border-radius: var(--m-radius-sm);
+  background: var(--m-surface);
+  box-shadow: var(--m-shadow);
+}
+.m-add:focus-within {
+  box-shadow: 0 0 0 2px var(--m-accent);
+}
+.m-add-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 48px;
+  padding: 0 4px 0 14px;
+}
+.m-add-row input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--m-text);
+  font-size: 16px;
+}
+.m-add-row input::placeholder {
+  color: var(--m-text-3);
+}
+.m-add-summary {
+  padding: 0 14px 10px;
+  color: var(--m-accent-text);
+}
 .m-chips {
   display: flex;
   gap: 8px;

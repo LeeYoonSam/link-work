@@ -224,7 +224,7 @@
         "src/main/ipc/{todo,todo-tag,memo,memo-category,variable}.ipc.ts",
         "src/main/utils/{todo-helpers,memo-helpers,activity-logger}.ts",
         "src/renderer/src/components/{todo,memo,variable}/**",
-        "src/renderer/src/stores/{todoStore,memoStore,variableStore}.ts",
+        "src/renderer/src/stores/{todoStore,quickAddStore,memoStore,variableStore}.ts",
         "src/renderer/src/hooks/**"
       ],
       "docs": []

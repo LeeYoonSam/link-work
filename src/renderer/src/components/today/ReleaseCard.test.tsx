@@ -55,8 +55,8 @@ describe('ReleaseCard', () => {
     expect(html).toContain('외 2건 →')
     // 신호에 올라간 행은 표식만 붙는다
     const r812 = html.slice(html.indexOf('data-issue="ICA-812"'), html.indexOf('data-issue="ICA-790"'))
-    expect(r812).toContain('지금 챙길 것에 있음')
-    expect(html.slice(html.indexOf('data-issue="ICA-790"'))).not.toContain('지금 챙길 것에 있음')
+    expect(r812).toContain('먼저 챙길 항목')
+    expect(html.slice(html.indexOf('data-issue="ICA-790"'))).not.toContain('먼저 챙길 항목')
   })
 
   it('Jira 릴리스와 연결 안 되면 그 문구와 일정만 보인다', () => {

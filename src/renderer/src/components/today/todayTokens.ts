@@ -1,9 +1,10 @@
 // 오늘 대시보드 전용 시각 상수 (docs/ASSISTANT.md §11.3).
 // 공용 ui/tokens.ts 는 다른 화면도 쓴다. 그래서 대시보드의 위계·강조 규칙은 이 파일에만 둔다.
 //
-// 정보 위계: 헤드라인(lg) > 신호(sm medium) > 카드 제목(sm semibold) > 행(sm) > 메타(xs).
+// 정보 위계: 헤드라인(lg) > 카드 제목(sm semibold) > 행(sm) > 메타(xs).
 // 색 뜻: 빨강 = 지금 막는 위험·마감 지남, 앰버 = 주의, 파랑 = 정보·지금, 보라 = 회의, 초록 = 완료.
 // 색만으로 뜻을 전하지 않는다. severity 는 아이콘 모양(◆ ▲ ●)과 글자 라벨도 함께 쓴다.
+// SEVERITY_STYLE 은 휴대폰 열람의 '지금 챙길 것'(mobile/TodayTab.tsx)이 쓴다. 데스크톱 오늘 화면은 신호 패널을 그리지 않는다.
 import type { SignalSeverity } from '../../types'
 
 export interface SeverityStyle {

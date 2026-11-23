@@ -179,6 +179,20 @@ export function buildDocsView(
   return { groups, kindCounts, sources, total }
 }
 
+/** 검색어가 있는지. 공백만이면 검색이 아니다 */
+export function isDocsSearching(query: string): boolean {
+  return query.trim() !== ''
+}
+
+/**
+ * 문서 탭 그룹이 펼쳐져 보이는지. 기본은 펼침이고 저장된 접힘(collapsed[id] === true)을 따른다.
+ * 검색 중에는 접힌 그룹 안의 결과가 숨지 않게 저장된 접힘을 무시하고 모두 펼친다.
+ */
+export function isDocGroupOpen(collapsed: Record<string, boolean>, id: string, query: string): boolean {
+  if (isDocsSearching(query)) return true
+  return collapsed[id] !== true
+}
+
 /**
  * 상세 패널 "관련 문서". 이슈면 자기 링크와 하위 목록(하위작업)의 링크,
  * 에픽·가상 그룹이면 보이는 자손 전부를 URL 로 합친다.

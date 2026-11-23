@@ -4,7 +4,7 @@ import type { Todo } from '../types'
 import { collect, click, findButton } from '../components/today/testTree'
 import { createMobileApi, type FetchLike } from './api'
 import { removeOptimistically } from './mobileModel'
-import { TodoListView, type TodoListViewProps } from './TodosTab'
+import { addTodoFromInput, mobileTodoBody, TodoListView, type TodoAddBarProps, type TodoListViewProps } from './TodosTab'
 
 const todo = (over: Partial<Todo> & Pick<Todo, 'id'>): Todo => ({
   title: `할 일 ${over.id}`,
@@ -14,6 +14,7 @@ const todo = (over: Partial<Todo> & Pick<Todo, 'id'>): Todo => ({
   is_completed: 0,
   completed_at: null,
   notes: null,
+  source_link: null,
   created_at: '2026-11-01 00:00:00',
   updated_at: '2026-11-01 00:00:00',
   ...over
@@ -100,5 +101,82 @@ describe('TodoListView', () => {
     expect(html).toContain('주간 보고')
     expect(html).toContain('role="alert"')
     expect(html).toContain('완료하지 못했어요: 저장 실패')
+  })
+
+})
+
+// 2026-11-19(목) 10:00 로컬
+const NOW = new Date(2026, 10, 19, 10, 0)
+
+const addProps = (over: Partial<TodoAddBarProps> = {}): TodoAddBarProps => ({
+  draft: '',
+  summary: '',
+  busy: false,
+  onDraft: () => {},
+  onSubmit: () => {},
+  ...over
+})
+
+describe('할 일 추가 입력 줄', () => {
+  it('자연어를 알아본 구조화 필드를 POST /api/todos 로 보낸다', async () => {
+    const fetchImpl = vi.fn<FetchLike>(async () => ({ ok: true, status: 200, json: async () => ({ id: 31 }) }))
+    const api = createMobileApi(fetchImpl)
+    const out = await addTodoFromInput(api, '내일 3시 회의 준비 !높음', NOW)
+    expect(out).toEqual({ id: 31 })
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/todos')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      title: '회의 준비',
+      priority: 'high',
+      due_date: '2026-11-20 15:00',
+      due_reminder: 1
+    })
+  })
+
+  it('날짜만 있으면 알림 0, 아무것도 알아보지 못하면 제목만, 빈 입력은 보내지 않는다', async () => {
+    expect(mobileTodoBody('11/25 치과', NOW)).toEqual({ title: '치과', due_date: '2026-11-25', due_reminder: 0 })
+    expect(mobileTodoBody('  장보기 ', NOW)).toEqual({ title: '장보기' })
+    // 태그는 알아보지 않는다
+    expect(mobileTodoBody('정리 #업무', NOW)).toEqual({ title: '정리 #업무' })
+    expect(mobileTodoBody('   ', NOW)).toBeNull()
+    const fetchImpl = vi.fn<FetchLike>()
+    expect(await addTodoFromInput(createMobileApi(fetchImpl), '  ', NOW)).toBeNull()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('실패하면 서버 문구로 reject 한다(화면은 입력을 남기고 문구를 보인다)', async () => {
+    const api = createMobileApi(async () => ({ ok: false, status: 400, json: async () => ({ error: '할 일 제목을 입력하세요.' }) }))
+    await expect(addTodoFromInput(api, '무언가', NOW)).rejects.toThrow('할 일 제목을 입력하세요.')
+  })
+
+  it('진행 중 목록 위에만 입력 줄과 인식 요약을 그리고, 제출하면 onSubmit', () => {
+    const onSubmit = vi.fn()
+    const onDraft = vi.fn()
+    const add = addProps({ draft: '내일 3시 회의 준비 !높음', summary: '내일 15:00 · 높음', onSubmit, onDraft })
+    const tree = TodoListView(props({ add }))
+    const html = renderToStaticMarkup(tree)
+    expect(html).toContain('aria-label="새 할 일"')
+    expect(html).toContain('data-add-summary')
+    expect(html).toContain('내일 15:00 · 높음')
+    const form = collect(tree).find((e) => e.type === 'form')!
+    const preventDefault = vi.fn()
+    ;(form.props.onSubmit as (e: unknown) => void)({ preventDefault })
+    expect(preventDefault).toHaveBeenCalled()
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    const input = collect(tree).find((e) => e.type === 'input' && e.props['aria-label'] === '새 할 일')!
+    ;(input.props.onChange as (e: unknown) => void)({ currentTarget: { value: '모레' } })
+    expect(onDraft).toHaveBeenCalledWith('모레')
+    // 한글 조합 중 Enter 는 제출을 막는다
+    const keyPrevent = vi.fn()
+    ;(input.props.onKeyDown as (e: unknown) => void)({ key: 'Enter', nativeEvent: { isComposing: true }, preventDefault: keyPrevent })
+    expect(keyPrevent).toHaveBeenCalled()
+
+    const done = renderToStaticMarkup(TodoListView(props({ add, showCompleted: true, todos: [] })))
+    expect(done).not.toContain('aria-label="새 할 일"')
+    // 빈 입력은 추가 버튼이 꺼져 있고 요약이 없다
+    const empty = renderToStaticMarkup(TodoListView(props({ add: addProps() })))
+    expect(empty).not.toContain('data-add-summary')
+    expect(empty).toMatch(/<button type="submit" disabled=""/)
   })
 })

@@ -1,7 +1,7 @@
 // 모바일 열람(휴대폰 브라우저) 계약 타입. 데스크톱 렌더러(발행·설정)와 모바일 화면이 함께 쓴다.
 // 메인 프로세스의 src/main/services/mobile/types.ts 와 같은 모양이다 — 한쪽을 바꾸면 다른 쪽도 바꾼다.
 // 순수 타입 모듈이다. React·스토어·window 를 쓰지 않는다.
-import type { Memo, MemoCategory, Todo } from '../types'
+import type { Memo, MemoCategory, Todo, TodoPriority } from '../types'
 import type { TodayDashboard } from '../components/today/todayModel'
 
 /** 데스크톱이 조립해 메인에 올려 두는 오늘 대시보드 스냅샷. 메인은 내용을 해석하지 않는다(크기·date 만 검사) */
@@ -61,6 +61,7 @@ export interface MobileAddress {
 // ── HTTP API (모두 쿠키 인증 필요, JSON) ───────────────────
 // GET  /api/today                 → MobileTodayResponse   (메인이 데스크톱에 재발행도 요청한다)
 // GET  /api/todos?completed=0|1   → MobileTodosResponse
+// POST /api/todos                 → MobileTodoCreated     (본문 MobileTodoCreateBody)
 // POST /api/todos/:id/complete    → MobileOk
 // POST /api/todos/:id/restore     → MobileOk
 // GET  /api/memos                 → MobileMemosResponse   (보관하지 않은 메모 전부 + 카테고리)
@@ -74,6 +75,21 @@ export interface MobileTodayResponse {
 
 export interface MobileTodosResponse {
   todos: Todo[]
+}
+
+export interface MobileTodoCreateBody {
+  /** 앞뒤 공백을 뺀 1~200자 */
+  title: string
+  /** 없으면 'medium' */
+  priority?: TodoPriority
+  /** 'YYYY-MM-DD' 또는 'YYYY-MM-DD HH:mm'. 그 밖의 형식은 400 */
+  due_date?: string | null
+  /** 서버가 무시하고 due_date 로 정한다: 시각이 있으면 1, 없으면 0 */
+  due_reminder?: 0 | 1
+}
+
+export interface MobileTodoCreated {
+  id: number
 }
 
 export interface MobileMemosResponse {

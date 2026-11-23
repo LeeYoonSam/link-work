@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
+  ApprovalCard,
+  batchTodoItems,
   ComposerControls,
   PlanApprovalCard,
   WRITE_MODES,
@@ -209,5 +211,54 @@ describe('계획 승인 응답과 mode_changed 이벤트', () => {
     useAiChatStore.getState().handleStreamEvent({ chatId: 1, event: 'mode_changed', mode: 'auto' })
     const chats = useAiChatStore.getState().chats
     expect(chats.map((c) => c.write_mode)).toEqual(['auto', 'readonly'])
+  })
+})
+
+describe('ApprovalCard — create_todos', () => {
+  const render = (input: Record<string, unknown>, name = 'create_todos'): string =>
+    renderToStaticMarkup(
+      <ApprovalCard
+        request={{ requestId: 'r9', name, label: '할 일 여러 건 생성', kind: 'write', input }}
+        allowAlways
+        onRespond={() => {}}
+      />
+    )
+
+  it('items 를 건수와 번호 목록(제목·우선순위·마감·태그)으로 보여 준다', () => {
+    const html = render({
+      items: [
+        { title: '자료 정리', priority: 'high', due_date: '2026-11-21', tags: ['회의'] },
+        { title: '메일 회신', due_date: '2026-11-22 10:00' },
+        { title: '리뷰 요청', priority: 'low' }
+      ],
+      source_link: 'linkwork://note/5'
+    })
+    expect(html).toContain('할 일 3건 생성')
+    expect(html).toContain('<ol')
+    expect(html.match(/<li/g)).toHaveLength(3)
+    expect(html).toContain('자료 정리')
+    expect(html).toContain('높음')
+    expect(html).toContain('마감 2026-11-21')
+    expect(html).toContain('#회의')
+    expect(html).toContain('메일 회신')
+    expect(html).toContain('보통')
+    expect(html).toContain('마감 2026-11-22 10:00')
+    expect(html).toContain('낮음')
+    expect(html).toContain('출처: linkwork://note/5')
+    // 원본 JSON 대신 목록을 보여 준다
+    expect(html).not.toContain('&quot;items&quot;')
+  })
+
+  it('다른 쓰기 도구는 입력 JSON 을 그대로 보여 준다', () => {
+    const html = render({ title: '하나' }, 'create_todo')
+    expect(html).toContain('&quot;title&quot;')
+    expect(html).not.toContain('건 생성</p>')
+  })
+
+  it('형식이 다른 items 는 빈 목록으로 다룬다', () => {
+    expect(batchTodoItems({ items: 'x' })).toEqual([])
+    expect(batchTodoItems({ items: [null, { title: 3 }] })).toEqual([
+      { title: '(제목 없음)', priority: undefined, due_date: undefined, tags: undefined }
+    ])
   })
 })

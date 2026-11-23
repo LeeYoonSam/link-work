@@ -16,6 +16,23 @@ import MarkdownContent from './MarkdownContent'
 import CategoryBadge from './CategoryBadge'
 import { ChevronLeftIcon, CopyIcon, ExpandIcon } from './memoIcons'
 import { formatDbTime, parseMemoTitle } from './memoText'
+import { memoTodoPrefill } from '../todo/sourceLink'
+import { useQuickAddStore } from '../../stores/quickAddStore'
+
+/** '할 일로 만들기': 메모 첫 줄과 메모 링크로 빠른 추가 팝오버를 연다. 저장은 사용자가 팝오버에서 한다 */
+export function openMemoTodo(memo: Pick<Memo, 'id' | 'content'>): void {
+  useQuickAddStore.getState().open(memoTodoPrefill(memo))
+}
+
+// 체크 상자 + 더하기 모양. 할 일로 만들기 버튼에 쓴다
+function TodoPlusIcon({ size = 15 }: { size?: number }): React.ReactNode {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M9 11l3 3L22 4" />
+      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+    </svg>
+  )
+}
 
 const TOOL_TONES = {
   default: 'text-gray-400 hover:text-gray-700 hover:bg-gray-100',
@@ -217,6 +234,9 @@ export default function MemoReader({
                 </ToolButton>
                 <ToolButton label="편집 (e)" onClick={() => onEdit(memo)}>
                   <PencilIcon size={15} />
+                </ToolButton>
+                <ToolButton label="할 일로 만들기" tone="primary" onClick={() => openMemoTodo(memo)}>
+                  <TodoPlusIcon size={15} />
                 </ToolButton>
               </>
             )}

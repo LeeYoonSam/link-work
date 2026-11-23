@@ -340,7 +340,7 @@ IPC 는 throw 하지 않고 `{ success, … }` 로 감싼다.
 
 ### 6.0.2 문서 탭
 
-- 루트는 `DocsTab.tsx`, 순수 모델은 `docsModel.ts`(`buildDocsView`, `mergeLinks`, `matchesDoc`, `relatedDocs`)다.
+- 루트는 `DocsTab.tsx`, 순수 모델은 `docsModel.ts`(`buildDocsView`, `mergeLinks`, `matchesDoc`, `relatedDocs`, `isDocGroupOpen`)다.
 - 티켓 트리의 그룹(에픽 → 티켓, 에픽 없음·범위 밖)을 그대로 받아, 보드에 보이는 이슈(inScope 와 그 조상)의 `links` 를 묶는다.
 - 그룹 안에서 문서(웹링크·첨부·본문 링크)를 위에, 연결 이슈를 아래에 관계 이름 순으로 둔다. 연결 이슈가 많아도 문서가 묻히지 않게 하기 위해서다.
 - 출처 라벨은 첨부면 `'첨부'`, 그 밖은 저장된 `source`(비면 `'기타'`)다.
@@ -350,6 +350,11 @@ IPC 는 throw 하지 않고 `{ success, … }` 로 감싼다.
 - 출처 필터의 후보는 종류·출처 필터를 모두 빼고(검색·내 담당만은 적용) 등장한 라벨을 건수 많은 순으로 보인다. 하나를 고른 뒤에도 다른 출처를 더 고를 수 있게 하기 위해서다.
   이미 고른 출처는 검색에 가려져 0건이어도 후보에 남긴다. 해제할 체크박스가 사라지면 안 되기 때문이다.
 - 상단 종류별 건수는 종류 필터를 빼고 센다. 종류 토글의 숫자가 "이 종류를 켜면 몇 건"이어야 해서다.
+- 그룹 접기: 그룹 헤더 왼쪽 chevron 단추(`aria-expanded`)로 그룹을 접고 편다. 접으면 헤더(아이콘·에픽 키·제목·건수)만 남고 문서·연결 이슈 목록은 그리지 않는다.
+  목록 위 "모두 접기"/"모두 펴기" 단추는 지금 보이는 그룹 전체에 적용한다. 보이는 그룹이 모두 접혀 있으면 "모두 펴기", 아니면 "모두 접기"로 보인다.
+- 기본은 펼침이다. 접힘은 localStorage `linkwork.jiraBoard.prefs` 의 `docsCollapsed`(그룹 id → 접힘)에 저장되고 티켓 탭의 펼침과 따로 관리한다.
+- 검색어가 있으면(공백만은 검색 아님) 저장된 접힘을 무시하고 모두 펼친다. 접힌 그룹 안의 검색 결과가 숨으면 안 되고, 상세 패널의 "문서 탭에서 모두 보기"가 검색어로 이 탭을 열기 때문이다.
+  이때 그룹 단추와 모두 접기/펴기 단추는 막고 "검색 중에는 모두 펼쳐 보여요"를 안내한다. 종류·출처 필터만 있으면 접힘을 그대로 따른다.
 - 0건이면 "연결된 문서가 없어요 — Jira 티켓에 웹링크를 추가하거나 본문에 링크를 넣으면 여기에 모여요".
 - 티켓 상세 패널의 "관련 문서" 절은 그 이슈와 하위 목록의 `links` 를 보인다. 에픽·가상 그룹이면 보이는 자손 것까지 합쳐 URL 중복을 뺀다.
   최대 6건(`RELATED_LIMIT`)만 보이고 "문서 탭에서 모두 보기"는 그 키를 검색어로 문서 탭을 연다(`openDocsFor`). 에픽 키로 찾으면 그 에픽 그룹 전체가 나온다.
@@ -394,7 +399,8 @@ IPC 는 throw 하지 않고 `{ success, … }` 로 감싼다.
   - 검색어, 상태 분류, 세부 상태, 유형, 릴리스 필터 중 하나라도 걸려 있으면 묶지 않는다(`shouldFoldDone`). 내 담당만·완료 모두 숨김·이전 완료 보기는 묶음을 유지한다. 찾으려고 거른 결과가 묶음 속에 숨으면 안 되기 때문이다.
   - "모두 펼치기/접기"는 묶음 행도 함께 펼치고 접는다. "보드에서 보기"는 조상을 펼친 뒤에도 그 이슈가 묶음 속에 숨어 있을 때만 감싼 묶음·섹션을 펼친다(보이는 이슈면 사용자가 접어 둔 묶음은 그대로 둔다).
   - 포커스된 행이 접힌 묶음 속으로 사라지면 그 이슈를 감싼 묶음 행 → 부모 → 조부모의 묶음 행 → 그룹 → 닫힌 상위 티켓 섹션 순으로 보이는 첫 행에 포커스를 옮긴다.
-- 상세 패널: 메타, 설명 발췌, 하위 목록, [Jira에서 열기], [AI 대화로 열기]. 에픽이면 [AI 요약] 버튼이 있고, 결과에 "AI 요약 · 시각"을 붙인다.
+- 상세 패널: 메타, 설명 발췌, 하위 목록, [Jira에서 열기], [할 일로 만들기], [AI 대화로 열기]. 에픽이면 [AI 요약] 버튼이 있고, 결과에 "AI 요약 · 시각"을 붙인다.
+- [할 일로 만들기]: `openIssueTodo` 가 할 일 빠른 추가 팝오버(`quickAddStore.open`)를 "[KEY] 요약" 과 출처 링크(티켓 웹 주소 `{siteUrl}/browse/{KEY}`)로 채워 연다. 할 일은 사용자가 팝오버에서 Enter 로 저장한다. 사이트 주소는 Jira 연결 상태(`releaseNoteStore.jiraStatus.siteUrl`)에서 읽고, 모르거나 https 가 아니면 버튼을 숨긴다.
 - [AI 대화로 열기]: [Jira에서 열기] 옆에 있다. 누르면 `openIssueChat` 이 `aiChatStore.startChatWith(prompt, { writeMode: 'ask' })` 로 새 AI 대화를 열고 질문을 보낸다. 이 대화에서 AI 가 할 일·메모를 쓰려면 승인 카드를 거친다
   (AI 를 쓸 수 없으면 보내지 않고 AI 화면만 연다. [AI_CHAT_ARCHITECTURE.md](AI_CHAT_ARCHITECTURE.md) 6.1절).
   - 질문은 `aiChatPromptFor(key, isEpic)` 가 만든다. 에픽과 에픽 가상 그룹은 "Jira 에픽 {key} 와 하위 티켓의 현재 상태를 읽고, 내가 할 일의 일정 초안을 제안해줘. 할 일로 만들기 전에 먼저 초안을 보여줘." 이다. 그 밖의 티켓은 "Jira 티켓 {key} 의 내용과 최근 진행 상황을 읽고 정리해줘." 이다.
@@ -438,13 +444,13 @@ IPC 는 throw 하지 않고 `{ success, … }` 로 감싼다.
 |---|---|
 | `src/main/services/jira-board.test.ts` | 전체 수집 규칙(JQL·보강·inScope·상한), 동기화 모드(증분 upsert·저장 대상 선별, 전체로 넘어가는 조건, auto 의 60초 생략·24시간 전체·옛 행 전체, 실패 시 저장본 보존, 비우기), 링크 조립(종류별·중복 제거·http(s)만), 웹링크 대상·상한·실패 무시·증분 유지, AI 요약. Jira 호출 함수와 저장소를 주입해 네트워크 없이 돈다 |
 | `src/main/services/jira-board-store.test.ts` | 저장·읽기·전체 교체·증분 upsert·비우기, 깨진 행 무시, 옛 행 채우기와 `legacyRows`, 쓰기 오류 시 되돌리기, 에픽 AI 요약 저장(덮어쓰기·50행 상한·사라진 에픽 삭제·비우기) |
-| `src/renderer/src/components/project/IssueDetailPanel.test.tsx` | [AI 대화로 열기] 버튼 표시와 질문 문구(`aiChatPromptFor`), 질문에 제목·설명이 없음 |
+| `src/renderer/src/components/project/IssueDetailPanel.test.tsx` | [AI 대화로 열기] 버튼 표시와 질문 문구(`aiChatPromptFor`), 질문에 제목·설명이 없음, [할 일로 만들기] 표시 조건(사이트 주소)과 미리 채울 값 |
 | `src/main/ipc/jira-board.ipc.test.ts` | `fetch` 의 mode 검증, `cached`, `summarizeEpic` 전달, `openLink` 가 저장 스냅샷에 없는 URL·비 http(s)·문자열 아닌 값을 거부 |
 | `src/main/services/jira-adf.test.ts` | ADF → 평문 변환, 링크 추출(`extractAdfLinks`), 출처 이름 추정(`guessLinkName`) |
 | `src/renderer/src/components/project/boardModel.test.ts` | 트리 구성, 롤업, 필터(릴리스 필터 포함), 정렬, 평탄화, 키보드 이동, 요약 타일, 우선순위 표기 |
-| `src/renderer/src/components/project/docsModel.test.ts` | 문서 탭의 묶기, 같은 URL 합치기, 연결 이슈 분리, 종류별 건수, 검색·출처·내 담당 필터 |
-| `src/renderer/src/components/project/DocsTab.test.tsx` | 문서 탭의 상태별 화면, 묶음·합치기 표시, 종류별 건수, 빈 안내 |
+| `src/renderer/src/components/project/docsModel.test.ts` | 문서 탭의 묶기, 같은 URL 합치기, 연결 이슈 분리, 종류별 건수, 검색·출처·내 담당 필터, 그룹 펼침 판정(기본 펼침·저장된 접힘·검색 중 모두 펼침) |
+| `src/renderer/src/components/project/DocsTab.test.tsx` | 문서 탭의 상태별 화면, 묶음·합치기 표시, 종류별 건수, 빈 안내, 그룹 접기(`aria-expanded`·접힌 그룹은 헤더만)·모두 접기/펴기·검색 중 접힘 무시 |
 | `src/renderer/src/components/project/ProjectsPage.test.tsx` | 탭 바와 선택 탭만 마운트, 릴리스 탭 배지, 탭 전환, 릴리스 탭에서만 markSeen |
 | `src/renderer/src/components/project/IssueTree.keyboard.test.tsx` | 트리 키 처리가 상세 패널 버튼의 키를 가로채지 않음 |
-| `src/renderer/src/stores/jiraBoardStore.test.ts` | load(저장본 먼저·동기화·중복 방지·늦은 응답·오류 코드), AI 요약 상태, 필터·펼침·선택과 localStorage, `revealIssue`(보드에서 보기) |
+| `src/renderer/src/stores/jiraBoardStore.test.ts` | load(저장본 먼저·동기화·중복 방지·늦은 응답·오류 코드), AI 요약 상태, 필터·펼침·문서 탭 접힘·선택과 localStorage, `revealIssue`(보드에서 보기) |
 | `src/renderer/src/components/project/ProjectBoardView.test.tsx` | 상태별 화면(§6.3), 트리의 펼침·aria·백로그 숨김·roving tabindex |

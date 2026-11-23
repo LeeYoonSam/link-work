@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Card, EmptyState, SearchIcon, taskTag, typo } from '../ui'
+import { Card, ChevronDownIcon, EmptyState, SearchIcon, taskTag, typo } from '../ui'
 import { useJiraBoardStore } from '../../stores/jiraBoardStore'
 import { useNavigationStore } from '../../stores/navigationStore'
 import { CheckItem, FilterPopover, SyncControls, toggleIn } from './BoardControls'
@@ -12,6 +12,8 @@ import {
   DOC_KIND_ORDER,
   EMPTY_DOCS_FILTER,
   buildDocsView,
+  isDocGroupOpen,
+  isDocsSearching,
   type DocEntry,
   type DocGroup,
   type DocKind
@@ -51,11 +53,40 @@ function EntryList({ entries, onOpen }: { entries: DocEntry[]; onOpen: (url: str
   )
 }
 
-function GroupSection({ group, onOpen }: { group: DocGroup; onOpen: (url: string) => void }): React.ReactNode {
+const SEARCH_OPEN_HINT = '검색 중에는 모두 펼쳐 보여요'
+
+function GroupSection({
+  group,
+  open,
+  searching,
+  onToggle,
+  onOpen
+}: {
+  group: DocGroup
+  open: boolean
+  /** 검색 중이면 접힘을 무시하고 펼치므로 토글을 막는다 */
+  searching: boolean
+  onToggle: (id: string, collapsed: boolean) => void
+  onOpen: (url: string) => void
+}): React.ReactNode {
   const count = group.docs.length + group.issues.length
+  const bodyId = `doc-group-body-${group.id}`
   return (
-    <section className="px-5 py-4" aria-label={group.title} data-doc-group={group.id}>
+    <section className="px-5 py-4" aria-label={group.title} data-doc-group={group.id} data-open={open}>
       <header className="flex items-center gap-1.5 min-w-0">
+        {/* 접기 단추는 에픽 키 단추와 형제로 둔다(단추 중첩 금지) */}
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={bodyId}
+          aria-label={`${group.title} ${open ? '접기' : '펴기'}`}
+          disabled={searching}
+          title={searching ? SEARCH_OPEN_HINT : open ? '접기' : '펴기'}
+          onClick={() => onToggle(group.id, open)}
+          className="-ml-1 w-5 h-5 flex-shrink-0 inline-flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
+        >
+          <ChevronDownIcon size={14} className={open ? '' : '-rotate-90'} />
+        </button>
         {group.kind === 'epic' ? (
           <IssueTypeIcon level="epic" typeName="에픽" />
         ) : (
@@ -76,15 +107,19 @@ function GroupSection({ group, onOpen }: { group: DocGroup; onOpen: (url: string
         <h3 className="min-w-0 truncate text-sm font-semibold text-gray-900">{group.title}</h3>
         <span className={`${typo.metaFaint} flex-shrink-0`}>{count}</span>
       </header>
-      {group.docs.length > 0 ? (
-        <div className="mt-1">
-          <EntryList entries={group.docs} onOpen={onOpen} />
-        </div>
-      ) : null}
-      {group.issues.length > 0 ? (
-        <div className="mt-2">
-          <p className={`${typo.microLabel} mt-2`}>연결 이슈 {group.issues.length}</p>
-          <EntryList entries={group.issues} onOpen={onOpen} />
+      {open ? (
+        <div id={bodyId}>
+          {group.docs.length > 0 ? (
+            <div className="mt-1">
+              <EntryList entries={group.docs} onOpen={onOpen} />
+            </div>
+          ) : null}
+          {group.issues.length > 0 ? (
+            <div className="mt-2">
+              <p className={`${typo.microLabel} mt-2`}>연결 이슈 {group.issues.length}</p>
+              <EntryList entries={group.issues} onOpen={onOpen} />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>
@@ -103,12 +138,15 @@ export default function DocsTab(): React.ReactNode {
     errorCode,
     filter,
     docsFilter,
+    docsCollapsed,
     lastSync,
     lastSyncRequested,
     load,
     sync,
     setFilter,
     setDocsFilter,
+    setDocsCollapsed,
+    setAllDocsCollapsed,
     dismissError
   } = useJiraBoardStore()
   const setView = useNavigationStore((s) => s.setView)
@@ -143,8 +181,11 @@ export default function DocsTab(): React.ReactNode {
     void openBoardLink(url).then(setLinkError)
   }
   const mineOn = filter.mineOnly && !!myAccountId
-  const docsFiltered =
-    docsFilter.query.trim() !== '' || docsFilter.kinds.length > 0 || docsFilter.sources.length > 0
+  const searching = isDocsSearching(docsFilter.query)
+  const docsFiltered = searching || docsFilter.kinds.length > 0 || docsFilter.sources.length > 0
+  const isOpen = (id: string): boolean => isDocGroupOpen(docsCollapsed, id, docsFilter.query)
+  // 모두 접기/펴기는 저장된 접힘 기준(검색 중에는 버튼을 막는다)
+  const allCollapsed = view.groups.length > 0 && view.groups.every((g) => !isDocGroupOpen(docsCollapsed, g.id, ''))
   const shownCount = view.groups.reduce((n, g) => n + g.docs.length + g.issues.length, 0)
   const kindTotal = DOC_KIND_ORDER.reduce((n, k) => n + view.kindCounts[k], 0)
 
@@ -275,11 +316,33 @@ export default function DocsTab(): React.ReactNode {
           </EmptyState>
         </Card>
       ) : (
-        <Card padding="none" className="divide-y divide-gray-100">
-          {view.groups.map((g) => (
-            <GroupSection key={g.id} group={g} onOpen={openLink} />
-          ))}
-        </Card>
+        <div className="space-y-2">
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              data-docs-collapse-all
+              disabled={searching}
+              title={searching ? SEARCH_OPEN_HINT : undefined}
+              onClick={() => setAllDocsCollapsed(view.groups.map((g) => g.id), !allCollapsed)}
+              className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 disabled:cursor-default disabled:text-gray-300"
+            >
+              <ChevronDownIcon size={12} className={allCollapsed ? '-rotate-90' : ''} />
+              {allCollapsed ? '모두 펴기' : '모두 접기'}
+            </button>
+          </div>
+          <Card padding="none" className="divide-y divide-gray-100">
+            {view.groups.map((g) => (
+              <GroupSection
+                key={g.id}
+                group={g}
+                open={isOpen(g.id)}
+                searching={searching}
+                onToggle={setDocsCollapsed}
+                onOpen={openLink}
+              />
+            ))}
+          </Card>
+        </div>
       )}
     </div>
   )

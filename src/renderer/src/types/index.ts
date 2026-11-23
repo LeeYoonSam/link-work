@@ -184,6 +184,8 @@ export interface Todo {
   is_completed: number
   completed_at: string | null
   notes: string | null
+  // 출처 링크(linkwork:// 앱 내 링크 또는 https:// URL). 없으면 null
+  source_link: string | null
   created_at: string
   updated_at: string
   tags?: TodoTag[]
@@ -195,6 +197,7 @@ export interface TodoInput {
   due_date?: string | null
   due_reminder?: number
   notes?: string | null
+  source_link?: string | null
   tag_ids?: number[]
 }
 

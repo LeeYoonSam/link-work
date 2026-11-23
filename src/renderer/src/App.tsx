@@ -13,8 +13,11 @@ import MeetingNotesView from './components/notes/MeetingNotesView'
 import TodayView from './components/today/TodayView'
 import SettingsView from './components/settings/SettingsView'
 import MobileTodayPublisher from './components/mobile/MobileTodayPublisher'
+import QuickAddPopover, { isQuickAddShortcut } from './components/todo/QuickAddPopover'
+import { ToastHost, flushToasts } from './components/ui'
 import { useNavigationStore } from './stores/navigationStore'
 import { useAssistantStore } from './stores/assistantStore'
+import { useQuickAddStore } from './stores/quickAddStore'
 import { installRecorderBridge } from './stores/recorderSession'
 import { installDataSync } from './stores/dataSync'
 import { installAiStreamSync } from './stores/aiChatStore'
@@ -43,6 +46,28 @@ function App(): React.ReactNode {
 
   // AI 응답 스트림을 화면과 무관하게 받는다. 다른 화면에서 시작한 대화의 초기 이벤트를 놓치지 않는다(메인 창에서 1회).
   useEffect(() => installAiStreamSync(), [])
+
+  // Cmd+Shift+A 로 어느 화면에서든 할 일 빠른 추가를 연다. 텍스트 입력 중에도 연다(capture 로 먼저 받는다)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.isComposing || !isQuickAddShortcut(e)) return
+      e.preventDefault()
+      useQuickAddStore.getState().toggle()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+
+  // 메뉴를 옮기면 보류 중인 토스트(실행 취소 대기 중인 삭제 등)를 확정한다
+  useEffect(() => {
+    flushToasts()
+  }, [view])
+
+  // 창을 닫거나 새로 고칠 때도 보류 중인 삭제를 확정한다
+  useEffect(() => {
+    window.addEventListener('beforeunload', flushToasts)
+    return () => window.removeEventListener('beforeunload', flushToasts)
+  }, [])
 
   // 비서 알림 클릭 → 오늘 화면으로 이동한다(assistant:navigate)
   useEffect(() => {
@@ -129,6 +154,8 @@ function App(): React.ReactNode {
         <Header />
         <main className="flex-1 overflow-auto p-6">{renderContent()}</main>
       </div>
+      <QuickAddPopover />
+      <ToastHost />
     </div>
   )
 }

@@ -42,7 +42,7 @@ export function IssueRow({
   return (
     <li data-issue={row.key} className={ROW}>
       <span className="flex h-5 w-2 shrink-0 items-center">
-        {row.signaled ? <span className={SIGNALED_MARK} title="지금 챙길 것에 있음" aria-label="지금 챙길 것에 있음" /> : null}
+        {row.signaled ? <span className={SIGNALED_MARK} title="먼저 챙길 항목" aria-label="먼저 챙길 항목" /> : null}
       </span>
       <button
         type="button"

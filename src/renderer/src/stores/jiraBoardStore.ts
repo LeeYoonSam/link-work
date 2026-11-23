@@ -27,7 +27,8 @@ import { EMPTY_DOCS_FILTER, type DocsFilter } from '../components/project/docsMo
 
 // 프로젝트 화면(Jira 계층 보드) 상태. 데이터는 main 의 스냅샷 하나다 — 저장본(jiraBoard:cached)을 먼저
 // 띄우고 Jira 동기화(jiraBoard:fetch) 결과로 교체한다 (docs/PROJECT_BOARD.md).
-// 펼침·토글(내 담당만·완료 모두 숨김·이전 완료 보기)·정렬 같은 사용자별 편의만 localStorage 에 남긴다 (없거나 막혀도 동작한다).
+// 티켓 탭 펼침·문서 탭 그룹 접힘·토글(내 담당만·완료 모두 숨김·이전 완료 보기)·정렬 같은 사용자별 편의만
+// localStorage 에 남긴다 (없거나 막혀도 동작한다).
 
 export type JiraBoardErrorCode = 'not_connected' | 'no_default_project'
 
@@ -39,9 +40,18 @@ interface Prefs {
   showPastDone: boolean
   sort: BoardSort
   expanded: Record<string, boolean>
+  docsCollapsed: Record<string, boolean>
 }
 
 const SORTS: BoardSort[] = ['active', 'key', 'updated', 'due']
+
+/** 저장본의 id → boolean 맵에서 boolean 값만 거른다. 객체가 아니면 undefined */
+function boolRecord(raw: unknown): Record<string, boolean> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const out: Record<string, boolean> = {}
+  for (const [k, v] of Object.entries(raw)) if (typeof v === 'boolean') out[k] = v
+  return out
+}
 
 function readPrefs(): Partial<Prefs> {
   try {
@@ -54,11 +64,10 @@ function readPrefs(): Partial<Prefs> {
     if (typeof p.hideDone === 'boolean') out.hideDone = p.hideDone
     if (typeof p.showPastDone === 'boolean') out.showPastDone = p.showPastDone
     if (p.sort && SORTS.includes(p.sort)) out.sort = p.sort
-    if (p.expanded && typeof p.expanded === 'object') {
-      const expanded: Record<string, boolean> = {}
-      for (const [k, v] of Object.entries(p.expanded)) if (typeof v === 'boolean') expanded[k] = v
-      out.expanded = expanded
-    }
+    const expanded = boolRecord(p.expanded)
+    if (expanded) out.expanded = expanded
+    const docsCollapsed = boolRecord(p.docsCollapsed)
+    if (docsCollapsed) out.docsCollapsed = docsCollapsed
     return out
   } catch {
     return {}
@@ -66,7 +75,7 @@ function readPrefs(): Partial<Prefs> {
 }
 
 // 저장은 늘 savedFilter(사용자가 직접 정한 값)로 한다. 화면용 filter 에는 reveal 이 잠깐 푼 조건이 섞여 있을 수 있다
-function writePrefs(s: Pick<JiraBoardState, 'savedFilter' | 'sort' | 'expanded'>): void {
+function writePrefs(s: Pick<JiraBoardState, 'savedFilter' | 'sort' | 'expanded' | 'docsCollapsed'>): void {
   try {
     if (typeof localStorage === 'undefined') return
     const prefs: Prefs = {
@@ -74,7 +83,8 @@ function writePrefs(s: Pick<JiraBoardState, 'savedFilter' | 'sort' | 'expanded'>
       hideDone: s.savedFilter.hideDone,
       showPastDone: s.savedFilter.showPastDone,
       sort: s.sort,
-      expanded: s.expanded
+      expanded: s.expanded,
+      docsCollapsed: s.docsCollapsed
     }
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
   } catch {
@@ -104,6 +114,8 @@ export interface JiraBoardState {
   sort: BoardSort
   /** 행 id → 펼침. 없으면 기본값(에픽 펼침, 하위작업 접힘) */
   expanded: Record<string, boolean>
+  /** 문서 탭 그룹 id → 접힘. 없으면 펼침. 티켓 탭의 expanded 와는 별개다 */
+  docsCollapsed: Record<string, boolean>
   /** 상세 패널에 띄운 행 id */
   selectedKey: string | null
   aiSummaries: Record<string, JiraEpicAiSummary>
@@ -122,6 +134,8 @@ export interface JiraBoardState {
   setSort: (sort: BoardSort) => void
   setExpanded: (id: string, expanded: boolean) => void
   setAllExpanded: (ids: string[], expanded: boolean) => void
+  setDocsCollapsed: (id: string, collapsed: boolean) => void
+  setAllDocsCollapsed: (ids: string[], collapsed: boolean) => void
   select: (key: string | null) => void
   dismissError: () => void
   setDocsFilter: (patch: Partial<DocsFilter>) => void
@@ -157,6 +171,7 @@ export const useJiraBoardStore = create<JiraBoardState>((set, get) => ({
   savedFilter: initialFilter,
   sort: prefs.sort ?? 'active',
   expanded: prefs.expanded ?? {},
+  docsCollapsed: prefs.docsCollapsed ?? {},
   selectedKey: null,
   aiSummaries: {},
   aiLoading: {},
@@ -247,6 +262,20 @@ export const useJiraBoardStore = create<JiraBoardState>((set, get) => ({
       const next = { ...s.expanded }
       for (const id of ids) next[id] = expanded
       return { expanded: next }
+    })
+    writePrefs(get())
+  },
+
+  setDocsCollapsed: (id, collapsed) => {
+    set((s) => ({ docsCollapsed: { ...s.docsCollapsed, [id]: collapsed } }))
+    writePrefs(get())
+  },
+
+  setAllDocsCollapsed: (ids, collapsed) => {
+    set((s) => {
+      const next = { ...s.docsCollapsed }
+      for (const id of ids) next[id] = collapsed
+      return { docsCollapsed: next }
     })
     writePrefs(get())
   },

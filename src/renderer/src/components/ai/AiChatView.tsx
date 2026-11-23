@@ -729,9 +729,72 @@ export function PlanApprovalCard({
   )
 }
 
+const PRIORITY_LABELS: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' }
+
+interface BatchTodoItem {
+  title: string
+  priority?: string
+  due_date?: string
+  tags?: string[]
+  notes?: string
+}
+
+// 승인 카드에 보이는 메모 최대 길이(넘으면 말줄임)
+const BATCH_NOTES_PREVIEW_MAX = 120
+
+// create_todos 입력의 items 를 표시용으로 고른다. 형식이 다르면 빈 배열
+export function batchTodoItems(input: Record<string, unknown>): BatchTodoItem[] {
+  const raw = input.items
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((x): x is Record<string, unknown> => typeof x === 'object' && x !== null)
+    .map((x) => ({
+      title: typeof x.title === 'string' ? x.title : '(제목 없음)',
+      priority: typeof x.priority === 'string' ? x.priority : undefined,
+      due_date: typeof x.due_date === 'string' ? x.due_date : undefined,
+      tags: Array.isArray(x.tags) ? x.tags.filter((t): t is string => typeof t === 'string') : undefined,
+      notes: typeof x.notes === 'string' && x.notes.trim() ? x.notes.trim() : undefined
+    }))
+}
+
+// create_todos 승인 카드 본문: 전 항목을 번호 목록(제목·우선순위·마감·태그·메모)으로 보여 준다
+function TodosBatchPreview({ input }: { input: Record<string, unknown> }): React.ReactNode {
+  const items = batchTodoItems(input)
+  const sourceLink = typeof input.source_link === 'string' ? input.source_link : null
+  return (
+    <div className="mt-2 mb-3 bg-white border border-amber-200 rounded p-2.5 max-h-60 overflow-y-auto">
+      <p className="text-xs font-semibold text-gray-800">할 일 {items.length}건 생성</p>
+      <ol className="mt-1.5 space-y-1 list-decimal list-inside text-xs text-gray-700">
+        {items.map((item, i) => (
+          <li key={i} className="break-words">
+            <span className="font-medium text-gray-900">{item.title}</span>
+            <span className="text-gray-500">
+              {' · '}
+              {PRIORITY_LABELS[item.priority ?? 'medium'] ?? item.priority}
+              {item.due_date && ` · 마감 ${item.due_date}`}
+              {item.tags && item.tags.length > 0 && ` · ${item.tags.map((t) => `#${t}`).join(' ')}`}
+            </span>
+            {item.notes && (
+              <span className="block pl-4 text-[11px] text-gray-500 whitespace-pre-wrap">
+                메모:{' '}
+                {item.notes.length > BATCH_NOTES_PREVIEW_MAX
+                  ? `${item.notes.slice(0, BATCH_NOTES_PREVIEW_MAX)}…`
+                  : item.notes}
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+      {sourceLink && (
+        <p className="mt-1.5 text-[11px] text-gray-500 break-all">출처: {sourceLink}</p>
+      )}
+    </div>
+  )
+}
+
 // 쓰기 도구 실행 전 사용자 승인 카드 (HITL — docs/AI_GUARDRAILS.md 7.2절)
 // allowAlways: "이 채팅에서 항상 승인" 노출 여부 (fetch_url 은 별도 게이트라 제외)
-function ApprovalCard({
+export function ApprovalCard({
   request,
   allowAlways,
   onRespond
@@ -761,9 +824,13 @@ function ApprovalCard({
           <p className="mt-2 text-[11px] font-medium text-amber-700">변경 내용</p>
         </>
       )}
-      <pre className="mt-2 mb-3 bg-white border border-amber-200 rounded p-2.5 text-xs font-mono text-gray-700 whitespace-pre-wrap break-words max-h-60 overflow-y-auto">
-        {JSON.stringify(request.input, null, 2)}
-      </pre>
+      {request.name === 'create_todos' ? (
+        <TodosBatchPreview input={request.input} />
+      ) : (
+        <pre className="mt-2 mb-3 bg-white border border-amber-200 rounded p-2.5 text-xs font-mono text-gray-700 whitespace-pre-wrap break-words max-h-60 overflow-y-auto">
+          {JSON.stringify(request.input, null, 2)}
+        </pre>
+      )}
       <div className="flex gap-2">
         <button
           onClick={() => onRespond(true)}

@@ -3,6 +3,7 @@ import { writeFile, mkdir, unlink } from 'fs/promises'
 import { join } from 'path'
 import { getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
+import { saveTodoHistory } from '../utils/todo-helpers'
 import { runMeetingPipeline, SPEAKER_COLORS } from '../services/meeting-pipeline'
 import { runMeetingSummary } from '../services/meeting-summary'
 import { wavDurationMs } from '../services/wav-util'
@@ -445,10 +446,12 @@ export function registerRecordingIpc(): void {
     ]
       .filter(Boolean)
       .join('\n')
+    // 출처는 이 회의의 회의록 링크다(linkwork://note/{회의 id} 가 회의록 메뉴에서 그 회의를 연다)
     const result = db
-      .prepare('INSERT INTO todos (title, priority, due_date, notes) VALUES (?, ?, ?, ?)')
-      .run(item.text, 'medium', dueIsDate ? item.due : null, notes)
+      .prepare('INSERT INTO todos (title, priority, due_date, notes, source_link) VALUES (?, ?, ?, ?, ?)')
+      .run(item.text, 'medium', dueIsDate ? item.due : null, notes, `linkwork://note/${meetingId}`)
     const todoId = Number(result.lastInsertRowid)
+    saveTodoHistory(db, todoId, 'create')
     logActivity('todo', 'create', todoId, item.text)
 
     // summary의 해당 항목에 todo_id 기록 (재등록 방지/표시)

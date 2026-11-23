@@ -74,7 +74,7 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 | `src/main/services/ai-agent.ts` | 쿼리 실행 엔진. 시스템 프롬프트, 스트리밍 중계, 취소, 세션 resume, 진행상태 보관, 동시 실행 상한, 도구 게이트(canUseTool) |
 | `src/main/services/ai-tools.ts` | LinkWork 조회 도구 + 외부 지식 도구(Notion/Bitbucket/웹) 정의 (zod 스키마 + SQL). 자동 허용 목록 `LINKWORK_TOOL_NAMES` |
 | `src/main/services/ai-assistant-tools.ts` | 회의 액션아이템 조회 도구 `list_meeting_action_items` |
-| `src/main/services/ai-write-tools.ts` | 쓰기 도구 4종 (생성 2종 `create_todo`/`create_memo` + 수정 2종 `update_todo`/`update_memo`, 채팅별 쓰기 모드 게이트 — 가드레일 문서 7절) |
+| `src/main/services/ai-write-tools.ts` | 쓰기 도구 5종 (생성 3종 `create_todo`/`create_todos`/`create_memo` + 수정 2종 `update_todo`/`update_memo`, 채팅별 쓰기 모드 게이트 — 가드레일 문서 7절). `create_todos` 는 할 일 1~20건을 한 트랜잭션으로 만든다 |
 | `src/main/services/ai-audit.ts` | 감사 로그 기록 헬퍼 |
 | `src/main/services/ai-model.ts` | 모델 패밀리 레지스트리(`AI_MODEL_FAMILIES`), AI 대화 모델 선택 저장(`ai_model`), 동적 라벨 캐시(`ai_model_labels`). 헤드리스 호출(회의 전 브리핑·에픽 AI 요약)용 고정 ID 매핑(`resolveAiModelId`)도 둔다 |
 | `src/main/services/ai-headless.ts` | 창 없이 Claude 를 1회 실행하고 JSON 을 zod 로 검증하는 `runHeadlessJson`, 헤드리스 LLM 직렬화 줄 `runLlmSerialized`. AI 대화가 아니라 회의 전 브리핑·에픽 AI 요약이 쓴다. 도구는 0개다 |
@@ -196,7 +196,7 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 | `start` | — | 쿼리 시작 |
 | `text` | `delta` | 응답 텍스트 조각 (renderer에서 누적) |
 | `tool` | `name`, `label` | 도구 사용 중 ("TODO 조회 중…" 표시) |
-| `approval` | `request` | 승인 카드 요청. `request` 는 `{ requestId, kind, name, label, input, current }` 다. `kind` 는 `write` · `fetch` · `plan` 중 하나다 |
+| `approval` | `request` | 승인 카드 요청. `request` 는 `{ requestId, kind, name, label, input, current }` 다. `kind` 는 `write` · `fetch` · `plan` 중 하나다. 쓰기 카드는 `input` 을 JSON 으로 보여 준다. `name` 이 `create_todos` 이면 머리에 "할 일 N건 생성"을 적고 `input.items` 를 번호 목록(제목·우선순위·마감·태그)으로 보여 준다 |
 | `approval_resolved` | `requestId`, `approved` | 승인 카드 응답 처리 완료 |
 | `mode_changed` | `mode` | 채팅 쓰기 모드가 바뀜. 계획 승인 뒤 auto 또는 ask 로 바뀔 때 보낸다 |
 | `done` | `message?`, `cancelled?` | 완료. message는 DB에 저장된 assistant 행 |
@@ -233,8 +233,8 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 
 | 도구 | 용도 |
 |---|---|
-| `list_todos` | TODO 목록 + 태그 (완료/검색/태그 필터, notes 300자 truncate) |
-| `get_todo` | TODO 상세 (notes 전문 + 알람 설정 — 수정 전 확인용) |
+| `list_todos` | TODO 목록 + 태그 + 출처 링크 `source_link` (완료/검색/태그 필터, notes 300자 truncate) |
+| `get_todo` | TODO 상세 (notes 전문 + 알람 설정 + 출처 링크 `source_link` — 수정 전 확인용) |
 | `search_memos` | 메모 검색 (내용/카테고리/중요/보관 필터, 1000자 truncate) |
 | `get_memo` | 메모 전문 조회 (수정 전 확인용) |
 | `get_calendar_events` | Google 캘린더 일정 (기간 지정, 미연동 시 안내 반환) |
@@ -348,7 +348,8 @@ AI 채팅과 오늘 화면의 회의 브리핑 카드는 같은 처리기 `utils
 
 링크 규칙은 다음과 같다.
 - AI 는 특정 항목을 안내할 때 항목 링크를 쓴다. 메뉴 링크는 목록 전체를 안내할 때만 쓴다.
-- 쓰기 도구(`ai-write-tools.ts`)는 결과의 `link` 에 항목 링크를 넣는다. AI 는 생성·수정 뒤 그 값을 그대로 쓴다.
+- 쓰기 도구(`ai-write-tools.ts`)는 결과의 `link` 에 항목 링크를 넣는다. `create_todos` 는 `todos` 배열의 항목마다 `link` 를 넣는다. AI 는 생성·수정 뒤 그 값을 그대로 쓴다.
+- 메모·회의록 등에서 나온 할 일을 만들 때 AI 는 `source_link` 에 그 `linkwork://` 링크를 넣는다(시스템 프롬프트 쓰기 규칙).
 - 단건 조회 도구 `get_memo`, `get_todo`, `get_release_note` 는 결과에 `link` 를 넣는다. 목록 도구에는 넣지 않는다.
 - `get_calendar_events` 는 일정 `id` 를 돌려준다. AI 는 이 값으로 캘린더 링크를 만든다.
 
@@ -379,7 +380,7 @@ AI 채팅과 오늘 화면의 회의 브리핑 카드는 같은 처리기 `utils
 - **다른 화면에서 AI 대화 열기**: `useAiChatStore.getState().startChatWith(prompt)` 를 부른다(6.1절).
   프롬프트에는 식별자만 넣는다.
 - **데이터 추가/수정/삭제 도구**: [AI_GUARDRAILS.md 7절의 쓰기 도구 기준](./AI_GUARDRAILS.md#7-쓰기-도구)을
-  반드시 따를 것 (HITL 승인, 소프트 삭제, 일괄 변경 금지, 채팅별 쓰기 모드 등).
+  반드시 따를 것 (HITL 승인, 소프트 삭제, 일괄 수정·삭제 금지, 채팅별 쓰기 모드 등).
 - **모델 선택지 변경**: `ai-model.ts` 의 `AI_MODEL_FAMILIES`(패밀리 정의)와 `AI_CHAT_MODEL_CHOICES`(AI 대화 선택지)를 고친다.
   - 새 버전이 나오면 코드를 고치지 않는다. CLI 가 별칭을 최신 버전으로 해석하고, 라벨도 `supportedModels()` 에서 갱신된다.
   - 저장된 값이 선택지 밖이면(예 이전 선택지 `sonnet`) `normalizeAiChatModel` 이 기본값 `opus` 로 바꾼다.

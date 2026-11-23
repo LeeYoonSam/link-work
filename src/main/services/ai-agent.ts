@@ -277,6 +277,7 @@ const TOOL_LABELS: Record<string, string> = {
   Read: '첨부 이미지 확인',
   ToolSearch: '도구 검색',
   create_todo: 'TODO 생성',
+  create_todos: '할 일 여러 건 생성',
   create_memo: '메모 생성',
   update_todo: 'TODO 수정',
   update_memo: '메모 수정'
@@ -472,7 +473,7 @@ ${
     ? `## 데이터 작성 규칙 (쓰기 도구 활성${
         writeMode === 'auto' ? ' — 자동 승인 모드' : writeMode === 'plan' ? ' — 계획 모드' : ''
       })
-- 생성: create_todo / create_memo
+- 생성: create_todo / create_memo, 할 일 여러 건은 create_todos
 - 수정: update_todo / update_memo
 위 도구로 데이터를 **생성·수정**할 수 있습니다.
 1. ${
@@ -485,7 +486,7 @@ ${
 2. 사용자가 거절하면 같은 내용으로 다시 시도하지 말고, 무엇을 바꿀지 물어보세요.
 3. 쓰기 전에 조회 도구로 맥락을 먼저 확인하세요. 특히 수정은 반드시 조회 도구로 대상 id와 현재 값을 확인한 뒤, **변경할 필드만** 전달하세요.
 4. 메모 content와 TODO notes는 **전체 교체**됩니다. 부분 수정 시 반드시 get_memo / get_todo로 전문을 조회한 뒤, 수정 사항을 반영한 전체 내용을 전달하세요 (목록 도구의 잘린 내용을 그대로 쓰면 데이터가 유실됩니다).
-5. 여러 항목을 바꿀 때는 항목마다 도구를 한 번씩 호출하세요 (한 호출 = 한 항목).${writeMode === 'ask' ? ' 호출마다 승인을 받습니다.' : ''}
+5. 여러 항목을 수정할 때는 항목마다 도구를 한 번씩 호출하세요 (한 호출 = 한 항목).${writeMode === 'ask' ? ' 호출마다 승인을 받습니다.' : ''} 예외는 할 일 생성입니다. 사용자가 여러 할 일을 한 번에 요청하거나 글·회의 내용을 할 일로 나눠 달라고 하면 create_todos 한 번으로 묶으세요 (최대 20건${writeMode === 'ask' ? ', 승인 1회' : ''}). 1건이면 create_todo 를 쓰세요. 메모·회의록 등에서 나온 할 일이면 source_link 에 그 linkwork 링크(예: linkwork://memo/{id}, linkwork://note/{id})를 넣으세요.
 6. 사용자가 형식을 지정하지 않으면 데이터 성격에 맞게 정리해서 작성하세요 (메모는 마크다운 구조화, TODO 제목은 간결한 행동 단위).
 7. 삭제는 지원하지 않습니다 — 요청 시 해당 메뉴에서 직접 작업하도록 안내하세요. (메모 보관 처리, TODO 완료/복원은 update 도구로 가능합니다)
 8. 생성/수정 후에는 도구 결과의 link 를 그대로 써서 해당 항목을 안내하세요.`

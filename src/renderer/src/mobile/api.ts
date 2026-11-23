@@ -7,6 +7,8 @@ import type {
   MobileMemosResponse,
   MobileOk,
   MobileTodayResponse,
+  MobileTodoCreateBody,
+  MobileTodoCreated,
   MobileTodosResponse
 } from './contract'
 
@@ -40,6 +42,7 @@ export const MOBILE_HEADER = 'X-LinkWork-Mobile'
 export interface MobileApi {
   getToday: () => Promise<MobileTodayResponse>
   getTodos: (completed: boolean) => Promise<MobileTodosResponse>
+  createTodo: (body: MobileTodoCreateBody) => Promise<MobileTodoCreated>
   completeTodo: (id: number) => Promise<MobileOk>
   restoreTodo: (id: number) => Promise<MobileOk>
   getMemos: () => Promise<MobileMemosResponse>
@@ -83,6 +86,7 @@ export function createMobileApi(fetchImpl: FetchLike = (input, init) => fetch(in
   return {
     getToday: () => request<MobileTodayResponse>('GET', '/api/today'),
     getTodos: (completed) => request<MobileTodosResponse>('GET', `/api/todos?completed=${completed ? 1 : 0}`),
+    createTodo: (body) => request<MobileTodoCreated>('POST', '/api/todos', body),
     completeTodo: (id) => request<MobileOk>('POST', `/api/todos/${encodeURIComponent(String(id))}/complete`),
     restoreTodo: (id) => request<MobileOk>('POST', `/api/todos/${encodeURIComponent(String(id))}/restore`),
     getMemos: () => request<MobileMemosResponse>('GET', '/api/memos'),

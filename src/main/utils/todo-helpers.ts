@@ -11,6 +11,24 @@ export const TODO_TAGS_SUBQUERY =
 // 완료/복원 상태 전이 SQL만 수행한다(이력·활동 로그는 호출자가 기록).
 // completed_at은 로컬 시간으로 저장 — todo:listActive의 date('now','localtime') 비교 규약과 일치.
 // 메뉴(todo:complete/restore)와 AI 수정 도구가 이 한 곳을 공용으로 사용해 규약 드리프트를 막는다.
+// ── 출처 링크(todos.source_link) 검증 ──
+// 허용: linkwork:// 앱 내 링크(예: linkwork://memo/12) 또는 https:// URL(Jira 티켓). 최대 500자.
+// 그 밖의 스킴(javascript:, http: 등)은 거부한다. todo IPC 와 AI 쓰기 도구가 함께 쓴다.
+export const SOURCE_LINK_MAX_LENGTH = 500
+const SOURCE_LINK_RE = /^(linkwork|https):\/\/\S+$/
+
+// 규칙에 맞으면 trim 한 문자열, undefined·null·빈 문자열이면 null, 위반이면 오류를 던진다
+export function normalizeSourceLink(value: unknown): string | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string') throw new Error('출처 링크 형식이 올바르지 않습니다.')
+  const link = value.trim()
+  if (link === '') return null
+  if (link.length > SOURCE_LINK_MAX_LENGTH || !SOURCE_LINK_RE.test(link)) {
+    throw new Error('출처 링크 형식이 올바르지 않습니다.')
+  }
+  return link
+}
+
 export function setTodoCompletion(
   db: Database.Database,
   todoId: number | bigint,
@@ -59,6 +77,30 @@ export function saveTodoHistory(
   )
 }
 
+// ── 할 일 추가 (todo:create 와 같은 INSERT·이력). 모바일 열람 서버가 쓴다 ──
+// todo.ipc.ts 의 todo:create 와 같은 SQL 이다 — 한쪽을 바꾸면 다른 쪽도 바꾼다.
+// 다만 출처 링크(source_link)는 받지 않는다. 모바일 추가는 출처 없이 만든다.
+// 활동 로그·변경 알림은 호출자가 남긴다.
+
+export interface TodoInsertInput {
+  title: string
+  priority?: 'low' | 'medium' | 'high'
+  due_date?: string | null
+  due_reminder?: number
+  notes?: string | null
+  tag_ids?: number[]
+}
+
+export function insertTodo(db: Database.Database, input: TodoInsertInput): number {
+  const result = db
+    .prepare('INSERT INTO todos (title, priority, due_date, due_reminder, notes) VALUES (?, ?, ?, ?, ?)')
+    .run(input.title, input.priority || 'medium', input.due_date || null, input.due_reminder ?? 0, input.notes ?? null)
+  const todoId = Number(result.lastInsertRowid)
+  if (input.tag_ids && input.tag_ids.length > 0) saveTodoTags(db, todoId, input.tag_ids)
+  saveTodoHistory(db, todoId, 'create')
+  return todoId
+}
+
 // ── 목록 조회 (todo:list 와 같은 쿼리·정렬). 모바일 열람 서버가 쓴다 ──
 // todo.ipc.ts 의 todo:list·attachTags 와 같은 SQL 이다 — 한쪽을 바꾸면 다른 쪽도 바꾼다.
 
@@ -79,6 +121,7 @@ interface TodoListRow {
   is_completed: number
   completed_at: string | null
   notes: string | null
+  source_link: string | null
   created_at: string
   updated_at: string
 }

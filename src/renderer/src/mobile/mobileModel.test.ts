@@ -27,6 +27,7 @@ const todo = (over: Partial<Todo> & Pick<Todo, 'id'>): Todo => ({
   is_completed: 0,
   completed_at: null,
   notes: null,
+  source_link: null,
   created_at: '2026-11-01 00:00:00',
   updated_at: '2026-11-01 00:00:00',
   ...over

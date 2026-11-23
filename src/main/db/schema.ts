@@ -251,6 +251,8 @@ export function applySchema(db: Database.Database): void {
       is_completed INTEGER NOT NULL DEFAULT 0,
       completed_at TEXT,
       notes TEXT,
+      -- 출처 링크: linkwork:// 앱 내 링크 또는 https:// URL(Jira 티켓). 형식 검사는 normalizeSourceLink
+      source_link TEXT,
       created_at TEXT DEFAULT (datetime('now', 'localtime')),
       updated_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
@@ -459,6 +461,9 @@ export function applySchema(db: Database.Database): void {
   const todoColumnNames = todoColumns.map((c) => c.name)
   if (todoColumns.length > 0 && !todoColumnNames.includes('notes')) {
     db.exec("ALTER TABLE todos ADD COLUMN notes TEXT")
+  }
+  if (todoColumns.length > 0 && !todoColumnNames.includes('source_link')) {
+    db.exec("ALTER TABLE todos ADD COLUMN source_link TEXT")
   }
 
   // AI 채팅별 쓰기 모드: readonly(읽기 전용) | ask(승인 후 쓰기, 기본) | auto(자동 쓰기)

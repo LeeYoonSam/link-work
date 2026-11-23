@@ -50,7 +50,11 @@ vi.mock('./ai-tools', () => ({
   getLinkworkMcpServer: async () => ({})
 }))
 vi.mock('./ai-write-tools', () => ({
-  LINKWORK_WRITE_TOOL_NAMES: ['mcp__linkwork__create_memo', 'mcp__linkwork__update_memo'],
+  LINKWORK_WRITE_TOOL_NAMES: [
+    'mcp__linkwork__create_memo',
+    'mcp__linkwork__update_memo',
+    'mcp__linkwork__create_todos'
+  ],
   getUpdatePreview: () => null
 }))
 const audit = vi.hoisted(() => ({ log: vi.fn() }))
@@ -622,6 +626,53 @@ describe('runAiQuery — 도구 화이트리스트', () => {
     expect(audit.log).toHaveBeenCalledWith(
       expect.objectContaining({ event: 'tool_denied', toolName: 'AskUserQuestion' })
     )
+  })
+})
+
+describe('runAiQuery — create_todos 승인 게이트', () => {
+  const items = { items: [{ title: 'a' }, { title: 'b' }] }
+
+  it('readonly 채팅은 승인 카드 없이 거부한다', async () => {
+    const results: PermissionResultLike[] = []
+    const { sent } = await runChat('readonly', async function* (opts) {
+      results.push(await opts.canUseTool('mcp__linkwork__create_todos', items, toolCtx('b1')))
+      yield RESULT_MESSAGE
+    })
+    expect(results[0].behavior).toBe('deny')
+    expect(results[0].message).toContain('읽기 전용 모드')
+    expect(sent.some((e) => e.event === 'approval')).toBe(false)
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'tool_denied', toolName: 'mcp__linkwork__create_todos' })
+    )
+  })
+
+  it('ask 채팅은 목록 전체를 승인 카드 1장으로 묻고 승인하면 허용한다', async () => {
+    const results: PermissionResultLike[] = []
+    const { sent } = await runChat(
+      'ask',
+      async function* (opts) {
+        results.push(await opts.canUseTool('mcp__linkwork__create_todos', items, toolCtx('b2')))
+        yield RESULT_MESSAGE
+      },
+      { approved: true }
+    )
+    const approvals = sent.filter((e) => e.event === 'approval')
+    expect(approvals).toHaveLength(1)
+    expect(approvals[0].request).toMatchObject({
+      name: 'create_todos',
+      label: '할 일 여러 건 생성',
+      input: items
+    })
+    expect(results[0]).toEqual({ behavior: 'allow', updatedInput: items })
+  })
+
+  it('쓰기 규칙이 여러 할 일 생성을 create_todos 로 묶게 한다', async () => {
+    const { buildSystemPrompt } = await loadAgent()
+    const prompt = buildSystemPrompt('ask', false, false)
+    expect(prompt).toContain('create_todos 한 번으로 묶으세요')
+    expect(prompt).toContain('1건이면 create_todo')
+    expect(prompt).toContain('source_link')
+    expect(buildSystemPrompt('readonly', false, false)).not.toContain('create_todos')
   })
 })
 

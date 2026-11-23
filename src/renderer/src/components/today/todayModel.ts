@@ -14,6 +14,7 @@ import type {
   TodayFacts
 } from '../../types'
 import { clockTime, compareIssueKeys, isOverdue, localDate } from '../project/boardModel'
+import { todoBucket } from '../todo/todoModel'
 import {
   classifyReleaseEvent,
   issuesInRelease,
@@ -158,11 +159,32 @@ const dDayText = (dDay: number): string => (dDay === 0 ? 'D-day' : `D-${dDay}`)
 
 const todoDue = (t: Todo): string | null => (t.due_date ? t.due_date.slice(0, 10) : null)
 
-function todoBucket(due: string | null, today: string): TodoRow['bucket'] {
-  if (!due) return 'none'
-  if (due < today) return 'overdue'
-  if (due === today) return 'today'
-  return 'later'
+const PRIORITY_LABEL: Record<TodoPriority, string> = { high: '높음', medium: '보통', low: '낮음' }
+
+/**
+ * 빠른 추가 입력이 알아본 내용 한 줄 요약. 예: '내일 15:00 · 높음 · #업무'.
+ * 마감은 오늘·내일이면 그 말로, 그 밖은 'M/D'. 보통 우선순위는 적지 않는다. 알아본 것이 없으면 ''.
+ * 오늘 카드와 모바일 할 일 탭이 함께 쓴다
+ */
+export function todoInputSummary(
+  input: { due_date?: string | null; priority?: TodoPriority; tag_ids?: number[] },
+  today: string,
+  tags: { id: number; name: string }[] = []
+): string {
+  const parts: string[] = []
+  const due = input.due_date ?? null
+  if (due) {
+    const day = due.slice(0, 10)
+    const time = due.length > 10 ? due.slice(11, 16) : ''
+    const dayText = day === today ? '오늘' : day === shiftDay(today, 1) ? '내일' : md(day)
+    parts.push(time ? `${dayText} ${time}` : dayText)
+  }
+  if (input.priority && input.priority !== 'medium') parts.push(PRIORITY_LABEL[input.priority])
+  for (const id of input.tag_ids ?? []) {
+    const tag = tags.find((t) => t.id === id)
+    if (tag) parts.push(`#${tag.name}`)
+  }
+  return parts.join(' · ')
 }
 
 /** 시간 있는 일정이 [from, to) 와 겹치는가 */

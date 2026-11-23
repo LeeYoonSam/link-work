@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
-import { saveTodoHistory, saveTodoTags, setTodoCompletion } from '../utils/todo-helpers'
+import { normalizeSourceLink, saveTodoHistory, saveTodoTags, setTodoCompletion } from '../utils/todo-helpers'
 
 interface TodoInput {
   title: string
@@ -9,6 +9,8 @@ interface TodoInput {
   due_date?: string | null
   due_reminder?: number
   notes?: string | null
+  // 출처 링크(linkwork:// 또는 https://). normalizeSourceLink 로 검증한다
+  source_link?: string | null
   tag_ids?: number[]
 }
 
@@ -21,6 +23,7 @@ interface TodoRow {
   is_completed: number
   completed_at: string | null
   notes: string | null
+  source_link: string | null
   created_at: string
   updated_at: string
 }
@@ -59,16 +62,19 @@ export function registerTodoIpc(): void {
   const db = getDatabase()
 
   ipcMain.handle('todo:create', (_event, input: TodoInput) => {
+    // 형식이 틀린 출처 링크는 저장 전에 거부한다
+    const sourceLink = normalizeSourceLink(input.source_link)
     const stmt = db.prepare(`
-      INSERT INTO todos (title, priority, due_date, due_reminder, notes)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO todos (title, priority, due_date, due_reminder, notes, source_link)
+      VALUES (?, ?, ?, ?, ?, ?)
     `)
     const result = stmt.run(
       input.title,
       input.priority || 'medium',
       input.due_date || null,
       input.due_reminder ?? 0,
-      input.notes ?? null
+      input.notes ?? null,
+      sourceLink
     )
     const todoId = result.lastInsertRowid
     if (input.tag_ids && input.tag_ids.length > 0) {
@@ -130,6 +136,11 @@ export function registerTodoIpc(): void {
     if (input.notes !== undefined) {
       fields.push('notes = ?')
       values.push(input.notes)
+    }
+    // 키가 있을 때만 바꾼다(값이 undefined 면 키가 없는 것으로 본다). null·빈 문자열은 연결 해제다
+    if (input.source_link !== undefined) {
+      fields.push('source_link = ?')
+      values.push(normalizeSourceLink(input.source_link))
     }
     fields.push("updated_at = datetime('now', 'localtime')")
     values.push(id)

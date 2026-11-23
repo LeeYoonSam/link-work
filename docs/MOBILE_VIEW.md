@@ -6,8 +6,9 @@
 Mac 앱의 메인 프로세스가 작은 HTTP 서버를 띄우고, 휴대폰은 설정 > 모바일의 QR 을 스캔해 접속한다.
 별도 앱 설치나 클라우드 동기화는 없다. **기본값은 꺼짐**이다.
 
-휴대폰에서 할 수 있는 쓰기는 두 가지뿐이다.
+휴대폰에서 할 수 있는 쓰기는 세 가지뿐이다.
 
+- 할 일 추가
 - 할 일 완료 / 되돌리기
 - 메모 작성
 
@@ -25,7 +26,7 @@ Mac 앱의 메인 프로세스가 작은 HTTP 서버를 띄우고, 휴대폰은 
 ```
 
 - **오늘 대시보드는 렌더러가 조립한다.** 조립 코드(`components/today/todayModel.ts` 의 `buildTodayDashboard`)가 렌더러에만 있어서다. 데스크톱 렌더러가 조립 결과(스냅샷)를 IPC 로 메인에 올리고, 메인은 마지막 스냅샷을 해석하지 않고 그대로 휴대폰에 돌려준다(객체인지·`date` 형식(YYYY-MM-DD)·직렬화 크기 1MB 이하만 검사).
-- **할 일·메모는 메인이 DB 에서 직접 읽고 쓴다.** 쓰기는 같은 기능의 IPC(`todo:complete`·`todo:restore`·`memo:create`)와 같은 부수효과(이력·활동 로그)를 남기고, 끝나면 `ai:dataChanged`(`{ entity: 'todo' | 'memo' }`)를 보내 데스크톱 화면을 갱신한다(`stores/dataSync.ts`).
+- **할 일·메모는 메인이 DB 에서 직접 읽고 쓴다.** 쓰기는 같은 기능의 IPC(`todo:create`·`todo:complete`·`todo:restore`·`memo:create`)와 같은 부수효과(이력·활동 로그)를 남기고, 끝나면 `ai:dataChanged`(`{ entity: 'todo' | 'memo' }`)를 보내 데스크톱 화면을 갱신한다(`stores/dataSync.ts`).
 - 데스크톱 앱이 실행 중이어야 한다. 앱이 꺼져 있거나 Mac 이 잠자기 상태면 서버도 없다.
 
 ### 2.1 스냅샷 발행 (`components/mobile/`)
@@ -51,8 +52,10 @@ Mac 앱의 메인 프로세스가 작은 HTTP 서버를 띄우고, 휴대폰은 
 | 화면 | 읽기 | 쓰기 |
 |---|---|---|
 | 오늘 | `GET /api/today` 의 스냅샷(헤드라인·신호·다음 배포·Jira·할 일·일정) | 없음 |
-| 할 일 | `GET /api/todos?completed=0` / `=1` | 완료(`POST /api/todos/:id/complete`), 되돌리기(`.../restore`) |
+| 할 일 | `GET /api/todos?completed=0` / `=1` | 추가(`POST /api/todos`), 완료(`POST /api/todos/:id/complete`), 되돌리기(`.../restore`) |
 | 메모 | `GET /api/memos`(보관하지 않은 메모 전부 + 카테고리) | 작성(`POST /api/memos`) |
+
+**할 일 추가**(`mobile/TodosTab.tsx`): '진행 중' 보기의 목록 위에 입력 줄이 있다('완료 보기'에는 없다). 입력은 데스크톱 할 일 화면과 같은 자연어 인식(`components/todo/todoParse.ts` 의 `parseTodoInput`)을 거치되 태그는 알아보지 않는다(모바일은 태그 목록을 받지 않는다). 예: `내일 3시 회의 준비 !높음` → 제목 `회의 준비`, 마감 내일 15:00, 우선순위 높음. 입력하는 동안 입력 아래에 알아본 내용을 한 줄로 보인다(`today/todayModel.ts` 의 `todoInputSummary`, 예: `내일 15:00 · 높음`). 추가(또는 키보드의 완료)를 누르면 제목·`priority`·`due_date`·`due_reminder` 를 구조화해 보내고, 성공하면 입력을 비우고 진행 중 목록을 다시 읽는다. 실패하면 입력을 그대로 두고 오류 문구를 보인다. 한글 조합 중 Enter 는 제출하지 않는다.
 
 `401` 을 받으면 화면은 "Mac 의 LinkWork 설정 → 모바일에서 QR 을 다시 스캔하세요." 를 보인다(`EXPIRED_TEXT`).
 
@@ -68,7 +71,7 @@ Mac 앱의 메인 프로세스가 작은 HTTP 서버를 띄우고, 휴대폰은 
 | Host 검사 | Host 헤더가 `<이 Mac 의 IPv4(LAN·Tailscale) | localhost | 127.0.0.1>:<port>` 가 아니면 403 (DNS rebinding 방어). Tailscale MagicDNS 이름(`<기기>.<tailnet>.ts.net`)은 허용하지 않는다 |
 | POST 조건 | `X-LinkWork-Mobile: 1` 헤더, `Content-Type: application/json`, Origin 이 있으면 같은 출처. 본문 64KB 상한. 다른 출처의 폼·스크립트가 흉내 내기 어렵게 하려는 조건이다 |
 | 속도 제한 | 같은 원격 주소에서 1분 안에 인증 실패가 10회에 이르면 그다음 요청부터 429. 예외로 차단 중에도 **올바른 토큰의 `/pair`** 는 302 로 통과하고 그 주소의 실패 기록을 지운다(다시 스캔하면 풀린다). 틀린 토큰의 `/pair` 는 차단 중에도 실패로 세고 429 를 돌려준다(토큰 대입 방어) |
-| 입력 검증 | 메모 본문은 trim 후 1~20000자, 카테고리는 존재해야 한다. 할 일 id 가 없으면 404 |
+| 입력 검증 | 메모 본문은 trim 후 1~20000자, 카테고리는 존재해야 한다. 할 일 제목은 trim 후 1~200자, `priority` 는 `low`·`medium`·`high`, `due_date` 는 `YYYY-MM-DD` 또는 `YYYY-MM-DD HH:mm` 만 받는다(그 밖은 400). 할 일 id 가 없으면 404 |
 | 상태 재조회 | 설정 > 모바일이 보이는 동안 창 focus 때와 10초마다 `mobile:getStatus` 를 다시 읽는다(처리 중이면 생략). Wi-Fi 가 바뀌어 IP 가 달라지면 QR·주소가 따라 바뀐다 |
 | 화면 노출 | 설정 화면은 접속 주소의 토큰 부분을 가려서(`t=••••••`) 보이고, [주소 복사] 만 전체 주소를 클립보드에 넣는다. QR 은 이미지로만 보인다 |
 | 백업 제외 | `mobile_server_token`·`mobile_server_enabled` 는 기기 종속이라 백업에서 뺀다([DATA_BACKUP.md](DATA_BACKUP.md) §1). 복원해도 이 기기의 값을 유지하므로 복원으로 서버가 저절로 켜지지 않는다. 새 PC 에서는 다시 켜고 QR 을 새로 스캔한다 |
@@ -91,6 +94,7 @@ Mac 앱의 메인 프로세스가 작은 HTTP 서버를 띄우고, 휴대폰은 
 | `GET /assets/*` | 정적 파일 | 자산 허용 목록(§4) 밖이면 404. 경로 탈출(`..`, 인코딩된 슬래시 등)은 거부 |
 | `GET /api/today` | `{ snapshot: MobileTodaySnapshot \| null }` | 데스크톱에 재발행도 요청한다(5초에 1번) |
 | `GET /api/todos?completed=0\|1` | `{ todos: Todo[] }` | |
+| `POST /api/todos` | `{ id: number }` | 본문 `{ title, priority?, due_date?, due_reminder? }`(`MobileTodoCreateBody`). `due_reminder` 는 보낸 값과 무관하게 `due_date` 에 시각이 있으면 1, 없으면 0 으로 저장한다(알림 규약). `priority` 기본은 `medium`. 출처 링크(`source_link`)는 받지 않는다(보내도 버리고 null 로 저장). 이력(`create`)·활동 로그·`ai:dataChanged`(todo) |
 | `POST /api/todos/:id/complete` | `{ success: true }` | 이력·활동 로그·`ai:dataChanged`(todo) |
 | `POST /api/todos/:id/restore` | `{ success: true }` | 같음 |
 | `GET /api/memos` | `{ memos: Memo[], categories: MemoCategory[] }` | 보관하지 않은 메모 전부 |

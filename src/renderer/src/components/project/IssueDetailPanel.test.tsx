@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import IssueDetailPanel, { aiChatPromptFor, openIssueChat } from './IssueDetailPanel'
+import IssueDetailPanel, { aiChatPromptFor, openIssueChat, openIssueTodo } from './IssueDetailPanel'
 import { useAiChatStore } from '../../stores/aiChatStore'
+import { useQuickAddStore } from '../../stores/quickAddStore'
 import type { DetailTarget } from './boardModel'
 import type { JiraBoardIssue } from '../../types'
 
@@ -97,5 +98,42 @@ describe('openIssueChat', () => {
       [aiChatPromptFor('PROJ-9', true), { writeMode: 'ask' }],
       [aiChatPromptFor('PROJ-1', false), { writeMode: 'ask' }]
     ])
+  })
+})
+
+describe('IssueDetailPanel [할 일로 만들기]', () => {
+  const withSite = (siteUrl: string | null): string =>
+    renderToStaticMarkup(
+      <IssueDetailPanel
+        target={target(issue())}
+        today="2026-11-19"
+        onSummarize={vi.fn()}
+        onOpenJira={vi.fn()}
+        jiraSiteUrl={siteUrl}
+      />
+    )
+
+  it('Jira 사이트 주소를 알면 Jira 열기 옆에 버튼을 그린다', () => {
+    const html = withSite('https://x.atlassian.net')
+    expect(html).toContain('>할 일로 만들기</button>')
+    expect(html.indexOf('Jira에서 열기')).toBeLessThan(html.indexOf('>할 일로 만들기<'))
+  })
+
+  it('사이트 주소를 모르면 버튼을 숨긴다', () => {
+    expect(withSite(null)).not.toContain('>할 일로 만들기<')
+    expect(render(issue())).not.toContain('>할 일로 만들기<')
+  })
+
+  it('누르면 "[KEY] 요약" 과 티켓 웹 주소로 빠른 추가를 연다', () => {
+    useQuickAddStore.getState().close()
+    openIssueTodo('PROJ-1', '로그인 오류', 'https://x.atlassian.net/')
+    expect(useQuickAddStore.getState()).toMatchObject({
+      isOpen: true,
+      initialText: '[PROJ-1] 로그인 오류',
+      sourceLink: 'https://x.atlassian.net/browse/PROJ-1'
+    })
+    useQuickAddStore.getState().close()
+    openIssueTodo('PROJ-1', '로그인 오류', null)
+    expect(useQuickAddStore.getState().isOpen).toBe(false)
   })
 })

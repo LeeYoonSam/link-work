@@ -43,7 +43,7 @@ describe('JiraWorkCard', () => {
     // 총 건수 = 행 + 나머지
     expect(html).toContain('>7</span>')
     const first = html.slice(html.indexOf('data-issue="ICA-700"'), html.indexOf('data-issue="ICA-701"'))
-    expect(first).toContain('지금 챙길 것에 있음')
+    expect(first).toContain('먼저 챙길 항목')
   })
 
   it('상태별 빈 문구. 미연결이면 설정 이동 링크를 보인다', () => {

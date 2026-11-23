@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { Memo, MemoCategory } from '../../types'
-import MemoReader, { memoTimeLine, type MemoReaderProps } from './MemoReader'
+import MemoReader, { memoTimeLine, openMemoTodo, type MemoReaderProps } from './MemoReader'
+import { useQuickAddStore } from '../../stores/quickAddStore'
 
 const memo: Memo = {
   id: 7,
@@ -44,7 +45,7 @@ describe('MemoReader', () => {
 
   it('활성 메모 툴바: 중요·편집·복사·크게 보기·보관, 분류 바꾸기', () => {
     const html = render()
-    for (const label of ['중요 표시', '편집 (e)', '원문 복사', '크게 보기', '보관']) {
+    for (const label of ['중요 표시', '편집 (e)', '할 일로 만들기', '원문 복사', '크게 보기', '보관']) {
       expect(html).toContain(`aria-label="${label}"`)
     }
     expect(html).toContain('title="분류 바꾸기"')
@@ -57,6 +58,7 @@ describe('MemoReader', () => {
     expect(html).toContain('aria-label="영구 삭제"')
     expect(html).not.toContain('aria-label="편집 (e)"')
     expect(html).not.toContain('aria-label="보관"')
+    expect(html).not.toContain('aria-label="할 일로 만들기"')
     expect(html).toContain('보관됨')
   })
 
@@ -83,5 +85,16 @@ describe('MemoReader', () => {
 
   it('memoTimeLine 은 수정 안 한 메모면 작성만', () => {
     expect(memoTimeLine({ ...memo, updated_at: memo.created_at })).toMatch(/^작성 2026-11-05/)
+  })
+
+  it('할 일로 만들기: 첫 줄(마크다운 기호 뺌)과 메모 링크로 빠른 추가를 연다', () => {
+    useQuickAddStore.getState().close()
+    openMemoTodo(memo)
+    expect(useQuickAddStore.getState()).toMatchObject({
+      isOpen: true,
+      initialText: '배포 절차',
+      sourceLink: 'linkwork://memo/7'
+    })
+    useQuickAddStore.getState().close()
   })
 })

@@ -69,4 +69,16 @@ describe('createMobileApi', () => {
     expect(init?.method).toBe('POST')
     expect(JSON.parse(String(init?.body))).toEqual({ content: '# 회의\n내용', category_id: 3, is_important: 1 })
   })
+
+  it('할 일 추가는 계약 본문 형식으로 POST /api/todos 하고 id 를 돌려준다', async () => {
+    const fetchImpl = vi.fn<FetchLike>(async () => res(200, { id: 9 }))
+    const api = createMobileApi(fetchImpl)
+    const out = await api.createTodo({ title: '회의 준비', priority: 'high', due_date: '2026-11-20 15:00', due_reminder: 1 })
+    expect(out).toEqual({ id: 9 })
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/todos')
+    expect(init?.method).toBe('POST')
+    expect(init?.headers).toMatchObject({ [MOBILE_HEADER]: '1', 'Content-Type': 'application/json' })
+    expect(JSON.parse(String(init?.body))).toEqual({ title: '회의 준비', priority: 'high', due_date: '2026-11-20 15:00', due_reminder: 1 })
+  })
 })

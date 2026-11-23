@@ -9,12 +9,14 @@ import type {
 import {
   buildTodayDashboard,
   minutesUntil,
+  todoInputSummary,
   visibleRefs,
   SIGNAL_REF_DISPLAY_LIMIT,
   JIRA_ROW_LIMIT,
   TODO_ROW_LIMIT,
   type TodayModelInput
 } from './todayModel'
+import { todoBucket } from '../todo/todoModel'
 
 // 오늘 대시보드 조립 규칙을 고정한다. 시각은 로컬 시각으로 만들어 넣어 시간대와 무관하게 돈다.
 
@@ -95,6 +97,7 @@ const todo = (title: string, over: Partial<Todo> = {}): Todo => ({
   is_completed: 0,
   completed_at: null,
   notes: null,
+  source_link: null,
   created_at: `2026-11-10 09:00:${String(todoId % 60).padStart(2, '0')}`,
   updated_at: '2026-11-10 09:00:00',
   ...over
@@ -519,5 +522,34 @@ describe('visibleRefs', () => {
     const v = visibleRefs({ refs })
     expect(v.refs.map((r) => r.id)).toEqual(['K-0', 'K-1', 'K-2', 'K-3', '4.177.0'])
     expect(v.moreCount).toBe(2)
+  })
+})
+
+describe('할 일 공용 모델 연결', () => {
+  it('대시보드 할 일 묶음은 todo/todoModel 의 todoBucket 과 같다', () => {
+    const today = '2026-11-19'
+    const dues = ['2026-11-17 18:00', '2026-11-19', '2026-11-19 09:00', '2026-11-25', null]
+    const d = buildTodayDashboard(
+      input({ activeTodos: dues.map((due, k) => todo(`b${k}`, { due_date: due })) })
+    )
+    for (const r of d.todos.rows) expect(r.bucket).toBe(todoBucket(r.dueDate, today))
+    expect(d.todos.rows.map((r) => r.bucket)).toEqual(['overdue', 'today', 'today', 'later', 'none'])
+  })
+})
+
+describe('todoInputSummary', () => {
+  const today = '2026-11-19'
+  const tags = [{ id: 1, name: '업무' }]
+  it('마감·시각·우선순위·태그를 한 줄로 잇는다', () => {
+    expect(todoInputSummary({ due_date: '2026-11-20 15:00', priority: 'high' }, today)).toBe('내일 15:00 · 높음')
+    expect(todoInputSummary({ due_date: '2026-11-19' }, today)).toBe('오늘')
+    expect(todoInputSummary({ due_date: '2026-11-25', priority: 'low', tag_ids: [1, 9] }, today, tags)).toBe('11/25 · 낮음 · #업무')
+  })
+  it('보통 우선순위만 있거나 알아본 것이 없으면 빈 문자열', () => {
+    expect(todoInputSummary({ priority: 'medium' }, today)).toBe('')
+    expect(todoInputSummary({ due_date: null }, today)).toBe('')
+  })
+  it('달이 바뀌는 내일도 내일이다', () => {
+    expect(todoInputSummary({ due_date: '2026-12-01 09:30' }, '2026-11-30')).toBe('내일 09:30')
   })
 })

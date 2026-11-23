@@ -371,7 +371,7 @@ Claude Agent SDK의 `query()`를 Claude Code 구독 로그인으로 부른다. S
 
 ## 7. 액션아이템 → 할 일
 
-`recording:actionItemToTodo(meetingId, index)`: `summary.action_items[index]`로 `todos` 행을 직접 만든다(`title=text`, `priority='medium'`). `due`가 `YYYY-MM-DD`(시각 허용) 형식일 때만 `due_date`에 넣고, 아니면 원문을 notes에 남긴다. notes는 `회의에서 추출: <회의 제목>`, `담당: <assignee>`, `기한: <원문>` 줄로 만든다. 만든 `todo_id`를 그 항목에 기록해 다시 등록하지 않게 하고, `logActivity('todo', 'create', …)`를 남긴다. 자동 등록하지 않고 사용자가 버튼을 눌러야 한다(오탐 방지).
+`recording:actionItemToTodo(meetingId, index)`: `summary.action_items[index]`로 `todos` 행을 직접 만든다(`title=text`, `priority='medium'`). `due`가 `YYYY-MM-DD`(시각 허용) 형식일 때만 `due_date`에 넣고, 아니면 원문을 notes에 남긴다. notes는 `회의에서 추출: <회의 제목>`, `담당: <assignee>`, `기한: <원문>` 줄로 만든다. `source_link`에는 그 회의의 회의록 링크 `linkwork://note/{meetingId}`를 넣는다(할 일 행의 출처 칩이 회의록 메뉴에서 그 회의를 연다). 만든 `todo_id`를 그 항목에 기록해 다시 등록하지 않게 하고, 할 일 이력(`saveTodoHistory(…, 'create')`)과 `logActivity('todo', 'create', …)`를 남긴다. 자동 등록하지 않고 사용자가 버튼을 눌러야 한다(오탐 방지).
 
 ## 8. 렌더러 구조
 

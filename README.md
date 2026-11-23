@@ -13,7 +13,7 @@
 | — | 오늘 | 오늘 대시보드. 신호·다음 배포·Jira 작업·할 일·일정·메모를 한 화면에 모은다 |
 | — | AI 대화 | Claude Code 구독 로그인으로 앱 데이터(할 일·메모·일정·Jira 등)를 묻고 고친다 ([AI_CHAT_ARCHITECTURE.md](docs/AI_CHAT_ARCHITECTURE.md)) |
 | 업무 | 프로젝트 | Jira 프로젝트 화면. 티켓·릴리스·문서 탭 ([PROJECT_BOARD.md](docs/PROJECT_BOARD.md), [RELEASE_NOTES.md](docs/RELEASE_NOTES.md)) |
-| 업무 | 할 일 | 할 일과 태그 |
+| 업무 | 할 일 | 할 일과 태그. 오늘·예정·전체·완료 뷰, 한 줄 빠른 추가(`내일 3시 #태그 !높음` 인식) |
 | 업무 | 캘린더 | Google 캘린더 주간 일정(읽기 전용) |
 | 회의 | 녹음 | 회의·면접 녹음, 전사, 화자 분리, AI 요약, 액션아이템을 할 일로 등록 ([MEETING_RECORDING.md](docs/MEETING_RECORDING.md)) |
 | 회의 | 회의록 | 요약이 끝난 회의를 문서처럼 검색·열람하고 Markdown 으로 내보낸다 |
@@ -21,7 +21,7 @@
 | 자료 | 변수 | 자주 쓰는 값을 저장해 두고 복사한다 |
 | (하단) | 설정 | 연동·AI·비서·회의 녹음·모바일·데이터 ([SETTINGS.md](docs/SETTINGS.md)) |
 
-그 밖에 메뉴 막대 트레이 패널(오늘 일정·할 일), 같은 Wi-Fi 의 휴대폰에서 오늘·할 일·메모를 보는 휴대폰 열람([MOBILE_VIEW.md](docs/MOBILE_VIEW.md))이 있다.
+그 밖에 어느 화면에서든 Cmd+Shift+A 로 여는 할 일 빠른 추가, 메뉴 막대 트레이 패널(오늘 일정·할 일), 같은 Wi-Fi 의 휴대폰에서 오늘·할 일·메모를 보는 휴대폰 열람([MOBILE_VIEW.md](docs/MOBILE_VIEW.md))이 있다.
 
 ## 연동
 

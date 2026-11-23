@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { CalendarEvent } from '../types'
+import type { CalendarEvent, MeetingNoteItem } from '../types'
+import { previousWorkRange } from '../components/today/yesterdayModel'
 import { useAssistantStore } from './assistantStore'
 import { useTodoStore } from './todoStore'
 import { useJiraBoardStore } from './jiraBoardStore'
@@ -7,7 +8,7 @@ import { useReleaseNoteStore } from './releaseNoteStore'
 
 // 오늘 대시보드의 데이터 스토어. 화면 조립은 components/today/todayModel.ts 가 한다.
 // 여기서는 기존 스토어(비서·할 일·Jira 보드·릴리스)를 한꺼번에 불러오고, 오늘 대시보드만 쓰는
-// 캘린더 범위(오늘 0시 ~ +21일)를 들고 있다. 한 줄 브리핑·신호 문구는 규칙(todayModel)이 만든다. 캘린더 스토어는 주 단위라 다음 주 배포를 못 본다.
+// 캘린더 범위(오늘 0시 ~ +21일)를 들고 있다. 업무 공유 카드용으로 지난 근무일 일정(pastEvents)과 회의록 목록도 따로 받는다. 한 줄 브리핑·신호 문구는 규칙(todayModel)이 만든다. 캘린더 스토어는 주 단위라 다음 주 배포를 못 본다.
 
 /** 캘린더를 받는 기간(일). 다음 주 배포·QA 일정까지 본다 */
 export const CALENDAR_RANGE_DAYS = 21
@@ -15,6 +16,10 @@ export const CALENDAR_RANGE_DAYS = 21
 export interface TodayStore {
   events: CalendarEvent[]
   eventsError: string | null
+  /** 지난 근무일(previousWorkRange) 구간의 일정. 실패하면 직전 값을 둔다 */
+  pastEvents: CalendarEvent[]
+  /** 요약된 회의록 목록(meetingNotes.list). 실패하면 직전 값을 둔다 */
+  meetingNotes: MeetingNoteItem[]
   loading: boolean
   /** 마지막으로 불러오기가 끝난 시각. ISO */
   lastSyncedAt: string | null
@@ -27,11 +32,15 @@ export interface TodayStore {
 // 늦게 끝난 옛 요청이 새 결과를 덮지 않게 요청마다 번호를 붙인다
 let loadSeq = 0
 let rangeSeq = 0
+let pastSeq = 0
+let notesSeq = 0
 
 /** 테스트용: 모듈 상태(요청 번호)를 비운다 */
 export function resetTodayStoreInternals(): void {
   loadSeq = 0
   rangeSeq = 0
+  pastSeq = 0
+  notesSeq = 0
 }
 
 function errorText(e: unknown, fallback: string): string {
@@ -61,6 +70,30 @@ export const useTodayStore = create<TodayStore>((set) => {
     }
   }
 
+  // 지난 근무일 일정. 오늘 범위(events)와는 별개 요청이다. 실패는 조용히 넘긴다(직전 값 유지)
+  const fetchPast = async (force: boolean): Promise<void> => {
+    const seq = ++pastSeq
+    const { from, to } = previousWorkRange(new Date())
+    try {
+      const res = await window.api.calendar.range(from.toISOString(), to.toISOString(), force)
+      if (seq !== pastSeq) return
+      if (res.success) set({ pastEvents: res.events })
+    } catch {
+      // 직전 값 유지
+    }
+  }
+
+  const fetchNotes = async (): Promise<void> => {
+    const seq = ++notesSeq
+    try {
+      const notes = await window.api.meetingNotes.list()
+      if (seq !== notesSeq) return
+      if (Array.isArray(notes)) set({ meetingNotes: notes })
+    } catch {
+      // 직전 값 유지
+    }
+  }
+
   // 하나가 실패해도 나머지는 반영한다. 각 스토어가 자기 오류 상태를 들고 있다
   const run = async (force: boolean): Promise<void> => {
     const seq = ++loadSeq
@@ -78,7 +111,9 @@ export const useTodayStore = create<TodayStore>((set) => {
         await release.fetchAllReleaseNotes()
         await useReleaseNoteStore.getState().syncChanges(force)
       })(),
-      fetchRange(force)
+      fetchRange(force),
+      fetchPast(force),
+      fetchNotes()
     ])
     if (seq !== loadSeq) return
     set({ loading: false, lastSyncedAt: new Date().toISOString() })
@@ -87,6 +122,8 @@ export const useTodayStore = create<TodayStore>((set) => {
   return {
     events: [],
     eventsError: null,
+    pastEvents: [],
+    meetingNotes: [],
     loading: false,
     lastSyncedAt: null,
 

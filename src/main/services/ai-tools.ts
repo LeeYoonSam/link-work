@@ -117,7 +117,7 @@ async function buildServer(): Promise<McpSdkServerConfigWithInstance> {
 
   const listTodos = tool(
   'list_todos',
-  'TODO 목록을 조회한다. 태그 목록을 포함해 반환한다. completed로 완료/미완료 필터, search로 제목/노트 검색, tag로 태그명 필터가 가능하다.',
+  'TODO 목록을 조회한다. 태그 목록과 출처 링크(source_link, 없으면 null)를 포함해 반환한다. completed로 완료/미완료 필터, search로 제목/노트 검색, tag로 태그명 필터가 가능하다.',
   {
     completed: z.boolean().optional().describe('true면 완료된 TODO만, false면 미완료만, 생략하면 전체'),
     search: searchTerm('제목/노트 부분 검색어'),
@@ -145,7 +145,7 @@ async function buildServer(): Promise<McpSdkServerConfigWithInstance> {
     const rows = db
       .prepare(
         `SELECT t.id, t.title, t.priority, t.due_date, t.is_completed, t.completed_at, t.notes, t.created_at,
-                ${TODO_TAGS_SUBQUERY}
+                t.source_link, ${TODO_TAGS_SUBQUERY}
          FROM todos t
          ${where}
          ORDER BY t.is_completed ASC,
@@ -162,7 +162,7 @@ async function buildServer(): Promise<McpSdkServerConfigWithInstance> {
 // due_reminder/시각 포함 due_date를 함께 반환해 알람을 보존한 채 수정할 수 있게 한다.
 const getTodo = tool(
   'get_todo',
-  'TODO 하나의 상세 정보를 조회한다. 노트(notes) 전문, 태그, 알람 설정(due_reminder)을 포함한다. TODO를 수정하기 전에 현재 값을 확인할 때 사용한다. due_date에 시각(HH:mm)이 있고 due_reminder=1이면 알람이 설정된 것이다.',
+  'TODO 하나의 상세 정보를 조회한다. 노트(notes) 전문, 태그, 알람 설정(due_reminder), 출처 링크(source_link)를 포함한다. TODO를 수정하기 전에 현재 값을 확인할 때 사용한다. due_date에 시각(HH:mm)이 있고 due_reminder=1이면 알람이 설정된 것이다.',
   {
     todo_id: z.number().int().positive().describe('TODO id (list_todos로 확인)')
   },
@@ -171,7 +171,7 @@ const getTodo = tool(
     const row = db
       .prepare(
         `SELECT t.id, t.title, t.priority, t.due_date, t.due_reminder, t.is_completed, t.completed_at,
-                t.notes, t.created_at, t.updated_at,
+                t.notes, t.created_at, t.updated_at, t.source_link,
                 ${TODO_TAGS_SUBQUERY}
          FROM todos t WHERE t.id = ?`
       )

@@ -27,6 +27,7 @@ import {
 } from './static'
 import type { MobileChangedEntity, MobileTodaySnapshot } from './types'
 import {
+  insertTodo,
   listTodosByCompletion,
   saveTodoHistory,
   setTodoCompletion
@@ -40,6 +41,7 @@ import {
 
 const MAX_BODY_BYTES = 64 * 1024
 const MAX_MEMO_LENGTH = 20000
+const MAX_TODO_TITLE_LENGTH = 200
 /** /api/today 가 데스크톱에 재발행을 요청하는 최소 간격 */
 const PUBLISH_REQUEST_INTERVAL_MS = 5000
 /** 이보다 작은 응답은 압축하지 않는다 */
@@ -83,6 +85,16 @@ const memoCreateSchema = z.object({
   content: z.string(),
   category_id: z.number().int().positive().nullable().optional(),
   is_important: z.union([z.literal(0), z.literal(1)]).optional()
+})
+
+/** 'YYYY-MM-DD' 또는 'YYYY-MM-DD HH:mm' (할 일 마감 저장 형식) */
+const TODO_DUE_RE = /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?: (?:[01]\d|2[0-3]):[0-5]\d)?$/
+
+const todoCreateSchema = z.object({
+  title: z.string(),
+  priority: z.enum(['low', 'medium', 'high']).optional(),
+  due_date: z.string().regex(TODO_DUE_RE).nullable().optional(),
+  due_reminder: z.union([z.literal(0), z.literal(1)]).optional()
 })
 
 class HttpError extends Error {
@@ -257,7 +269,7 @@ function allowedMethods(pathname: string): string[] | null {
   if (pathname === '/') return ['GET']
   if (pathname.startsWith('/assets/')) return ['GET']
   if (pathname === '/api/today') return ['GET']
-  if (pathname === '/api/todos') return ['GET']
+  if (pathname === '/api/todos') return ['GET', 'POST']
   if (TODO_ACTION_RE.test(pathname)) return ['POST']
   if (pathname === '/api/memos') return ['GET', 'POST']
   return null
@@ -355,6 +367,27 @@ export function createMobileServer(deps: MobileServerDeps): MobileServer {
     if (pathname === '/api/today') {
       requestPublish()
       sendJson(res, 200, { snapshot: deps.getTodaySnapshot() })
+      return
+    }
+
+    if (pathname === '/api/todos' && method === 'POST') {
+      const parsed = todoCreateSchema.safeParse(await readJsonBody(req))
+      if (!parsed.success) throw new HttpError(400, '할 일 입력이 올바르지 않습니다.')
+      const title = parsed.data.title.trim()
+      if (title.length < 1) throw new HttpError(400, '할 일 제목을 입력하세요.')
+      if (title.length > MAX_TODO_TITLE_LENGTH) throw new HttpError(400, `할 일 제목은 ${MAX_TODO_TITLE_LENGTH}자 이하로 써 주세요.`)
+      const dueDate = parsed.data.due_date ?? null
+      // 알림 규약: 마감에 시각이 있으면 알림을 켠다. 보낸 due_reminder 는 따르지 않는다
+      const id = insertTodo(db, {
+        title,
+        priority: parsed.data.priority ?? 'medium',
+        due_date: dueDate,
+        due_reminder: dueDate && dueDate.length > 10 ? 1 : 0
+      })
+      // todo:create IPC 와 같은 부수효과(이력은 insertTodo 가, 활동 로그·변경 알림은 여기서)
+      deps.logActivity('todo', 'create', id, title)
+      notifyChanged('todo')
+      sendJson(res, 200, { id })
       return
     }
 

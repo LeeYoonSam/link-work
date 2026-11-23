@@ -1,5 +1,5 @@
 // 모바일 '오늘' 탭. 데스크톱이 조립해 올린 오늘 대시보드 스냅샷을 그린다.
-// 표시 규칙·문구는 데스크톱 today 카드(SignalPanel·ReleaseCard·JiraWorkCard·TodoCard·ScheduleCard)를 따른다.
+// 표시 규칙·문구는 데스크톱 today 카드(ReleaseCard·JiraWorkCard·TodoCard·ScheduleCard)를 따른다.
 // 데스크톱 카드는 스토어·네비게이션에 묶여 있어 가져오지 않고, 순수 모델·토큰만 가져온다.
 // 화면 구성: sticky 헤더(대형 타이틀·새로고침) → 히어로(날짜·헤드라인·갱신 상태) → 신호 → 일정 → 다음 배포 → Jira → 할 일.
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -42,7 +42,7 @@ function SeverityIcon({ severity }: { severity: SignalSeverity }): React.ReactNo
 
 const REF_TONE: Record<string, string | undefined> = { issue: 'mono', todo: 'success', meeting: 'purple', release: 'mono' }
 
-/** meeting_soon 의 'n분 뒤'. 데스크톱 meetingSoonSuffix 와 같다 */
+/** meeting_soon 의 'n분 뒤' */
 function meetingSuffix(signal: TodaySignal, rows: ScheduleRow[], now: Date): string {
   if (signal.kind !== 'meeting_soon') return ''
   const ref = signal.refs.find((r) => r.type === 'meeting')

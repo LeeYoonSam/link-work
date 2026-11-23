@@ -1,9 +1,11 @@
 // 오늘 대시보드 (docs/ASSISTANT.md §11).
 // 오늘 챙겨야 할 것을 한눈에 읽는 화면이다. 직접 하는 동작은 할 일 체크·빠른 추가, 이동 링크,
-// 회의 브리핑 펼침, 새로고침뿐이다. 조립은 todayModel(순수 함수)이 하고 이 파일은 데이터 연결과 배치만 한다.
+// 회의 브리핑 펼침, 업무 공유 복사, 새로고침뿐이다. 조립은 todayModel(순수 함수)이 하고 이 파일은 데이터 연결과 배치만 한다.
 //
-// 배치: DOM 순서는 좁은 창 순서(헤더·신호 → 배포 → Jira → 할 일 → 일정 → 메모)다.
-// 컨테이너 폭이 1000px 이상이면 격자로 일정을 왼쪽 좁은 열에 두고 오른쪽에 배포 → [Jira | 할 일] 을 둔다.
+// 신호(todayModel 의 signals)는 패널로 그리지 않는다. 헤드라인 선택과 카드 행 강조(signaled)에만 쓰인다.
+//
+// 배치: DOM 순서는 좁은 창 순서(헤더 → 배포 → Jira → 할 일 → 업무 공유 → 일정 → 메모)다.
+// 컨테이너 폭이 1000px 이상이면 격자로 일정을 왼쪽 좁은 열에 두고 오른쪽에 배포 → [Jira | 할 일] → 업무 공유 를 둔다.
 import { useEffect, useMemo, useState } from 'react'
 import type { AssistantNavigateEvent } from '../../types'
 import { useAssistantStore } from '../../stores/assistantStore'
@@ -14,21 +16,19 @@ import { useReleaseNoteStore } from '../../stores/releaseNoteStore'
 import { useNavigationStore } from '../../stores/navigationStore'
 import { useFocusStore } from '../../stores/focusStore'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { useMeetingNotesStore } from '../../stores/meetingNotesStore'
+import { showToast } from '../ui'
 import { openReleaseForVersion, revealInTickets } from '../project/projectNav'
 import { RefreshIcon } from '../project/BoardBits'
 import { HomeMemos } from '../dashboard/HomeOverview'
-import {
-  buildTodayDashboard,
-  type NextRelease,
-  type SignalRef,
-  type TodayDashboard
-} from './todayModel'
+import { buildTodayDashboard, type NextRelease, type TodayDashboard } from './todayModel'
 import { meetingBriefings } from './MeetingBriefingCard'
-import SignalPanel from './SignalPanel'
 import ReleaseCard from './ReleaseCard'
 import JiraWorkCard from './JiraWorkCard'
 import TodoCard from './TodoCard'
 import ScheduleCard, { localClock } from './ScheduleCard'
+import WorkShareCard from './WorkShareCard'
+import { buildWorkShare } from './shareModel'
 
 // 화면의 '지금' 을 다시 읽는 간격
 const NOW_TICK_MS = 60_000
@@ -81,24 +81,24 @@ export async function openRelease(release: Pick<NextRelease, 'jiraVersionId' | '
   useNavigationStore.getState().openProjectsTab('releases')
 }
 
-/** 신호의 근거 칩 이동 */
-export function openSignalRef(ref: SignalRef, release: NextRelease | null): void {
-  switch (ref.type) {
-    case 'issue':
-      openIssue(ref.id)
-      return
-    case 'todo': {
-      const id = Number(ref.id)
-      if (Number.isInteger(id) && id > 0) openTodo(id)
-      else useNavigationStore.getState().setView('todos')
-      return
-    }
-    case 'meeting':
-      scrollToId(`schedule-row-${ref.id}`)
-      return
-    case 'release':
-      void openRelease(release)
-      return
+/** 회의록 → 회의록 화면의 그 회의록. 검색·종류 필터가 숨기지 않도록 먼저 푼다(openInternalLink 의 note 와 같다) */
+export function openNote(noteId: number): void {
+  const notes = useMeetingNotesStore.getState()
+  notes.setFilter({ q: '', kind: 'all' })
+  void notes.select(noteId)
+  useFocusStore.getState().requestFocus({ entity: 'note', id: noteId })
+  useNavigationStore.getState().setView('notes')
+}
+
+/** 업무 공유 글을 클립보드에 쓰고 토스트로 알린다. 실패해도 화면은 그대로다 */
+export async function copyShareText(text: string): Promise<void> {
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    showToast({ message: '업무 공유 내용을 복사했어요' })
+  } catch (e) {
+    console.warn('[TodayView] 업무 공유 복사 실패', e)
+    showToast({ message: '복사하지 못했어요' })
   }
 }
 
@@ -133,13 +133,6 @@ export function headerErrorText(eventsError: string | null, calendarConnected: b
   return parts.join(' · ')
 }
 
-/** 일정 id → 시작 ISO. 신호의 'n분 뒤' 에 쓴다 */
-function meetingStartMap(d: Pick<TodayDashboard, 'schedule'>): Record<string, string> {
-  const map: Record<string, string> = {}
-  for (const r of d.schedule.rows) map[r.id] = r.startISO
-  return map
-}
-
 export default function TodayView({
   now: nowProp
 }: {
@@ -157,8 +150,11 @@ export default function TodayView({
   const eventsError = useTodayStore((s) => s.eventsError)
   const loading = useTodayStore((s) => s.loading)
   const lastSyncedAt = useTodayStore((s) => s.lastSyncedAt)
+  const pastEvents = useTodayStore((s) => s.pastEvents)
+  const meetingNotes = useTodayStore((s) => s.meetingNotes)
   const activeTodos = useTodoStore((s) => s.activeTodos)
   const completedTodos = useTodoStore((s) => s.completedTodos)
+  const todoTags = useTodoStore((s) => s.tags)
   const snapshot = useJiraBoardStore((s) => s.snapshot)
   const boardErrorCode = useJiraBoardStore((s) => s.errorCode)
   const boardLoading = useJiraBoardStore((s) => s.loading)
@@ -195,6 +191,11 @@ export default function TodayView({
         completedTodos
       }),
     [now, events, calendarConnected, snapshot, boardErrorCode, boardLoading, boardError, notes, activeTodos, completedTodos]
+  )
+
+  const share = useMemo(
+    () => buildWorkShare({ now, snapshot, activeTodos, completedTodos, events, pastEvents, notes: meetingNotes }),
+    [now, snapshot, activeTodos, completedTodos, events, pastEvents, meetingNotes]
   )
 
   // 알림 클릭(회의 브리핑)으로 열리면 그 브리핑을 펼치고 스크롤한다
@@ -246,19 +247,8 @@ export default function TodayView({
           {headerError ? <p className="mt-1 break-words text-xs text-amber-700">{headerError}</p> : null}
         </header>
 
-        <div className="col-span-full min-w-0">
-          <SignalPanel
-            signals={dashboard.signals}
-            hiddenSignals={dashboard.hiddenSignals ?? []}
-            hiddenCount={dashboard.hiddenSignalCount}
-            summaryLine={dashboard.summaryLine}
-            now={now}
-            meetingStarts={meetingStartMap(dashboard)}
-            onOpenRef={(ref) => openSignalRef(ref, dashboard.release)}
-          />
-        </div>
 
-        <div className="min-w-0 @min-[1000px]:col-span-2 @min-[1000px]:col-start-2 @min-[1000px]:row-start-3">
+        <div className="min-w-0 @min-[1000px]:col-span-2 @min-[1000px]:col-start-2 @min-[1000px]:row-start-2">
           <ReleaseCard
             release={dashboard.release}
             onOpenIssue={(row) => openIssue(row.key)}
@@ -267,7 +257,7 @@ export default function TodayView({
           />
         </div>
 
-        <div className="min-w-0 self-start @min-[1000px]:col-start-2 @min-[1000px]:row-start-4">
+        <div className="min-w-0 self-start @min-[1000px]:col-start-2 @min-[1000px]:row-start-3">
           <JiraWorkCard
             jira={dashboard.jira}
             onOpenIssue={(row) => openIssue(row.key)}
@@ -279,19 +269,33 @@ export default function TodayView({
           />
         </div>
 
-        <div className="min-w-0 self-start @min-[1000px]:col-start-3 @min-[1000px]:row-start-4">
+        <div className="min-w-0 self-start @min-[1000px]:col-start-3 @min-[1000px]:row-start-3">
           <TodoCard
             todos={dashboard.todos}
             onComplete={(id) => useTodoStore.getState().completeTodo(id)}
-            onAdd={(title) => useTodoStore.getState().createTodo({ title })}
+            tags={todoTags}
+            onAdd={async (input) => {
+              await useTodoStore.getState().createTodo(input)
+            }}
             onOpenTodo={openTodo}
             onOpenTodos={() => useNavigationStore.getState().setView('todos')}
           />
         </div>
 
+        {/* 넓은 창: Jira·할 일 행 아래에 오른쪽 2열 전체 폭 */}
+        <div className="min-w-0 @min-[1000px]:col-span-2 @min-[1000px]:col-start-2 @min-[1000px]:row-start-4">
+          <WorkShareCard
+            share={share}
+            onOpenIssue={openIssue}
+            onOpenTodo={openTodo}
+            onOpenNote={openNote}
+            onCopy={(text) => void copyShareText(text)}
+          />
+        </div>
+
         {/* 넓은 창: 일정 열을 sticky 로 두어 오른쪽 카드가 길어도 아래에 빈 칸이 남지 않게 보인다.
             창보다 길면 열 안에서 스크롤한다 */}
-        <div className="min-w-0 self-start @min-[1000px]:sticky @min-[1000px]:top-4 @min-[1000px]:col-start-1 @min-[1000px]:row-span-2 @min-[1000px]:row-start-3 @min-[1000px]:max-h-[calc(100vh-7.5rem)] @min-[1000px]:overflow-y-auto @min-[1000px]:rounded-lg">
+        <div className="min-w-0 self-start @min-[1000px]:sticky @min-[1000px]:top-4 @min-[1000px]:col-start-1 @min-[1000px]:row-span-3 @min-[1000px]:row-start-2 @min-[1000px]:max-h-[calc(100vh-7.5rem)] @min-[1000px]:overflow-y-auto @min-[1000px]:rounded-lg">
           <ScheduleCard
             schedule={dashboard.schedule}
             now={now}

@@ -484,6 +484,92 @@ describe('API', () => {
     expect(changed).toHaveLength(2)
   })
 
+  it('할 일 추가: trim 저장·id 반환, 시각 있는 마감은 알림 1, 이력·활동 로그·변경 알림', async () => {
+    const ok = await post('/api/todos', { title: '  휴대폰 할 일  ', priority: 'high', due_date: '2026-11-21 15:00', due_reminder: 0 })
+    expect(ok.status).toBe(200)
+    const { id } = JSON.parse(ok.body)
+    expect(typeof id).toBe('number')
+    const row = db.prepare('SELECT title, priority, due_date, due_reminder, is_completed, notes FROM todos WHERE id = ?').get(id) as Record<string, unknown>
+    expect(row).toMatchObject({ title: '휴대폰 할 일', priority: 'high', due_date: '2026-11-21 15:00', due_reminder: 1, is_completed: 0, notes: null })
+    expect(changed).toEqual(['todo'])
+    expect(activity).toEqual([['todo', 'create', id, '휴대폰 할 일']])
+    const history = db.prepare('SELECT action FROM todo_history WHERE todo_id = ?').all(id) as { action: string }[]
+    expect(history.map((h) => h.action)).toEqual(['create'])
+
+    // 날짜만 있으면 알림 0(보낸 값과 무관), 우선순위 기본은 보통
+    const dayOnly = await post('/api/todos', { title: '날짜만', due_date: '2026-11-22', due_reminder: 1 })
+    expect(dayOnly.status).toBe(200)
+    const r2 = db.prepare('SELECT priority, due_date, due_reminder FROM todos WHERE id = ?').get(JSON.parse(dayOnly.body).id)
+    expect(r2).toMatchObject({ priority: 'medium', due_date: '2026-11-22', due_reminder: 0 })
+    const noDue = await post('/api/todos', { title: '마감 없음', due_date: null })
+    expect(noDue.status).toBe(200)
+    expect(db.prepare('SELECT due_date, due_reminder FROM todos WHERE id = ?').get(JSON.parse(noDue.body).id)).toMatchObject({ due_date: null, due_reminder: 0 })
+    expect((await post('/api/todos', { title: 'x'.repeat(200) })).status).toBe(200)
+
+    // 출처 링크는 받지 않는다: 보내도 버리고 null 로 저장한다
+    const withLink = await post('/api/todos', { title: '출처 시도', source_link: 'linkwork://memo/1' })
+    expect(withLink.status).toBe(200)
+    expect(db.prepare('SELECT source_link FROM todos WHERE id = ?').get(JSON.parse(withLink.body).id)).toMatchObject({ source_link: null })
+
+    // 추가한 항목이 진행 중 목록에 보인다
+    const list = JSON.parse((await authed('/api/todos')).body)
+    expect(list.todos.map((t: { id: number }) => t.id)).toContain(id)
+  })
+
+  it('할 일 추가 검증: 빈 제목·200자 초과·잘못된 마감·우선순위·알림 값은 400', async () => {
+    const before = (db.prepare('SELECT COUNT(*) AS c FROM todos').get() as { c: number }).c
+    for (const bad of [
+      {},
+      { title: '' },
+      { title: '   ' },
+      { title: 'x'.repeat(201) },
+      { title: 1 },
+      { title: '할 일', due_date: '2026/11/21' },
+      { title: '할 일', due_date: '2026-11-21T15:00' },
+      { title: '할 일', due_date: '2026-11-21 25:00' },
+      { title: '할 일', due_date: '2026-13-01' },
+      { title: '할 일', due_date: '내일' },
+      { title: '할 일', priority: 'urgent' },
+      { title: '할 일', due_reminder: 2 }
+    ]) {
+      const r = await post('/api/todos', bad)
+      expect(r.status, JSON.stringify(bad)).toBe(400)
+      expect(JSON.parse(r.body).error).toBeTruthy()
+    }
+    expect((await post('/api/todos', '{not json')).status).toBe(400)
+    expect(db.prepare('SELECT COUNT(*) AS c FROM todos').get()).toEqual(expect.objectContaining({ c: before }))
+    expect(changed).toEqual([])
+  })
+
+  it('할 일 추가도 인증·POST 규칙을 그대로 탄다: 쿠키 없음 401, 모바일 헤더 없음 403, JSON 아님 415', async () => {
+    const noCookie = await send({
+      method: 'POST',
+      path: '/api/todos',
+      headers: { 'Content-Type': 'application/json', 'X-LinkWork-Mobile': '1' },
+      body: JSON.stringify({ title: '침입' })
+    })
+    expect(noCookie.status).toBe(401)
+    const noHeader = await send({
+      method: 'POST',
+      path: '/api/todos',
+      headers: { Cookie: cookie(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: '침입' })
+    })
+    expect(noHeader.status).toBe(403)
+    expect((await post('/api/todos', { title: '침입' }, { Origin: 'http://evil.example.com' })).status).toBe(403)
+    expect((await post('/api/todos', { title: '침입' }, { 'Content-Type': 'text/plain' })).status).toBe(415)
+    const badHost = await send({
+      method: 'POST',
+      path: '/api/todos',
+      host: 'evil.example.com',
+      headers: { Cookie: cookie(), 'Content-Type': 'application/json', 'X-LinkWork-Mobile': '1' },
+      body: JSON.stringify({ title: '침입' })
+    })
+    expect(badHost.status).toBe(403)
+    expect(db.prepare("SELECT COUNT(*) AS c FROM todos WHERE title = '침입'").get()).toEqual(expect.objectContaining({ c: 0 }))
+    expect(changed).toEqual([])
+  })
+
   it('/api/memos: 보관하지 않은 메모 + 카테고리', async () => {
     const r = await authed('/api/memos')
     expect(r.status).toBe(200)
@@ -548,7 +634,7 @@ describe('API', () => {
     const cases: [string, string][] = [
       ['PUT', '/api/todos'],
       ['DELETE', '/api/memos/1'],
-      ['POST', '/api/todos'],
+      ['DELETE', '/api/todos'],
       ['DELETE', '/api/todos/1/complete'],
       ['GET', '/api/todos/1/complete'],
       ['GET', '/api/unknown'],

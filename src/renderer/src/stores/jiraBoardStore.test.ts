@@ -436,6 +436,58 @@ describe('jiraBoardStore.setDocsFilter', () => {
   })
 })
 
+describe('jiraBoardStore 문서 탭 그룹 접힘', () => {
+  const saved = (): Record<string, unknown> => JSON.parse(storage.get('linkwork.jiraBoard.prefs') ?? '{}')
+
+  it('기본은 빈 맵(모두 펼침)이다', () => {
+    expect(useJiraBoardStore.getState().docsCollapsed).toEqual({})
+  })
+
+  it('setDocsCollapsed 는 한 그룹, setAllDocsCollapsed 는 여러 그룹을 바꾸고 localStorage 에 남긴다', () => {
+    const st = useJiraBoardStore.getState()
+    st.setDocsCollapsed('PROJ-1', true)
+    st.setAllDocsCollapsed(['PROJ-2', 'PROJ-3'], true)
+    st.setAllDocsCollapsed(['PROJ-3'], false)
+    const want = { 'PROJ-1': true, 'PROJ-2': true, 'PROJ-3': false }
+    expect(useJiraBoardStore.getState().docsCollapsed).toEqual(want)
+    expect(saved().docsCollapsed).toEqual(want)
+  })
+
+  it('티켓 탭 펼침과 서로 덮어쓰지 않는다', () => {
+    const st = useJiraBoardStore.getState()
+    st.setExpanded('PROJ-1', false)
+    st.setDocsCollapsed('PROJ-1', true)
+    st.setAllExpanded(['PROJ-2'], true)
+    st.setSort('due')
+    expect(useJiraBoardStore.getState().expanded).toEqual({ 'PROJ-1': false, 'PROJ-2': true })
+    expect(useJiraBoardStore.getState().docsCollapsed).toEqual({ 'PROJ-1': true })
+    expect(saved()).toMatchObject({
+      sort: 'due',
+      expanded: { 'PROJ-1': false, 'PROJ-2': true },
+      docsCollapsed: { 'PROJ-1': true }
+    })
+  })
+
+  it('앱 재시작 시 저장본에서 복원하고 boolean 이 아닌 값은 버린다', async () => {
+    storage.set(
+      'linkwork.jiraBoard.prefs',
+      JSON.stringify({ expanded: { 'PROJ-1': false }, docsCollapsed: { 'PROJ-1': true, 'PROJ-2': 'yes' } })
+    )
+    vi.resetModules()
+    const fresh = (await import('./jiraBoardStore')).useJiraBoardStore.getState()
+    expect(fresh.docsCollapsed).toEqual({ 'PROJ-1': true })
+    expect(fresh.expanded).toEqual({ 'PROJ-1': false })
+  })
+
+  it('필드가 없는 옛 저장본은 빈 맵으로 읽는다', async () => {
+    storage.set('linkwork.jiraBoard.prefs', JSON.stringify({ sort: 'key', expanded: { 'PROJ-1': true } }))
+    vi.resetModules()
+    const fresh = (await import('./jiraBoardStore')).useJiraBoardStore.getState()
+    expect(fresh.docsCollapsed).toEqual({})
+    expect(fresh.sort).toBe('key')
+  })
+})
+
 describe('jiraBoardStore.summarizeEpic', () => {
   it('성공하면 에픽 키로 요약을 담는다', async () => {
     await useJiraBoardStore.getState().summarizeEpic('PROJ-1')
@@ -484,7 +536,8 @@ describe('jiraBoardStore 필터·펼침·선택', () => {
       hideDone: true,
       showPastDone: false,
       sort: 'due',
-      expanded: { 'PROJ-1': false, 'PROJ-2': true, 'PROJ-3': true }
+      expanded: { 'PROJ-1': false, 'PROJ-2': true, 'PROJ-3': true },
+      docsCollapsed: {}
     })
   })
 

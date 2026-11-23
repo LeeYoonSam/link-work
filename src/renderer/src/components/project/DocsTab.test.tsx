@@ -61,7 +61,8 @@ const BASE: Partial<JiraBoardState> = {
   error: null,
   errorCode: null,
   filter: EMPTY_FILTER,
-  docsFilter: EMPTY_DOCS_FILTER
+  docsFilter: EMPTY_DOCS_FILTER,
+  docsCollapsed: {}
 }
 let state: Partial<JiraBoardState> = BASE
 
@@ -72,6 +73,8 @@ vi.mock('../../stores/jiraBoardStore', () => ({
     sync: async () => {},
     setFilter: noop,
     setDocsFilter: noop,
+    setDocsCollapsed: noop,
+    setAllDocsCollapsed: noop,
     dismissError: noop
   })
 }))
@@ -126,5 +129,59 @@ describe('DocsTab', () => {
     const html = render({ snapshot: snapshot(), docsFilter: { ...EMPTY_DOCS_FILTER, query: '없는말' } })
     expect(html).toContain('조건에 맞는 문서가 없어요')
     expect(html).toContain('필터 지우기')
+  })
+
+  describe('그룹 접기', () => {
+    const groupHtml = (html: string, id: string): string => {
+      const start = html.indexOf(`data-doc-group="${id}"`)
+      const end = html.indexOf('</section>', start)
+      return html.slice(start, end)
+    }
+
+    it('기본은 펼침: aria-expanded="true" 이고 항목이 보이며 "모두 접기"를 준다', () => {
+      const html = render({ snapshot: snapshot() })
+      const g = groupHtml(html, 'PROJ-1')
+      expect(g).toContain('aria-expanded="true"')
+      expect(g).toContain('aria-label="결제 개편 접기"')
+      expect(g).toContain('>기획서<')
+      expect(html).toContain('모두 접기')
+      expect(html).not.toContain('모두 펴기')
+    })
+
+    it('접힌 그룹은 헤더·건수만 남고 문서·연결 이슈 목록이 없다', () => {
+      const html = render({ snapshot: snapshot(), docsCollapsed: { 'PROJ-1': true } })
+      const g = groupHtml(html, 'PROJ-1')
+      expect(g).toContain('aria-expanded="false"')
+      expect(g).toContain('aria-label="결제 개편 펴기"')
+      expect(g).toContain('결제 개편')
+      expect(g).toMatch(/>2<\/span>/)
+      expect(g).toContain('>PROJ-1<')
+      expect(g).not.toContain('>기획서<')
+      expect(g).not.toContain('연결 이슈 1')
+      // 보이는 그룹이 전부 접혀 있으면 "모두 펴기"
+      expect(html).toContain('모두 펴기')
+    })
+
+    it('검색어가 있으면 저장된 접힘을 무시하고 펼치며 토글은 막는다', () => {
+      const html = render({
+        snapshot: snapshot(),
+        docsCollapsed: { 'PROJ-1': true },
+        docsFilter: { ...EMPTY_DOCS_FILTER, query: '기획' }
+      })
+      const g = groupHtml(html, 'PROJ-1')
+      expect(g).toContain('aria-expanded="true"')
+      expect(g).toContain('>기획서<')
+      expect(g).toMatch(/<button[^>]*aria-expanded="true"[^>]*disabled=""/)
+      expect(html).toMatch(/<button[^>]*data-docs-collapse-all[^>]*disabled=""[^>]*title="검색 중에는 모두 펼쳐 보여요"/)
+    })
+
+    it('종류 필터만 있으면 접힘을 그대로 따른다', () => {
+      const html = render({
+        snapshot: snapshot(),
+        docsCollapsed: { 'PROJ-1': true },
+        docsFilter: { ...EMPTY_DOCS_FILTER, kinds: ['web'] }
+      })
+      expect(groupHtml(html, 'PROJ-1')).toContain('aria-expanded="false"')
+    })
   })
 })

@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { TodayDashboard } from './todayModel'
+import type { WorkShare } from './shareModel'
 
 // 오늘 대시보드 (docs/ASSISTANT.md §11).
 // 스토어는 상태 객체를 읽는 가짜로 바꾼다. 대시보드 조립(buildTodayDashboard)은 고정 fixture 를 돌려준다 —
@@ -23,6 +24,7 @@ const nav = { setView: vi.fn(), openProjectsTab: vi.fn(), view: 'today' }
 const todo = {
   activeTodos: [],
   completedTodos: [],
+  tags: [],
   setFilterTagId: vi.fn(),
   setSelectedTodoId: vi.fn(),
   completeTodo: vi.fn(async () => {}),
@@ -33,6 +35,8 @@ const today = {
   eventsError: null as string | null,
   loading: false,
   lastSyncedAt: null as string | null,
+  pastEvents: [],
+  meetingNotes: [],
   load: vi.fn(async () => {}),
   refresh: vi.fn(async () => {})
 }
@@ -45,6 +49,8 @@ const assistant = {
   regenerateMeetingBriefing: vi.fn(async () => {})
 }
 const focus = { requestFocus: vi.fn() }
+const notesStore = { setFilter: vi.fn(), select: vi.fn(async (_id: number | null) => {}) }
+const toast = vi.hoisted(() => ({ showToast: vi.fn(() => 1) }))
 const projectNav = { revealInTickets: vi.fn((_k: string) => true), openReleaseForVersion: vi.fn(async (_id: string) => {}) }
 
 vi.mock('../../stores/navigationStore', () => ({ useNavigationStore: fakeStore(nav) }))
@@ -54,6 +60,11 @@ vi.mock('../../stores/assistantStore', () => ({ useAssistantStore: fakeStore(ass
 vi.mock('../../stores/jiraBoardStore', () => ({ useJiraBoardStore: fakeStore({ snapshot: null, errorCode: null }) }))
 vi.mock('../../stores/releaseNoteStore', () => ({ useReleaseNoteStore: fakeStore({ allNotes: [] }) }))
 vi.mock('../../stores/focusStore', () => ({ useFocusStore: fakeStore(focus) }))
+vi.mock('../../stores/meetingNotesStore', () => ({ useMeetingNotesStore: fakeStore(notesStore) }))
+vi.mock('../ui/toastStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../ui/toastStore')>()),
+  showToast: toast.showToast
+}))
 vi.mock('../../stores/settingsStore', () => ({ useSettingsStore: fakeStore({ open: vi.fn() }) }))
 vi.mock('../project/projectNav', () => projectNav)
 vi.mock('../dashboard/HomeOverview', () => ({ HomeMemos: () => <section id="home-overview">중요 메모</section> }))
@@ -132,19 +143,38 @@ const DASH: TodayDashboard = {
   }
 }
 
+const SHARE: WorkShare = {
+  range: { from: new Date(2026, 10, 18), to: new Date(2026, 10, 19), multiDay: false, label: '11월 18일 (수)' },
+  pastTitle: '어제',
+  dateLabel: '11월 19일 (목)',
+  jiraKnown: true,
+  done: [{ kind: 'issue', id: 'ICA-801', title: '결제 버그 수정', note: null }],
+  doing: [],
+  planned: [],
+  doneToday: [],
+  meetings: [],
+  total: 1
+}
+const buildWorkShare = vi.hoisted(() => vi.fn())
+vi.mock('./shareModel', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./shareModel')>()
+  return { ...actual, buildWorkShare }
+})
+
 vi.mock('./todayModel', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./todayModel')>()
   return { ...actual, buildTodayDashboard: vi.fn(() => DASH) }
 })
 
 const mod = await import('./TodayView')
-const { default: TodayView, dateHeading, headerErrorText, releaseUnknownReason, meetingFocusEventId, openIssue, openTodo, openRelease, openSignalRef, syncedClock } = mod
+const { default: TodayView, copyShareText, openNote, dateHeading, headerErrorText, releaseUnknownReason, meetingFocusEventId, openIssue, openTodo, openRelease, syncedClock } = mod
 
 const NOW = new Date(2026, 10, 19, 13, 20, 0)
 const render = (): string => renderToStaticMarkup(<TodayView now={NOW} />)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  buildWorkShare.mockReturnValue(SHARE)
   today.loading = false
   today.lastSyncedAt = null
 })
@@ -164,29 +194,48 @@ describe('TodayView 화면', () => {
     expect(render()).toMatch(/<button[^>]*disabled=""[^>]*aria-label="새로고침"/)
   })
 
-  it('DOM 순서는 좁은 창 순서다: 신호 → 배포 → Jira → 할 일 → 일정 → 메모. 넓은 창은 컨테이너 격자다', () => {
+  it('DOM 순서는 좁은 창 순서다: 헤더 → 배포 → Jira → 할 일 → 업무 공유 → 일정 → 메모. 넓은 창은 컨테이너 격자다', () => {
     const html = render()
-    const ids = ['today-headline', 'today-signals', 'today-release', 'today-jira', 'today-todos', 'today-schedule', 'home-overview']
+    const ids = ['today-headline', 'today-release', 'today-jira', 'today-todos', 'today-share', 'today-schedule', 'home-overview']
     const pos = ids.map((id) => html.search(new RegExp(`(id|data-testid)="${id}"`)))
     expect(pos.every((p) => p >= 0)).toBe(true)
     expect([...pos].sort((a, b) => a - b)).toEqual(pos)
     expect(html).toContain('@container')
     expect(html).toContain('@min-[1000px]:grid-cols-')
-    // 일정은 넓은 창에서 왼쪽 열에 놓인다
-    expect(html).toMatch(/@min-\[1000px\]:col-start-1[^"]*@min-\[1000px\]:row-start-3/)
+    // 일정은 넓은 창에서 왼쪽 열, 헤더 바로 아래 행부터 놓인다
+    expect(html).toMatch(/@min-\[1000px\]:col-start-1[^"]*@min-\[1000px\]:row-start-2/)
+    expect(html).toMatch(/@min-\[1000px\]:col-start-2 @min-\[1000px\]:row-start-2"><div[^>]*><section id="today-release"/)
   })
 
-  it('meeting_soon 신호에 n분 뒤를 붙인다', () => {
-    expect(render()).toContain('40분 뒤')
+  it('업무 공유: 스토어 값으로 모델을 조립하고 넓은 창에서 Jira·할 일 아래 오른쪽 2열 전체 폭에 둔다', () => {
+    today.pastEvents = [{ id: 'p' }] as never
+    today.meetingNotes = [{ id: 1 }] as never
+    const html = render()
+    expect(buildWorkShare).toHaveBeenCalledWith({
+      now: NOW,
+      snapshot: null,
+      activeTodos: todo.activeTodos,
+      completedTodos: todo.completedTodos,
+      events: today.events,
+      pastEvents: today.pastEvents,
+      notes: today.meetingNotes
+    })
+    expect(html).toContain('업무 공유')
+    expect(html).toContain('결제 버그 수정')
+    expect(html).toMatch(/@min-\[1000px\]:col-span-2 @min-\[1000px\]:col-start-2 @min-\[1000px\]:row-start-4"><div[^>]*><section id="today-share"/)
+    // 일정 열은 배포·[Jira|할 일]·업무 공유 세 행에 걸친다
+    expect(html).toMatch(/@min-\[1000px\]:col-start-1 @min-\[1000px\]:row-span-3 @min-\[1000px\]:row-start-2/)
+    today.pastEvents = []
+    today.meetingNotes = []
   })
 
-  it('헤드라인과 신호는 규칙 문구 그대로 보인다(LLM 다듬기 없음)', () => {
+  it('헤드라인은 규칙 문구 그대로 보이고 신호 패널(지금 챙길 것)은 그리지 않는다', () => {
     const html = render()
     expect(html).toContain(DASH.headline)
-    for (const sig of DASH.signals) {
-      expect(html).toContain(`data-signal="${sig.id}"`)
-      expect(html).toContain(sig.text)
-    }
+    expect(html).not.toContain('today-signals')
+    expect(html).not.toContain('data-signal=')
+    expect(html).not.toMatch(/>지금 챙길 것</)
+    for (const sig of DASH.signals) expect(html).not.toContain(sig.text)
     expect(html).not.toContain('data-source=')
   })
 
@@ -227,6 +276,31 @@ describe('TodayView 이동', () => {
     expect(nav.setView).toHaveBeenCalledWith('todos')
   })
 
+  it('openNote: 회의록 필터를 풀고 선택·포커스 요청 후 회의록 화면으로 간다', () => {
+    openNote(31)
+    expect(notesStore.setFilter).toHaveBeenCalledWith({ q: '', kind: 'all' })
+    expect(notesStore.select).toHaveBeenCalledWith(31)
+    expect(focus.requestFocus).toHaveBeenCalledWith({ entity: 'note', id: 31 })
+    expect(nav.setView).toHaveBeenCalledWith('notes')
+  })
+
+  it('copyShareText: 클립보드에 쓰고 토스트로 알린다. 실패하면 실패 토스트, 빈 글은 아무것도 안 한다', async () => {
+    const writeText = vi.fn(async (_t: string) => {})
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    await copyShareText('작업 완료')
+    expect(writeText).toHaveBeenCalledWith('작업 완료')
+    expect(toast.showToast).toHaveBeenLastCalledWith({ message: '업무 공유 내용을 복사했어요' })
+    writeText.mockRejectedValueOnce(new Error('denied'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await copyShareText('x')
+    expect(toast.showToast).toHaveBeenLastCalledWith({ message: '복사하지 못했어요' })
+    warn.mockRestore()
+    toast.showToast.mockClear()
+    await copyShareText('')
+    expect(toast.showToast).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
   it('openRelease: Jira 버전 id 가 있으면 그 릴리스, 노트만 있으면 포커스 요청 + 릴리스 탭, 없으면 탭만', async () => {
     await openRelease({ jiraVersionId: '10501', noteId: 12 })
     expect(projectNav.openReleaseForVersion).toHaveBeenCalledWith('10501')
@@ -235,23 +309,6 @@ describe('TodayView 이동', () => {
     expect(nav.openProjectsTab).toHaveBeenLastCalledWith('releases')
     await openRelease(null)
     expect(nav.openProjectsTab).toHaveBeenCalledTimes(2)
-  })
-
-  it('openSignalRef: issue·todo·release 는 해당 화면으로, meeting 은 일정 행으로 스크롤', () => {
-    openSignalRef({ type: 'issue', id: 'ICA-1', label: 'ICA-1' }, null)
-    expect(projectNav.revealInTickets).toHaveBeenCalledWith('ICA-1')
-    openSignalRef({ type: 'todo', id: '7', label: 't' }, null)
-    expect(todo.setSelectedTodoId).toHaveBeenCalledWith(7)
-    openSignalRef({ type: 'release', id: '4.177.0', label: '4.177.0' }, DASH.release)
-    expect(projectNav.openReleaseForVersion).toHaveBeenCalledWith('10501')
-    const el = { scrollIntoView: vi.fn() }
-    ;(globalThis as unknown as { document: unknown }).document = { getElementById: vi.fn(() => el) }
-    openSignalRef({ type: 'meeting', id: 'cal-b', label: 'Tech weekly' }, null)
-    expect((globalThis as unknown as { document: { getElementById: ReturnType<typeof vi.fn> } }).document.getElementById).toHaveBeenCalledWith(
-      'schedule-row-cal-b'
-    )
-    expect(el.scrollIntoView).toHaveBeenCalled()
-    delete (globalThis as unknown as { document?: unknown }).document
   })
 
   it('알림 focus: meeting 을 브리핑 이벤트 id 로 바꾸고 id 가 숫자가 아니거나 focus 가 없으면 null 이다', () => {
@@ -288,8 +345,8 @@ describe('TodayView 이동', () => {
 
   it('넓은 창의 Jira·할 일 카드는 내용 높이(self-start)다', () => {
     const html = render()
-    expect(html).toMatch(/self-start @min-\[1000px\]:col-start-2 @min-\[1000px\]:row-start-4/)
-    expect(html).toMatch(/self-start @min-\[1000px\]:col-start-3 @min-\[1000px\]:row-start-4/)
+    expect(html).toMatch(/self-start @min-\[1000px\]:col-start-2 @min-\[1000px\]:row-start-3/)
+    expect(html).toMatch(/self-start @min-\[1000px\]:col-start-3 @min-\[1000px\]:row-start-3/)
   })
 
   it('헬퍼: dateHeading·syncedClock', () => {

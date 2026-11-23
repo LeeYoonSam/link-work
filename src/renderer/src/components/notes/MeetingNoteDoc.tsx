@@ -2,8 +2,15 @@ import { useEffect, useState } from 'react'
 import { useMeetingNotesStore } from '../../stores/meetingNotesStore'
 import { useNavigationStore } from '../../stores/navigationStore'
 import { useRecordingStore } from '../../stores/recordingStore'
+import { useQuickAddStore } from '../../stores/quickAddStore'
 import { EmptyState, button } from '../ui'
 import { formatDuration } from './MeetingNoteList'
+import { meetingTodoPrefill } from '../todo/sourceLink'
+
+/** '할 일로 만들기': '회의 제목 후속' 과 회의록 링크(linkwork://note/{회의 id})로 빠른 추가 팝오버를 연다 */
+export function openMeetingTodo(meeting: { id: number; title: string }): void {
+  useQuickAddStore.getState().open(meetingTodoPrefill(meeting))
+}
 
 function formatClock(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -68,6 +75,9 @@ export default function MeetingNoteDoc(): React.ReactNode {
         </button>
         <button type="button" onClick={openInRecordings} className={`px-3 py-1.5 text-xs ${button.subtle}`}>
           녹음에서 열기
+        </button>
+        <button type="button" onClick={() => openMeetingTodo(meeting)} className={`px-3 py-1.5 text-xs ${button.subtle}`}>
+          할 일로 만들기
         </button>
       </div>
 
