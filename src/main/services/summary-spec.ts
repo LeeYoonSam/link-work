@@ -14,3 +14,19 @@ export interface SummarySpec<T> {
   validate: (raw: unknown) => T
   persist: (db: Database.Database, meetingId: number, parsed: T, model: string) => void
 }
+
+// AI에게 ms 정수를 직접 만들게 하면 신뢰도가 낮다. 전사록에 이미 [mm:ss]가 붙어 있으므로
+// 그 표기를 그대로 돌려받아 여기서 ms로 환산한다. 회의·면접 스펙이 함께 쓴다.
+// 허용: "mm:ss"(분 1~3자리, 1시간을 넘으면 분이 60을 넘는다), "h:mm:ss", 앞뒤 대괄호("[12:34]").
+// 그 밖의 표기("00:75", "3분 12초")와 빈 값은 null → 재생 점프 버튼을 숨긴다.
+export function parseTimestamp(at: string | null | undefined): number | null {
+  if (!at) return null
+  let s = at.trim()
+  const bracketed = s.match(/^\[\s*(.*?)\s*\]$/)
+  if (bracketed) s = bracketed[1]
+  const hms = s.match(/^(\d{1,2}):([0-5]\d):([0-5]\d)$/)
+  if (hms) return (Number(hms[1]) * 3600 + Number(hms[2]) * 60 + Number(hms[3])) * 1000
+  const ms = s.match(/^(\d{1,3}):([0-5]\d)$/)
+  if (ms) return (Number(ms[1]) * 60 + Number(ms[2])) * 1000
+  return null
+}

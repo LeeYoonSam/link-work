@@ -545,6 +545,21 @@ export interface ActionItem {
   speaker_id?: number | null
   source_segment_id?: number | null
   todo_id?: number | null
+  // 근거 발언 위치(ms). null·없음이면 재생 점프 불가.
+  at_ms?: number | null
+}
+
+// 결정사항·미결 질문 한 항목. 구버전 요약의 문자열 결정사항은 at_ms null로 정규화되어 온다.
+export interface SummaryTextItem {
+  text: string
+  at_ms: number | null
+}
+
+// 주제별 요약 한 항목. 구버전 요약에는 없다(빈 배열).
+export interface SummaryTopic {
+  title: string
+  start_ms: number | null
+  points: string[]
 }
 
 // ── 면접 기록 (kind='interview') 전용 요약 구조 ──
@@ -568,10 +583,13 @@ export interface MeetingSummary {
   meeting_id: number
   // 회의: TL;DR / 면접: 면접 개요
   tldr: string | null
-  // 회의 전용 4개 필드 — key_points 포함 (면접에서는 빈 배열)
-  key_points: string[]
-  decisions: string[]
+  // 회의 전용 필드 (면접에서는 빈 배열). key_points·next_steps는 구버전 요약에만 값이 있다.
+  keywords: string[]
+  topics: SummaryTopic[]
+  decisions: SummaryTextItem[]
   action_items: ActionItem[]
+  open_questions: SummaryTextItem[]
+  key_points: string[]
   next_steps: string[]
   // 면접 전용 4분류 (회의에서는 빈 배열)
   qa_pairs: InterviewQaPair[]

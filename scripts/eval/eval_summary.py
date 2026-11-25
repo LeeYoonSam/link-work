@@ -121,21 +121,43 @@ def _extract_json(text: str) -> dict[str, Any]:
     return json.loads(text)
 
 
+def _clock(ms: Any) -> str:
+    """앱 전사 줄과 같은 [mm:ss]. 시각이 없으면 빈 문자열."""
+    if not isinstance(ms, (int, float)):
+        return ""
+    total = int(ms) // 1000
+    return f" [{total // 60:02d}:{total % 60:02d}]"
+
+
 def _serialize_summary(summary: dict[str, Any]) -> str:
-    parts = [f"TL;DR: {summary.get('tldr', '')}"]
+    """앱 회의록 Markdown 과 같은 섹션 순서로 요약을 직렬화한다. 빈 섹션은 생략."""
+    parts: list[str] = []
+    if summary.get("keywords"):
+        parts.append("키워드: " + " · ".join(summary["keywords"]))
+    parts.append(f"TL;DR: {summary.get('tldr', '')}")
     if summary.get("key_points"):
         parts.append("핵심:\n" + "\n".join(f"- {x}" for x in summary["key_points"]))
     if summary.get("decisions"):
-        parts.append("결정:\n" + "\n".join(f"- {x}" for x in summary["decisions"]))
+        parts.append("결정:\n" + "\n".join(
+            f"- {d['text']}{_clock(d.get('at_ms'))}" for d in summary["decisions"]))
     if summary.get("action_items"):
         ai = []
         for it in summary["action_items"]:
             who = it.get("assignee") or "?"
             due = it.get("due") or "-"
-            ai.append(f"- {it.get('text', '')} (담당:{who}, 기한:{due})")
+            ai.append(f"- {it.get('text', '')} (담당:{who}, 기한:{due}){_clock(it.get('at_ms'))}")
         parts.append("실행항목:\n" + "\n".join(ai))
+    if summary.get("open_questions"):
+        parts.append("미결질문:\n" + "\n".join(
+            f"- {q['text']}{_clock(q.get('at_ms'))}" for q in summary["open_questions"]))
     if summary.get("next_steps"):
         parts.append("다음단계:\n" + "\n".join(f"- {x}" for x in summary["next_steps"]))
+    if summary.get("topics"):
+        lines = []
+        for i, t in enumerate(summary["topics"], 1):
+            lines.append(f"{i}. {t.get('title', '')}{_clock(t.get('start_ms'))}")
+            lines.extend(f"   - {p}" for p in t.get("points") or [] if isinstance(p, str))
+        parts.append("주제별 요약:\n" + "\n".join(lines))
     return "\n\n".join(parts)
 
 

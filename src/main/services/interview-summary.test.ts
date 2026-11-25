@@ -58,3 +58,24 @@ describe('INTERVIEW_SPEC.validate', () => {
     expect(() => validate({ qa_pairs: [{ answer_summary: 'A' }] })).toThrow()
   })
 })
+
+describe('INTERVIEW_SPEC.persist', () => {
+  it('회의 전용 topics·open_questions·keywords 를 빈 배열로 덮어쓴다', () => {
+    const sqls: string[] = []
+    const db = {
+      prepare: (sql: string) => ({
+        run: () => {
+          sqls.push(sql)
+          return { changes: 1 }
+        }
+      })
+    }
+    INTERVIEW_SPEC.persist(db as never, 1, validate({ overview: '개요' }), 'm')
+    const [insertPart, updatePart] = sqls[0].split('ON CONFLICT')
+    expect(insertPart).toMatch(/next_steps,\s*topics, open_questions, keywords,/)
+    expect(insertPart).toContain("VALUES (?, ?, '[]', '[]', '[]', '[]', '[]', '[]', '[]', ?")
+    for (const col of ['topics', 'open_questions', 'keywords']) {
+      expect(updatePart).toContain(`${col} = excluded.${col}`)
+    }
+  })
+})

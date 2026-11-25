@@ -2,15 +2,26 @@ import { useEffect, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
 import { useMeetingNotesStore } from '../../stores/meetingNotesStore'
 import { useNavigationStore } from '../../stores/navigationStore'
-import type { ActionItem, MeetingSummary } from '../../types'
-import { EmptyState, ProgressBar } from '../ui'
+import type { ActionItem, MeetingSummary, SummaryTextItem, SummaryTopic } from '../../types'
+import { Badge, EmptyState, ProgressBar } from '../ui'
+import { taskTag } from '../ui/tokens'
 
 interface Props {
   summary: MeetingSummary | null
   meetingId: number
+  // 시각 버튼을 누르면 그 시점부터 재생한다. 없으면 시각 버튼을 그리지 않는다.
+  onSeek?: (ms: number) => void
 }
 
-export default function SummaryPanel({ summary, meetingId }: Props): React.ReactNode {
+// InterviewPanel과 같은 m:ss 표기
+function formatTime(ms: number): string {
+  const totalSec = Math.floor(ms / 1000)
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
+export default function SummaryPanel({ summary, meetingId, onSeek }: Props): React.ReactNode {
   const { processing, summarizeMeeting, actionItemToTodo, refreshCurrent } = useRecordingStore()
   // 요약 재생성은 회의별로 독립 실행된다. SummaryPanel은 회의 전환 시 언마운트되지 않고
   // 재사용되므로, boolean 대신 트리거된 회의 id로 추적해 다른 회의에 "재생성 중…" 잔상이
@@ -105,6 +116,17 @@ export default function SummaryPanel({ summary, meetingId }: Props): React.React
 
   return (
     <div className="space-y-5">
+      {/* 키워드 (표시 전용) */}
+      {summary.keywords.length > 0 && (
+        <SummarySection title="키워드">
+          <div className="flex flex-wrap gap-1.5">
+            {summary.keywords.map((k, i) => (
+              <Badge key={i} color={taskTag.domain} size="xs">{k}</Badge>
+            ))}
+          </div>
+        </SummarySection>
+      )}
+
       {/* TL;DR */}
       {summary.tldr && (
         <SummarySection title="TL;DR">
@@ -112,7 +134,7 @@ export default function SummaryPanel({ summary, meetingId }: Props): React.React
         </SummarySection>
       )}
 
-      {/* 핵심 포인트 */}
+      {/* 핵심 포인트 (구버전 요약에만 값이 있다) */}
       {summary.key_points.length > 0 && (
         <SummarySection title="핵심 포인트">
           <ul className="space-y-1.5">
@@ -131,10 +153,7 @@ export default function SummaryPanel({ summary, meetingId }: Props): React.React
         <SummarySection title="결정사항">
           <ul className="space-y-1.5">
             {summary.decisions.map((d, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
-                <CheckmarkIcon />
-                {d}
-              </li>
+              <TextItemRow key={i} item={d} icon={<CheckmarkIcon />} onSeek={onSeek} />
             ))}
           </ul>
         </SummarySection>
@@ -152,13 +171,25 @@ export default function SummaryPanel({ summary, meetingId }: Props): React.React
                 meetingId={meetingId}
                 onAdded={refreshCurrent}
                 onTodo={async (mid, idx) => { await actionItemToTodo(mid, idx) }}
+                onSeek={onSeek}
               />
             ))}
           </ul>
         </SummarySection>
       )}
 
-      {/* 다음 단계 */}
+      {/* 미결 질문 */}
+      {summary.open_questions.length > 0 && (
+        <SummarySection title="미결 질문">
+          <ul className="space-y-1.5">
+            {summary.open_questions.map((q, i) => (
+              <TextItemRow key={i} item={q} icon={<QuestionIcon />} onSeek={onSeek} />
+            ))}
+          </ul>
+        </SummarySection>
+      )}
+
+      {/* 다음 단계 (구버전 요약에만 값이 있다) */}
       {summary.next_steps.length > 0 && (
         <SummarySection title="다음 단계">
           <ul className="space-y-1.5">
@@ -169,6 +200,17 @@ export default function SummaryPanel({ summary, meetingId }: Props): React.React
               </li>
             ))}
           </ul>
+        </SummarySection>
+      )}
+
+      {/* 주제별 요약 */}
+      {summary.topics.length > 0 && (
+        <SummarySection title="주제별 요약">
+          <ol className="space-y-3">
+            {summary.topics.map((t, i) => (
+              <TopicRow key={i} topic={t} index={i} onSeek={onSeek} />
+            ))}
+          </ol>
         </SummarySection>
       )}
 
@@ -226,13 +268,15 @@ function ActionItemRow({
   index,
   meetingId,
   onAdded,
-  onTodo
+  onTodo,
+  onSeek
 }: {
   item: ActionItem
   index: number
   meetingId: number
   onAdded: () => Promise<void>
   onTodo: (meetingId: number, index: number) => Promise<void>
+  onSeek?: (ms: number) => void
 }): React.ReactNode {
   const [adding, setAdding] = useState(false)
   const [added, setAdded] = useState(item.todo_id != null)
@@ -255,7 +299,7 @@ function ActionItemRow({
       <span className="mt-1 w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-700 leading-snug">{item.text}</p>
-        {(item.assignee ?? item.due) && (
+        {(item.assignee || item.due || (item.at_ms != null && onSeek)) && (
           <div className="flex items-center gap-2 mt-0.5">
             {item.assignee && (
               <span className="text-[11px] text-gray-400">{item.assignee}</span>
@@ -263,6 +307,7 @@ function ActionItemRow({
             {item.due && (
               <span className="text-[11px] text-gray-400 font-mono">{item.due}</span>
             )}
+            <SeekButton ms={item.at_ms} onSeek={onSeek} />
           </div>
         )}
       </div>
@@ -281,6 +326,76 @@ function ActionItemRow({
         >
           {adding ? '추가 중...' : '+ TODO'}
         </button>
+      )}
+    </li>
+  )
+}
+
+// 시각 버튼: 시각이 있고 onSeek가 주어졌을 때만 그린다(InterviewPanel QaRow 규약).
+function SeekButton({
+  ms,
+  onSeek
+}: {
+  ms: number | null | undefined
+  onSeek?: (ms: number) => void
+}): React.ReactNode {
+  if (ms == null || !onSeek) return null
+  return (
+    <button
+      type="button"
+      onClick={() => onSeek(ms)}
+      title="이 시점부터 듣기"
+      className="shrink-0 flex items-center gap-1 text-[11px] font-mono text-blue-500 hover:text-blue-700 transition-colors"
+    >
+      <PlayIcon />
+      {formatTime(ms)}
+    </button>
+  )
+}
+
+function TextItemRow({
+  item,
+  icon,
+  onSeek
+}: {
+  item: SummaryTextItem
+  icon: React.ReactNode
+  onSeek?: (ms: number) => void
+}): React.ReactNode {
+  return (
+    <li className="flex items-start gap-2 text-sm text-gray-700">
+      {icon}
+      <span className="flex-1 min-w-0">{item.text}</span>
+      <SeekButton ms={item.at_ms} onSeek={onSeek} />
+    </li>
+  )
+}
+
+function TopicRow({
+  topic,
+  index,
+  onSeek
+}: {
+  topic: SummaryTopic
+  index: number
+  onSeek?: (ms: number) => void
+}): React.ReactNode {
+  return (
+    <li className="space-y-1">
+      <div className="flex items-start gap-2">
+        <span className="text-[11px] font-mono text-gray-300 mt-0.5 shrink-0">{index + 1}</span>
+        <p className="flex-1 text-sm font-medium text-gray-800 leading-snug">{topic.title}</p>
+        <SeekButton ms={topic.start_ms} onSeek={onSeek} />
+      </div>
+      {topic.points.length > 0 && (
+        <ul className="space-y-1 pl-5">
+          {topic.points.map((pt, i) => (
+            <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
+              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" />
+              {pt}
+            </li>
+          ))}
+        </ul>
       )}
     </li>
   )
@@ -327,6 +442,35 @@ function ArrowIcon(): React.ReactNode {
     >
       <path d="M5 12h14" />
       <path d="m12 5 7 7-7 7" />
+    </svg>
+  )
+}
+
+function PlayIcon(): React.ReactNode {
+  return (
+    <svg width={11} height={11} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <polygon points="6 4 20 12 6 20" />
+    </svg>
+  )
+}
+
+function QuestionIcon(): React.ReactNode {
+  return (
+    <svg
+      width={14}
+      height={14}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="text-amber-500 mt-0.5 shrink-0"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <path d="M12 17h.01" />
     </svg>
   )
 }

@@ -125,28 +125,61 @@ def load_meeting(conn: sqlite3.Connection, meeting_id: int) -> Meeting:
     )
 
 
+# 요약 JSON 컬럼. 옛 DB 에는 topics·open_questions·keywords 컬럼이 없을 수 있다.
+_SUMMARY_JSON_COLUMNS = (
+    "keywords", "topics", "decisions", "action_items", "open_questions",
+    "key_points", "next_steps",
+)
+
+
+def _summary_columns(conn: sqlite3.Connection) -> set[str]:
+    return {r[1] for r in conn.execute("PRAGMA table_info(meeting_summaries)").fetchall()}
+
+
+def _text_items(value: Any) -> list[dict[str, Any]]:
+    """decisions·open_questions 정규화. 옛 요약의 문자열과 새 요약의 {text, at_ms} 를 모두 받는다."""
+    items: list[dict[str, Any]] = []
+    for v in value if isinstance(value, list) else []:
+        if isinstance(v, str):
+            text, at_ms = v, None
+        elif isinstance(v, dict):
+            text, at_ms = v.get("text"), v.get("at_ms")
+        else:
+            continue
+        if isinstance(text, str) and text.strip():
+            items.append({"text": text.strip(),
+                          "at_ms": at_ms if isinstance(at_ms, (int, float)) else None})
+    return items
+
+
 def load_summary(conn: sqlite3.Connection, meeting_id: int) -> Optional[dict[str, Any]]:
+    cols = [c for c in _SUMMARY_JSON_COLUMNS if c in _summary_columns(conn)]
     r = conn.execute(
-        "SELECT tldr, key_points, decisions, action_items, next_steps, model "
+        f"SELECT tldr, model{''.join(', ' + c for c in cols)} "
         "FROM meeting_summaries WHERE meeting_id = ?",
         (meeting_id,),
     ).fetchone()
     if r is None:
         return None
 
-    def _j(v: Any) -> Any:
+    def _j(name: str) -> Any:
+        v = r[name] if name in cols else None
         if not v:
             return []
         try:
-            return json.loads(v)
+            parsed = json.loads(v)
         except (json.JSONDecodeError, TypeError):
             return []
+        return parsed if isinstance(parsed, list) else []
 
     return {
         "tldr": r["tldr"] or "",
-        "key_points": _j(r["key_points"]),
-        "decisions": _j(r["decisions"]),
-        "action_items": _j(r["action_items"]),
-        "next_steps": _j(r["next_steps"]),
+        "keywords": [k for k in _j("keywords") if isinstance(k, str)],
+        "topics": [t for t in _j("topics") if isinstance(t, dict)],
+        "decisions": _text_items(_j("decisions")),
+        "action_items": [a for a in _j("action_items") if isinstance(a, dict)],
+        "open_questions": _text_items(_j("open_questions")),
+        "key_points": _j("key_points"),
+        "next_steps": _j("next_steps"),
         "model": r["model"],
     }

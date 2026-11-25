@@ -21,6 +21,7 @@ import { wavDurationMs } from './wav-util'
 import { postprocessTurns } from './diarization/postprocess'
 import { beginPipeline, endPipeline, PipelineCancelledError } from './pipeline-abort'
 import { assignSpeaker, resolvePostprocessOptions } from './speaker-assign'
+import { remapSummaryTimes } from './meeting-notes'
 import {
   planSpeakerCarryover,
   matchCorrectedSpeakers,
@@ -144,6 +145,25 @@ function remapExistingTimelines(
     })()
   } catch {
     // 무시 — 정상 경로라면 merge가 곧 전부 다시 쓴다.
+  }
+
+  // 회의 요약의 근거 시각(주제 시작·결정·액션아이템·미결 질문)도 같은 이유로 옮긴다.
+  try {
+    const row = db
+      .prepare(
+        'SELECT topics, decisions, action_items, open_questions FROM meeting_summaries WHERE meeting_id = ?'
+      )
+      .get(meetingId) as
+      | { topics: string | null; decisions: string | null; action_items: string | null; open_questions: string | null }
+      | undefined
+    if (row) {
+      const next = remapSummaryTimes(row, map)
+      db.prepare(
+        'UPDATE meeting_summaries SET topics = ?, decisions = ?, action_items = ?, open_questions = ? WHERE meeting_id = ?'
+      ).run(next.topics, next.decisions, next.action_items, next.open_questions, meetingId)
+    }
+  } catch {
+    // 무시 — 요약 본문은 그대로 유효하다.
   }
 
   try {
