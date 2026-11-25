@@ -17,7 +17,8 @@ function seed(): DatabaseSync {
     );
     CREATE TABLE meeting_summaries (
       meeting_id INTEGER PRIMARY KEY, tldr TEXT, key_points TEXT, decisions TEXT,
-      action_items TEXT, next_steps TEXT, qa_pairs TEXT, generated_at TEXT
+      action_items TEXT, next_steps TEXT, topics TEXT, open_questions TEXT, keywords TEXT,
+      qa_pairs TEXT, generated_at TEXT
     );
     INSERT INTO meetings VALUES
       (1, '미지정 회의', 'meeting', 'summarized', '2026-11-01 10:00:00', 60000, NULL),
@@ -48,5 +49,35 @@ describe('listMeetingNotes', () => {
   it('kind 로 거른다', () => {
     expect(ids(seed(), { kind: 'interview' })).toEqual([])
     expect(ids(seed(), { kind: 'meeting' })).toEqual([3, 2, 1])
+  })
+})
+
+describe('listMeetingNotes 검색 — 새 요약 필드', () => {
+  function seedWithFormat(): DatabaseSync {
+    const db = seed()
+    db.exec(`
+      CREATE TABLE meeting_segments (meeting_id INTEGER, text TEXT);
+      UPDATE meeting_summaries SET keywords = '["정산 배치"]' WHERE meeting_id = 1;
+      UPDATE meeting_summaries
+         SET topics = '[{"title":"환불 수수료 정책","start_ms":1000,"points":["카드사 협의"]}]'
+       WHERE meeting_id = 2;
+      UPDATE meeting_summaries
+         SET open_questions = '[{"text":"색인 재구축 시점","at_ms":null}]'
+       WHERE meeting_id = 3;
+    `)
+    return db
+  }
+
+  it('키워드로 찾는다', () => {
+    expect(ids(seedWithFormat(), { q: '정산 배치' })).toEqual([1])
+  })
+
+  it('주제 제목과 주제 포인트로 찾는다', () => {
+    expect(ids(seedWithFormat(), { q: '환불 수수료' })).toEqual([2])
+    expect(ids(seedWithFormat(), { q: '카드사' })).toEqual([2])
+  })
+
+  it('미결 질문으로 찾는다', () => {
+    expect(ids(seedWithFormat(), { q: '색인 재구축' })).toEqual([3])
   })
 })

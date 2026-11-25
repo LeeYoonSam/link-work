@@ -6,6 +6,9 @@ import {
   countActionItems,
   escapeLike,
   parseJsonArray,
+  parseKeywords,
+  parseTextItems,
+  parseTopics,
   type NoteDetail,
   type NoteSummary
 } from '../services/meeting-notes'
@@ -38,6 +41,9 @@ const SEARCH_COLUMNS = [
   's.decisions',
   's.action_items',
   's.next_steps',
+  's.topics',
+  's.open_questions',
+  's.keywords',
   's.qa_pairs'
 ]
 
@@ -109,9 +115,12 @@ function meetingNoteMarkdown(db: Db, id: number): string {
   const summary: NoteSummary | null = s
     ? {
         tldr: s.tldr,
-        key_points: parseJsonArray(s.key_points),
-        decisions: parseJsonArray(s.decisions),
+        keywords: parseKeywords(s.keywords),
+        topics: parseTopics(s.topics),
+        decisions: parseTextItems(s.decisions),
         action_items: parseJsonArray(s.action_items),
+        open_questions: parseTextItems(s.open_questions),
+        key_points: parseJsonArray(s.key_points),
         next_steps: parseJsonArray(s.next_steps),
         qa_pairs: parseJsonArray(s.qa_pairs),
         competencies: parseJsonArray(s.competencies),

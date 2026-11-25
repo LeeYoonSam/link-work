@@ -124,6 +124,20 @@ export function migrateReleaseNotesDropProject(db: Database.Database): void {
   }
 }
 
+/**
+ * 회의 요약 포맷 컬럼(topics, open_questions, keywords)을 붙인다. 모두 JSON 배열 TEXT이고,
+ * 이 컬럼이 생기기 전에 만든 요약 행은 NULL로 남는다(읽는 쪽이 빈 배열로 본다).
+ * 신규 설치와 구버전 DB 양쪽에서 같은 경로로 붙여, CREATE TABLE 본문을 건드리지 않는다. 멱등.
+ */
+export function migrateMeetingSummaryFormatColumns(db: Database.Database): void {
+  const columns = db.prepare('PRAGMA table_info(meeting_summaries)').all() as { name: string }[]
+  if (columns.length === 0) return
+  const names = new Set(columns.map((c) => c.name))
+  for (const col of ['topics', 'open_questions', 'keywords']) {
+    if (!names.has(col)) db.exec(`ALTER TABLE meeting_summaries ADD COLUMN ${col} TEXT`)
+  }
+}
+
 /** 모든 테이블을 만들고 기존 DB 를 현재 스키마까지 마이그레이션한다. */
 export function applySchema(db: Database.Database): void {
   db.exec(`
@@ -550,4 +564,5 @@ export function applySchema(db: Database.Database): void {
   }
 
   migrateReleaseNotesDropProject(db)
+  migrateMeetingSummaryFormatColumns(db)
 }

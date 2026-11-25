@@ -70,6 +70,18 @@ python3 eval_meeting.py --meeting 5            # cpWER (--orc 로 ORC-WER 추가
 python3 eval_summary.py --meeting 5
 ```
 
+### 요약 형식
+`eval_summary.py`는 `meeting_summaries`의 키워드·TL;DR·결정사항·액션아이템·미결 질문·주제별 요약(옛 요약은 핵심 포인트·다음 단계)을
+앱 회의록 Markdown과 같은 순서로 직렬화해 채점에 넘긴다. 시각(`at_ms`·`start_ms`)이 있으면 `[mm:ss]`로 붙인다.
+`decisions`는 옛 요약의 문자열 배열과 새 요약의 `{text, at_ms}` 배열을 모두 읽는다. `topics`·`open_questions`·`keywords`
+컬럼이 없는 옛 DB도 그대로 읽는다(빈 배열).
+
+요약 프롬프트의 출력 형식(주제 수·포인트 수·키워드 수·시각이 전사 줄에 있는지·기본 화자 라벨 담당자)은 앱 쪽 실측 테스트로 확인한다:
+```bash
+LINKWORK_LIVE_SUMMARY_ID=52 npx vitest run src/main/services/meeting-summary.live.test.ts
+```
+환경변수가 없으면 건너뛴다. DB는 `sqlite3 -readonly`로 읽고, 응답 본문은 저장하지 않고 개수·비율만 출력한다.
+
 ## 회귀 측정 워크플로
 
 파이프라인 파라미터(`threshold`, `compressionRatio`, `initial_prompt` 등)를 바꾼 뒤:

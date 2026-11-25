@@ -636,7 +636,7 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
           (isInterview ? (
             <InterviewPanel summary={summary} meetingId={meeting.id} onSeek={handleSeek} />
           ) : (
-            <SummaryPanel summary={summary} meetingId={meeting.id} />
+            <SummaryPanel summary={summary} meetingId={meeting.id} onSeek={handleSeek} />
           ))}
         {tab === 'speakers' && (
           <SpeakerEditor

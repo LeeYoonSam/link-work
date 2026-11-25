@@ -120,9 +120,25 @@ export default function MeetingNoteDoc(): React.ReactNode {
         </>
       ) : (
         <>
+          {summary.keywords.length > 0 && (
+            <Section title="키워드">
+              <p>{summary.keywords.join(' · ')}</p>
+            </Section>
+          )}
           {summary.tldr && <Section title="TL;DR"><p>{summary.tldr}</p></Section>}
           {summary.key_points.length > 0 && <Section title="핵심 포인트"><List items={summary.key_points} /></Section>}
-          {summary.decisions.length > 0 && <Section title="결정사항"><List items={summary.decisions} /></Section>}
+          {summary.decisions.length > 0 && (
+            <Section title="결정사항">
+              <ul className="list-disc pl-5 space-y-1">
+                {summary.decisions.map((d, i) => (
+                  <li key={i}>
+                    {d.text}
+                    <Clock ms={d.at_ms} />
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
           {summary.action_items.length > 0 && (
             <Section title="액션아이템">
               <ul className="space-y-1">
@@ -138,13 +154,41 @@ export default function MeetingNoteDoc(): React.ReactNode {
                           ({[a.assignee, a.due].filter(Boolean).join(' · ')})
                         </span>
                       )}
+                      <Clock ms={a.at_ms} />
                     </span>
                   </li>
                 ))}
               </ul>
             </Section>
           )}
+          {summary.open_questions.length > 0 && (
+            <Section title="미결 질문">
+              <ul className="list-disc pl-5 space-y-1">
+                {summary.open_questions.map((q, i) => (
+                  <li key={i}>
+                    {q.text}
+                    <Clock ms={q.at_ms} />
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
           {summary.next_steps.length > 0 && <Section title="다음 단계"><List items={summary.next_steps} /></Section>}
+          {summary.topics.length > 0 && (
+            <Section title="주제별 요약">
+              <div className="space-y-3">
+                {summary.topics.map((t, i) => (
+                  <div key={i}>
+                    <p className="font-medium text-gray-800">
+                      {i + 1}. {t.title}
+                      <Clock ms={t.start_ms} />
+                    </p>
+                    {t.points.length > 0 && <List items={t.points} />}
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
         </>
       )}
 
@@ -181,6 +225,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <div className="text-sm text-gray-700 leading-relaxed">{children}</div>
     </section>
   )
+}
+
+// 읽기 전용 문서라 재생이 없다. 근거 시각을 회색 mm:ss로만 붙인다.
+function Clock({ ms }: { ms: number | null | undefined }): React.ReactNode {
+  if (ms == null) return null
+  return <span className="ml-1.5 text-[11px] font-mono text-gray-400">{formatClock(ms)}</span>
 }
 
 function List({ items }: { items: string[] }): React.ReactNode {

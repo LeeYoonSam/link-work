@@ -96,17 +96,33 @@ export interface VadAdapter {
   detectSilence(audioPath: string, opts?: { minSilenceMs?: number }): Promise<VadRegion[]>
 }
 
-// AI 요약 5분류 (meeting_summaries에 JSON 직렬화되어 저장)
+// AI 회의 요약 (meeting_summaries에 컬럼별 JSON으로 직렬화되어 저장)
+// 시각(at_ms, start_ms)은 AI가 돌려준 전사 줄의 "mm:ss"를 환산한 오디오 위치(ms)다.
+// 근거 줄을 찾지 못했거나 형식이 어긋나면 null → 재생 점프 버튼·시각 표기를 숨긴다.
+export interface SummaryTextItem {
+  text: string
+  at_ms: number | null
+}
+export interface SummaryTopic {
+  title: string
+  start_ms: number | null
+  points: string[]
+}
 export interface SummaryActionItem {
   text: string
   assignee?: string | null
   due?: string | null
+  at_ms?: number | null
 }
 export interface MeetingSummaryResult {
   tldr: string
-  key_points: string[]
-  decisions: string[]
+  keywords: string[]
+  topics: SummaryTopic[]
+  decisions: SummaryTextItem[]
   action_items: SummaryActionItem[]
+  open_questions: SummaryTextItem[]
+  // 구버전 요약 호환 필드. 새 요약은 주제별 요약·액션아이템·미결 질문으로 흡수해 항상 [].
+  key_points: string[]
   next_steps: string[]
 }
 

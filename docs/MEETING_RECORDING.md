@@ -8,7 +8,7 @@
 - **STT**: 로컬 Whisper(`@fugood/whisper.node` + `large-v3-turbo` q8_0, 모델은 첫 실행 때 `userData/models/`로 내려받는다). API 키를 쓰지 않는다.
 - **녹음 소스**: 마이크 + 시스템 오디오. **마이크=L / 시스템=R 스테레오로 나눠 저장**해 모델 없이도 2화자(나/상대)를 얻는다.
 - **화자 분리**: 다자 자동 분리(`sherpa-onnx-node`) + **수동 보정**.
-- **범위**: 녹음 → 전사 → 시간대별 타임라인 → AI 요약(회의 5분류 / 면접 4분류) → 액션아이템을 할 일로 등록.
+- **범위**: 녹음 → 전사 → 시간대별 타임라인 → AI 요약(회의: 키워드·TL;DR·결정사항·액션아이템·미결 질문·주제별 요약 / 면접 4분류) → 액션아이템을 할 일로 등록.
 - **AI 요약**: Claude Code 구독 로그인(`query()`)을 쓴다. 추가 과금이 없다.
 
 ## 1. 아키텍처 개요
@@ -116,12 +116,12 @@ CREATE TABLE IF NOT EXISTS meeting_cuts (
 CREATE TABLE IF NOT EXISTS meeting_summaries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   meeting_id INTEGER NOT NULL UNIQUE,
-  tldr TEXT,                                  -- 한 줄/문단 요약 (면접에서는 '면접 개요')
-  -- 회의(kind='meeting') 전용 4개 컬럼(key_points 포함). 면접 요약 시 '[]'로 덮어쓴다.
-  key_points TEXT,                            -- JSON string[]
-  decisions TEXT,                             -- JSON string[]
+  tldr TEXT,                                  -- 회의 결론 2~3문장 (면접에서는 '면접 개요')
+  -- 회의(kind='meeting') 전용 컬럼. 면접 요약 시 '[]'로 덮어쓴다.
+  key_points TEXT,                            -- JSON string[]. 구버전 요약에만 값이 있고 새 요약은 '[]'
+  decisions TEXT,                             -- JSON SummaryTextItem[] (구버전 요약은 string[])
   action_items TEXT,                          -- JSON ActionItem[]
-  next_steps TEXT,                            -- JSON string[]
+  next_steps TEXT,                            -- JSON string[]. 구버전 요약에만 값이 있고 새 요약은 '[]'
   -- 면접(kind='interview') 전용 4분류. 회의 요약 시 '[]'로 덮어쓴다.
   qa_pairs TEXT,                              -- JSON InterviewQaPair[]
   competencies TEXT,                          -- JSON InterviewCompetency[]
@@ -129,6 +129,10 @@ CREATE TABLE IF NOT EXISTS meeting_summaries (
   fact_checks TEXT,                           -- JSON string[]
   model TEXT,
   generated_at TEXT DEFAULT (datetime('now','localtime')),
+  -- 회의 전용, migrateMeetingSummaryFormatColumns 가 ALTER TABLE 로 붙인다. 컬럼이 생기기 전 요약 행은 NULL(빈 배열로 읽는다)
+  topics TEXT,                                -- JSON SummaryTopic[] 주제별 요약
+  open_questions TEXT,                        -- JSON SummaryTextItem[] 미결 질문
+  keywords TEXT,                              -- JSON string[] 키워드(최대 10)
   FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
 );
 
@@ -168,7 +172,7 @@ CREATE TABLE IF NOT EXISTS meeting_attendees (  -- 회의별 참석자(구성원
 
 ## 3. 공용 타입
 
-렌더러 타입은 `src/renderer/src/types/index.ts`에 있다: `MeetingStatus`, `MeetingSource`(`'mic' | 'mic+system'`), `MeetingKind`(`'meeting' | 'interview'`), `Meeting`(위 `meetings` 행), `MeetingSpeaker`, `MeetingSegment`, `MeetingCut`, `ActionItem`, `InterviewQaPair`, `InterviewCompetency`, `MeetingSummary`(JSON 컬럼을 배열로 푼 형태), `MeetingDetail`, `RecordingStreamEvent`, `ChannelEnergy`, `GlossaryEntry`, `Member`, `Attendee`, `RecordingAPI`, `RecorderBridgeAPI`, `RecognitionAidsAPI`, `MeetingNoteFilter`, `MeetingNoteItem`, `MeetingNotesAPI`.
+렌더러 타입은 `src/renderer/src/types/index.ts`에 있다: `MeetingStatus`, `MeetingSource`(`'mic' | 'mic+system'`), `MeetingKind`(`'meeting' | 'interview'`), `Meeting`(위 `meetings` 행), `MeetingSpeaker`, `MeetingSegment`, `MeetingCut`, `ActionItem`, `SummaryTextItem`, `SummaryTopic`, `InterviewQaPair`, `InterviewCompetency`, `MeetingSummary`(JSON 컬럼을 배열로 푼 형태), `MeetingDetail`, `RecordingStreamEvent`, `ChannelEnergy`, `GlossaryEntry`, `Member`, `Attendee`, `RecordingAPI`, `RecorderBridgeAPI`, `RecognitionAidsAPI`, `MeetingNoteFilter`, `MeetingNoteItem`, `MeetingNotesAPI`.
 메인 쪽 어댑터·요약 타입은 `src/main/services/meeting-types.ts`에 있다.
 
 꼭 지켜야 하는 형태:
@@ -181,6 +185,18 @@ interface ActionItem {
   speaker_id?: number | null
   source_segment_id?: number | null
   todo_id?: number | null    // 할 일로 등록하면 채운다
+  at_ms?: number | null      // 근거 발언 위치. AI 는 "mm:ss"로 답하고 main 이 ms 로 바꾼다(§6)
+}
+
+interface SummaryTextItem {  // 결정사항·미결 질문 한 항목
+  text: string
+  at_ms: number | null       // 구버전 문자열 결정사항은 null 로 읽는다
+}
+
+interface SummaryTopic {     // 주제별 요약 한 항목
+  title: string
+  start_ms: number | null    // 그 주제의 논의가 시작된 위치
+  points: string[]
 }
 
 interface InterviewQaPair {
@@ -188,6 +204,18 @@ interface InterviewQaPair {
   answer_summary: string
   start_ms: number | null    // AI 는 "mm:ss"로 답하고 main 이 ms 로 바꾼다(§6-2)
   quote?: string | null
+}
+
+interface MeetingSummary {    // 회의 필드. 면접 필드(qa_pairs 등)는 생략
+  tldr: string | null
+  keywords: string[]
+  topics: SummaryTopic[]
+  decisions: SummaryTextItem[]
+  action_items: ActionItem[]
+  open_questions: SummaryTextItem[]
+  key_points: string[]        // 구버전 요약에만 값이 있다
+  next_steps: string[]        // 구버전 요약에만 값이 있다
+  // …면접 전용 qa_pairs·competencies·follow_ups·fact_checks
 }
 
 interface MeetingDetail {
@@ -342,9 +370,16 @@ interface VadAdapter {
 
 Claude Agent SDK의 `query()`를 Claude Code 구독 로그인으로 부른다. SDK lazy load, 실행 파일 찾기, 환경 변수 정리, `toFriendlyError`(미로그인·미설치 안내)는 `ai-agent.ts`와 같은 방식으로 이 파일 안에 따로 둔다. 요약은 데이터 조회가 아니라 변환이므로 도구를 모두 끈다(`tools: []`, `allowedTools: []`, `settingSources: []`, MCP 없음).
 
-- 입력: 전사본을 `[mm:ss] 화자명: 텍스트` 줄로 직렬화한다(너무 길면 앞부분 우선 + 길이 상한). 앞에 `buildSummaryContextBlock(loadPromptContext(db, meetingId))`의 `[참고 정보]` 블록(참석자·용어집, §12)을 붙인다 — 비어 있으면 생략. `SummarySpec.buildPrompt(transcript, contextBlock)`.
-- 시스템 프롬프트: 회의는 tldr·key_points·decisions·action_items·next_steps를 JSON으로만 내게 한다(추측·회의에 없는 내용 금지). 회의·면접 요약 시스템 프롬프트는 공통 조각 `src/main/services/writing-style.ts`의 ASD-STE100 글쓰기 규칙과 JSON 보조 안내를 포함하고, "순수 JSON만 출력" 문장을 마지막에 둔다.
-- 출력 파싱: 응답에서 JSON 블록 추출(코드펜스 허용) → zod 검증 → `meeting_summaries` upsert.
+- 입력: 전사본을 `[mm:ss] 화자명: 텍스트` 줄로 직렬화한다(`formatTranscriptLines`). 80,000자(`MAX_TRANSCRIPT_CHARS`)를 넘으면 `fitTranscript`가 줄을 시간순으로 균등 샘플링해 앞·중간·끝을 모두 남기고, 끝에 발췌본이라는 안내를 붙인다. 앞에 `buildSummaryContextBlock(loadPromptContext(db, meetingId))`의 `[참고 정보]` 블록(참석자·용어집, §12)을 붙인다 — 비어 있으면 생략. `SummarySpec.buildPrompt(transcript, contextBlock)`.
+- 시스템 프롬프트(회의): `MEETING_SPEC.systemPrompt`. 원칙 블록 → 출력 키 블록(`MEETING_OUTPUT_KEYS`, 회의 종류별 템플릿에서 갈아끼울 수 있게 분리) 순서다.
+  - 원칙: 전사록에 없는 내용 금지(불확실하면 빈 배열·null). 시각은 근거 전사 줄의 `mm:ss`를 그대로 복사하고 계산·추정하지 않는다(못 찾으면 null). 화자명이 `화자 1` 같은 기본 라벨이면 실명을 추측하지 않고 문장 주어·assignee로 쓰지 않는다. assignee는 전사록에 이름으로 드러날 때만 채운다(`[참고 정보]`의 참석자는 표기 맞춤용). 같은 내용을 여러 키에 반복하지 않는다.
+  - 출력 키: `tldr`(결론 2~3문장), `keywords`(핵심 명사구 5~10개), `topics`(`[{title, start, points}]` 시간순 주제 3~8개, 10분 미만 회의는 1~3개, points 2~5개), `decisions`(`[{text, at}]`), `action_items`(`[{text, assignee, due, at}]`), `open_questions`(`[{text, at}]` 회의 안에서 답이 나오지 않은 질문). 옛 `key_points`는 주제별 요약으로, `next_steps`는 액션아이템·미결 질문으로 흡수해 새 요약은 둘 다 `[]`다.
+  - 회의·면접 요약 시스템 프롬프트는 공통 조각 `src/main/services/writing-style.ts`의 ASD-STE100 글쓰기 규칙과 JSON 보조 안내를 포함하고, "순수 JSON만 출력" 문장을 마지막에 둔다. 회의 프롬프트는 `keywords`·`title`이 명사구라 글쓰기 규칙의 문장 규칙을 적용하지 않는다고 덧붙인다.
+- 출력 파싱: 응답에서 JSON 블록 추출(`extractJson`, 코드펜스 허용) → zod 검증·정규화(`MEETING_SPEC.validate`) → `meeting_summaries` upsert.
+  - 정규화: 문자열 trim, 빈 text·title 항목 제거. `at`·`start`는 `parseTimestamp`로 `at_ms`·`start_ms`가 된다. `keywords`는 앞 `#` 제거·중복 제거·최대 10개. `topics`는 최대 12개·points 최대 8개, 모든 `start_ms`가 있으면 오름차순 정렬. 개수 하한은 프롬프트로만 요구하고 스키마로 강제하지 않는다(짧은 회의의 요약이 파싱 실패로 버려지지 않게).
+  - `decisions`·`open_questions`는 문자열 항목도 받아 `at_ms: null`로 바꾼다.
+- **타임스탬프 규약**(회의·면접 공통): AI에게 ms 정수를 만들게 하지 않는다. 전사 줄의 `[mm:ss]`를 그대로 돌려받아 `summary-spec.ts`의 `parseTimestamp`가 ms로 환산한다. 받는 형식은 `mm:ss`(분 1~3자리, 초 00~59), `h:mm:ss`, 대괄호로 감싼 `[mm:ss]`다. 그 밖의 형식(`00:75`, `3분 12초`)과 빈 값은 `null`이고, 화면은 시각 버튼·표기를 숨긴다. 회귀 테스트: `summary-spec.test.ts`.
+- 실측: `LINKWORK_LIVE_SUMMARY_ID=<회의 id> npx vitest run src/main/services/meeting-summary.live.test.ts`가 실제 회의 전사로 claude CLI를 불러 주제 수(3~8)·points 수(≥2)·키워드 수(5~10)·시각 범위·시각이 전사 줄에 있는 비율(≥90%)·주제 시간순·기본 라벨 담당자 0건을 단언한다. 환경변수가 없으면 건너뛴다. DB는 `sqlite3 -readonly`로 읽고 응답 본문은 쓰지 않는다.
 - 진행률: phase:summarize, 완료 시 phase:done. 실패하면 친절한 오류 문구로 바꿔 보낸다.
 
 ### 6-1. 종류별 요약 스펙 (SummarySpec)
@@ -353,7 +388,7 @@ Claude Agent SDK의 `query()`를 Claude Code 구독 로그인으로 부른다. S
 
 | kind | 스펙 | 위치 |
 |---|---|---|
-| `meeting` | `MEETING_SPEC` — 5분류 | `meeting-summary.ts` |
+| `meeting` | `MEETING_SPEC` — 키워드·TL;DR·주제별 요약·결정사항·액션아이템·미결 질문 | `meeting-summary.ts` |
 | `interview` | `INTERVIEW_SPEC` — 면접 4분류 | `interview-summary.ts` |
 
 두 스펙 모두 **상대 종류의 컬럼을 `'[]'`로 덮어쓴다**. 종류를 바꿔 재요약했을 때 이전 종류의 잔여 데이터가 화면에 남지 않게 하기 위함이다.
@@ -363,7 +398,7 @@ Claude Agent SDK의 `query()`를 Claude Code 구독 로그인으로 부른다. S
 **이 기능은 채용 판정 도구가 아니라 기록 보조다.** 프롬프트가 점수·등급·합불 의견·직무 무관 정보(성별·나이·출신 등) 생성을 금지하고, 화면에도 판정 근거로 쓰지 말라는 고지를 상시 노출한다.
 
 - 출력 키: `overview`(→ tldr 컬럼 재사용), `qa_pairs`, `competencies`, `follow_ups`, `fact_checks`.
-- **타임스탬프 규약**: AI에게 ms 정수를 만들게 하지 않는다. 전사록에 이미 `[mm:ss]`가 있으므로 그 표기를 `at` 필드로 그대로 돌려받고, `interview-summary.ts`의 `parseTimestamp`가 ms로 환산한다(형식이 어긋나면 `null` → 재생 점프 버튼 숨김). 회귀 테스트: `interview-summary.test.ts`.
+- 타임스탬프: 질문 시각을 `at`으로 돌려받아 §6의 공통 규약(`parseTimestamp`)으로 `start_ms`를 만든다. 회귀 테스트: `interview-summary.test.ts`.
 - 화자 귀속: "질문하는 쪽=면접관"을 프롬프트가 추론하되, 화자 이름이 지정돼 있으면 그것을 우선한다. 화자 탭의 면접 프리셋(`면접관`/`지원자`)으로 지정하면 정확도가 올라간다.
 - 참석 인원(`expected_speakers`)은 면접 기본 2(면접관+지원자 기본형 → 화자 자동추정 과분할 방지), 녹음 시작 화면의 "참석 인원" 입력으로 변경 가능하다(비우면 자동 추정). 다대일 면접이면 면접관 수를 포함한 인원을 지정한다. 상세 화면에서 사후 재분리도 가능(`recording:setExpectedSpeakers`).
 - 면접관은 한 명 이상일 수 있다(다대일 면접). 요약 프롬프트가 "질문하는 쪽=면접관"을 복수로 허용하고, 화자 프리셋(`면접관`/`지원자`)을 여러 화자에 지정하면 이름이 겹치지 않게 `면접관 2`, `지원자 2`…로 자동 번호가 붙는다.
@@ -371,7 +406,7 @@ Claude Agent SDK의 `query()`를 Claude Code 구독 로그인으로 부른다. S
 
 ## 7. 액션아이템 → 할 일
 
-`recording:actionItemToTodo(meetingId, index)`: `summary.action_items[index]`로 `todos` 행을 직접 만든다(`title=text`, `priority='medium'`). `due`가 `YYYY-MM-DD`(시각 허용) 형식일 때만 `due_date`에 넣고, 아니면 원문을 notes에 남긴다. notes는 `회의에서 추출: <회의 제목>`, `담당: <assignee>`, `기한: <원문>` 줄로 만든다. `source_link`에는 그 회의의 회의록 링크 `linkwork://note/{meetingId}`를 넣는다(할 일 행의 출처 칩이 회의록 메뉴에서 그 회의를 연다). 만든 `todo_id`를 그 항목에 기록해 다시 등록하지 않게 하고, 할 일 이력(`saveTodoHistory(…, 'create')`)과 `logActivity('todo', 'create', …)`를 남긴다. 자동 등록하지 않고 사용자가 버튼을 눌러야 한다(오탐 방지).
+`recording:actionItemToTodo(meetingId, index)`: `summary.action_items[index]`로 `todos` 행을 직접 만든다(`title=text`, `priority='medium'`). `due`가 `YYYY-MM-DD`(시각 허용) 형식일 때만 `due_date`에 넣고, 아니면 원문을 notes에 남긴다. notes는 `회의에서 추출: <회의 제목>`, `담당: <assignee>`, `기한: <원문>` 줄로 만든다. `source_link`에는 그 회의의 회의록 링크 `linkwork://note/{meetingId}`를 넣는다(할 일 행의 출처 칩이 회의록 메뉴에서 그 회의를 연다). 만든 `todo_id`를 그 항목에 기록해 다시 등록하지 않게 하고(항목의 다른 필드는 `at_ms`를 포함해 그대로 둔다), 할 일 이력(`saveTodoHistory(…, 'create')`)과 `logActivity('todo', 'create', …)`를 남긴다. 자동 등록하지 않고 사용자가 버튼을 눌러야 한다(오탐 방지).
 
 ## 8. 렌더러 구조
 
@@ -389,7 +424,7 @@ components/recording/
   RecordingList.tsx            # 녹음 카드 목록(상태 pill, 면접 배지), kindFilter 적용
   MeetingDetail.tsx            # 헤더(제목/날짜/상태) + 탭(타임라인/요약/화자), kind별 패널 분기
   SpeakerTimeline.tsx          # 시간대별 화자 발언 (클릭→오디오 점프), 발언 수정, 컷 토글
-  SummaryPanel.tsx             # [회의] 5분류 + 액션아이템 "+ TODO" 버튼
+  SummaryPanel.tsx             # [회의] 키워드 칩(표시 전용)→TL;DR→핵심 포인트(구버전)→결정사항→액션아이템("+ TODO")→미결 질문→다음 단계(구버전)→주제별 요약. onSeek(MeetingDetail의 handleSeek)가 있고 시각이 있으면 항목마다 시각 버튼("이 시점부터 듣기", 클릭→그 시점 재생)
   InterviewPanel.tsx           # [면접] Q&A(클릭→질문 시점 재생)/근거/추가 확인/레퍼런스 체크
   SpeakerEditor.tsx            # 화자 실명 입력/색상/병합/세그먼트 재할당 (면접 프리셋 지원)
   AudioPlayer.tsx              # <audio> + seek, cuts enabled 구간 skip(비파괴)
@@ -414,7 +449,7 @@ components/recording/
 
 요약까지 끝난 회의·면접(`meetings.status='summarized'`)을 사이드바 "회의록"(ViewId `notes`)에서 문서처럼 목록·검색·열람하고 Markdown으로 복사·저장한다. 새 테이블은 없다. `meetings` + `meeting_summaries`(1:1) 조인과 `meeting_segments`·`meeting_attendees`·`meeting_members`만 읽는다(읽기 전용).
 
-- 파일: `src/main/services/meeting-notes.ts`(순수 함수 `buildMeetingNoteMarkdown`, `countActionItems`, `escapeLike`, `parseJsonArray`), `src/main/ipc/meeting-notes.ipc.ts`, 렌더러 `components/notes/`(`MeetingNotesView`·`MeetingNoteList`·`MeetingNoteDoc`)와 `stores/meetingNotesStore.ts`.
+- 파일: `src/main/services/meeting-notes.ts`(순수 함수 `buildMeetingNoteMarkdown`, `countActionItems`, `escapeLike`, `parseJsonArray`, 요약 읽기 정규화 `parseTextItems`·`parseTopics`·`parseKeywords`, 컷편집용 `remapSummaryTimes`), `src/main/ipc/meeting-notes.ipc.ts`, 렌더러 `components/notes/`(`MeetingNotesView`·`MeetingNoteList`·`MeetingNoteDoc`)와 `stores/meetingNotesStore.ts`.
 - IPC (preload `window.api.meetingNotes`):
 
 | 채널 | 입력 | 출력 |
@@ -423,9 +458,11 @@ components/recording/
 | `meetingNotes:markdown` | `id: number` | Markdown 문자열 (회의 없으면 `''`) |
 
 - 필터: `q`는 trim 후 비면 무시하고, `%`·`_`·`\`를 이스케이프(`ESCAPE '\'`)해 문자 그대로 찾는다. `kind`는 `'all'`(기본) | `'meeting'` | `'interview'`.
-- 검색 범위(부분 일치 LIKE, OR): `m.title`, `s.tldr`, `s.key_points`, `s.decisions`, `s.action_items`, `s.next_steps`, `s.qa_pairs`, 그리고 전사 `meeting_segments.text`(EXISTS 서브쿼리). JSON 컬럼은 직렬화 문자열 그대로 검색한다.
+- 요약 읽기 정규화: 저장된 JSON은 요약 시점의 형식을 그대로 담으므로, 읽는 쪽(`recording.ipc.ts`의 `mapSummary`, `meetingNotes:markdown`)은 `parseTextItems`(문자열과 `{text, at_ms}` 혼재 → `{text, at_ms}`), `parseTopics`, `parseKeywords`로 한 형태로 맞춘다. 컬럼이 NULL이거나 JSON이 깨졌으면 빈 배열이다.
+- 검색 범위(부분 일치 LIKE, OR): `m.title`, `s.tldr`, `s.key_points`, `s.decisions`, `s.action_items`, `s.next_steps`, `s.topics`, `s.open_questions`, `s.keywords`, `s.qa_pairs`, 그리고 전사 `meeting_segments.text`(EXISTS 서브쿼리). JSON 컬럼은 직렬화 문자열 그대로 검색한다.
 - `MeetingNoteItem` 파생 값: `key_point_count`, `decision_count`, `action_item_count`(각 JSON 배열 길이), `open_action_count`(`todo_id`가 없는 액션아이템 수), `attendee_names`(정렬은 `listAttendees`와 같다).
-- Markdown 구조: `# 제목` → 메타 줄(일시·길이·종류·참석자) → 회의는 `## TL;DR`, `## 핵심 포인트`, `## 결정사항`, `## 액션아이템`(`- [ ]`/`- [x]`=할 일로 옮김, 담당·기한), `## 다음 단계` / 면접은 `## 면접 개요`, `## 질문과 답변`(`### Qn. 질문 [mm:ss]`, 답변 요약, `> 인용`), `## 역량별 근거`, `## 후속 질문`, `## 확인 필요` → 마지막 `## 전사`(`[mm:ss] **화자**: 텍스트`). 빈 섹션은 생략한다.
+- Markdown 구조: `# 제목` → 메타 줄(일시·길이·종류·참석자) → 회의는 `## 키워드`(`a · b · c` 한 줄), `## TL;DR`, `## 핵심 포인트`(구버전 요약만), `## 결정사항`, `## 액션아이템`(`- [ ]`/`- [x]`=할 일로 옮김, 담당·기한), `## 미결 질문`, `## 다음 단계`(구버전 요약만), `## 주제별 요약`(`### n. 제목 [mm:ss]` + 포인트 불릿) / 면접은 `## 면접 개요`, `## 질문과 답변`(`### Qn. 질문 [mm:ss]`, 답변 요약, `> 인용`), `## 역량별 근거`, `## 후속 질문`, `## 확인 필요` → 마지막 `## 전사`(`[mm:ss] **화자**: 텍스트`). 빈 섹션은 생략한다. 결정사항·액션아이템·미결 질문·주제 제목은 시각이 있으면 끝에 전사 섹션과 같은 표기의 ` [mm:ss]`를 붙이고, 없으면 붙이지 않는다. 구버전 요약(새 필드 없음)의 출력은 새 필드가 생기기 전과 같다.
+- 회의록 문서 화면(`MeetingNoteDoc`)도 같은 섹션 순서로 그리고, 시각은 회색 `mm:ss` 텍스트로만 보인다(오디오 없음). 상세 화면의 요약 탭(`SummaryPanel`)은 시각을 버튼으로 그려 누르면 그 시점부터 재생한다. 키워드 칩은 표시 전용이다.
 - 문서 화면의 [Markdown 복사]는 클립보드에, 저장은 `export:saveMarkdown`(저장 대화상자)으로 파일에 쓴다.
 
 ## 11. 무음 컷편집 (audio compaction)
@@ -511,3 +548,4 @@ components/recording/
 - **신뢰도**: whisper.node 바인딩이 확률을 내보내지 않아 `confidence`가 항상 NULL이다.
 - **beam search**: `beamSize: 5`를 넘기지만 whisper.node 1.0.22는 greedy로 고정해 적용되지 않는다(§5-1).
 - **용어 인식**: whisper.cpp에는 hotword/keyword boosting이 없어 initial_prompt와 후보정(§12)으로만 대응한다.
+- **요약 시각과 컷편집**: 이미 요약이 있는 회의를 전체 재처리하며 컷편집이 적용되면, 회의 요약의 시각 필드(`topics[].start_ms`, `decisions`·`action_items`·`open_questions`의 `at_ms`)는 아직 옮기지 않는다(면접 `qa_pairs.start_ms`만 옮긴다, §11). 변환 함수 `remapSummaryTimes`는 있으나 파이프라인에 연결되지 않았다. 요약을 다시 생성하면 새 시각으로 맞춰진다.

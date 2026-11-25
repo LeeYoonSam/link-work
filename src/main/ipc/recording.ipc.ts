@@ -10,6 +10,7 @@ import { wavDurationMs } from '../services/wav-util'
 import { cancelPipeline } from '../services/pipeline-abort'
 import { setAttendees, listAttendees } from '../services/recognition-aids'
 import { recoverOrphanRecordings, discardDraft } from '../services/recording-recovery'
+import { parseKeywords, parseTextItems, parseTopics } from '../services/meeting-notes'
 import type {
   RecordingStreamEvent,
   SendStream,
@@ -43,6 +44,9 @@ interface SummaryRow {
   decisions: string | null
   action_items: string | null
   next_steps: string | null
+  topics: string | null
+  open_questions: string | null
+  keywords: string | null
   qa_pairs: string | null
   competencies: string | null
   follow_ups: string | null
@@ -67,9 +71,14 @@ function mapSummary(row: SummaryRow | undefined): unknown {
     id: row.id,
     meeting_id: row.meeting_id,
     tldr: row.tldr,
+    // 키워드·주제·미결 질문은 새 요약에만 있다. decisions·open_questions는 구버전(문자열)과
+    // 새 형식({text, at_ms})을 {text, at_ms}로 맞춘다. key_points·next_steps는 구버전에만 값이 있다.
+    keywords: parseKeywords(row.keywords),
+    topics: parseTopics(row.topics),
     key_points: parseJsonArray<string>(row.key_points),
-    decisions: parseJsonArray<string>(row.decisions),
+    decisions: parseTextItems(row.decisions),
     action_items: parseJsonArray<SummaryActionItem>(row.action_items),
+    open_questions: parseTextItems(row.open_questions),
     next_steps: parseJsonArray<string>(row.next_steps),
     // 면접 전용 4분류 (회의 요약에서는 빈 배열)
     qa_pairs: parseJsonArray<InterviewQaPair>(row.qa_pairs),

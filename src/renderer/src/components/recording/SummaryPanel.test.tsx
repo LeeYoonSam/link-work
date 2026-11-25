@@ -25,9 +25,12 @@ const summary: MeetingSummary = {
   id: 1,
   meeting_id: 7,
   tldr: '주간 회의 요약',
+  keywords: [],
+  topics: [],
   key_points: ['핵심 1'],
   decisions: [],
   action_items: [],
+  open_questions: [],
   next_steps: [],
   qa_pairs: [],
   competencies: [],
@@ -51,5 +54,83 @@ describe('SummaryPanel 복사 버튼', () => {
     const html = renderToStaticMarkup(<SummaryPanel summary={null} meetingId={7} />)
     expect(html).not.toContain('내용 복사')
     expect(html).toContain('AI 요약 생성')
+  })
+})
+
+const newSummary: MeetingSummary = {
+  ...summary,
+  tldr: '배포 일정을 확정했다.',
+  keywords: ['배포', '릴리스 노트'],
+  topics: [
+    { title: '배포 일정', start_ms: 65000, points: ['금요일 배포 제안', 'QA 일정 확인'] },
+    { title: '기타 논의', start_ms: null, points: ['회식 장소'] }
+  ],
+  key_points: [],
+  decisions: [{ text: '금요일에 배포한다', at_ms: 754000 }],
+  action_items: [{ text: '릴리스 노트 작성', assignee: '김철수', due: null, at_ms: 125000 }],
+  open_questions: [{ text: '핫픽스 브랜치를 누가 관리하나', at_ms: null }],
+  next_steps: []
+}
+
+describe('SummaryPanel 새 요약 형식', () => {
+  it('키워드 → TL;DR → 결정사항 → 액션아이템 → 미결 질문 → 주제별 요약 순으로 그린다', () => {
+    const html = renderToStaticMarkup(<SummaryPanel summary={newSummary} meetingId={7} onSeek={() => {}} />)
+    const order = ['키워드', 'TL;DR', '결정사항', '액션아이템', '미결 질문', '주제별 요약'].map((t) =>
+      html.indexOf(`>${t}<`)
+    )
+    order.forEach((idx) => expect(idx).toBeGreaterThanOrEqual(0))
+    expect([...order].sort((a, b) => a - b)).toEqual(order)
+    expect(html).toContain('배포')
+    expect(html).toContain('릴리스 노트')
+    expect(html).toContain('금요일에 배포한다')
+    expect(html).toContain('핫픽스 브랜치를 누가 관리하나')
+    expect(html).toContain('배포 일정')
+    expect(html).toContain('QA 일정 확인')
+    expect(html).not.toContain('>핵심 포인트<')
+    expect(html).not.toContain('>다음 단계<')
+  })
+
+  it('시각이 있고 onSeek가 있으면 시각 버튼을 m:ss로 그린다', () => {
+    const html = renderToStaticMarkup(<SummaryPanel summary={newSummary} meetingId={7} onSeek={() => {}} />)
+    expect(html).toContain('title="이 시점부터 듣기"')
+    // 주제 1:05, 결정 12:34, 액션 2:05 — 시각 null인 주제·미결 질문은 버튼 없음
+    expect(html.match(/title="이 시점부터 듣기"/g)).toHaveLength(3)
+    expect(html).toContain('1:05')
+    expect(html).toContain('12:34')
+    expect(html).toContain('2:05')
+  })
+
+  it('onSeek가 없으면 시각 버튼을 그리지 않는다', () => {
+    const html = renderToStaticMarkup(<SummaryPanel summary={newSummary} meetingId={7} />)
+    expect(html).not.toContain('이 시점부터 듣기')
+    expect(html).not.toContain('12:34')
+  })
+})
+
+describe('SummaryPanel 구버전 요약', () => {
+  const legacy: MeetingSummary = {
+    ...summary,
+    tldr: '예전 요약',
+    key_points: ['핵심 A'],
+    decisions: [{ text: '결정 B', at_ms: null }],
+    action_items: [{ text: '액션 C', assignee: '이영희', due: '2026-11-30' }],
+    next_steps: ['다음 D']
+  }
+
+  it('구버전 요약은 핵심 포인트·다음 단계를 그리고 주제별 요약·키워드·미결 질문은 그리지 않는다', () => {
+    const html = renderToStaticMarkup(<SummaryPanel summary={legacy} meetingId={7} onSeek={() => {}} />)
+    for (const t of ['예전 요약', '핵심 A', '결정 B', '액션 C', '이영희', '2026-11-30', '다음 D']) {
+      expect(html).toContain(t)
+    }
+    expect(html).toContain('>핵심 포인트<')
+    expect(html).toContain('>다음 단계<')
+    expect(html).not.toContain('>주제별 요약<')
+    expect(html).not.toContain('>키워드<')
+    expect(html).not.toContain('>미결 질문<')
+    expect(html).not.toContain('이 시점부터 듣기')
+    // 액션아이템은 + TODO 흐름을 그대로 둔다
+    expect(html).toContain('+ TODO')
+    expect(html.indexOf('>핵심 포인트<')).toBeLessThan(html.indexOf('>결정사항<'))
+    expect(html.indexOf('>액션아이템<')).toBeLessThan(html.indexOf('>다음 단계<'))
   })
 })

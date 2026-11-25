@@ -7,17 +7,8 @@
 import type Database from 'better-sqlite3'
 import { z } from 'zod'
 import type { InterviewSummaryResult } from './meeting-types'
-import type { SummarySpec } from './summary-spec'
+import { parseTimestamp, type SummarySpec } from './summary-spec'
 import { WRITING_STYLE_JSON_NOTE, WRITING_STYLE_RULES } from './writing-style'
-
-// AI에게 ms 정수를 직접 만들게 하면 신뢰도가 낮다. 전사록에 이미 [mm:ss]가 붙어 있으므로
-// 그 표기를 그대로 돌려받아 여기서 ms로 환산한다.
-function parseTimestamp(at: string | null | undefined): number | null {
-  if (!at) return null
-  const m = at.trim().match(/^(\d{1,3}):([0-5]\d)$/)
-  if (!m) return null
-  return (Number(m[1]) * 60 + Number(m[2])) * 1000
-}
 
 const QaPairSchema = z.object({
   question: z.string(),
@@ -92,8 +83,8 @@ function validate(raw: unknown): InterviewSummaryResult {
 }
 
 // overview는 회의 요약의 tldr 컬럼을 재사용한다(둘 다 "한 문단 개요"라 의미가 겹침).
-// 회의 전용 4개 컬럼(key_points/decisions/action_items/next_steps)은 빈 배열로 덮어써, 종류를
-// 바꿔 재요약했을 때 이전 종류의 잔여 데이터가 남지 않게 한다.
+// 회의 전용 컬럼(key_points/decisions/action_items/next_steps/topics/open_questions/keywords)은
+// 빈 배열로 덮어써, 종류를 바꿔 재요약했을 때 이전 종류의 잔여 데이터가 남지 않게 한다.
 function persist(
   db: Database.Database,
   meetingId: number,
@@ -103,14 +94,18 @@ function persist(
   db.prepare(
     `INSERT INTO meeting_summaries
        (meeting_id, tldr, key_points, decisions, action_items, next_steps,
+        topics, open_questions, keywords,
         qa_pairs, competencies, follow_ups, fact_checks, model, generated_at)
-     VALUES (?, ?, '[]', '[]', '[]', '[]', ?, ?, ?, ?, ?, datetime('now','localtime'))
+     VALUES (?, ?, '[]', '[]', '[]', '[]', '[]', '[]', '[]', ?, ?, ?, ?, ?, datetime('now','localtime'))
      ON CONFLICT(meeting_id) DO UPDATE SET
        tldr = excluded.tldr,
        key_points = excluded.key_points,
        decisions = excluded.decisions,
        action_items = excluded.action_items,
        next_steps = excluded.next_steps,
+       topics = excluded.topics,
+       open_questions = excluded.open_questions,
+       keywords = excluded.keywords,
        qa_pairs = excluded.qa_pairs,
        competencies = excluded.competencies,
        follow_ups = excluded.follow_ups,

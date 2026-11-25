@@ -8,8 +8,11 @@ import type { MeetingSummary } from '../../types'
 
 const EMPTY: Omit<MeetingSummary, 'id' | 'meeting_id'> = {
   tldr: null,
+  keywords: [],
+  topics: [],
   key_points: [],
   decisions: [],
+  open_questions: [],
   action_items: [],
   next_steps: [],
   qa_pairs: [],
@@ -90,7 +93,7 @@ describe('InterviewPanel', () => {
           id: 3,
           meeting_id: 44,
           ...EMPTY,
-          decisions: ['결정A'],
+          decisions: [{ text: '결정A', at_ms: null }],
           next_steps: ['다음단계B'],
           action_items: [{ text: '액션C' }]
         }}

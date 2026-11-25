@@ -41,7 +41,14 @@ const fakeDb = {
 }
 vi.mock('../db/database', () => ({ getDatabase: () => fakeDb }))
 
-import { runMeetingSummary } from './meeting-summary'
+import {
+  MEETING_SPEC,
+  extractJson,
+  fitTranscript,
+  formatTranscriptLines,
+  runMeetingSummary
+} from './meeting-summary'
+import type { MeetingSummaryResult } from './meeting-types'
 
 const VALID_MEETING_JSON = JSON.stringify({
   tldr: '요약',
@@ -120,5 +127,172 @@ describe('runMeetingSummary SDK 옵션', () => {
     expect(options.allowedTools).toEqual([])
     expect(options.mcpServers).toEqual({})
     expect(options.settingSources).toEqual([])
+  })
+})
+
+const validate = (raw: unknown): MeetingSummaryResult => MEETING_SPEC.validate(raw) as MeetingSummaryResult
+
+describe('MEETING_SPEC.validate — 새 요약 스키마', () => {
+  it('주제·결정·액션아이템·미결 질문의 시각을 ms 로 환산한다', () => {
+    const r = validate({
+      tldr: ' 결론 ',
+      keywords: ['결제', '환불'],
+      topics: [
+        { title: '결제 개편', start: '00:12', points: ['카드부터', ' '] },
+        { title: '환불', start: '[12:34]', points: ['수수료 논의'] }
+      ],
+      decisions: [{ text: '카드 결제부터', at: '01:35' }],
+      action_items: [{ text: '견적 요청', assignee: '이영희', due: '다음 주', at: '1:02:03' }],
+      open_questions: [{ text: '수수료 부담 주체', at: null }]
+    })
+    expect(r).toEqual({
+      tldr: '결론',
+      keywords: ['결제', '환불'],
+      topics: [
+        { title: '결제 개편', start_ms: 12000, points: ['카드부터'] },
+        { title: '환불', start_ms: 754000, points: ['수수료 논의'] }
+      ],
+      decisions: [{ text: '카드 결제부터', at_ms: 95000 }],
+      action_items: [{ text: '견적 요청', assignee: '이영희', due: '다음 주', at_ms: 3723000 }],
+      open_questions: [{ text: '수수료 부담 주체', at_ms: null }],
+      key_points: [],
+      next_steps: []
+    })
+  })
+
+  it('decisions·open_questions 의 문자열 배열(구버전 형식)을 받는다', () => {
+    const r = validate({ decisions: ['금요일 배포', ''], open_questions: ['남은 쟁점'] })
+    expect(r.decisions).toEqual([{ text: '금요일 배포', at_ms: null }])
+    expect(r.open_questions).toEqual([{ text: '남은 쟁점', at_ms: null }])
+  })
+
+  it('구형식(key_points·next_steps 만 있는 응답)도 통과하고 새 필드는 빈 배열이 된다', () => {
+    const r = validate({ tldr: '요약', key_points: ['포인트'], next_steps: ['다음'] })
+    expect(r.key_points).toEqual(['포인트'])
+    expect(r.next_steps).toEqual(['다음'])
+    expect(r.topics).toEqual([])
+    expect(r.keywords).toEqual([])
+    expect(r.open_questions).toEqual([])
+    expect(r.decisions).toEqual([])
+    expect(r.action_items).toEqual([])
+  })
+
+  it('키워드는 앞 # 을 떼고 중복을 지우며 10개까지만 남긴다', () => {
+    const r = validate({
+      keywords: ['#결제', '결제', ' 환불 ', '', '##QA', ...Array.from({ length: 12 }, (_, i) => `k${i}`)]
+    })
+    expect(r.keywords.slice(0, 3)).toEqual(['결제', '환불', 'QA'])
+    expect(r.keywords).toHaveLength(10)
+    expect(new Set(r.keywords).size).toBe(10)
+  })
+
+  it('주제는 시각이 모두 있으면 오름차순으로, 하나라도 없으면 받은 순서로 둔다', () => {
+    const sorted = validate({
+      topics: [
+        { title: 'B', start: '05:00' },
+        { title: 'A', start: '01:00' }
+      ]
+    })
+    expect(sorted.topics.map((t) => t.title)).toEqual(['A', 'B'])
+    const kept = validate({
+      topics: [
+        { title: 'B', start: '05:00' },
+        { title: 'A', start: null }
+      ]
+    })
+    expect(kept.topics.map((t) => t.title)).toEqual(['B', 'A'])
+  })
+
+  it('주제 12개·포인트 8개 상한, 제목·본문이 빈 항목은 버린다', () => {
+    const r = validate({
+      topics: [
+        { title: ' ', points: ['x'] },
+        ...Array.from({ length: 14 }, (_, i) => ({ title: `T${i}`, points: Array.from({ length: 10 }, (_, j) => `p${j}`) }))
+      ],
+      decisions: [{ text: '  ', at: '00:01' }],
+      action_items: [{ text: '' }, { text: '할 일', assignee: ' ', due: '' }]
+    })
+    expect(r.topics).toHaveLength(12)
+    expect(r.topics[0].title).toBe('T0')
+    expect(r.topics[0].points).toHaveLength(8)
+    expect(r.decisions).toEqual([])
+    expect(r.action_items).toEqual([{ text: '할 일', assignee: null, due: null, at_ms: null }])
+  })
+
+  it('필수 필드가 없는 항목은 거부한다', () => {
+    expect(() => validate({ topics: [{ points: ['p'] }] })).toThrow()
+    expect(() => validate({ decisions: [{ at: '00:01' }] })).toThrow()
+  })
+})
+
+describe('MEETING_SPEC 프롬프트', () => {
+  it('새 출력 키와 시각·화자 라벨 규칙을 담는다', () => {
+    const p = MEETING_SPEC.systemPrompt
+    for (const key of ['tldr', 'keywords', 'topics', 'decisions', 'action_items', 'open_questions']) {
+      expect(p).toContain(key)
+    }
+    expect(p).toContain('기본 라벨')
+    expect(p).toContain('"mm:ss"를 그대로 복사')
+    expect(p).not.toContain('key_points')
+    expect(p).not.toContain('next_steps')
+  })
+
+  it('buildPrompt 는 참고 정보가 있을 때만 앞에 붙인다', () => {
+    expect(MEETING_SPEC.buildPrompt('T', '')).toBe('다음 회의 전사록을 분석해 JSON으로 요약하세요:\n\nT')
+    expect(MEETING_SPEC.buildPrompt('T', '[참고 정보]')).toBe(
+      '[참고 정보]\n\n다음 회의 전사록을 분석해 JSON으로 요약하세요:\n\nT'
+    )
+  })
+})
+
+describe('MEETING_SPEC.persist', () => {
+  it('topics·open_questions·keywords 를 INSERT 와 ON CONFLICT 양쪽에 쓴다', () => {
+    const calls: { sql: string; args: unknown[] }[] = []
+    const db = {
+      prepare: (sql: string) => ({
+        run: (...args: unknown[]) => {
+          calls.push({ sql, args })
+          return { changes: 1 }
+        }
+      })
+    }
+    const parsed = validate({
+      tldr: '요약',
+      keywords: ['결제'],
+      topics: [{ title: '주제', start: '00:10', points: ['p'] }],
+      open_questions: [{ text: '쟁점', at: '00:20' }]
+    })
+    MEETING_SPEC.persist(db as never, 3, parsed, 'm')
+    const { sql, args } = calls[0]
+    const [insertPart, updatePart] = sql.split('ON CONFLICT')
+    for (const col of ['topics', 'open_questions', 'keywords']) {
+      expect(insertPart).toContain(col)
+      expect(updatePart).toContain(`${col} = excluded.${col}`)
+    }
+    expect(args).toContain(JSON.stringify(parsed.topics))
+    expect(args).toContain(JSON.stringify(parsed.open_questions))
+    expect(args).toContain(JSON.stringify(['결제']))
+  })
+})
+
+describe('실측용 export (동작 고정)', () => {
+  it('formatTranscriptLines 는 [mm:ss] 화자명: 발언 으로 직렬화하고 빈 발언을 뺀다', () => {
+    expect(
+      formatTranscriptLines([
+        { start_ms: 65000, text: ' 안녕하세요 ', label: '화자 1', display_name: null },
+        { start_ms: 70000, text: '  ', label: '화자 1', display_name: null },
+        { start_ms: 4520000, text: '끝', label: null, display_name: '김철수' },
+        { start_ms: 0, text: '라벨 없음', label: null, display_name: null }
+      ])
+    ).toEqual(['[01:05] 화자 1: 안녕하세요', '[75:20] 김철수: 끝', '[00:00] 화자: 라벨 없음'])
+  })
+
+  it('fitTranscript 는 한도 안이면 그대로 잇는다', () => {
+    expect(fitTranscript(['a', 'b'])).toBe('a\nb')
+  })
+
+  it('extractJson 은 코드펜스와 앞뒤 잡음을 걷어낸다', () => {
+    expect(extractJson('```json\n{"a":1}\n```')).toBe('{"a":1}')
+    expect(extractJson('결과: {"a":1} 끝')).toBe('{"a":1}')
   })
 })
