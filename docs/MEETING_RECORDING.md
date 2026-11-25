@@ -7,7 +7,8 @@
 
 - **STT**: 로컬 Whisper(`@fugood/whisper.node` + `large-v3-turbo` q8_0, 모델은 첫 실행 때 `userData/models/`로 내려받는다). API 키를 쓰지 않는다.
 - **녹음 소스**: 마이크 + 시스템 오디오. **마이크=L / 시스템=R 스테레오로 나눠 저장**해 모델 없이도 2화자(나/상대)를 얻는다.
-- **화자 분리**: 다자 자동 분리(`sherpa-onnx-node`) + **수동 보정**.
+- **화자 분리**: 다자 자동 분리 + **수동 보정**. `sherpa-onnx-node`의 화자 임베딩 모델(CAM++)만 쓰고, 클러스터링은 앱이 직접 한다(§5-3). 네이티브 입력은 호출당 2.25초 이하로 제한한다(배포 Electron 크래시 회피).
+- **목소리 등록**: 화자에 구성원 이름을 지정하면 그 화자의 목소리 임베딩을 구성원 표본으로 저장하고, 다음 회의부터 같은 목소리를 자동으로 그 구성원으로 지정·제안한다(§5-4). 표본은 로컬 DB에만 둔다.
 - **범위**: 녹음 → 전사 → 시간대별 타임라인 → AI 요약(회의 5분류 / 면접 4분류) → 액션아이템을 할 일로 등록.
 - **AI 요약**: Claude Code 구독 로그인(`query()`)을 쓴다. 추가 과금이 없다.
 
@@ -29,8 +30,10 @@ RecordingView ── recordingStore ──IPC──► recording.ipc.ts
                                                    1) STT  (stt/)        → raw segments (어댑터가 전사용 VAD를 직접 실행)
                                                       → cleanSegments → filterHallucinations → applyGlossary (§5-2, §12)
                                                    2) VAD  (vad/)        → cuts[] (silence)
-                                                   3) Diar (diarization/)→ speaker turns (+ note 안내) → 후처리
-                                                   4) merge → segments[] + speakers[] (최근접 귀속 + 화자 속성 승계)
+                                                   3) Diar (diarization/)→ 세그먼트 위 짧은 창(≤2.25초) 임베딩 → 자체 AHC
+                                                      → speaker turns + 화자별 목소리 centroid (+ note 안내) → 후처리
+                                                   4) merge → segments[] + speakers[] (최근접 귀속 + 화자 속성 승계
+                                                      + 목소리 매칭·저장, voiceprint.ts)
                                                    진행률: recording:stream 이벤트
                                                           │
                           recording:summarize ──► meeting-summary.ts
@@ -47,7 +50,7 @@ RecordingView ── recordingStore ──IPC──► recording.ipc.ts
 
 ## 2. 데이터 모델 (SQLite)
 
-`meetings`·`meeting_speakers`·`meeting_segments`·`meeting_cuts`·`meeting_summaries`는 `src/main/db/schema.ts`, 인식 보조 테이블(`stt_glossary`·`meeting_members`·`meeting_attendees`)은 `src/main/services/recognition-aids.ts`의 `RECOGNITION_AIDS_SCHEMA`가 만든다. 모두 `CREATE TABLE IF NOT EXISTS`이고, 뒤에 붙은 컬럼은 `PRAGMA table_info` 확인 후 `ALTER TABLE`로 추가한다.
+`meetings`·`meeting_speakers`·`meeting_segments`·`meeting_cuts`·`meeting_summaries`는 `src/main/db/schema.ts`, 인식 보조 테이블(`stt_glossary`·`meeting_members`·`meeting_attendees`)은 `src/main/services/recognition-aids.ts`의 `RECOGNITION_AIDS_SCHEMA`가 만든다. 목소리 테이블(`meeting_speaker_voices`·`member_voice_samples`)과 `meeting_speakers`의 구성원 연결 컬럼은 `src/main/services/voiceprint.ts`의 `VOICEPRINT_SCHEMA`·`applyVoiceprintSchema`가 만들고, `schema.ts`가 `RECOGNITION_AIDS_SCHEMA` 뒤에 실행한다(`meeting_members`를 FK로 가리키므로). 모두 `CREATE TABLE IF NOT EXISTS`이고, 뒤에 붙은 컬럼은 `PRAGMA table_info` 확인 후 `ALTER TABLE`로 추가한다.
 
 ```sql
 CREATE TABLE IF NOT EXISTS meetings (
@@ -83,6 +86,11 @@ CREATE TABLE IF NOT EXISTS meeting_speakers (
   display_name TEXT,                          -- 사용자가 입력한 실명 (null=미지정)
   color TEXT NOT NULL DEFAULT '#4F8EF7',
   sort_order INTEGER NOT NULL DEFAULT 0,
+  -- 구성원 연결(§5-4). 뒤에 붙은 컬럼이라 ALTER TABLE 로 추가한다
+  member_id INTEGER,                          -- meeting_members.id (FK 없음, 구성원 삭제 시 코드가 NULL 로)
+  member_source TEXT,                         -- NULL | 'manual'(사용자 지정·확정) | 'auto'(목소리 자동 지정) | 'suggested'(제안만)
+  match_score REAL,                           -- auto/suggested 때 코사인 유사도
+  rejected_member_ids TEXT NOT NULL DEFAULT '[]', -- JSON number[] "이 사람 아님"으로 거절한 구성원
   FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
 );
 
@@ -164,7 +172,36 @@ CREATE TABLE IF NOT EXISTS meeting_attendees (  -- 회의별 참석자(구성원
   FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
   FOREIGN KEY (member_id) REFERENCES meeting_members(id) ON DELETE CASCADE
 );
+
+-- ── 목소리 (§5-4): 화자 임베딩. 로컬 DB에만 저장하고 렌더러·요약·모바일·Markdown 으로 내보내지 않는다 ──
+CREATE TABLE IF NOT EXISTS meeting_speaker_voices ( -- 이 회의 화자의 목소리 centroid (adapter 'sherpa'일 때만)
+  speaker_id INTEGER PRIMARY KEY,             -- meeting_speakers.id
+  meeting_id INTEGER NOT NULL,
+  embedding BLOB NOT NULL,                    -- Float32 little-endian, L2 정규화
+  model TEXT NOT NULL,                        -- VOICE_EMBEDDING_MODEL (모델 + 창 설정)
+  dim INTEGER NOT NULL,                       -- 192
+  speech_ms INTEGER NOT NULL DEFAULT 0,       -- centroid 에 쓰인 발화 길이
+  FOREIGN KEY (speaker_id) REFERENCES meeting_speakers(id) ON DELETE CASCADE,
+  FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS member_voice_samples ( -- 구성원 목소리 표본(등록한 화자 centroid 1건 = 표본 1건)
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  member_id INTEGER NOT NULL,
+  meeting_id INTEGER,                         -- 출처 회의. 회의를 지워도 표본은 남는다(SET NULL)
+  speaker_key TEXT,                           -- 출처 화자 키
+  embedding BLOB NOT NULL,
+  model TEXT NOT NULL,
+  dim INTEGER NOT NULL,
+  speech_ms INTEGER NOT NULL,
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  FOREIGN KEY (member_id) REFERENCES meeting_members(id) ON DELETE CASCADE,
+  FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_member_voice_samples_src ON member_voice_samples(member_id, meeting_id, speaker_key);
 ```
+
+`recording:get`은 `meeting_speakers`를 `SELECT *`로 읽으므로 임베딩은 별도 테이블에 둔다(BLOB이 렌더러로 나가지 않게).
 
 ## 3. 공용 타입
 
@@ -226,18 +263,21 @@ interface RecordingStreamEvent {
 | `recording:summarize` | `id` | `{success, error?}` |
 | `recording:rename` | `id, title` | `{success}` |
 | `recording:remove` | `id` | `{success}` |
-| `recording:updateSpeaker` | `speakerId, {display_name?, color?, label?}` | `{success}` |
+| `recording:updateSpeaker` | `speakerId, {display_name?, color?, label?}` | `{success, member_id, enrolled}` (`display_name`을 바꾸면 구성원 연결·목소리 등록을 동기화, §5-4) |
+| `recording:enrollSpeakerVoice` | `speakerId` | `{success, error?, member_id?, enrolled?, created?}` (목소리가 없거나 발화 20초 미만이면 구성원을 만들기 전에 `success:false`, "발화가 짧아 목소리를 등록할 수 없습니다(20초 이상 필요).". 이름이 구성원이 아니면 그 이름으로 구성원을 만든 뒤 등록) |
+| `recording:confirmSpeakerMatch` | `speakerId` | `{success, error?, member_id?, enrolled?}` (`auto`/`suggested` → `manual`, 이름 확정, 표본 등록. 발화가 20초 미만이어도 확정·이름 지정은 하고 `enrolled:false`) |
+| `recording:rejectSpeakerMatch` | `speakerId` | `{success}` (거절 목록에 추가, 연결 해제, `auto`였으면 이름을 비움, 그 화자의 표본 삭제) |
 | `recording:reassignSegment` | `segmentId, speakerId \| null` | `{success}` |
 | `recording:updateSegmentText` | `segmentId, text` | `{success}` (`text_corrected=1`) |
 | `recording:addSpeaker` | `meetingId, name` | `{success, id?, existed?, error?}` (같은 이름이 있으면 그 화자를 쓴다) |
-| `recording:mergeSpeakers` | `meetingId, from, into` | `{success}` |
+| `recording:mergeSpeakers` | `meetingId, from, into` | `{success, error?}` (같은 회의의 서로 다른 화자가 아니면 `success:false`, "같은 회의의 서로 다른 화자만 합칠 수 있습니다.") |
 | `recording:toggleCut` | `cutId, enabled` | `{success}` |
 | `recording:actionItemToTodo` | `meetingId, index` | `{todo_id}` |
 | `recording:setExpectedSpeakers` | `id, n \| null` | `{success}` (0 이하·null 은 자동 추정) |
 | `recording:setAttendees` | `meetingId, memberIds[]` | `{success}` (`meeting_attendees` 교체) |
 | 이벤트 `recording:stream` | (main→renderer) `RecordingStreamEvent` | — |
 
-`recording:get`은 `attendees`를 함께 돌려준다. `recording:remove`는 오디오·`<id>.channels.json`·`<id>.compaction.json`을 모두 지운다.
+`recording:get`은 `attendees`를 함께 돌려주고, 화자마다 `has_voice`(목소리 centroid 유무), `voice_enrolled`(이 화자 목소리가 구성원 표본으로 실제 저장돼 있는지), `member_name`(연결된 구성원 이름)을 붙이고 `rejected_member_ids`를 배열로 푼다. 임베딩은 내보내지 않는다. `recording:remove`는 오디오·`<id>.channels.json`·`<id>.compaction.json`을 모두 지운다.
 
 녹음기 브리지(preload `window.api.recorder`, §14): `recorder:state`(renderer→main, `{active, draftId}`), `recorder:command`(main→renderer, `stop-and-save`), `recorder:command-done`(renderer→main, 결과).
 
@@ -251,7 +291,9 @@ interface RecordingStreamEvent {
 | `recognitionAids:importGlossaryText` | `text` | `{added, updated, skipped}` |
 | `recognitionAids:listMembers` | — | `Member[]` |
 | `recognitionAids:upsertMember` | `input` | `{id}` |
-| `recognitionAids:removeMember` | `id` | `{success}` |
+| `recognitionAids:removeMember` | `id` | `{success}` (그 구성원의 목소리 표본도 지우고, 연결된 화자의 `member_id`를 NULL 로) |
+| `recognitionAids:listVoiceprints` | — | `[{member_id, sample_count, total_speech_ms, updated_at}]` |
+| `recognitionAids:clearVoiceprint` | `memberId` | `{success, removed}` (그 구성원의 표본 전부 삭제) |
 
 ## 5. 어댑터 인터페이스 (main/services)
 
@@ -272,11 +314,15 @@ interface DiarizationAdapter {
   isAvailable(): Promise<boolean>
   diarize(audioPath: string, opts: { minSpeakers?; maxSpeakers?; numSpeakers?; source?; segments?: SttSegment[]; signal?: AbortSignal }): Promise<DiarTurn[]>
 }
-// 구현: sherpa-adapter (워커 프로세스에서 'sherpa-onnx-node'), channel-adapter (mic=L/sys=R 채널 에너지로 2화자 — 모델 불필요)
-// 오케스트레이션: diarization/index.ts diarizeWithFallback(audioPath, opts) → { turns, adapter, note? }
+// 구현: sherpa-adapter (워커 프로세스에서 창 임베딩 + 자체 클러스터링, §5-3 — 이름은 'sherpa' 유지),
+//       channel-adapter (mic=L/sys=R 채널 에너지로 2화자 — 모델 불필요)
+// 오케스트레이션: diarization/index.ts diarizeWithFallback(audioPath, opts)
+//   → { turns, adapter, note?, voices?, embeddingModel? }
 //   adapter: 'two-stage' | 'channel' | 'sherpa' | 'none'  ('none' = 빈 turns, merge 가 단일 화자 spk_0 로 귀속)
-//   note: 사용자에게 보여줄 한국어 한 문장. 강등(모델 준비 실패·sherpa 실패·빈 결과·2-스테이지 강등)이나
-//         centroid 병합으로 화자 수가 줄었을 때만 채운다(diarization/notes.ts).
+//   voices: SpeakerVoice[] { speaker_key, embedding: Float32Array(L2, 192), speech_ms } — adapter 'sherpa'일 때만.
+//           channel·two-stage 는 centroid 를 내지 않는다(§15). embeddingModel = VOICE_EMBEDDING_MODEL
+//   note: 사용자에게 보여줄 한국어 한 문장. 강등(모델 준비 실패·sherpa 실패·빈 결과·2-스테이지 강등)일 때만
+//         채운다(diarization/notes.ts).
 
 interface VadAdapter {
   readonly name: string
@@ -293,8 +339,8 @@ interface VadAdapter {
 2. `stt.transcribe` → raw segments (phase:transcribe, progress) → `cleanSegments` → `filterHallucinations(segments, { prompt })` → `applyGlossary`(§12) → WAV 길이 클램프. 정제 3단계는 `skipTranscribe` 경로에도 적용된다(단, 사용자가 고친 발언은 건너뜀 — §5-4).
 3. `vad.detectSilence` → cuts[] (phase:vad)
 4. `diarizeWithFallback` → turns (phase:diarize). `note`가 있으면 스트림 메시지로 보낸다. `diarizeWithFallback` 자체가 throw하면(취소 제외) 단일 화자로 계속하고 "화자분리에 실패해 화자를 구분하지 않았습니다. (원인)"을 보낸다. 이어서 `postprocessTurns`(옵션 분기는 §5-3).
-5. **merge**: 각 STT segment를 speaker_key에 귀속(§5-4 규칙). speakers[] 생성(중복 key 통합, 색상/라벨 부여 + 옛 화자 속성 승계). (phase:merge)
-6. DB 저장(meeting_speakers, meeting_segments, meeting_cuts — 트랜잭션으로 삭제 후 재삽입), meeting.status='transcribed'.
+5. **merge**: 각 STT segment를 speaker_key에 귀속(§5-4 규칙). speakers[] 생성(중복 key 통합, 색상/라벨 부여 + 옛 화자 속성·구성원 연결 승계 + 목소리 자동 매칭). (phase:merge)
+6. DB 저장(meeting_speakers, meeting_speaker_voices, meeting_segments, meeting_cuts — 트랜잭션으로 삭제 후 재삽입), meeting.status='transcribed'.
 7. 실패 시 status='failed', error 기록, phase:error.
 
 ### 5-1. STT 전사 (stt/whisper-adapter.ts)
@@ -313,16 +359,33 @@ interface VadAdapter {
 
 ### 5-3. 화자분리 (diarization/)
 - 폴백 체인: (mic+system·참석 인원 3명 이상 지정) 2-스테이지 재정합 → (mic+system) 채널 분리 → sherpa → none.
-- sherpa 클러스터링은 (1 − cosine) 거리의 complete linkage AHC이고 `threshold`는 덴드로그램을 자르는 높이다 — **클수록 화자 수가 줄어든다**(공식 기본 0.5, 앱은 과분할 완화를 위해 자동 추정 시 0.85). 참석 인원을 지정하면 `numClusters`로 정확히 그 수로 나눈다.
-- **자동 추정 모드 전용 centroid 정제**(worker.ts `refineByCentroid` → embedding-merge.ts `planIterativeCentroidMerge`, 3D-Speaker `merge_by_cos`/`filter_minor_cluster` 방식): 화자별 대표 오디오(최대 24초, `REP_MAX_SEC`)로 CAM++ 임베딩 centroid를 구한 뒤 다음 순서로 정제한다.
-  1. **반복 병합**: 현재 클러스터 중 centroid 코사인 유사도가 최대인 쌍이 0.8(`MERGE_COS_THRESHOLD`) 이상인 동안 그 한 쌍만 병합하고 centroid를 가중 평균으로 다시 계산한다(연쇄 과병합 없음).
-  2. **소수 클러스터 재할당**: 누적 발화가 `max(4초, 전체 발화 시간 × 1%)`(`MINOR_SPEAKER_SEC`, `MINOR_SPEAKER_RATIO`) 미만인 클러스터를 주요 화자로 보낸다. centroid가 있으면 가장 유사한 주요 화자로, centroid가 없으면(누적 0.4초 미만 조각, `REP_MIN_SEC`) 발화량이 가장 많은 주요 화자로 보낸다. 주요 화자가 하나도 없으면 재할당하지 않는다.
-  3. **상한 10명**(`MAX_AUTO_SPEAKERS`): ② 뒤에도 centroid 있는 클러스터가 10개를 넘을 때만 발동하는 안전장치로, 가장 유사한 쌍부터 더 병합한다. 상한을 ②보다 먼저 적용하면 조각 화자는 누구와도 닮지 않아 남고 실제 주요 화자끼리 합쳐진다(실측: 23분 회의가 2명으로 뭉개짐) — 그래서 반드시 마지막 단계다.
-  
-  화자 수가 줄면 `note`로 "유사한 화자 N명을 M명으로 병합했습니다."를 알린다. **인원을 지정하면 병합·재할당을 하지 않는다.**
-  
-  실측(2026-11-18, 실제 녹음 4건, sherpa-onnx-node 1.13.3, threshold 0.85 자동 추정): sherpa 원시 화자 수 37 / 23 / 30 / 97명 → 정제 후 8 / 2 / 4 / 6명(각각 23분 / 20분 / 60분 / 98분 녹음). 라벨이 없어 정답 화자 수는 확인하지 못했다 — 이 수치는 "조각 화자가 정리된다"는 근거일 뿐 정확도 근거가 아니다. 처리 시간(화자분리)은 측정 스크립트 기준(segmentation·embedding 각각 `numThreads` 4) 23분 녹음 51초, 98분 녹음 231초다. 앱 워커는 각각 `numThreads` 2라 이보다 더 걸릴 수 있다. 참고로 앱 워커 설정 그대로 테스트 인스턴스에서 8분 클립 전체 처리(전사+화자분리)는 48초였다.
-- sherpa 워커 타임아웃은 30분(`DEFAULT_WORKER_TIMEOUT_MS`)이다.
+- **sherpa 경로 = 창 임베딩 + 자체 클러스터링.** sherpa-onnx의 `OfflineSpeakerDiarization`(pyannote 분할 + 내장 클러스터링)은 쓰지 않는다. `SpeakerEmbeddingExtractor`(CAM++)로 짧은 창의 임베딩만 뽑고, 클러스터링은 앱 코드(순수 함수)가 한다.
+- **입력을 2.25초 이하로 자르는 이유**: sherpa-onnx의 일체형 분리기(`OfflineSpeakerDiarization`)는 배포 Electron(43)에서 약 6~10분 이상 입력에 onnxruntime(KleidiAI `MlasConv` → `operator new` → Chromium allocator)이 SIGTRAP으로 워커를 죽인다(180·360초 통과, 600초 종료 코드 133, 일반 Node 22에서는 정상). 그래서 일체형 분리기를 쓰지 않는다. 임베딩 추출 단독은 120초 입력까지 안전하고, 앱은 네이티브 호출 하나에 `WINDOW_MAX_SEC`(2.25초) 이하만 넣는다. 같은 이유로 WAV도 `sherpa.readWave`가 아니라 JS 디코더(`wav-pcm.ts` `decodeWavPcm16`, PCM16 mono만 받고 잘못된 헤더는 오류, 16kHz가 아니면 `embedding-diarizer.ts`가 오류)로 읽는다.
+- **창 계획**(`window-plan.ts` `planWindows(segments, audioSec)`): STT 세그먼트 위에 창을 깐다. 0.5초(`MIN_SEGMENT_SEC`) 미만 세그먼트는 건너뛴다. 2.25초(`WINDOW_MAX_SEC`) 이하면 세그먼트 전체가 창 1개, 더 길면 1.5초(`WINDOW_SEC`) 창을 0.75초(`HOP_SEC`) 간격으로 깔고 마지막 창은 세그먼트 끝에 맞춘다. 창 설정과 모델을 묶은 식별자가 `VOICE_EMBEDDING_MODEL`(`3dspeaker_campplus_sv_zh_en_16k_common_advanced/w1.5h0.75`)이고, 목소리 표본은 이 값이 같을 때만 서로 비교한다.
+- **알고리즘**(상수는 `window-plan.ts`·`clustering.ts` 한 곳에 둔다):
+  1. 임베딩(`embedding-diarizer.ts` `runEmbeddingDiarization`, 워커와 cli가 같이 쓴다): 창마다 samples를 잘라 `acceptWaveform` → `compute`(`numThreads` 2). 창 가중치는 모두 `HOP_SEC`(0.75초)다.
+  2. `smoothNeighbors`: 같은 세그먼트 안 앞뒤 1개 창과 평균한 뒤 L2 정규화한다(1.5초 창의 잡음 완화).
+  3. `ahcAverageLinkage`: 코사인 거리(1 − cos), average linkage, NN-chain O(n²) AHC. `cutByThreshold(CUT_THRESHOLD = 0.5)`로 자른다 — 거리 임계값이라 **클수록 화자 수가 줄어든다**.
+  4. **자동 모드**: centroid 반복 병합(가장 닮은 쌍의 코사인이 0.72(`MERGE_COS`) 이상인 동안 그 쌍만 병합하고 centroid를 다시 계산) → 소수 클러스터(누적 발화 `max(15초, 전체의 2%)`(`MINOR_SEC`·`MINOR_RATIO`) 미만)의 창을 가장 가까운 주요 centroid로 재할당 → 다시 반복 병합 → 상한 10명(`MAX_AUTO_SPEAKERS`, 넘으면 가장 닮은 쌍부터 더 병합).
+  5. **지정 모드**(참석 인원 N): 임계값 컷 결과가 이미 N개 미만이면 `cutByCount(N)`으로 덴드로그램을 N개로 자르고 끝낸다. 아니면 코사인 0.8(`SURE_MERGE_COS`) 이상인 쌍만 먼저 병합하고(N개 아래로는 내려가지 않는다), 그 뒤 N개가 될 때까지 주요 클러스터가 N개 이상이면 가장 작은 소수 조각을 가장 가까운 클러스터로 재할당하고, 아니면 가장 닮은 쌍을 병합한다.
+  6. **대용량 가드**: 창이 4000개(`MAX_CLUSTER_WINDOWS`)를 넘으면 균등 추출한 4000개로 3~5단계를 돌리고(가중치는 n/4000배로 늘려 소수 기준이 전체 녹음 기준을 유지), 나머지 창은 가장 가까운 centroid로 붙인다(거리 행렬 ≤64MB). 결과는 결정적이다(같은 입력 → 같은 결과).
+  7. `buildTurns(windows, labels)`(`turn-build.ts`): 겹친 창의 경계는 중점으로 나누고 인접한 같은 라벨을 합쳐 turns를 만든다.
+  8. 산출: turns + 화자별 목소리 `{speaker_key, embedding(L2, 192차원), speech_ms}`(§5-4). `speech_ms`는 후처리 전 turns 길이 합이다.
+- 인원을 지정하지 않았을 때 화자 수가 줄었다는 안내(note)는 내지 않는다. note는 강등·실패·빈 결과 때만 쓴다.
+- 워커는 `utilityProcess`(`out/main/diarization-worker.js`)이고 타임아웃은 30분(`DEFAULT_WORKER_TIMEOUT_MS`), 취소하면 워커를 kill한다.
+- **실측**(배포 Electron 43.7.7, 이 Mac의 실제 대면 녹음, `npm run check:diar`, 자동 추정):
+
+  | 회의 | 길이 | 세그먼트 | 창 | 최대 창 | 컷 직후 클러스터 | 최종 화자 | 처리 시간 |
+  |---|---|---|---|---|---|---|---|
+  | 53 (1on1) | 19.3분 | 367 | 1229 | 2.22초 | 119 | 2 | 11.9초 |
+  | 50 (1on1) | 27.8분 | 505 | 1744 | 2.24초 | 83 | 2 | 18.0초 |
+  | 40 (1on1) | 17.2분 | 221 | 1155 | 2.24초 | 38 | 2 | 11.9초 |
+  | 45 (1on1) | 26.4분 | 412 | 1717 | 2.24초 | 51 | 2 | 17.8초 |
+  | 46 (1on1) | 19.6분 | 343 | 1171 | 2.24초 | 59 | 2 | 12.0초 |
+  | 51 (다인) | 61.5분 | 1079 | 3726 | 2.24초 | 187 | 4 | 40.8초 |
+
+  처리 시간은 임베딩이 대부분이고 창당 약 10ms다. 컷 직후의 조각 클러스터는 병합·재할당이 정리한다. 1on1 5건은 모두 2명으로 나뉜다. 다인 회의(51)는 정답 화자 수를 몰라 2~8명 범위만 확인한다.
+- **실측 회귀**(`scripts/diar-regress.mjs`, `npm run check:diar`): 앱 DB(읽기 전용)의 세그먼트와 녹음 파일로 `out/main/diarization-cli.js`(electron 모듈을 쓰지 않는 cli 엔트리, `--audio --segments --model [--num N]`, stdout 마지막 줄 JSON)를 배포 Electron 런타임(`ELECTRON_RUN_AS_NODE=1`)에서 회의별로 돌린다. cli의 최종 화자 수는 앱과 같은 후처리(`resolvePostprocessOptions({adapter:'sherpa'})` → `postprocessTurns` → 세그먼트별 `assignSpeaker`) 뒤의 고유 화자 수다. sherpa 모듈은 `LINKWORK_SHERPA_MODULE` → 일반 해석 → 배포 앱 `app.asar` 안 순서로 찾는다. 경로는 `LINKWORK_ELECTRON`·`LINKWORK_DIAR_CLI`·`LINKWORK_USERDATA`로 바꾼다. 단언: 회의 53·50·40·45·46 최종 화자 2명, 회의 51 2~8명이고 180초 이내, 모든 실행의 최대 창 ≤2.25초, 회의 50의 화자 목소리를 프로필로 회의 53의 두 주요 화자가 각각 서로 다른 50번 화자와 코사인 ≥0.70(최적 1:1)이고 교차 쌍 ≤0.62. 실패하면 종료 코드 1, 녹음·DB·Electron·cli·모델이 없으면 2. `--only 53,50`으로 일부만 돌린다. 녹음은 사용자 데이터라 이 회귀는 이 Mac에서만 돈다.
 - **후처리 옵션 분기**(`speaker-assign.ts`의 `resolvePostprocessOptions({ adapter, expectedSpeakers })`, `postprocess.ts`는 그대로):
   | 조건 | smoothing | 소수 화자 흡수 |
   |---|---|---|
@@ -330,13 +393,23 @@ interface VadAdapter {
   | 그 외(sherpa 등) | `minTurnMs 200, sandwichMs 300, gapFillMs 500` — 같은 화자 사이에 낀 "네" 같은 짧은 응답 보존 | 켬(`minRatio 0.02, minDurationMs 60000`) |
   | 참석 인원 지정(`expected_speakers > 0`) | 위 adapter 기준 | 끔(지정 인원이 9→5처럼 줄어드는 현상 방지) |
 
-### 5-4. merge — 화자 귀속과 속성 승계 (speaker-assign.ts, speaker-carryover.ts)
+### 5-4. merge — 화자 귀속, 속성 승계, 목소리 매칭 (speaker-assign.ts, speaker-carryover.ts, voiceprint.ts)
 - **귀속(`assignSpeaker`)**: 겹침이 가장 큰 turn의 화자. 겹침이 같으면 먼저 나온 turn. 어떤 turn과도 겹치지 않으면 **시간상 가장 가까운 turn**(구간 사이 간격 최소)의 화자. turns가 없으면 `spk_0`.
 - **화자 속성 승계(`planSpeakerCarryover`)**: merge 트랜잭션이 지우기 직전의 옛 세그먼트(시간 + speaker_id)와 새 귀속 결과(시간 + speaker_key)를 시간 겹침으로 대조한다. 새 화자 키마다 겹침이 가장 큰 옛 화자가 새 화자 발화 시간의 **과반(>50%)**을 차지하면 그 옛 화자의 `display_name`·`color`·사용자가 바꾼 `label`(키·순서로 만든 기본 라벨과 다를 때)을 이어받는다. 한 옛 화자는 겹침이 가장 큰 새 화자 한 명에게만 승계한다. 승계 대상이 없는 새 화자는 기본값(`resolveSpeakerMeta`). 전체 재처리·빠른 재적용 모두 적용된다. 이번 처리에서 컷편집이 적용됐으면 옛 세그먼트 시각은 이미 `remapExistingTimelines`가 새 타임라인으로 옮겨 두었다.
 - **빠른 재적용(`skipTranscribe`) 전용 — 수동 보정 보존**:
   - `text_corrected=1` 세그먼트는 정제·환각 필터·용어집 후보정을 건너뛰고 원문 그대로 유지하며, 플래그도 1로 다시 저장한다.
   - `speaker_corrected=1` 세그먼트는 자동 귀속을 무시하고 사용자가 지정했던 옛 화자를 유지한다(`matchCorrectedSpeakers` + `planSpeakerRows`). 그 옛 화자가 승계로 새 화자에 매핑됐으면 그 새 화자 행에, 아니면 옛 행을 별도 화자 행으로 다시 만들어(`speaker_key`·`label`·`display_name`·`color` 보존) 연결하고 `speaker_corrected=1`로 저장한다. 정제가 세그먼트를 병합·삭제하므로 정제 전후 대응은 시간 기준(겹침이 새 세그먼트 길이의 과반)이며, 대응을 못 찾으면 그 보정 정보는 버린다.
   - 기존 전사가 오디오 길이와 어긋나 전체 재전사로 폴백하면 수동 보정 보존은 하지 않는다(속성 승계만 시도).
+- **목소리 매칭과 등록**(`src/main/services/voiceprint.ts`): 화자분리가 낸 화자별 centroid를 `meeting_speaker_voices`에 저장하고(adapter `sherpa`일 때만), 구성원 표본(`member_voice_samples`)과 대조한다. 순수 함수는 `encodeEmbedding`/`decodeEmbedding`, `buildMemberProfile`, `planVoiceMatches`, `combineCentroids`다.
+  - **구성원 프로필**: 저장하지 않고 매칭 때 계산한다. 같은 `model`(`VOICE_EMBEDDING_MODEL`)의 최근 표본 20개(`PROFILE_MAX_SAMPLES`)를 `min(speech_ms, 300초)`(`PROFILE_WEIGHT_CAP_MS`) 가중 평균한 뒤 L2 정규화한다. 모델이 다른 표본은 매칭에서 뺀다.
+  - **자동 매칭(`planVoiceMatches`, merge 단계, `applyMeetingVoices`)**: 대상은 centroid가 있고 `speech_ms` ≥ 10초(`MATCH_MIN_SPEECH_MS`)이며 이름(승계 포함)이 없는 새 화자다. 후보는 표본이 있는 켜진 구성원이고, 회의에 참석자가 지정돼 있으면 참석자로 좁히며, 이 회의의 다른 화자에 이미 연결된 구성원과 그 화자의 `rejected_member_ids`는 뺀다. 점수(코사인) 내림차순으로 탐욕 1:1 배정한다. 점수 ≥ 0.70(`AUTO_MATCH_MIN`)이고 그 화자의 2순위 후보와 차이 ≥ 0.08(`AUTO_MATCH_MARGIN`)이면 `auto`(`display_name` = 구성원 이름), 0.60(`SUGGEST_MATCH_MIN`) 이상인데 `auto`에 못 미치면 `suggested`(`display_name`은 비워 둔다). 하나라도 지정·제안하면 스트림 메시지 "목소리로 화자 지정 N명, 제안 M명"을 보낸다.
+  - **임계값 근거**(실측, 배포 Electron, 1on1 녹음): 회의 50의 화자 목소리를 프로필로 회의 53의 두 화자를 대조하면 같은 사람 쌍은 0.76·0.80, 다른 사람 쌍은 0.41·0.43이다(`npm run check:diar`가 매칭 ≥0.70·교차 ≤0.62를 매번 확인한다). 같은 회의 안 두 화자 centroid의 유사도는 0.55(회의 53)·0.59(회의 50)다. 그래서 자동 지정은 0.70, 제안은 0.60에 두고, 두 후보가 비슷하면(차 < 0.08) 자동 지정하지 않는다.
+  - **등록(수동, `syncSpeakerEnrollment`)**: 화자 이름(`display_name`)을 켜진 구성원의 이름이나 별칭과 같게(앞뒤 공백·대소문자 무시) 지정하면 그 구성원에 연결하고(`member_source='manual'`), 그 화자의 centroid를 표본으로 upsert한다(`speech_ms` ≥ 20초(`ENROLL_MIN_SPEECH_MS`)일 때만, 출처 `(member_id, meeting_id, speaker_key)`당 1건). 이름을 지우거나 구성원이 아닌 이름으로 바꾸면 연결과 그 표본을 지운다. 구성원이 아닌 이름은 [목소리 등록] 버튼(`recording:enrollSpeakerVoice`)으로 구성원을 만든 뒤 등록한다. 이 버튼은 그 화자의 목소리가 없거나 발화가 20초 미만이면 구성원을 만들지 않고 거절한다(`SHORT_VOICE_ERROR`).
+  - **자동 지정은 표본으로 등록하지 않는다.** 사용자가 [맞음] 버튼(`recording:confirmSpeakerMatch`)을 눌러야 `manual`이 되고 표본이 생긴다(발화 20초 미만이면 확정·이름 지정만 하고 표본은 만들지 않는다). [이 사람 아님] 버튼(`recording:rejectSpeakerMatch`)은 거절 목록에 넣고 연결을 끊는다.
+  - **재처리 승계**: `planSpeakerCarryover`가 옛 화자를 이어받은 새 화자는 옛 행의 `rejected_member_ids`를 이어받는다. 승계한 이름이 구성원 이름이면 그 구성원에 연결한다 — 옛 연결이 같은 구성원의 `auto`였으면 `auto`와 점수를 그대로 두고(사용자가 확정하지 않았다), 아니면 `manual`로 연결하고 이 회의에서 온 그 구성원의 표본을 새 centroid로 바꾼다. 새 centroid가 없거나 발화 20초 미만이면 옛 표본을 그대로 두고 출처 `speaker_key`만 새 화자 키로 옮긴다. 승계한 이름이 구성원이 아니면 연결하지 않는다.
+  - **수동 병합**(`recording:mergeSpeakers` → `mergeSpeakerVoices`, 같은 회의의 서로 다른 두 화자만): 두 화자의 centroid를 `speech_ms` 가중 평균해 남는 화자에 두고, 없어지는 화자에서 온 표본은 지운다. 남는 화자가 `manual`로 연결돼 있으면 합친 centroid로 표본을 갱신한다. 세그먼트 단위 화자 변경(`recording:reassignSegment`)은 centroid를 갱신하지 않는다(§15).
+  - **실패 격리**: `applyMeetingVoices`는 merge 트랜잭션 안의 SAVEPOINT로 감싼다. 목소리 저장·승계·자동 매칭이 실패하면 그 단계만 되돌리고 스트림 메시지 "목소리 저장·매칭을 건너뛰었습니다. (원인)"을 보낸 뒤 전사·화자 저장을 계속한다.
+  - 회의를 지워도 표본은 남는다(`meeting_id` SET NULL). 구성원을 지우면 그 표본도 지워지고, 연결된 화자의 `member_id`·`member_source`·`match_score`는 NULL이 된다(이름은 남는다). [목소리 삭제]는 표본만 지우고 화자 연결은 둔다.
 
 ## 6. AI 요약 (meeting-summary.ts)
 
@@ -379,23 +452,27 @@ Claude Agent SDK의 `query()`를 Claude Code 구독 로그인으로 부른다. S
 stores/recorderStore.ts        # MediaRecorder 래퍼·캡처 상태(idle|recording|paused|stopped)·레벨미터 (§14)
 stores/recorderSession.ts      # 녹음 세션 수명주기 오케스트레이션 (§14)
 stores/recordingStore.ts       # 목록/상세/처리 상태/스트림 구독, kindFilter
-stores/recognitionAidsStore.ts # 용어집·구성원 CRUD (§12)
+stores/recognitionAidsStore.ts # 용어집·구성원 CRUD, 구성원별 목소리 표본 요약 (§12)
 utils/audio.ts                 # blobToWav16kMono, 채널 에너지 추출
 utils/processing-progress.ts   # phase 가중치로 전체 진행률 계산 (§11)
 components/recording/
   RecordingView.tsx            # 좌: [새 녹음]으로 여는 녹음 컨트롤 + 종류 필터(전체/회의/면접) + "인식 보조" 패널 토글 + 목록, 우: 상세
-  RecognitionAidsPanel.tsx     # 용어집/구성원 탭 편집 + 텍스트 가져오기 (§12). 설정 > 회의 녹음에도 같은 패널이 있다
+  RecognitionAidsPanel.tsx     # 용어집/구성원 탭 편집 + 텍스트 가져오기, 구성원별 "목소리 N건" + [목소리 삭제] (§12). 설정 > 회의 녹음에도 같은 패널이 있다
   RecorderControls.tsx         # 종류(회의/면접) + 소스 선택 + 참석자 칩 + 무음 제거 체크, 시작/일시정지/종료 + 레벨미터
   RecordingList.tsx            # 녹음 카드 목록(상태 pill, 면접 배지), kindFilter 적용
-  MeetingDetail.tsx            # 헤더(제목/날짜/상태) + 탭(타임라인/요약/화자), kind별 패널 분기
+  MeetingDetail.tsx            # 헤더(제목/날짜/상태) + 탭(타임라인/요약/화자), kind별 패널 분기, 화자 탭의 "화자 다시 분리"
   SpeakerTimeline.tsx          # 시간대별 화자 발언 (클릭→오디오 점프), 발언 수정, 컷 토글
   SummaryPanel.tsx             # [회의] 5분류 + 액션아이템 "+ TODO" 버튼
   InterviewPanel.tsx           # [면접] Q&A(클릭→질문 시점 재생)/근거/추가 확인/레퍼런스 체크
-  SpeakerEditor.tsx            # 화자 실명 입력/색상/병합/세그먼트 재할당 (면접 프리셋 지원)
+  SpeakerEditor.tsx            # 화자 실명 입력/색상/병합/세그먼트 재할당 (면접 프리셋 지원), 목소리 매칭 배지·확인/거절·등록
   AudioPlayer.tsx              # <audio> + seek, cuts enabled 구간 skip(비파괴)
 ```
 
 디자인은 `components/ui/tokens.ts`(button/typo/status pill), `ui/index.tsx`(Card/Badge/IconButton/EmptyState/SectionTitle), `ui/icons.tsx`를 쓴다. 새 색이나 커스텀 CSS 없이 Tailwind v4 인라인 클래스 + 토큰으로 그린다.
+
+**화자 탭의 목소리 UX**(§5-4):
+- `SpeakerEditor` 화자 행: `auto` → "목소리로 자동 지정 · 82%" 배지 + [맞음] [이 사람 아님]. `suggested` → "혹시 OOO?" + [지정] [아님]. `manual`이고 `voice_enrolled`(표본이 실제로 있음) → "목소리 등록됨". 이름은 있는데 구성원이 아니고 `has_voice` → [목소리 등록].
+- `MeetingDetail` 화자 탭(`canRediarize`): `source='mic'`, 상태 `transcribed`/`summarized`이고 `has_voice`인 화자가 하나도 없으면(새 화자분리 이전에 처리했거나 분리에 실패한 회의) "화자 다시 분리" 버튼을 보인다. 누르면 `reprocessMeeting(id, true)` — 빠른 재적용(`skipTranscribe`: 재전사·컷편집 없음, `pipeline_version` 유지, 발언 단위 수동 보정과 화자 속성 보존, §5-4)으로 화자분리만 다시 돌리고 이어서 요약을 다시 만든다. 버튼 옆에 요약도 다시 만든다는 문구를 보인다.
 
 메뉴는 회의·면접 통합 단일 메뉴(사이드바 "회의" 그룹의 `녹음`)다. 종류 구분은 목록 상단 필터 탭으로 하며, 선택값은 `recordingStore.kindFilter`에 둔다 — `RecordingView`가 메뉴 전환 시 언마운트되므로 로컬 state면 필터가 초기화된다.
 
@@ -404,10 +481,10 @@ components/recording/
 ## 9. 네이티브 의존성 / 빌드
 
 - `@fugood/whisper.node`, `sherpa-onnx-node`, `silero-vad-node`는 **optionalDependencies**다. `electron.vite.config.ts`가 메인 번들에서 외부화하고, 코드는 lazy import + try/catch로 불러 없으면 폴백 어댑터로 내려간다. 파이프라인은 항상 끝까지 돈다.
-- 화자 분리는 메인 번들과 함께 빌드되는 워커(`out/main/diarization-worker.js`, `src/main/services/diarization/worker.ts`)를 `utilityProcess`로 띄워 돌린다.
+- 화자 분리는 메인 번들과 함께 빌드되는 워커(`out/main/diarization-worker.js`, `src/main/services/diarization/worker.ts`)를 `utilityProcess`로 띄워 돌린다. `electron.vite.config.ts`는 실측 회귀용 cli 엔트리(`out/main/diarization-cli.js`, `src/main/services/diarization/cli.ts`)도 만든다. cli는 electron 모듈을 쓰지 않아 `ELECTRON_RUN_AS_NODE=1`로 배포 앱 바이너리에서 돌릴 수 있다(§5-3).
 - **시스템 오디오**: 추가 패키지 없이 Electron 내장 `session.setDisplayMediaRequestHandler` + `audio: 'loopback'`을 쓴다(`src/main/services/system-audio-loopback.ts`, 앱 시작 시 창 생성 전에 등록). Electron 39+는 macOS 14.2+에서 이를 CoreAudio Tap으로 지원하며 feature flag가 필요 없다. `loopbackWithMute`는 스피커를 음소거하므로 쓰지 않는다. 시스템 오디오 권한이 없으면 에러 없이 처음부터 ended인 트랙이 오므로 렌더러(`recorderStore`)가 `readyState === 'live'`인 트랙만 쓰고, 없으면 "시스템 오디오 권한이 없어 마이크만 녹음합니다."를 안내한다. 녹음 중 시스템 트랙이 끊기면 경고만 띄우고 마이크 녹음은 계속한다.
 - **마이크 제약**: `echoCancellation: true`(스피커로 나온 상대 음성이 마이크(L)에 섞이는 것 방지), `noiseSuppression: false`(§11 정책 — 노이즈 억제는 whisper WER·화자 분리 DER을 악화시킨다는 보고가 있어 입력 단계에서도 끈다).
-- `package.json` `build.asarUnpack`에 `**/*.node`와 `node_modules/sherpa-onnx-darwin-arm64/**`가 있다. Whisper·화자 분리 모델은 `userData/models/`에 런타임으로 내려받는다.
+- `package.json` `build.asarUnpack`에 `**/*.node`와 `node_modules/sherpa-onnx-darwin-arm64/**`가 있다. Whisper 모델과 화자 임베딩 모델(`sherpa-embedding.onnx`, CAM++ 28MB)은 `userData/models/`에 런타임으로 내려받는다. 화자분리에 pyannote 분할 모델은 필요 없다(`areDiarizationModelsReady`·`ensureDiarizationModels`는 임베딩 모델만 본다).
 - `Info.plist`(electron-builder `mac.extendInfo`): `NSMicrophoneUsageDescription`, `NSAudioCaptureUsageDescription`.
 
 ## 10. 회의록 메뉴
@@ -430,7 +507,7 @@ components/recording/
 
 ## 11. 무음 컷편집 (audio compaction)
 
-**목적**: 처리 전에 긴 침묵을 잘라 (a) whisper 청크 수(28초 창에 발화가 더 촘촘히) (b) sherpa 화자분리 입력 길이 (c) 파일 크기를 줄이고, 재생 시 침묵 스킵이 필요 없게 한다. **컷편집본이 그 녹음의 파일이 된다**(사용자 결정, 원본 별도 보관 없음). 제거한 구간은 `<id>.compaction.json` 사이드카(`{version, originalMs, compactedMs, removed[], params, compactedAt}`)에 남긴다.
+**목적**: 처리 전에 긴 침묵을 잘라 (a) whisper 청크 수(28초 창에 발화가 더 촘촘히) (b) 처리할 오디오 길이 (c) 파일 크기를 줄이고, 재생 시 침묵 스킵이 필요 없게 한다. **컷편집본이 그 녹음의 파일이 된다**(사용자 결정, 원본 별도 보관 없음). 제거한 구간은 `<id>.compaction.json` 사이드카(`{version, originalMs, compactedMs, removed[], params, compactedAt}`)에 남긴다.
 
 **구성**
 - `stt/audio-compactor.ts` — 순수 함수(단위 테스트 대상): `planCompaction(speech, audioMs, opts)`, `compactPcm16(wav, dataRange, keep)`, `remapChannelEnergy(env, keep)`, `mapMsToCompacted(ms, keep)`, `speechRegionsToCompacted(speech, keep)`. 기본 파라미터는 `DEFAULT_COMPACTION_OPTIONS` 한곳에 둔다.
@@ -455,22 +532,26 @@ components/recording/
 | 보조 장치 | 저장 | 사용처 |
 |---|---|---|
 | 용어집 `stt_glossary` (정답 표기 · 오인식 표기 aliases · 메모 · 우선순위) | 로컬 DB | ① `buildInitialPrompt({glossaryTerms})` — 프롬프트 **끝**에 ` 용어: A, B, C.`(최대 15개·120자, 전체 360자; whisper는 마지막 224토큰만 반영하므로 끝이 가장 중요, alias는 넣지 않는다) ② `applyGlossary(segments, rules)` 결정론적 후보정 ③ 요약 `[참고 정보]` 블록 |
-| 구성원 `meeting_members` (이름 · 호칭/별칭 · 역할) + 회의별 참석자 `meeting_attendees` | 로컬 DB | ① 프롬프트 참석자 힌트(`speakerNames`에 합류) ② 녹음 시작 시 참석 인원 자동 제안 ③ `SpeakerEditor` 이름 프리셋 ④ 요약 `[참고 정보]`의 담당자 매칭 |
+| 구성원 `meeting_members` (이름 · 호칭/별칭 · 역할) + 회의별 참석자 `meeting_attendees` | 로컬 DB | ① 프롬프트 참석자 힌트(`speakerNames`에 합류) ② 녹음 시작 시 참석 인원 자동 제안 ③ `SpeakerEditor` 이름 프리셋 ④ 요약 `[참고 정보]`의 담당자 매칭 ⑤ 목소리 매칭 후보(참석자가 있으면 참석자로 좁힘) |
+| 목소리 표본 `member_voice_samples` (구성원별 화자 centroid) + 회의 화자 목소리 `meeting_speaker_voices` | 로컬 DB | 다음 회의의 화자 자동 지정·제안(§5-4) |
+
+**목소리 표본**: 사용자가 화자에 구성원 이름을 지정하거나 [목소리 등록]·[맞음]을 누를 때만 만든다(동의 없는 수집 없음, 자동 지정은 표본을 만들지 않는다). 192차원 임베딩이며 오디오는 담지 않는다. **로컬 SQLite에만** 저장하고, 요약 프롬프트·휴대폰 열람·회의록 Markdown·렌더러 IPC 응답 어디에도 넣지 않는다(렌더러는 `has_voice`·표본 건수만 받는다). 데이터 백업 파일에는 회의 그룹으로 포함된다([DATA_BACKUP.md](DATA_BACKUP.md)). 구성원 탭의 [목소리 삭제] 버튼(`recognitionAids:clearVoiceprint`)로 그 구성원의 표본을 모두 지운다.
 
 **후보정 규칙(`stt/glossary-correct.ts`)** — 오치환 방지가 우선: alias 2자 이상, term과 동일한 alias 제외, 긴 alias 우선. 라틴/숫자 alias는 대소문자 무시 + 양쪽 영숫자 경계. 한글 포함 alias는 경계 없음(조사 결합 허용: "링크워크를"→"LinkWork를"), 3자 이상이면 문자 사이 공백 0~1개 허용("링크 워크"). 이미 정답 표기인 부분은 재치환하지 않는다. 사용자 수정 플래그 `text_corrected`는 건드리지 않는다.
 
-**서비스(`recognition-aids.ts`)**: `listGlossary/upsertGlossary/removeGlossary/importGlossaryText(parseGlossaryText)/listMembers/upsertMember/removeMember/setAttendees/listAttendees/loadPromptContext/buildSummaryContextBlock`. `loadPromptContext(db, meetingId)`는 켜진 용어 전체(전역)를 `priority DESC, updated_at DESC`로 읽고, 실패 시 빈 컨텍스트(throw 금지).
+**서비스(`recognition-aids.ts`)**: `listGlossary/upsertGlossary/removeGlossary/importGlossaryText(parseGlossaryText)/listMembers/upsertMember/removeMember/setAttendees/listAttendees/loadPromptContext/buildSummaryContextBlock`. 목소리 표본 조회·삭제는 `voiceprint.ts`에 있다. `loadPromptContext(db, meetingId)`는 켜진 용어 전체(전역)를 `priority DESC, updated_at DESC`로 읽고, 실패 시 빈 컨텍스트(throw 금지).
 
-**UI**: 녹음 목록 헤더 "인식 보조" → `RecognitionAidsPanel`(용어집/구성원 탭, 텍스트 가져오기 `정답 | 별칭1, 별칭2 | 메모`). 녹음 시작 화면 참석자 칩, 상세 화면 참석자 칩 편집.
+**UI**: 녹음 목록 헤더 "인식 보조" → `RecognitionAidsPanel`(용어집/구성원 탭, 텍스트 가져오기 `정답 | 별칭1, 별칭2 | 메모`, 구성원별 "목소리 N건" + [목소리 삭제]). 녹음 시작 화면 참석자 칩, 상세 화면 참석자 칩 편집.
 
 ## 13. 파이프라인 버전과 요약 재생성
 
-전체 처리(`!skipTranscribe`)가 merge 트랜잭션에서 `meetings.pipeline_version = CURRENT_PIPELINE_VERSION`(meeting-pipeline.ts, 현재 **3**)을 기록한다. 버전 값의 뜻: 0 = 구 파이프라인 또는 미처리, 2 = 무음 컷편집 + 용어집 후보정/프롬프트 힌트 + 참석자 힌트, 3 = 2에 더해 세그먼트 분할(maxLen) + 환각 필터 + 화자 centroid 병합 + 컷편집 VAD 이원화 + 화자 속성 승계. 빠른 재적용은 컷편집·재전사를 하지 않으므로 값을 유지한다. 파이프라인 동작이 결과에 영향을 줄 만큼 바뀌면 이 상수를 올린다.
+전체 처리(`!skipTranscribe`)가 merge 트랜잭션에서 `meetings.pipeline_version = CURRENT_PIPELINE_VERSION`(meeting-pipeline.ts, 현재 **4**)을 기록한다. 버전 값의 뜻: 0 = 구 파이프라인 또는 미처리, 2 = 무음 컷편집 + 용어집 후보정/프롬프트 힌트 + 참석자 힌트, 3 = 2에 더해 세그먼트 분할(maxLen) + 환각 필터 + 화자 centroid 병합 + 컷편집 VAD 이원화 + 화자 속성 승계, 4 = 3에 더해 창 임베딩 화자분리(§5-3) + 목소리 매칭(§5-4). 빠른 재적용은 컷편집·재전사를 하지 않으므로 값을 유지한다. 파이프라인 동작이 결과에 영향을 줄 만큼 바뀌면 이 상수를 올린다.
 
-상세 화면의 "AI 요약 다시 생성"(면접: "면접 기록 다시 정리")은 `needsFullReanalysis(meeting)`(= `pipeline_version < 2`, MeetingDetail.tsx의 `SUMMARY_PIPELINE_VERSION`)로 분기한다. 버전 2·3 회의는 모두 "요약만 재생성" 대상이다:
+상세 화면의 "AI 요약 다시 생성"(면접: "면접 기록 다시 정리")은 `needsFullReanalysis(meeting)`(= `pipeline_version < 2`, MeetingDetail.tsx의 `SUMMARY_PIPELINE_VERSION`)로 분기한다. 버전 2 이상 회의는 모두 "요약만 재생성" 대상이다:
 - **구 파이프라인 회의** → "다시 분석 후 요약 생성": 전체 재처리(컷편집 → 용어집·참석자 힌트로 재전사 → 후보정 → 화자분리) 후 자동 요약. 화자 실명·색상·사용자 라벨은 시간 겹침으로 승계되고(§5-4), 발언 단위 수정(텍스트 수정·세그먼트별 화자 지정)은 초기화된다(merge가 세그먼트를 재생성).
 - **현재 파이프라인 회의** → 요약만 재생성(전사·수동 수정 보존, `[참고 정보]` 블록은 항상 반영).
 "전체 다시 처리"는 버전과 무관하게 항상 재전사 + 요약 재생성이다(`recordingStore.reprocessMeeting`이 성공·전사 시 `summarizeMeeting`을 호출). 승계 규칙은 위와 같다.
+버전 3 이하 회의를 일괄로 다시 처리하지는 않는다. 화자 탭의 "화자 다시 분리"(§8)가 목소리가 없는 마이크 녹음에만 보여, 사용자가 회의별로 빠른 재적용(재전사 없음)으로 화자만 다시 나눈다.
 참석 인원만 바꿔 재분리하는 빠른 재적용(`skipTranscribe`)은 화자 속성 승계에 더해 발언 단위 수동 보정(`text_corrected`·`speaker_corrected`)도 보존한다(§5-4).
 
 ## 14. 녹음 수명주기와 비정상 종료 복구
@@ -511,3 +592,9 @@ components/recording/
 - **신뢰도**: whisper.node 바인딩이 확률을 내보내지 않아 `confidence`가 항상 NULL이다.
 - **beam search**: `beamSize: 5`를 넘기지만 whisper.node 1.0.22는 greedy로 고정해 적용되지 않는다(§5-1).
 - **용어 인식**: whisper.cpp에는 hotword/keyword boosting이 없어 initial_prompt와 후보정(§12)으로만 대응한다.
+- **겹침 발화**: 창 하나에 화자 한 명만 배정한다. 두 사람이 동시에 말한 구간은 한쪽으로 간다.
+- **세그먼트 안 화자 교대**: 창은 STT 세그먼트 안에만 깔고 귀속은 세그먼트 단위다. 한 세그먼트 안에서 화자가 바뀌면 한 명으로 귀속된다(세그먼트를 짧게 자르는 것으로 완화, §5-1).
+- **채널·2-스테이지 경로의 목소리**: `mic+system` 채널 분리와 2-스테이지 경로는 centroid를 내지 않아 목소리 매칭·등록이 되지 않는다.
+- **세그먼트 단위 화자 변경**: `recording:reassignSegment`로 발언 하나의 화자를 바꿔도 화자 centroid는 갱신하지 않는다. 화자 병합만 centroid를 합친다.
+- **다인 회의 화자 수**: 3명 이상 회의에서 자동 추정 화자 수가 실제와 다를 수 있다. 참석 인원을 지정하면(녹음 시작 화면, 상세 화면 `recording:setExpectedSpeakers`) 그 수로 정확히 나눈다 — 다인 회의는 지정을 권장한다.
+- **정확도 근거**: 정답 화자 라벨이 있는 녹음은 1on1(2명)뿐이다. 다인 회의의 화자 수·귀속 정확도는 측정하지 못했다.

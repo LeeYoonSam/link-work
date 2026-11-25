@@ -8,7 +8,7 @@ import { getSttAdapter } from './stt/index'
 import { buildInitialPrompt } from './stt/initial-prompt'
 import { GapAdapter } from './vad/gap-adapter'
 import { getVadAdapter } from './vad/index'
-import { diarizeWithFallback } from './diarization/index'
+import { diarizeWithFallback, VOICE_EMBEDDING_MODEL, type SpeakerVoice } from './diarization/index'
 import { ensureDiarizationModels } from './diarization/model-manager'
 import { cleanSegments } from './transcript-cleaner'
 import { applyGlossary } from './stt/glossary-correct'
@@ -16,6 +16,7 @@ import { filterHallucinations } from './stt/hallucination-filter'
 import { compactRecording } from './audio-compaction'
 import { mapMsToCompacted, type Region } from './stt/audio-compactor'
 import { loadPromptContext, type PromptContext } from './recognition-aids'
+import { applyMeetingVoicesSafe, loadOldSpeakerLinks } from './voiceprint'
 import { wavDurationMs } from './wav-util'
 import { postprocessTurns } from './diarization/postprocess'
 import { beginPipeline, endPipeline, PipelineCancelledError } from './pipeline-abort'
@@ -33,9 +34,10 @@ import {
 // 현재 파이프라인 버전.
 //  2 = 무음 컷편집 + 용어집 후보정/프롬프트 힌트 + 참석자 힌트.
 //  3 = 세그먼트 분할(maxLen) + 환각 필터 + 화자 centroid 병합 + 컷편집 VAD 이원화 + 화자 속성 승계.
+//  4 = 창 임베딩 + 자체 클러스터링 화자분리 + 목소리 매칭(구성원 자동 지정).
 // 파이프라인 동작이 결과에 영향을 줄 만큼 바뀌면 올린다. meetings.pipeline_version에 기록해,
 // 옛 버전으로 처리된 녹음을 골라 다시 돌릴 수 있게 한다(0 = 이 컬럼이 생기기 전 처리분).
-const CURRENT_PIPELINE_VERSION = 3
+const CURRENT_PIPELINE_VERSION = 4
 
 // 정제를 거치는 작업용 세그먼트. 빠른 재적용에서 사용자가 수정한 발언은 text_corrected=1로 표시해
 // 정제·환각 필터·용어집 후보정을 건너뛰고 플래그도 그대로 다시 저장한다.
@@ -520,6 +522,9 @@ export async function runMeetingPipeline(
     let turns: DiarTurn[] = []
     let diarAdapter = 'none'
     let diarNote: string | undefined
+    // 화자별 목소리 centroid(adapter 'sherpa'일 때만). merge 트랜잭션이 저장·자동 매칭에 쓴다.
+    let diarVoices: SpeakerVoice[] = []
+    let diarEmbeddingModel: string | null = null
     try {
       const result = await diarizeWithFallback(audioPath, {
         source: meeting.source,
@@ -536,8 +541,12 @@ export async function runMeetingPipeline(
       })
       turns = result.turns
       diarAdapter = result.adapter
-      // 강등·병합 안내(있을 때만). 화자분리가 조용히 품질을 낮추지 않도록 사용자에게 알린다.
+      // 강등 안내(있을 때만). 화자분리가 조용히 품질을 낮추지 않도록 사용자에게 알린다.
       diarNote = result.note
+      if (result.adapter === 'sherpa' && result.voices && result.voices.length > 0) {
+        diarVoices = result.voices
+        diarEmbeddingModel = result.embeddingModel ?? VOICE_EMBEDDING_MODEL
+      }
     } catch (err) {
       // 취소는 아래 signal.aborted 체크가 끊는다. 그 외 실패는 단일 화자로 계속하되 원인을 알린다.
       turns = []
@@ -605,6 +614,7 @@ export async function runMeetingPipeline(
       reusedSegments.length > 0 ? matchCorrectedSpeakers(reusedSegments, rawSegments) : []
 
     // DB 트랜잭션으로 저장
+    let voiceMatchCounts: { auto: number; suggested: number; error?: string } = { auto: 0, suggested: 0 }
     const tx = db.transaction(() => {
       // 화자 속성 승계: 지우기 직전의 옛 화자·세그먼트를 새 귀속 결과와 시간 겹침으로 대조해
       // 실명·색상·사용자 라벨을 이어받는다. 전체 재처리에서 컷편집이 이번에 적용됐어도 옛 세그먼트
@@ -617,6 +627,8 @@ export async function runMeetingPipeline(
       const oldSegments = db
         .prepare('SELECT start_ms, end_ms, speaker_id FROM meeting_segments WHERE meeting_id = ?')
         .all(meetingId) as OldSegmentRow[]
+      // 구성원 연결(member_id·member_source·match_score·rejected_member_ids) 승계용 옛 값
+      const oldLinks = loadOldSpeakerLinks(db, meetingId)
       const carry = planSpeakerCarryover(
         oldSegments,
         oldSpeakers,
@@ -634,7 +646,8 @@ export async function runMeetingPipeline(
         oldSpeakers
       })
 
-      // 기존 데이터 정리 (재처리 시)
+      // 기존 데이터 정리 (재처리 시). 화자 목소리는 FK CASCADE에 기대지 않고 명시적으로 지운다.
+      db.prepare('DELETE FROM meeting_speaker_voices WHERE meeting_id = ?').run(meetingId)
       db.prepare('DELETE FROM meeting_speakers WHERE meeting_id = ?').run(meetingId)
       db.prepare('DELETE FROM meeting_segments WHERE meeting_id = ?').run(meetingId)
       db.prepare('DELETE FROM meeting_cuts WHERE meeting_id = ?').run(meetingId)
@@ -651,6 +664,36 @@ export async function runMeetingPipeline(
             .lastInsertRowid
         )
       )
+
+      // 목소리: centroid 저장 → 구성원 연결 승계 → 이름 없는 화자 자동 지정·제안(docs/MEETING_RECORDING.md 목소리 등록)
+      const oldIdByKey = new Map<string, number>()
+      for (const [key, meta] of carry) oldIdByKey.set(key, meta.oldSpeakerId)
+      // best-effort: 목소리 단계가 실패해도 전사·화자 저장은 계속한다(SAVEPOINT로 그 단계만 되돌림).
+      const voiceResult = applyMeetingVoicesSafe(db, {
+        meetingId,
+        // 앞쪽은 이번 화자분리의 화자, 그 뒤는 수동 지정 보존으로 다시 만든 옛 화자 행이다
+        // (planSpeakerRows). 다시 만든 행은 옛 행에서 연결을 잇고, 이번 centroid는 쓰지 않는다.
+        speakers: plan.speakers.map((sp, i) => {
+          const fromDiarization = i < speakerKeyOrder.length
+          const oldSpeakerId = fromDiarization
+            ? (oldIdByKey.get(sp.speaker_key) ?? null)
+            : (oldSpeakers.find(
+                (o) => o.speaker_key === sp.speaker_key && o.display_name === sp.display_name
+              )?.id ?? null)
+          return {
+            id: speakerIds[i],
+            speaker_key: sp.speaker_key,
+            display_name: sp.display_name,
+            oldSpeakerId,
+            useVoice: fromDiarization
+          }
+        }),
+        voices: diarVoices,
+        model: diarEmbeddingModel,
+        oldLinks,
+        attendeeIds: aids.attendees.map((a) => a.member_id)
+      })
+      voiceMatchCounts = voiceResult
 
       // meeting_segments INSERT
       const insertSegment = db.prepare(
@@ -719,6 +762,19 @@ export async function runMeetingPipeline(
 
     tx()
 
+    if (voiceMatchCounts.error) {
+      send({
+        meetingId,
+        phase: 'merge',
+        message: `목소리 저장·매칭을 건너뛰었습니다. (${voiceMatchCounts.error})`
+      })
+    } else if (voiceMatchCounts.auto > 0 || voiceMatchCounts.suggested > 0) {
+      send({
+        meetingId,
+        phase: 'merge',
+        message: `목소리로 화자 지정 ${voiceMatchCounts.auto}명, 제안 ${voiceMatchCounts.suggested}명`
+      })
+    }
     send({ meetingId, phase: 'merge', progress: 1 })
     send({ meetingId, phase: 'done', progress: 1, message: '처리 완료' })
 

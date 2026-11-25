@@ -1,5 +1,6 @@
 // 화자분리(sherpa-onnx) 모델 다운로드 매니저.
-// segmentation(pyannote) + embedding(3D-Speaker) 두 모델을 userData/models/에 받는다.
+// 화자 임베딩 모델(3D-Speaker CAM++) 하나만 userData/models/에 받는다. 화자분리는 창 임베딩 +
+// 자체 클러스터링(embedding-diarizer.ts)이라 pyannote 분할 모델을 쓰지 않는다.
 // 모델은 앱에 번들하지 않고 최초 1회만 다운로드한다 (stt/model-manager.ts 패턴).
 import { app, net } from 'electron'
 import { createWriteStream, existsSync } from 'fs'
@@ -10,13 +11,6 @@ interface DiarModelInfo {
   file: string
   url: string
   approxBytes: number
-}
-
-// segmentation: pyannote segmentation 3.0 (huggingface raw .onnx — tar.bz2 압축해제 회피)
-const SEGMENTATION_MODEL: DiarModelInfo = {
-  file: 'sherpa-segmentation.onnx',
-  url: 'https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/main/model.onnx',
-  approxBytes: 5_992_913
 }
 
 // embedding: 3D-Speaker CAM++ (중·영 혼합 학습, 다국어 회의에 무난, 28MB)
@@ -30,16 +24,12 @@ function modelsDir(): string {
   return join(app.getPath('userData'), 'models')
 }
 
-export function segmentationModelPath(): string {
-  return join(modelsDir(), SEGMENTATION_MODEL.file)
-}
-
 export function embeddingModelPath(): string {
   return join(modelsDir(), EMBEDDING_MODEL.file)
 }
 
 export function areDiarizationModelsReady(): boolean {
-  return existsSync(segmentationModelPath()) && existsSync(embeddingModelPath())
+  return existsSync(embeddingModelPath())
 }
 
 type DiarModelProgress = (info: { ratio: number; label: string }) => void
@@ -99,7 +89,7 @@ async function downloadModel(
 let inflight: Promise<void> | null = null
 
 /**
- * 두 모델(segmentation, embedding)을 순차 다운로드한다. 이미 있으면 즉시 반환.
+ * 임베딩 모델을 다운로드한다. 이미 있으면 즉시 반환.
  * 동시 호출은 하나의 작업으로 합친다(inflight).
  */
 export async function ensureDiarizationModels(onProgress?: DiarModelProgress): Promise<void> {
@@ -107,11 +97,8 @@ export async function ensureDiarizationModels(onProgress?: DiarModelProgress): P
   if (inflight) return inflight
 
   inflight = (async () => {
-    await downloadModel(SEGMENTATION_MODEL, (r) =>
-      onProgress?.({ ratio: r, label: '화자 분리 모델 다운로드 (1/2)' })
-    )
     await downloadModel(EMBEDDING_MODEL, (r) =>
-      onProgress?.({ ratio: r, label: '화자 임베딩 모델 다운로드 (2/2)' })
+      onProgress?.({ ratio: r, label: '화자 임베딩 모델 다운로드' })
     )
   })()
 

@@ -143,6 +143,13 @@ const api = {
       speakerId: number,
       input: { display_name?: string | null; color?: string; label?: string }
     ) => ipcRenderer.invoke('recording:updateSpeaker', speakerId, input),
+    // 목소리 등록 — 화자 목소리를 구성원 표본으로 (docs/MEETING_RECORDING.md 목소리 등록)
+    enrollSpeakerVoice: (speakerId: number) =>
+      ipcRenderer.invoke('recording:enrollSpeakerVoice', speakerId),
+    confirmSpeakerMatch: (speakerId: number) =>
+      ipcRenderer.invoke('recording:confirmSpeakerMatch', speakerId),
+    rejectSpeakerMatch: (speakerId: number) =>
+      ipcRenderer.invoke('recording:rejectSpeakerMatch', speakerId),
     reassignSegment: (segmentId: number, speakerId: number | null) =>
       ipcRenderer.invoke('recording:reassignSegment', segmentId, speakerId),
     updateSegmentText: (segmentId: number, text: string) =>
@@ -212,7 +219,11 @@ const api = {
       enabled?: boolean
       sort_order?: number
     }) => ipcRenderer.invoke('recognitionAids:upsertMember', input),
-    removeMember: (id: number) => ipcRenderer.invoke('recognitionAids:removeMember', id)
+    removeMember: (id: number) => ipcRenderer.invoke('recognitionAids:removeMember', id),
+    // 구성원 목소리 표본 요약·삭제(임베딩은 오지 않는다)
+    listVoiceprints: () => ipcRenderer.invoke('recognitionAids:listVoiceprints'),
+    clearVoiceprint: (memberId: number) =>
+      ipcRenderer.invoke('recognitionAids:clearVoiceprint', memberId)
   },
   export: {
     saveMarkdown: (content: string, defaultFileName: string) =>

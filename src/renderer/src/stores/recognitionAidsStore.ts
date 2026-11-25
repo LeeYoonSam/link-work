@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { GlossaryEntry, Member } from '../types'
+import type { GlossaryEntry, Member, MemberVoiceprint } from '../types'
 
 // 인식 보조 장치(용어집·구성원) 전역 상태.
 //
@@ -37,6 +37,8 @@ interface ImportResult {
 interface RecognitionAidsStore {
   glossary: GlossaryEntry[]
   members: Member[]
+  /** 구성원별 저장된 목소리 표본 요약 (표본이 없는 구성원은 빠진다) */
+  voiceprints: MemberVoiceprint[]
   loading: boolean
   /** 마지막 액션의 실패 사유. 성공하면 null로 지워진다. */
   error: string | null
@@ -48,6 +50,8 @@ interface RecognitionAidsStore {
   importGlossaryText: (text: string) => Promise<ImportResult | null>
   upsertMember: (input: MemberUpsertInput) => Promise<boolean>
   removeMember: (id: number) => Promise<boolean>
+  /** 구성원의 목소리 표본을 전부 지운다 */
+  clearVoiceprint: (memberId: number) => Promise<boolean>
 }
 
 const message = (err: unknown, fallback: string): string =>
@@ -56,17 +60,23 @@ const message = (err: unknown, fallback: string): string =>
 export const useRecognitionAidsStore = create<RecognitionAidsStore>((set, get) => ({
   glossary: [],
   members: [],
+  voiceprints: [],
   loading: false,
   error: null,
 
   fetchAll: async () => {
     set({ loading: true })
     try {
-      const [glossary, members] = await Promise.all([
+      const [glossary, members, voiceprints] = await Promise.all([
         window.api.recognitionAids.listGlossary(),
-        window.api.recognitionAids.listMembers()
+        window.api.recognitionAids.listMembers(),
+        // 목소리 요약은 부가 정보다. 실패해도 용어집·구성원 목록은 보여준다.
+        window.api.recognitionAids.listVoiceprints().catch((err: unknown) => {
+          console.error('[recognitionAidsStore] listVoiceprints error:', err)
+          return [] as MemberVoiceprint[]
+        })
       ])
-      set({ glossary, members, error: null })
+      set({ glossary, members, voiceprints, error: null })
     } catch (err) {
       console.error('[recognitionAidsStore] fetchAll error:', err)
       set({ error: message(err, '인식 보조 정보를 불러오지 못했습니다') })
@@ -136,6 +146,19 @@ export const useRecognitionAidsStore = create<RecognitionAidsStore>((set, get) =
     } catch (err) {
       console.error('[recognitionAidsStore] removeMember error:', err)
       set({ error: message(err, '구성원 삭제 실패') })
+      return false
+    }
+  },
+
+  clearVoiceprint: async (memberId) => {
+    try {
+      await window.api.recognitionAids.clearVoiceprint(memberId)
+      set({ error: null })
+      await get().fetchAll()
+      return true
+    } catch (err) {
+      console.error('[recognitionAidsStore] clearVoiceprint error:', err)
+      set({ error: message(err, '목소리 삭제 실패') })
       return false
     }
   }

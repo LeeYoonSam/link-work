@@ -25,6 +25,7 @@ export const BACKUP_GROUP_IDS: readonly BackupGroupId[] = [
  *   작업·할 일을 가리키고 렌더러의 "원본 완료"가 그 id 로 직접 완료를 호출하므로 떼어 놓으면
  *   엉뚱한 할 일이 완료될 수 있다.
  * - meetings: meeting_attendees 가 meeting_members 를 FK 로 가리키므로 구성원·용어집을 함께 둔다.
+ *   목소리(meeting_speaker_voices·member_voice_samples)도 화자·구성원을 FK 로 가리켜 같은 그룹이다.
  * - settings: 테이블이 없다. app_settings 를 키 단위로 나눈다(classifySettingKey).
  */
 export const GROUP_TABLES: Record<BackupGroupId, readonly string[]> = {
@@ -51,6 +52,8 @@ export const GROUP_TABLES: Record<BackupGroupId, readonly string[]> = {
     'meeting_summaries',
     'meeting_members',
     'meeting_attendees',
+    'meeting_speaker_voices',
+    'member_voice_samples',
     'stt_glossary'
   ],
   library: ['documents', 'memo_categories', 'memos', 'variables'],

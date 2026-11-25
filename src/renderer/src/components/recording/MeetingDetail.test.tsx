@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { compactionSummary, needsFullReanalysis } from './MeetingDetail'
+import { canRediarize, compactionSummary, needsFullReanalysis } from './MeetingDetail'
 
 // 무음 컷편집 배지의 표시 조건과 절감 비율을 고정한다.
 // 비율의 분모를 현재 길이로 잘못 잡으면 "52분에서 12분 뺐다"가 24%가 아니라 31%로 부풀려진다.
@@ -56,5 +56,33 @@ describe('needsFullReanalysis', () => {
     // main의 CURRENT_PIPELINE_VERSION이 먼저 올라간 빌드에서 처리된 회의를
     // 구버전 렌더러가 매번 전체 재처리로 끌고 가면 안 된다.
     expect(needsFullReanalysis({ pipeline_version: 3 })).toBe(false)
+  })
+})
+
+// 화자 탭 "화자 다시 분리" 노출 조건 — 마이크 단독 녹음인데 목소리가 저장된 화자가 없을 때만.
+describe('canRediarize', () => {
+  const noVoice = [{ has_voice: false }, { has_voice: false }]
+
+  it('마이크 녹음이고 목소리 있는 화자가 없으면 노출한다', () => {
+    expect(canRediarize({ source: 'mic', status: 'summarized' }, noVoice)).toBe(true)
+    expect(canRediarize({ source: 'mic', status: 'transcribed' }, [{ has_voice: false }])).toBe(true)
+    // 분리에 실패해 화자가 하나도 없어도 노출한다
+    expect(canRediarize({ source: 'mic', status: 'summarized' }, [])).toBe(true)
+  })
+
+  it('목소리가 저장된 화자가 하나라도 있으면 숨긴다', () => {
+    expect(
+      canRediarize({ source: 'mic', status: 'summarized' }, [{ has_voice: false }, { has_voice: true }])
+    ).toBe(false)
+  })
+
+  it('채널 분리(mic+system) 녹음은 숨긴다', () => {
+    expect(canRediarize({ source: 'mic+system', status: 'summarized' }, noVoice)).toBe(false)
+  })
+
+  it('녹음·처리 중이거나 실패한 회의는 숨긴다', () => {
+    expect(canRediarize({ source: 'mic', status: 'recording' }, noVoice)).toBe(false)
+    expect(canRediarize({ source: 'mic', status: 'processing' }, noVoice)).toBe(false)
+    expect(canRediarize({ source: 'mic', status: 'failed' }, noVoice)).toBe(false)
   })
 })

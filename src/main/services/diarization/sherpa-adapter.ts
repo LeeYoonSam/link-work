@@ -1,37 +1,20 @@
 // Sherpa-ONNX 화자분리 어댑터 (sherpa-onnx-node — optionalDependency, 네이티브 addon)
-// mic-only 단일 채널 녹음에서 음성 임베딩 기반으로 N명 화자를 분리한다.
-// process()가 동기 블로킹이라 utilityProcess 워커에서 실행한다 (worker.ts).
+// mic-only 단일 채널 녹음을 STT 세그먼트 위 창 임베딩 + 자체 클러스터링으로 N명 화자로 나눈다.
+// 임베딩 추출이 동기 블로킹이라 utilityProcess 워커에서 실행한다 (worker.ts → embedding-diarizer.ts).
 import { utilityProcess, app } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { createRequire } from 'module'
 import type { DiarizationAdapter, DiarTurn, SttSegment } from '../meeting-types'
-import { areDiarizationModelsReady, segmentationModelPath, embeddingModelPath } from './model-manager'
+import { areDiarizationModelsReady, embeddingModelPath } from './model-manager'
+import type { EmbeddingDiarizeResult } from './embedding-diarizer'
+import type { DiarWorkerRequest, DiarWorkerResponse } from './worker'
 
-interface SherpaSegment {
-  start: number // seconds
-  end: number // seconds
-  speaker: number
-}
-
-/** 워커가 알려주는 centroid 정제 결과 요약 (worker.ts DiarWorkerInfo와 동일 형태). */
-interface SherpaDiarizationInfo {
-  speakersBefore: number
-  speakersAfter: number
-  refined: boolean
-}
-
-interface WorkerResult {
-  ok: boolean
-  segments?: SherpaSegment[]
-  info?: SherpaDiarizationInfo
-  error?: string
-}
-
-/** 워커 결과(세그먼트 + 정제 요약). */
-interface WorkerOutput {
-  segments: SherpaSegment[]
-  info?: SherpaDiarizationInfo
+/** 화자별 목소리: 클러스터 centroid(L2 정규화, 192차원)와 누적 발화 ms. */
+export interface SpeakerVoice {
+  speaker_key: string
+  embedding: Float32Array
+  speech_ms: number
 }
 
 // 워커 타임아웃 기본값: 30분. 긴 회의도 이 안에 끝나며, 넘으면 워커가 멈춘 것으로 본다.
@@ -66,10 +49,12 @@ function isSherpaInstalled(): boolean {
 export class SherpaAdapter implements DiarizationAdapter {
   readonly name = 'sherpa-onnx'
   /**
-   * 마지막 diarize() 호출의 워커 정제 요약. DiarizationAdapter 인터페이스를 바꾸지 않고
-   * 호출자(diarizeWithFallback)가 화자 수 변화를 알 수 있게 노출한다. 호출 시작 시 초기화된다.
+   * 마지막 diarize() 호출이 만든 화자별 목소리(centroid). DiarizationAdapter 인터페이스를 바꾸지 않고
+   * 호출자(diarizeWithFallback)가 목소리 매칭에 쓰도록 노출한다. 호출 시작 시 초기화된다.
    */
-  lastInfo: SherpaDiarizationInfo | undefined
+  lastVoices: SpeakerVoice[] | undefined
+  /** lastVoices 를 만든 임베딩 식별자(VOICE_EMBEDDING_MODEL). */
+  lastEmbeddingModel: string | undefined
   private readonly timeoutMs: number
 
   constructor(opts: { timeoutMs?: number } = {}) {
@@ -77,7 +62,7 @@ export class SherpaAdapter implements DiarizationAdapter {
   }
 
   async isAvailable(): Promise<boolean> {
-    // 네이티브 모듈 + segmentation/embedding 모델이 모두 있어야 동작
+    // 네이티브 모듈 + 임베딩 모델이 있어야 동작
     return (await this.unavailableReason()) === null
   }
 
@@ -99,33 +84,33 @@ export class SherpaAdapter implements DiarizationAdapter {
       signal?: AbortSignal
     }
   ): Promise<DiarTurn[]> {
-    this.lastInfo = undefined
+    this.lastVoices = undefined
+    this.lastEmbeddingModel = undefined
     if (opts.signal?.aborted) throw abortError()
-    const segModel = segmentationModelPath()
     const embModel = embeddingModelPath()
-    if (!existsSync(segModel) || !existsSync(embModel)) {
+    if (!existsSync(embModel)) {
       throw new Error('화자분리 모델이 준비되지 않았습니다.')
     }
 
-    const { segments, info } = await runDiarizationWorker(
+    const result = await runDiarizationWorker(
       workerPath(),
       {
         audioPath,
-        segModel,
         embModel,
+        segments: (opts.segments ?? []).map((s) => ({ start_ms: s.start_ms, end_ms: s.end_ms })),
         numSpeakers: opts.numSpeakers,
         maxSpeakers: opts.maxSpeakers
       },
       opts.signal,
       this.timeoutMs
     )
-    this.lastInfo = info
-
-    return segments.map((s) => ({
-      start_ms: Math.round(s.start * 1000),
-      end_ms: Math.round(s.end * 1000),
-      speaker_key: `spk_${s.speaker}`
+    this.lastVoices = result.voices.map((v) => ({
+      speaker_key: v.speaker_key,
+      embedding: Float32Array.from(v.embedding),
+      speech_ms: v.speech_ms
     }))
+    this.lastEmbeddingModel = result.info.model
+    return result.turns
   }
 }
 
@@ -136,10 +121,10 @@ export class SherpaAdapter implements DiarizationAdapter {
  */
 function runDiarizationWorker(
   path: string,
-  req: { audioPath: string; segModel: string; embModel: string; numSpeakers?: number; maxSpeakers?: number },
+  req: DiarWorkerRequest,
   signal: AbortSignal | undefined,
   timeoutMs: number
-): Promise<WorkerOutput> {
+): Promise<EmbeddingDiarizeResult> {
   return new Promise((resolve, reject) => {
     // 시작 시점에 이미 취소됐으면 fork 자체를 생략한다.
     if (signal?.aborted) {
@@ -176,12 +161,13 @@ function runDiarizationWorker(
       )
     }
 
-    child.on('message', (msg: WorkerResult) => {
-      if (msg?.ok && msg.segments) {
-        const out: WorkerOutput = { segments: msg.segments, info: msg.info }
+    child.on('message', (msg: DiarWorkerResponse) => {
+      if (msg?.ok && msg.result) {
+        const out = msg.result
         finish(() => resolve(out))
       } else {
-        finish(() => reject(new Error(msg?.error || '화자분리 워커가 실패했습니다.')))
+        const error = msg && !msg.ok ? msg.error : undefined
+        finish(() => reject(new Error(error || '화자분리 워커가 실패했습니다.')))
       }
     })
 

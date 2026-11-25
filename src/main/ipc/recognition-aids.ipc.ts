@@ -1,4 +1,4 @@
-// 인식 보조 장치 IPC — 용어집 / 구성원
+// 인식 보조 장치 IPC — 용어집 / 구성원 / 구성원 목소리 표본(요약만, 임베딩은 내보내지 않는다)
 // 실제 로직은 services/recognition-aids.ts에 있고 여기서는 인자 검증과 DB 핸들 주입만 한다.
 //
 // 활동 로그(logActivity)는 남기지 않는다 — 용어집·구성원은 프로젝트 산출물이 아니라
@@ -16,6 +16,7 @@ import {
   type GlossaryInput,
   type MemberInput
 } from '../services/recognition-aids'
+import { listVoiceprints, clearVoiceprint } from '../services/voiceprint'
 
 // 렌더러에서 온 값은 신뢰하지 않는다 — 타입이 어긋나면 조용히 기본값으로 떨어뜨린다.
 function asId(v: unknown): number | null {
@@ -100,5 +101,14 @@ export function registerRecognitionAidsIpc(): void {
     if (target === null) return { success: false }
     removeMember(db, target)
     return { success: true }
+  })
+
+  // ── 구성원 목소리 ──
+  ipcMain.handle('recognitionAids:listVoiceprints', () => listVoiceprints(db))
+
+  ipcMain.handle('recognitionAids:clearVoiceprint', (_e, memberId: number) => {
+    const target = asId(memberId)
+    if (target === null) return { success: false, removed: 0 }
+    return { success: true, ...clearVoiceprint(db, target) }
   })
 }

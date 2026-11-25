@@ -431,6 +431,8 @@ export interface RecognitionAidsAPI {
     sort_order?: number
   }) => Promise<{ id: number }>
   removeMember: (id: number) => Promise<{ success: boolean }>
+  listVoiceprints: () => Promise<MemberVoiceprint[]>
+  clearVoiceprint: (memberId: number) => Promise<{ success: boolean }>
 }
 
 // ── 회의 녹음 (Meeting Recording) — docs/MEETING_RECORDING.md ──
@@ -483,6 +485,33 @@ export interface MeetingSpeaker {
   display_name: string | null
   color: string
   sort_order: number
+  // 목소리로 연결된 구성원. manual=사용자가 지정·확정, auto=목소리로 자동 지정, suggested=후보만 제시
+  member_id: number | null
+  member_source: 'manual' | 'auto' | 'suggested' | null
+  // 목소리 매칭 점수(코사인 0~1). 자동 지정·제안일 때만 값이 있다
+  match_score: number | null
+  // 이 화자의 목소리 임베딩이 저장돼 있는지 (임베딩 자체는 렌더러로 오지 않는다)
+  has_voice: boolean
+  // 이 화자 목소리가 구성원 표본으로 실제 저장돼 있는지
+  voice_enrolled: boolean
+  // member_id 구성원 이름 (제안 문구용)
+  member_name: string | null
+}
+
+// 목소리 등록·확인·거절 IPC 공통 반환
+export interface SpeakerVoiceResult {
+  success: boolean
+  error?: string
+  member_id?: number | null
+  enrolled?: boolean
+}
+
+// 구성원별 저장된 목소리 표본 요약
+export interface MemberVoiceprint {
+  member_id: number
+  sample_count: number
+  total_speech_ms: number
+  updated_at: string
 }
 
 export interface MeetingSegment {
@@ -646,7 +675,13 @@ export interface RecordingAPI {
   updateSpeaker: (
     speakerId: number,
     input: { display_name?: string | null; color?: string; label?: string }
-  ) => Promise<{ success: boolean }>
+  ) => Promise<{ success: boolean; member_id?: number | null; enrolled?: boolean }>
+  // 화자 목소리를 그 이름의 구성원 표본으로 등록 (구성원이 없으면 만든다)
+  enrollSpeakerVoice: (speakerId: number) => Promise<SpeakerVoiceResult>
+  // 자동 지정·제안을 맞다고 확정 → manual + 표본 등록
+  confirmSpeakerMatch: (speakerId: number) => Promise<SpeakerVoiceResult>
+  // 자동 지정·제안 거절 → 연결 해제, 다시 제안하지 않음
+  rejectSpeakerMatch: (speakerId: number) => Promise<SpeakerVoiceResult>
   reassignSegment: (segmentId: number, speakerId: number | null) => Promise<{ success: boolean }>
   updateSegmentText: (segmentId: number, text: string) => Promise<{ success: boolean }>
   addSpeaker: (

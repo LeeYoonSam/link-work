@@ -52,7 +52,7 @@ npm run build          # 프로덕션 번들 (out/)
 npm run deploy         # 빌드 → 앱 패키징(--dir) → ad-hoc 서명 → /Applications/LinkWork.app 에 반영
 ```
 
-그 밖의 스크립트: `npm run build:unpack`(패키징만, `dist/`), `npm run build:mac`(DMG), `npm run preview`(빌드 결과 미리보기), `npm run typecheck:node`, `npm run typecheck:web`, `npm run check:docs`(문서가 가리키는 경로·IPC 채널 검사).
+그 밖의 스크립트: `npm run build:unpack`(패키징만, `dist/`), `npm run build:mac`(DMG), `npm run preview`(빌드 결과 미리보기), `npm run typecheck:node`, `npm run typecheck:web`, `npm run check:docs`(문서가 가리키는 경로·IPC 채널 검사), `npm run check:diar`(이 Mac의 실제 녹음으로 화자 분리 실측 회귀, docs/MEETING_RECORDING.md §5-3).
 
 앱 데이터는 `~/Library/Application Support/` 아래 앱 폴더(`linkwork.db`, `recordings/`, `ai-attachments/`, `models/`)에 있다. 새 PC 로 옮길 때는 설정 > 데이터의 백업·복원을 쓴다([DATA_BACKUP.md](docs/DATA_BACKUP.md)).
 

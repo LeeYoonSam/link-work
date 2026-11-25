@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
 import { useRecognitionAidsStore } from '../../stores/recognitionAidsStore'
 import { formatClock } from '../../utils/processing-progress'
-import type { Meeting, MeetingStatus } from '../../types'
+import type { Meeting, MeetingSpeaker, MeetingStatus } from '../../types'
 import { Badge, IconButton, ProgressBar, TrashIcon, PencilIcon, XIcon, UndoIcon, button } from '../ui'
 import AudioPlayer from './AudioPlayer'
 import SpeakerTimeline from './SpeakerTimeline'
@@ -25,6 +25,20 @@ const SUMMARY_PIPELINE_VERSION = 2
 // 요약 재생성 요청을 전체 재처리로 승격시켜야 실제로 나아진다.
 export function needsFullReanalysis(m: Pick<Meeting, 'pipeline_version'>): boolean {
   return m.pipeline_version < SUMMARY_PIPELINE_VERSION
+}
+
+// 화자 탭의 "화자 다시 분리" 노출 조건.
+// 마이크 단독 녹음(source='mic')인데 목소리가 저장된 화자가 하나도 없으면 옛 화자분리로
+// 처리됐거나 분리에 실패한 회의다. 창 임베딩 화자분리로 다시 돌리면 화자가 나뉘고 목소리도
+// 저장된다. 채널 분리(mic+system)는 목소리를 저장하지 않으므로 대상이 아니다.
+// 전사가 끝난 회의만 — 녹음·처리 중인 회의에서 재처리를 걸지 않는다.
+export function canRediarize(
+  m: Pick<Meeting, 'source' | 'status'>,
+  speakers: Pick<MeetingSpeaker, 'has_voice'>[]
+): boolean {
+  if (m.source !== 'mic') return false
+  if (m.status !== 'transcribed' && m.status !== 'summarized') return false
+  return !speakers.some((s) => s.has_voice)
 }
 
 const STATUS_STYLES: Record<MeetingStatus, { badge: string; label: string }> = {
@@ -639,12 +653,29 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
             <SummaryPanel summary={summary} meetingId={meeting.id} />
           ))}
         {tab === 'speakers' && (
-          <SpeakerEditor
-            speakers={speakers}
-            meetingId={meeting.id}
-            kind={meeting.kind}
-            attendees={attendees}
-          />
+          <div className="space-y-3">
+            {canRediarize(meeting, speakers) && (
+              <div className="flex items-center gap-2 rounded-md bg-gray-50 px-3 py-2">
+                <p className="flex-1 text-[11px] text-gray-500">
+                  화자를 목소리로 다시 나눕니다. 요약도 다시 만듭니다.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleReprocess(true)}
+                  disabled={busy}
+                  className={`shrink-0 px-2.5 py-1 text-xs disabled:opacity-50 ${button.subtle}`}
+                >
+                  {reprocessing ? '분리 중…' : '화자 다시 분리'}
+                </button>
+              </div>
+            )}
+            <SpeakerEditor
+              speakers={speakers}
+              meetingId={meeting.id}
+              kind={meeting.kind}
+              attendees={attendees}
+            />
+          </div>
         )}
       </div>
 

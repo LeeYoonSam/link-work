@@ -10,6 +10,15 @@ import { wavDurationMs } from '../services/wav-util'
 import { cancelPipeline } from '../services/pipeline-abort'
 import { setAttendees, listAttendees } from '../services/recognition-aids'
 import { recoverOrphanRecordings, discardDraft } from '../services/recording-recovery'
+import {
+  syncSpeakerEnrollment,
+  enrollSpeakerVoice,
+  confirmSpeakerMatch,
+  rejectSpeakerMatch,
+  mergeSpeakerVoices,
+  speakersBelongToMeeting,
+  parseRejectedIds
+} from '../services/voiceprint'
 import type {
   RecordingStreamEvent,
   SendStream,
@@ -145,9 +154,34 @@ export function registerRecordingIpc(): void {
   ipcMain.handle('recording:get', (_e, id: number) => {
     const meeting = db.prepare('SELECT * FROM meetings WHERE id = ?').get(id)
     if (!meeting) return null
-    const speakers = db
-      .prepare('SELECT * FROM meeting_speakers WHERE meeting_id = ? ORDER BY sort_order, id')
-      .all(id)
+    // 화자마다 목소리 유무(has_voice)·표본 등록 여부(voice_enrolled)·연결된 구성원 이름(member_name)을 붙인다.
+    // 임베딩(BLOB)은 meeting_speaker_voices에만 있고 렌더러로 내보내지 않는다.
+    const speakers = (
+      db
+        .prepare(
+          `SELECT s.*,
+                  CASE WHEN v.speaker_id IS NULL THEN 0 ELSE 1 END AS has_voice,
+                  CASE WHEN EXISTS (
+                    SELECT 1 FROM member_voice_samples x
+                     WHERE x.member_id = s.member_id AND x.meeting_id = s.meeting_id
+                       AND x.speaker_key = s.speaker_key
+                  ) THEN 1 ELSE 0 END AS voice_enrolled,
+                  m.name AS member_name
+             FROM meeting_speakers s
+             LEFT JOIN meeting_speaker_voices v ON v.speaker_id = s.id
+             LEFT JOIN meeting_members m ON m.id = s.member_id
+            WHERE s.meeting_id = ?
+            ORDER BY s.sort_order, s.id`
+        )
+        .all(id) as Array<
+        Record<string, unknown> & { has_voice: number; voice_enrolled: number; rejected_member_ids: string }
+      >
+    ).map((sp) => ({
+      ...sp,
+      has_voice: sp.has_voice === 1,
+      voice_enrolled: sp.voice_enrolled === 1,
+      rejected_member_ids: parseRejectedIds(sp.rejected_member_ids)
+    }))
     const segments = db
       .prepare('SELECT * FROM meeting_segments WHERE meeting_id = ? ORDER BY start_ms, sort_order, id')
       .all(id)
@@ -354,10 +388,45 @@ export function registerRecordingIpc(): void {
       }
       if (fields.length === 0) return { success: false }
       values.push(speakerId)
-      db.prepare(`UPDATE meeting_speakers SET ${fields.join(', ')} WHERE id = ?`).run(...values)
-      return { success: true }
+      // 이름이 바뀌면 구성원 연결·목소리 표본을 함께 맞춘다(voiceprint.syncSpeakerEnrollment).
+      const tx = db.transaction(() => {
+        db.prepare(`UPDATE meeting_speakers SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+        if (input.display_name !== undefined) return syncSpeakerEnrollment(db, speakerId)
+        const row = db.prepare('SELECT member_id FROM meeting_speakers WHERE id = ?').get(speakerId) as
+          | { member_id: number | null }
+          | undefined
+        return { member_id: row?.member_id ?? null, enrolled: false }
+      })
+      const result = tx()
+      return { success: true, member_id: result.member_id, enrolled: result.enrolled }
     }
   )
+
+  // ── 목소리 등록 ──
+  // [목소리 등록]: 화자 이름이 구성원이 아니면 그 이름으로 구성원을 만든 뒤 표본으로 등록한다.
+  ipcMain.handle('recording:enrollSpeakerVoice', (_e, speakerId: number) => {
+    try {
+      const result = db.transaction(() => enrollSpeakerVoice(db, speakerId))()
+      return { success: true, ...result }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  // [맞음]/[지정]: 자동 지정·제안을 확정(manual)하고 표본으로 등록한다.
+  ipcMain.handle('recording:confirmSpeakerMatch', (_e, speakerId: number) => {
+    try {
+      const result = db.transaction(() => confirmSpeakerMatch(db, speakerId))()
+      return { success: true, ...result }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  // [이 사람 아님]/[아님]: 거부 목록에 넣고 연결을 끊는다(auto였으면 이름도 비운다).
+  ipcMain.handle('recording:rejectSpeakerMatch', (_e, speakerId: number) => {
+    return db.transaction(() => rejectSpeakerMatch(db, speakerId))()
+  })
 
   ipcMain.handle('recording:reassignSegment', (_e, segmentId: number, speakerId: number | null) => {
     db.prepare(
@@ -402,7 +471,13 @@ export function registerRecordingIpc(): void {
   ipcMain.handle(
     'recording:mergeSpeakers',
     (_e, meetingId: number, fromSpeakerId: number, intoSpeakerId: number) => {
+      // 두 화자가 서로 다르고 모두 이 회의 소속일 때만 병합한다.
+      if (!speakersBelongToMeeting(db, meetingId, [fromSpeakerId, intoSpeakerId])) {
+        return { success: false, error: '같은 회의의 서로 다른 화자만 합칠 수 있습니다.' }
+      }
       const tx = db.transaction(() => {
+        // 두 centroid를 speech_ms 가중 평균해 into에 둔다(from의 표본은 지운다).
+        mergeSpeakerVoices(db, meetingId, fromSpeakerId, intoSpeakerId)
         db.prepare(
           'UPDATE meeting_segments SET speaker_id = ?, speaker_corrected = 1 WHERE meeting_id = ? AND speaker_id = ?'
         ).run(intoSpeakerId, meetingId, fromSpeakerId)

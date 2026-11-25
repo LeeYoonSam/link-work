@@ -1,5 +1,5 @@
 // 화자분리 결과에 붙일 사용자 안내 문장(note) — 순수 함수.
-// diarizeWithFallback이 품질이 강등됐거나 알릴 것이 있을 때만 note를 채운다.
+// diarizeWithFallback이 품질이 강등됐을 때만 note를 채운다.
 
 /** 에러 객체에서 사람이 읽을 원인 메시지를 뽑는다. */
 export function errorMessage(err: unknown): string {
@@ -35,15 +35,6 @@ export function sherpaFailedNote(cause?: string): string {
 /** sherpa가 화자 구간을 하나도 내지 못한 경우. */
 export function sherpaEmptyNote(): string {
   return '화자분리 결과가 비어 있어 화자를 구분하지 않았습니다.'
-}
-
-/** centroid 정제로 화자 수가 줄었을 때만 문장을 돌려준다. */
-export function mergeNote(
-  info: { speakersBefore: number; speakersAfter: number; refined: boolean } | undefined
-): string | undefined {
-  if (!info || !info.refined) return undefined
-  if (info.speakersAfter >= info.speakersBefore) return undefined
-  return `유사한 화자 ${info.speakersBefore}명을 ${info.speakersAfter}명으로 병합했습니다.`
 }
 
 /** 2-스테이지(참석 3명 이상)에서 sherpa를 못 써 채널 2화자(나/상대)로 강등된 경우. */

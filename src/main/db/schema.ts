@@ -8,6 +8,7 @@
 // 여러 번 실행해도 결과가 같다(멱등).
 import type Database from 'better-sqlite3'
 import { RECOGNITION_AIDS_SCHEMA } from '../services/recognition-aids'
+import { applyVoiceprintSchema } from '../services/voiceprint'
 import { ASSISTANT_SCHEMA, migrateAssistantSchema } from '../services/assistant-schema'
 
 /**
@@ -439,6 +440,9 @@ export function applySchema(db: Database.Database): void {
   // 한 곳에서 관리한다(services/recognition-aids.ts) — 테스트도 같은 정의를 본다.
   // meeting_attendees가 meetings/meeting_members를 참조하므로 위 DDL 뒤에 실행한다.
   db.exec(RECOGNITION_AIDS_SCHEMA)
+  // 목소리 등록(화자 centroid·구성원 표본 + meeting_speakers 구성원 연결 컬럼). 정의는 services/voiceprint.ts.
+  // meeting_speakers·meetings·meeting_members를 참조하므로 RECOGNITION_AIDS_SCHEMA 뒤에 실행한다.
+  applyVoiceprintSchema(db)
   // 비서 테이블(daily_plans·plan_items·assistant_events). 정의는 services/assistant-schema.ts.
   db.exec(ASSISTANT_SCHEMA)
   migrateAssistantSchema(db)

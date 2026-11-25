@@ -1,4 +1,5 @@
 // 인식 보조 장치 — 용어집(stt_glossary) / 구성원(meeting_members) / 회의 참석자(meeting_attendees)
+// 구성원 목소리 표본(member_voice_samples)은 services/voiceprint.ts가 다룬다.
 // SSOT: docs/MEETING_RECORDING.md
 //
 // 회사 고유명사·사내 약어는 코드에 넣지 않는다. 사용자가 직접 입력한 값만 로컬 SQLite에 남고,
@@ -348,10 +349,15 @@ export function upsertMember(db: Db, input: MemberInput): { id: number } {
   return { id: Number(result.lastInsertRowid) }
 }
 
-// FK CASCADE가 켜져 있으면 참석자 행도 함께 지워지지만, PRAGMA 상태에 기대지 않고 명시적으로 지운다.
+// FK CASCADE가 켜져 있으면 참석자 행·목소리 표본도 함께 지워지지만, PRAGMA 상태에 기대지 않고
+// 명시적으로 지운다. 회의 화자의 구성원 연결(meeting_speakers.member_id)은 끊는다(이름은 둔다).
 export function removeMember(db: Db, id: number): void {
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM meeting_attendees WHERE member_id = ?').run(id)
+    db.prepare('DELETE FROM member_voice_samples WHERE member_id = ?').run(id)
+    db.prepare(
+      'UPDATE meeting_speakers SET member_id = NULL, member_source = NULL, match_score = NULL WHERE member_id = ?'
+    ).run(id)
     db.prepare('DELETE FROM meeting_members WHERE id = ?').run(id)
   })
   tx()

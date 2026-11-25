@@ -1,15 +1,16 @@
 import { describe, it, expect, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { GlossaryEntry, Member } from '../../types'
+import type { GlossaryEntry, Member, MemberVoiceprint } from '../../types'
 
 // 인식 보조 패널(용어집·구성원)이 등록된 항목과 빈 상태·고지 문구를 실제로 그리는지 고정한다.
 //
 // zustand v5는 서버 렌더(renderToStaticMarkup)에서 useSyncExternalStore의
 // getServerSnapshot으로 **초기 상태**를 돌려준다. setState로 주입해도 렌더에 반영되지
 // 않으므로 스토어 훅 자체를 모킹한다 (RecordingList.test.tsx와 같은 방식).
-const state: { glossary: GlossaryEntry[]; members: Member[] } = {
+const state: { glossary: GlossaryEntry[]; members: Member[]; voiceprints: MemberVoiceprint[] } = {
   glossary: [],
-  members: []
+  members: [],
+  voiceprints: []
 }
 
 const noop = async (): Promise<boolean> => true
@@ -25,7 +26,9 @@ vi.mock('../../stores/recognitionAidsStore', () => ({
     removeGlossary: noop,
     importGlossaryText: async () => null,
     upsertMember: noop,
-    removeMember: noop
+    removeMember: noop,
+    voiceprints: state.voiceprints,
+    clearVoiceprint: noop
   })
 }))
 
@@ -65,6 +68,7 @@ const render = (
 ): string => {
   state.glossary = next.glossary ?? []
   state.members = next.members ?? []
+  state.voiceprints = next.voiceprints ?? []
   return renderToStaticMarkup(<RecognitionAidsPanel initialTab={tab} />)
 }
 
@@ -106,5 +110,26 @@ describe('RecognitionAidsPanel', () => {
     const html = render({}, 'glossary')
     expect(html).toContain('텍스트로 가져오기')
     expect(html).toContain('정답 | 별칭1, 별칭2 | 메모')
+  })
+
+  it('목소리 표본이 있는 구성원에만 건수와 [목소리 삭제]를 보여준다', () => {
+    const html = render(
+      {
+        members: [member(1, '홍길동', [], null), member(2, '김철수', [], null)],
+        voiceprints: [
+          { member_id: 1, sample_count: 3, total_speech_ms: 180_000, updated_at: '2026-11-20 10:00:00' }
+        ]
+      },
+      'members'
+    )
+    expect(html).toContain('목소리 3건')
+    // 표본 있는 구성원 1명에게만 버튼이 붙는다
+    expect(html.split('목소리 삭제').length - 1).toBe(1)
+  })
+
+  it('목소리 표본이 없으면 목소리 표시를 그리지 않는다', () => {
+    const html = render({ members: [member(1, '홍길동', [], null)] }, 'members')
+    expect(html).not.toContain('목소리 삭제')
+    expect(html).not.toMatch(/목소리 \d+건/)
   })
 })

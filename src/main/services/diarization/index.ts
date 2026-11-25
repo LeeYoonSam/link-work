@@ -3,18 +3,19 @@
 // mic 단독: sherpa 임베딩 다화자 분리 → none.
 // 채널 에너지(.channels.json)가 없어도 sherpa 로 폴백하므로 mic+system 녹음이 단일 화자로 무너지지 않는다.
 import type { DiarTurn, SttSegment } from '../meeting-types'
-import { SherpaAdapter } from './sherpa-adapter'
+import { SherpaAdapter, type SpeakerVoice } from './sherpa-adapter'
 import { ChannelAdapter } from './channel-adapter'
 import { combineTwoStage } from './two-stage'
 import {
   errorMessage,
-  mergeNote,
   sherpaEmptyNote,
   sherpaFailedNote,
   sherpaUnavailableNote,
   twoStageDegradedNote
 } from './notes'
 
+export type { SpeakerVoice } from './sherpa-adapter'
+export { VOICE_EMBEDDING_MODEL } from './window-plan'
 
 interface DiarizeOptions {
   source: string
@@ -36,13 +37,16 @@ function abortError(): Error {
 /**
  * 화자분리 결과.
  * - turns/adapter: 기존 의미 그대로.
- * - note: 사용자에게 보여줄 한국어 한 문장. 품질이 강등됐거나(모델 준비 실패·sherpa 실패 등)
- *   알릴 것이 있을 때(centroid 정제로 화자 수가 줄어든 경우)만 채운다.
+ * - note: 사용자에게 보여줄 한국어 한 문장. 품질이 강등됐을 때(모델 준비 실패·sherpa 실패 등)만 채운다.
+ * - voices/embeddingModel: adapter==='sherpa'일 때만. 화자별 centroid(turn 의 speaker_key 기준)와
+ *   그 임베딩 식별자(VOICE_EMBEDDING_MODEL). channel·two-stage·none 에는 없다.
  */
-interface DiarizeResult {
+export interface DiarizeResult {
   turns: DiarTurn[]
   adapter: string
   note?: string
+  voices?: SpeakerVoice[]
+  embeddingModel?: string
 }
 
 /**
@@ -99,8 +103,12 @@ export async function diarizeWithFallback(audioPath: string, opts: DiarizeOption
         signal: opts.signal
       })
       if (turns.length > 0) {
-        const note = mergeNote(sherpa.lastInfo)
-        return note ? { turns, adapter: 'sherpa', note } : { turns, adapter: 'sherpa' }
+        const result: DiarizeResult = { turns, adapter: 'sherpa' }
+        if (sherpa.lastVoices) {
+          result.voices = sherpa.lastVoices
+          result.embeddingModel = sherpa.lastEmbeddingModel
+        }
+        return result
       }
       return { turns: [], adapter: 'none', note: sherpaEmptyNote() }
     } catch (err) {

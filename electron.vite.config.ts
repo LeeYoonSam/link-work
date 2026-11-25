@@ -50,10 +50,12 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        // 메인 엔트리 + 화자분리 워커(utilityProcess용)를 함께 빌드 → out/main/[name].js
+        // 메인 엔트리 + 화자분리 워커(utilityProcess용) + 화자분리 실측 CLI(ELECTRON_RUN_AS_NODE용,
+        // electron 미의존)를 함께 빌드 → out/main/[name].js
         input: {
           index: resolve('src/main/index.ts'),
-          'diarization-worker': resolve('src/main/services/diarization/worker.ts')
+          'diarization-worker': resolve('src/main/services/diarization/worker.ts'),
+          'diarization-cli': resolve('src/main/services/diarization/cli.ts')
         },
         // 회의 녹음용 선택적 네이티브 모듈 — 미설치 시 런타임 try/catch로 폴백되므로
         // 번들에 포함하지 않고 외부화한다 (docs/MEETING_RECORDING.md §9).

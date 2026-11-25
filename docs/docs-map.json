@@ -100,6 +100,8 @@
         "src/main/services/{meeting-pipeline,meeting-summary,meeting-types,interview-summary,summary-spec,writing-style}.ts",
         "src/main/services/{audio-compaction,wav-util,system-audio-loopback,pipeline-abort,transcript-cleaner}.ts",
         "src/main/services/{recording-guard,recording-recovery,speaker-assign,speaker-carryover,recognition-aids}.ts",
+        "src/main/services/voiceprint.ts",
+        "scripts/diar-regress.mjs",
         "src/main/services/stt/**",
         "src/main/services/vad/**",
         "src/main/services/diarization/**",

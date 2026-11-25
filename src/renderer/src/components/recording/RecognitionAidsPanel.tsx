@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useRecognitionAidsStore } from '../../stores/recognitionAidsStore'
-import type { GlossaryEntry, Member } from '../../types'
+import type { GlossaryEntry, Member, MemberVoiceprint } from '../../types'
 import { Badge, IconButton, TrashIcon } from '../ui'
 
 type AidsTab = 'glossary' | 'members'
@@ -48,7 +48,9 @@ export default function RecognitionAidsPanel({
     removeGlossary,
     importGlossaryText,
     upsertMember,
-    removeMember
+    removeMember,
+    voiceprints,
+    clearVoiceprint
   } = useRecognitionAidsStore()
 
   const [tab, setTab] = useState<AidsTab>(initialTab)
@@ -109,7 +111,13 @@ export default function RecognitionAidsPanel({
           onImport={importGlossaryText}
         />
       ) : (
-        <MembersTab members={members} onUpsert={upsertMember} onRemove={removeMember} />
+        <MembersTab
+          members={members}
+          voiceprints={voiceprints ?? []}
+          onUpsert={upsertMember}
+          onRemove={removeMember}
+          onClearVoice={clearVoiceprint}
+        />
       )}
     </div>
   )
@@ -400,13 +408,18 @@ type UpsertMember = (input: {
 
 function MembersTab({
   members,
+  voiceprints,
   onUpsert,
-  onRemove
+  onRemove,
+  onClearVoice
 }: {
   members: Member[]
+  voiceprints: MemberVoiceprint[]
   onUpsert: UpsertMember
   onRemove: (id: number) => Promise<boolean>
+  onClearVoice: (memberId: number) => Promise<boolean>
 }): React.ReactNode {
+  const voiceByMember = new Map(voiceprints.map((v) => [v.member_id, v]))
   const [newName, setNewName] = useState('')
   const [newRole, setNewRole] = useState('')
   const [adding, setAdding] = useState(false)
@@ -440,7 +453,14 @@ function MembersTab({
       ) : (
         <ul className="space-y-1.5">
           {members.map((m) => (
-            <MemberRow key={m.id} member={m} onUpsert={onUpsert} onRemove={onRemove} />
+            <MemberRow
+              key={m.id}
+              member={m}
+              voiceprint={voiceByMember.get(m.id) ?? null}
+              onUpsert={onUpsert}
+              onRemove={onRemove}
+              onClearVoice={onClearVoice}
+            />
           ))}
         </ul>
       )}
@@ -481,12 +501,16 @@ function MembersTab({
 
 function MemberRow({
   member,
+  voiceprint,
   onUpsert,
-  onRemove
+  onRemove,
+  onClearVoice
 }: {
   member: Member
+  voiceprint: MemberVoiceprint | null
   onUpsert: UpsertMember
   onRemove: (id: number) => Promise<boolean>
+  onClearVoice: (memberId: number) => Promise<boolean>
 }): React.ReactNode {
   const [name, setName] = useState(member.name)
   const [aliases, setAliases] = useState(member.aliases.join(', '))
@@ -571,6 +595,25 @@ function MemberRow({
       >
         {enabled ? '사용' : '끔'}
       </Badge>
+      {voiceprint && voiceprint.sample_count > 0 && (
+        <>
+          <Badge
+            color="bg-gray-100 text-gray-600"
+            size="xs"
+            title={`저장된 목소리 표본 ${voiceprint.sample_count}건 · 이 기기에만 저장`}
+          >
+            목소리 {voiceprint.sample_count}건
+          </Badge>
+          <button
+            type="button"
+            onClick={() => void onClearVoice(member.id)}
+            className="shrink-0 text-[10px] px-1.5 py-0.5 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+            title="이 구성원의 목소리 표본을 모두 지웁니다"
+          >
+            목소리 삭제
+          </button>
+        </>
+      )}
       <IconButton title="구성원 삭제" onClick={() => void onRemove(member.id)} tone="danger">
         <TrashIcon size={13} />
       </IconButton>

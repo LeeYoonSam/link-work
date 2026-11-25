@@ -3,7 +3,8 @@ import type {
   Meeting,
   MeetingDetail,
   MeetingKind,
-  RecordingStreamEvent
+  RecordingStreamEvent,
+  SpeakerVoiceResult
 } from '../types'
 import { blobToWav16kMono } from '../utils/audio'
 import { mergeProcessingEvent } from '../utils/processing-progress'
@@ -11,6 +12,35 @@ import type { ProcessingState } from '../utils/processing-progress'
 
 // 진행 상태의 형태와 이벤트 병합 규칙은 utils/processing-progress.ts가 갖는다.
 // 화면들이 스토어를 통해 그대로 쓸 수 있도록 다시 내보낸다.
+
+// 목소리 등록·확인·거절 결과. ok=false면 실패, message는 사용자에게 보여줄 안내(없으면 null)
+export interface VoiceActionOutcome {
+  ok: boolean
+  message: string | null
+}
+
+export type VoiceAction = 'enroll' | 'confirm' | 'reject'
+
+const VOICE_FAIL: Record<VoiceAction, string> = {
+  enroll: '목소리 등록 실패',
+  confirm: '목소리 지정 실패',
+  reject: '목소리 지정 해제 실패'
+}
+
+// IPC 반환을 사용자 안내로 바꾼다. result=null은 호출 자체가 throw한 경우.
+// 등록·확정이 성공했어도 enrolled===false면 발화가 짧아 표본을 저장하지 않은 것이다.
+export function voiceActionOutcome(
+  action: VoiceAction,
+  result: SpeakerVoiceResult | null
+): VoiceActionOutcome {
+  if (!result || !result.success) {
+    return { ok: false, message: result?.error?.trim() || VOICE_FAIL[action] }
+  }
+  if (action !== 'reject' && result.enrolled === false) {
+    return { ok: true, message: '발화가 짧아 목소리는 등록하지 않았습니다.' }
+  }
+  return { ok: true, message: null }
+}
 
 // 목록 필터 — 'all'이면 회의·면접을 함께 본다
 export type KindFilter = 'all' | MeetingKind
@@ -66,6 +96,10 @@ interface RecordingStore {
     speakerId: number,
     input: { display_name?: string | null; color?: string; label?: string }
   ) => Promise<void>
+  // 목소리 등록·자동 지정 확인/거절. throw하지 않고 결과와 안내 문구를 돌려준다
+  enrollSpeakerVoice: (speakerId: number) => Promise<VoiceActionOutcome>
+  confirmSpeakerMatch: (speakerId: number) => Promise<VoiceActionOutcome>
+  rejectSpeakerMatch: (speakerId: number) => Promise<VoiceActionOutcome>
   reassignSegment: (segmentId: number, speakerId: number | null) => Promise<void>
   updateSegmentText: (segmentId: number, text: string) => Promise<void>
   // 새 화자를 추가하고 id를 반환 (같은 이름이 있으면 기존 화자 id 재사용). 실패 시 null
@@ -300,6 +334,39 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
       await get().refreshCurrent()
     } catch (err) {
       console.error('[recordingStore] updateSpeaker error:', err)
+    }
+  },
+
+  enrollSpeakerVoice: async (speakerId) => {
+    try {
+      const r = await window.api.recording.enrollSpeakerVoice(speakerId)
+      await get().refreshCurrent()
+      return voiceActionOutcome('enroll', r)
+    } catch (err) {
+      console.error('[recordingStore] enrollSpeakerVoice error:', err)
+      return voiceActionOutcome('enroll', null)
+    }
+  },
+
+  confirmSpeakerMatch: async (speakerId) => {
+    try {
+      const r = await window.api.recording.confirmSpeakerMatch(speakerId)
+      await get().refreshCurrent()
+      return voiceActionOutcome('confirm', r)
+    } catch (err) {
+      console.error('[recordingStore] confirmSpeakerMatch error:', err)
+      return voiceActionOutcome('confirm', null)
+    }
+  },
+
+  rejectSpeakerMatch: async (speakerId) => {
+    try {
+      const r = await window.api.recording.rejectSpeakerMatch(speakerId)
+      await get().refreshCurrent()
+      return voiceActionOutcome('reject', r)
+    } catch (err) {
+      console.error('[recordingStore] rejectSpeakerMatch error:', err)
+      return voiceActionOutcome('reject', null)
     }
   },
 

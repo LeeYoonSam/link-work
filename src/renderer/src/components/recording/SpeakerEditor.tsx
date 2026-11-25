@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
+import type { VoiceAction } from '../../stores/recordingStore'
 import type { Attendee, MeetingKind, MeetingSpeaker } from '../../types'
+import { Badge } from '../ui'
 
 interface Props {
   speakers: MeetingSpeaker[]
@@ -48,16 +50,171 @@ export function buildNamePresets(kind: MeetingKind | undefined, attendees: Atten
   return out.slice(0, MAX_NAME_PRESETS)
 }
 
+// 화자 행에 붙는 목소리 상태. 표시와 버튼이 함께 갈리므로 판정을 한곳에 둔다.
+//  - auto: 목소리로 자동 지정됨 → 맞음/이 사람 아님
+//  - suggested: 후보만 있음 → 지정/아님
+//  - enrolled: 이 화자 목소리가 구성원 표본으로 실제 저장됨
+//  - enrollable: 이름이 있고 목소리가 있는데 아직 표본으로 저장되지 않음 → 목소리 등록
+export type SpeakerVoiceState = 'auto' | 'suggested' | 'enrolled' | 'enrollable' | null
+
+export function speakerVoiceState(
+  s: Pick<
+    MeetingSpeaker,
+    'display_name' | 'member_id' | 'member_source' | 'has_voice' | 'voice_enrolled'
+  >
+): SpeakerVoiceState {
+  if (s.member_id != null && s.member_source === 'auto') return 'auto'
+  if (s.member_id != null && s.member_source === 'suggested') return 'suggested'
+  if (s.voice_enrolled) return 'enrolled'
+  if (s.has_voice && (s.display_name ?? '').trim() !== '') return 'enrollable'
+  return null
+}
+
+// 매칭 점수(코사인 0~1)를 사람이 읽는 퍼센트로
+export function formatMatchScore(score: number | null): string | null {
+  if (score == null || !Number.isFinite(score)) return null
+  return `${Math.round(Math.max(0, Math.min(1, score)) * 100)}%`
+}
+
+const voiceBtn =
+  'text-[10px] px-1.5 py-0.5 rounded transition-colors disabled:opacity-50'
+
+// 화자 행의 목소리 배지·버튼. 훅을 쓰지 않는 표시 전용 컴포넌트다(테스트에서 직접 호출한다).
+export function SpeakerVoiceControls({
+  speaker,
+  busy,
+  onAction
+}: {
+  speaker: Pick<
+    MeetingSpeaker,
+    | 'display_name'
+    | 'member_id'
+    | 'member_source'
+    | 'match_score'
+    | 'has_voice'
+    | 'voice_enrolled'
+    | 'member_name'
+  >
+  busy: boolean
+  onAction: (action: VoiceAction) => void
+}): React.ReactNode {
+  const state = speakerVoiceState(speaker)
+  if (state == null) return null
+
+  const act =
+    (action: VoiceAction) =>
+    (e: { stopPropagation: () => void }): void => {
+      e.stopPropagation()
+      onAction(action)
+    }
+
+  if (state === 'auto') {
+    const pct = formatMatchScore(speaker.match_score)
+    return (
+      <div className="flex items-center gap-1 shrink-0">
+        <Badge color="bg-blue-50 text-blue-600" size="xs" title="저장된 목소리와 비교해 지정했습니다">
+          {pct ? `목소리로 자동 지정 · ${pct}` : '목소리로 자동 지정'}
+        </Badge>
+        <button
+          type="button"
+          onClick={act('confirm')}
+          disabled={busy}
+          className={`${voiceBtn} bg-blue-50 text-blue-600 hover:bg-blue-100`}
+          title="맞으면 이 목소리를 등록합니다"
+        >
+          맞음
+        </button>
+        <button
+          type="button"
+          onClick={act('reject')}
+          disabled={busy}
+          className={`${voiceBtn} text-gray-400 hover:text-gray-600 hover:bg-gray-100`}
+        >
+          이 사람 아님
+        </button>
+      </div>
+    )
+  }
+
+  if (state === 'suggested') {
+    return (
+      <div className="flex items-center gap-1 shrink-0">
+        <span className="text-[11px] text-gray-500">혹시 {speaker.member_name ?? '구성원'}?</span>
+        <button
+          type="button"
+          onClick={act('confirm')}
+          disabled={busy}
+          className={`${voiceBtn} bg-blue-50 text-blue-600 hover:bg-blue-100`}
+        >
+          지정
+        </button>
+        <button
+          type="button"
+          onClick={act('reject')}
+          disabled={busy}
+          className={`${voiceBtn} text-gray-400 hover:text-gray-600 hover:bg-gray-100`}
+        >
+          아님
+        </button>
+      </div>
+    )
+  }
+
+  if (state === 'enrolled') {
+    return (
+      <Badge color="bg-green-50 text-green-700" size="xs" title="다음 회의부터 이 목소리로 화자를 찾습니다">
+        목소리 등록됨
+      </Badge>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={act('enroll')}
+      disabled={busy}
+      className={`shrink-0 ${voiceBtn} bg-gray-100 text-gray-500 hover:bg-blue-50 hover:text-blue-600`}
+      title="이 이름의 구성원으로 목소리를 등록합니다"
+    >
+      목소리 등록
+    </button>
+  )
+}
+
+// 목소리 액션 결과 안내. 실패는 병합 실패와 같은 빨간 줄, 참고 안내는 회색 줄
+export function VoiceNotice({ ok, message }: { ok: boolean; message: string }): React.ReactNode {
+  return (
+    <p
+      role={ok ? 'status' : 'alert'}
+      className={`text-xs px-3 py-2 rounded-md ${
+        ok ? 'text-gray-500 bg-gray-50' : 'text-red-500 bg-red-50'
+      }`}
+    >
+      {message}
+    </p>
+  )
+}
+
 export default function SpeakerEditor({
   speakers,
   meetingId,
   kind,
   attendees
 }: Props): React.ReactNode {
-  const { updateSpeaker, mergeSpeakers, refreshCurrent } = useRecordingStore()
+  const {
+    updateSpeaker,
+    mergeSpeakers,
+    refreshCurrent,
+    confirmSpeakerMatch,
+    rejectSpeakerMatch,
+    enrollSpeakerVoice
+  } = useRecordingStore()
   const [mergeFrom, setMergeFrom] = useState<number | null>(null)
   const [mergeBusy, setMergeBusy] = useState(false)
   const [mergeError, setMergeError] = useState<string | null>(null)
+  const [voiceBusyId, setVoiceBusyId] = useState<number | null>(null)
+  // 목소리 액션 안내. ok=false는 실패(빨강), ok=true는 참고 안내(회색)
+  const [voiceNotice, setVoiceNotice] = useState<{ ok: boolean; message: string } | null>(null)
 
   const namePresets = buildNamePresets(kind, attendees ?? [])
 
@@ -81,6 +238,24 @@ export default function SpeakerEditor({
       setMergeError(e instanceof Error ? e.message : '병합 실패')
     } finally {
       setMergeBusy(false)
+    }
+  }
+
+  // 목소리 액션은 store가 상세를 새로고침한다. 실패하면 버튼은 그대로 두고 안내만 띄운다
+  const handleVoiceAction = async (speakerId: number, action: VoiceAction): Promise<void> => {
+    setVoiceBusyId(speakerId)
+    setVoiceNotice(null)
+    try {
+      const run =
+        action === 'confirm'
+          ? confirmSpeakerMatch
+          : action === 'reject'
+            ? rejectSpeakerMatch
+            : enrollSpeakerVoice
+      const outcome = await run(speakerId)
+      if (outcome.message) setVoiceNotice({ ok: outcome.ok, message: outcome.message })
+    } finally {
+      setVoiceBusyId(null)
     }
   }
 
@@ -119,6 +294,8 @@ export default function SpeakerEditor({
               setMergeFrom((prev) => (prev === spk.id ? null : spk.id))
             }
             onMergeInto={() => handleMerge(spk.id)}
+            voiceBusy={voiceBusyId === spk.id}
+            onVoiceAction={(action) => void handleVoiceAction(spk.id, action)}
           />
         ))}
       </ul>
@@ -140,6 +317,8 @@ export default function SpeakerEditor({
         </p>
       )}
 
+      {voiceNotice && <VoiceNotice ok={voiceNotice.ok} message={voiceNotice.message} />}
+
       {mergeError && (
         <p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-md">{mergeError}</p>
       )}
@@ -156,7 +335,9 @@ function SpeakerRow({
   mergeBusy,
   onUpdate,
   onSelectMergeFrom,
-  onMergeInto
+  onMergeInto,
+  voiceBusy,
+  onVoiceAction
 }: {
   speaker: MeetingSpeaker
   namePresets: string[]
@@ -168,6 +349,8 @@ function SpeakerRow({
   onUpdate: (input: { display_name?: string | null; color?: string }) => Promise<void>
   onSelectMergeFrom: () => void
   onMergeInto: () => Promise<void>
+  voiceBusy: boolean
+  onVoiceAction: (action: VoiceAction) => void
 }): React.ReactNode {
   const [editingName, setEditingName] = useState(false)
   const [nameValue, setNameValue] = useState(speaker.display_name ?? '')
@@ -175,6 +358,11 @@ function SpeakerRow({
   const [saving, setSaving] = useState(false)
 
   const isSelected = mergeFromId === speaker.id
+
+  // 자동 지정·거절로 이름이 바깥에서 바뀌면 입력 초안도 따라간다 (편집 중에는 덮지 않는다)
+  useEffect(() => {
+    if (!editingName) setNameValue(speaker.display_name ?? '')
+  }, [speaker.display_name])
 
   const handleNameSave = async (): Promise<void> => {
     setEditingName(false)
@@ -319,6 +507,15 @@ function SpeakerRow({
             </button>
           ))}
         </div>
+      )}
+
+      {/* 목소리 자동 지정·제안·등록 */}
+      {!isMergeTarget && !editingName && (
+        <SpeakerVoiceControls
+          speaker={speaker}
+          busy={voiceBusy || saving}
+          onAction={onVoiceAction}
+        />
       )}
 
       {/* 병합 선택 버튼 */}

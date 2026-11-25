@@ -9,7 +9,7 @@
 
 | 항목 | 백업 포함 | 그룹 | 비고 |
 |---|---|---|---|
-| `linkwork.db` (SQLite, WAL) — 프로젝트·작업(옛 데이터)·TODO·메모·문서·변수·회의(전사/화자/컷/요약/참석자)·용어집/구성원·릴리스 노트·AI 대화·활동 로그·설정 | **포함** | 테이블마다 아래 그룹 표 | 기기 종속 시크릿만 제거(아래) |
+| `linkwork.db` (SQLite, WAL) — 프로젝트·작업(옛 데이터)·TODO·메모·문서·변수·회의(전사/화자/컷/요약/참석자)·용어집/구성원·구성원 목소리 표본·릴리스 노트·AI 대화·활동 로그·설정 | **포함** | 테이블마다 아래 그룹 표 | 기기 종속 시크릿만 제거(아래) |
 | `recordings/` (`<id>.wav`, `<id>.channels.json`, `<id>.compaction.json`) | **포함** | `meetings` | DB는 파일명만 저장하므로 경로 독립 |
 | `ai-attachments/` (AI 대화 이미지) | **포함** | `ai` | |
 | `models/` (whisper·silero·sherpa, 1.4GB) | 제외 | — | 첫 실행 시 자동 다운로드 |
@@ -25,7 +25,7 @@
 | 그룹 ID | 화면 이름 (메뉴) | 테이블 | `app_settings` 키 | 파일 |
 |---|---|---|---|---|
 | `work` | 오늘·업무 (오늘, 프로젝트(릴리스 탭 포함), 할 일). `activity_log` 는 화면에 보이지 않지만 활동 기록으로 계속 쌓이고 이 그룹에 든다 | projects, tasks, todos, todo_tags, todo_tag_map, todo_history, release_notes, release_note_items, activity_log, daily_plans, plan_items, assistant_events, assistant_exclusions | `project_sync_created_keys` | 없음 |
-| `meetings` | 회의 (녹음, 회의록, 용어집·구성원) | meetings, meeting_speakers, meeting_segments, meeting_cuts, meeting_summaries, meeting_attendees, meeting_members, stt_glossary | 없음 | `recordings/` |
+| `meetings` | 회의 (녹음, 회의록, 용어집·구성원) | meetings, meeting_speakers, meeting_segments, meeting_cuts, meeting_summaries, meeting_attendees, meeting_members, stt_glossary, meeting_speaker_voices, member_voice_samples | 없음 | `recordings/` |
 | `library` | 자료 (메모, 변수, 예전 문서 메뉴의 문서) | documents, memos, memo_categories, variables | 없음 | 없음 |
 | `ai` | AI 대화 | ai_chats, ai_messages, ai_audit_log | 없음 | `ai-attachments/` |
 | `settings` | 설정·연동 | (없음 — `app_settings` 를 키 단위로) | `assistant_*`, `ai_model`, `ai_model_labels`, `google_client_id`, `jira_site_url`, `jira_email`, `jira_token_expires_at`, `jira_account_name`, `jira_default_project_key`, `bitbucket_email`, 그리고 분류되지 않은 모든 키(기본값) | 없음 |
@@ -37,6 +37,7 @@
 - `jira_epic_summaries` 는 보드 캐시로 만든 에픽 AI 요약이다(docs/PROJECT_BOARD.md §5.1). 버튼으로 다시 만들 수 있어 보드 캐시와 같이 취급한다(`NON_GROUP_TABLES`, `CACHE_TABLES`).
   내보낼 때 사본에서 세 테이블의 행을 지운다(`stripCaches`). 복원은 이 기기의 캐시를 그대로 두되, 복원으로 Jira 계정이 바뀌면 함께 지운다(아래 연동 묶음 규칙). 캐시가 비면 다음 화면 진입 때 보드가 전체 동기화를 한다.
 - `meeting_members`·`stt_glossary` 는 회의 그룹이다. `meeting_attendees` 가 `meeting_members` 를 FK 로 가리키고, 둘 다 회의 인식 보조다.
+- `meeting_speaker_voices`(회의 화자 목소리)·`member_voice_samples`(구성원 목소리 표본)도 회의 그룹이다. `meeting_speakers`·`meeting_members`·`meetings` 를 FK 로 가리킨다. 목소리 임베딩(오디오 아님)이 **백업 파일에 포함된다** — 새 PC 에서도 목소리 자동 지정이 이어진다([MEETING_RECORDING.md](MEETING_RECORDING.md) §12).
 - **새 테이블을 만들면 반드시 한 그룹(또는 백업 제외)에 넣는다.** 빠지면 테스트 G1 이 실패한다. 그룹을 추가·변경하면 `formatVersion` 을 올린다.
 
 **그룹을 넘는 참조.** 기본 규칙은 **정체성 일치**다 — 참조 대상 행의 `id` 와 `created_at` 이 모두 같을 때만 같은 엔터티로 본다(id 만 같은 다른 기기의 행에 붙지 않게).
@@ -60,7 +61,7 @@
 
 Claude Code 구독 OAuth(AI 요약·AI 대화)는 앱 데이터가 아니라 `~/.claude`에 있으므로 새 PC에 Claude Code를 설치·로그인해야 한다.
 
-⚠️ 백업 파일에는 평문 설정(`google_client_id`, Jira 사이트·이메일 등)과 회의 전사·요약 전문이 들어 있다. (`google_client_secret`은 키체인 암호문으로 저장하므로 백업에서 빠진다.) 공유 드라이브·메신저 등 남이 볼 수 있는 곳에 두지 말고, 이전이 끝나면 삭제하는 것이 좋다.
+⚠️ 백업 파일에는 평문 설정(`google_client_id`, Jira 사이트·이메일 등)과 회의 전사·요약 전문과 구성원 목소리 임베딩이 들어 있다. (`google_client_secret`은 키체인 암호문으로 저장하므로 백업에서 빠진다.) 공유 드라이브·메신저 등 남이 볼 수 있는 곳에 두지 말고, 이전이 끝나면 삭제하는 것이 좋다.
 
 ## 2. 백업 파일 형식 (zip)
 

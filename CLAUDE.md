@@ -16,6 +16,7 @@ LinkWork는 개인 업무와 회의 일정·기록을 관리하는 macOS 데스�
 | `npm run build` | 프로덕션 빌드 | 종료 코드 0 |
 | `npm run deploy` | 빌드 후 `/Applications`에 반영 | 종료 코드 0 |
 | `npm run check:docs` | 문서 검사: 문서의 저장소 경로·IPC 채널이 코드에 있는지, 문서 매핑 누락 | 종료 코드 0 |
+| `npm run check:diar` | 화자분리 실측 회귀: 배포 앱의 Electron 런타임(`ELECTRON_RUN_AS_NODE=1`)으로 이 Mac의 실제 녹음을 분리해 화자 수·목소리 매칭을 판정(`scripts/diar-regress.mjs`). 화자분리를 바꾸면 실행 | 종료 코드 0 (2 = 녹음·DB·바이너리 없음) |
 | `npm run check:docs -- --changed` | 바뀐 코드에 대응하는데 함께 바뀌지 않은 문서(확인 대상) 목록. `--json` 지원 | 판정용 아님(목록 확인) |
 
 ## 문서 동기화 정책
