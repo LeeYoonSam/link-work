@@ -85,12 +85,13 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 | `src/main/services/bitbucket-url.ts` | bitbucket.org 웹 URL 을 workspace·저장소·ref·경로로 나누는 파서 (순수 함수, 단위 테스트) |
 | `src/main/services/web-fetch.ts` | fetch_url용 웹 페이지 로드 + HTML→텍스트 (SSRF 가드, 단위 테스트) |
 | `src/main/services/ai-attachments.ts` | 이미지 첨부 저장/검증/정리 (`userData/ai-attachments`) |
+| `src/main/services/ai-suggestions.ts` | 빈 화면 추천 질문 8개를 AI 읽기 전용 커넥션으로 만든다 (`ai:suggestions`, 6.2절) |
 | `src/main/ipc/ai.ipc.ts` | IPC 핸들러 (`ai:*` 채널), 입력/첨부 검증, 제목 자동 설정, 모델 선택 IPC, Notion·Bitbucket 연동 IPC(설정 > 연동 카드가 쓴다) |
 | `src/main/db/database.ts` | 테이블 스키마 + AI 전용 읽기 전용 커넥션 |
 | `src/preload/index.ts` | `window.api.ai` 노출 |
 | `src/renderer/src/stores/aiChatStore.ts` | 채팅 상태 관리 (zustand). 앱 수준 스트림 구독 `installAiStreamSync`, 다른 화면에서 채팅을 여는 `startChatWith` |
 | `src/renderer/src/App.tsx` | 메인 창 마운트 때 `installAiStreamSync()` 를 1번 부른다 |
-| `src/renderer/src/components/ai/AiChatView.tsx` | 채팅 UI 전체 (이미지 첨부, 모델·모드 선택, 빈 화면 설명문·추천 질문 `EXAMPLE_PROMPTS`) |
+| `src/renderer/src/components/ai/AiChatView.tsx` | 채팅 UI 전체 (이미지 첨부, 모델·모드 선택, 빈 화면 설명문·추천 질문 그리드 `SuggestionGrid`·폴백 `FALLBACK_SUGGESTIONS`) |
 | `src/renderer/src/types/index.ts` | `AiChat`, `AiMessage`, `AiStreamEvent`, `AiAPI` 등 타입 |
 
 ## 5. 데이터 모델
@@ -189,6 +190,17 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 - 프롬프트에는 식별자(티켓 키)만 넣는다. 제목·설명 같은 원문 텍스트를 넣지 않는다.
 - 이유: 사용자 메시지는 신뢰하는 입력으로 다뤄진다. 원문을 넣으면 Jira 본문에 심긴 지시문이 사용자 지시처럼 전달된다. 원문은 AI 가 Jira 도구로 읽어야 신뢰할 수 없는 입력으로 다뤄진다(가드레일 문서 6절).
 - 새 진입 지점도 같은 규칙을 따른다. `IssueDetailPanel.test.tsx` 가 프롬프트에 제목·설명이 없음을 고정한다.
+
+### 6.2 빈 화면 추천 질문 (`ai:suggestions`)
+
+열린 채팅이 없고 AI 를 쓸 수 있을 때, 빈 화면은 설명문 아래에 추천 질문 8개를 2열 × 4행으로 보인다. 카드를 누르면 새 채팅을 만들고 그 질문(`prompt`)을 바로 보낸다.
+
+- IPC: `ai:suggestions(variant?)` → `AiSuggestion[]` 8개. 항목은 `{ id, category, label, prompt, feature? }` 다. `category` 는 `todo`·`meeting`·`project`·`release`·`memo`·`schedule` 중 하나다. `variant` 는 0~1000 정수이며 바꾸면 다른 문구·대상을 고른다.
+- main(`ai-suggestions.ts`)은 최근 할 일·회의·Jira 프로젝트 티켓·릴리스·메모와 현재 시간대를 보고 질문을 만든다. 질문에 넣는 제목 같은 값은 신뢰할 수 없는 입력으로 보고 정리한다(가드레일 문서 6.1절). 데이터가 없는 칸은 일반 질문으로 채운다.
+- 카드: 카테고리 칩(할 일·회의록·프로젝트·릴리스·메모·일정), 문구(`label`, 2줄까지), 소개 기능이 있으면 `✦ {feature}`. 마우스를 올리면 보낼 질문 전체(`prompt`)가 보인다.
+- 조회 시점: 빈 화면이 나타날 때마다(마운트, 채팅을 닫거나 지워 `currentChatId` 가 비었을 때) 새로 조회해 최신 데이터를 반영한다. 그리드 위 [↻ 다른 추천] 은 `variant` 를 1 올려 다시 조회한다.
+- 응답 전이나 조회가 실패하면 renderer 의 `FALLBACK_SUGGESTIONS`(일반 질문 8개)를 보인다. 다시 조회하는 동안은 지금 카드를 유지하고, 요청마다 번호를 매겨 마지막 요청의 응답만 반영한다. 형식이 틀린 항목은 버리고 모자란 칸은 폴백으로 채운다.
+- 폴백과 추천에는 사용자가 링크·대상을 따로 줘야 하는 질문을 넣지 않는다. 빈 값으로 전송되기 때문이다.
 
 ### 스트리밍 프로토콜 (`ai:stream` 이벤트)
 

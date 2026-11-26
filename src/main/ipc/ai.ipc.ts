@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { existsSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
-import { getDatabase } from '../db/database'
+import { getAiReadOnlyDatabase, getDatabase } from '../db/database'
 import {
   runAiQuery,
   cancelAiQuery,
@@ -31,6 +31,12 @@ import {
   saveBitbucketCredentials
 } from '../services/bitbucket'
 import { disconnectNotion, isNotionConnected, saveNotionToken } from '../services/notion'
+import {
+  buildAiSuggestions,
+  fallbackSuggestions,
+  normalizeSuggestionVariant,
+  type AiSuggestion
+} from '../services/ai-suggestions'
 
 const AI_WRITE_MODES: AiWriteMode[] = ['readonly', 'ask', 'auto', 'plan']
 
@@ -54,6 +60,17 @@ export function registerAiIpc(): void {
          ORDER BY c.updated_at DESC`
       )
       .all()
+  })
+
+  // 빈 화면 추천 질문 8개. 읽기 전용 커넥션만 쓰고 네트워크는 부르지 않는다 (AI_GUARDRAILS.md 6.1절)
+  ipcMain.handle('ai:suggestions', (_event, variant?: unknown): AiSuggestion[] => {
+    const v = normalizeSuggestionVariant(variant)
+    try {
+      return buildAiSuggestions(getAiReadOnlyDatabase(), { now: new Date(), variant: v })
+    } catch (err) {
+      console.warn('[ai:suggestions] 추천 질문 생성 실패, 일반 질문으로 대신함:', err)
+      return fallbackSuggestions(v)
+    }
   })
 
   ipcMain.handle('ai:chatCreate', () => {

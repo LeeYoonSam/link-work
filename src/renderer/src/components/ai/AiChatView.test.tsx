@@ -4,13 +4,18 @@ import {
   ApprovalCard,
   batchTodoItems,
   ComposerControls,
+  createSuggestionController,
+  FALLBACK_SUGGESTIONS,
+  normalizeSuggestions,
   PlanApprovalCard,
+  SuggestionGrid,
   WRITE_MODES,
   isPlanApproval,
   resolveWriteMode
 } from './AiChatView'
 import { FALLBACK_MODEL_OPTIONS, useAiChatStore } from '../../stores/aiChatStore'
-import type { AiChat } from '../../types'
+import type { AiChat, AiSuggestion } from '../../types'
+import type { ReactElement, ReactNode } from 'react'
 
 // AI 대화 화면의 모델 선택지 폴백, 입력창 아래 컨트롤, 계획 승인 카드를 고정한다.
 // Bitbucket 연동 팝업 검증은 settings/ConnectDialogs.test.tsx 로 옮겼다.
@@ -260,5 +265,122 @@ describe('ApprovalCard — create_todos', () => {
     expect(batchTodoItems({ items: [null, { title: 3 }] })).toEqual([
       { title: '(제목 없음)', priority: undefined, due_date: undefined, tags: undefined }
     ])
+  })
+})
+
+describe('빈 화면 추천 질문', () => {
+  const ipcItems: AiSuggestion[] = [
+    { id: 't1', category: 'todo', label: '마감 지난 할 일 3건 정리해줘', prompt: '마감 지난 할 일 정리해줘', feature: '할 일 일괄 수정' },
+    { id: 'm1', category: 'meeting', label: '주간 회의 액션아이템', prompt: '주간 회의 액션아이템 정리해줘', feature: '회의 간 검색' },
+    { id: 'p1', category: 'project', label: 'ABC-12 진행 상황', prompt: 'ABC-12 티켓 진행 상황 알려줘', feature: 'Jira 커넥터' },
+    { id: 'r1', category: 'release', label: '1.2.0 릴리스 요약', prompt: '1.2.0 릴리스 노트 요약해줘' },
+    { id: 'n1', category: 'memo', label: '최근 메모 요약', prompt: '최근 메모 요약해줘' },
+    { id: 's1', category: 'schedule', label: '오후 일정', prompt: '오늘 오후 일정 알려줘' },
+    { id: 't2', category: 'todo', label: '이번 주 할 일', prompt: '이번 주 할 일 보여줘' },
+    { id: 'm2', category: 'meeting', label: '결론 안 난 논의', prompt: '결론 안 난 논의 정리해줘' }
+  ]
+
+  // 함수 컴포넌트 결과 트리에서 button 요소를 모은다 (DOM 없이 onClick 을 호출하기 위함)
+  const collectButtons = (node: ReactNode, out: ReactElement<{ onClick?: () => void; title?: string }>[] = []) => {
+    if (Array.isArray(node)) node.forEach((n) => collectButtons(n, out))
+    else if (node && typeof node === 'object' && 'props' in node) {
+      const el = node as ReactElement<{ children?: ReactNode; onClick?: () => void; title?: string }>
+      if (el.type === 'button') out.push(el)
+      collectButtons(el.props.children, out)
+    }
+    return out
+  }
+
+  const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+
+  it('폴백은 8개이고 링크·대상이 필요 없는 일반 질문이다', () => {
+    expect(FALLBACK_SUGGESTIONS).toHaveLength(8)
+    expect(new Set(FALLBACK_SUGGESTIONS.map((s) => s.id)).size).toBe(8)
+    for (const s of FALLBACK_SUGGESTIONS) expect(s.prompt).not.toMatch(/https?:|linkwork:/)
+    // 새 채팅은 자동 쓰기 모드다. 폴백은 조회만 요청한다
+    for (const s of FALLBACK_SUGGESTIONS) expect(s.prompt).not.toMatch(/만들어|생성|수정|삭제|바꿔|덮어|옮겨|완료 처리/)
+  })
+
+  it('IPC 데이터 8개를 칩·질문·소개 기능과 함께 그린다', async () => {
+    const onChange = vi.fn()
+    const controller = createSuggestionController(vi.fn().mockResolvedValue(ipcItems), onChange)
+    controller.load()
+    await flush()
+    const { items } = onChange.mock.calls.at(-1)![0]
+    expect(items).toEqual(ipcItems)
+
+    const html = renderToStaticMarkup(
+      <SuggestionGrid suggestions={items} loading={false} onSelect={() => {}} onRefresh={() => {}} />
+    )
+    expect(html).toContain('추천 질문')
+    expect(html).toContain('↻ 다른 추천')
+    expect(html.match(/title="[^"]*"[^>]*>(?:<span)/g) ?? []).toHaveLength(8)
+    for (const chip of ['할 일', '회의록', '프로젝트', '릴리스', '메모', '일정']) expect(html).toContain(chip)
+    expect(html).toContain('마감 지난 할 일 3건 정리해줘')
+    expect(html).toContain('title="ABC-12 티켓 진행 상황 알려줘"')
+    expect(html).toMatch(/✦ (<!-- -->)?Jira 커넥터/)
+    expect(html).toContain('line-clamp-2')
+  })
+
+  it('IPC 가 실패하면 폴백 8개를 유지한다', async () => {
+    const onChange = vi.fn()
+    const controller = createSuggestionController(vi.fn().mockRejectedValue(new Error('ipc')), onChange)
+    controller.load()
+    await flush()
+    const last = onChange.mock.calls.at(-1)![0]
+    expect(last.loading).toBe(false)
+    expect(last.items).toBe(FALLBACK_SUGGESTIONS)
+    const html = renderToStaticMarkup(
+      <SuggestionGrid suggestions={last.items} loading={false} onSelect={() => {}} onRefresh={() => {}} />
+    )
+    for (const s of FALLBACK_SUGGESTIONS) expect(html).toContain(s.label)
+  })
+
+  it('카드를 누르면 그 prompt 를 보낸다', () => {
+    const onSelect = vi.fn()
+    const tree = SuggestionGrid({ suggestions: ipcItems, loading: false, onSelect, onRefresh: () => {} })
+    const cards = collectButtons(tree).filter((b) => b.props.title !== '다른 추천 질문 보기')
+    expect(cards).toHaveLength(8)
+    cards[2].props.onClick!()
+    expect(onSelect).toHaveBeenCalledWith('ABC-12 티켓 진행 상황 알려줘')
+  })
+
+  it('다른 추천은 variant 를 올려 다시 조회하고 이전 응답은 버린다', async () => {
+    let resolveFirst: (v: unknown) => void = () => {}
+    const fetcher = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise((r) => (resolveFirst = r)))
+      .mockResolvedValueOnce(ipcItems)
+      .mockReturnValueOnce(new Promise(() => {}))
+    const onChange = vi.fn()
+    const controller = createSuggestionController(fetcher, onChange)
+    controller.load()
+    controller.refresh()
+    expect(fetcher).toHaveBeenNthCalledWith(1, 0)
+    expect(fetcher).toHaveBeenNthCalledWith(2, 1)
+    await flush()
+    expect(onChange.mock.calls.at(-1)![0].items).toEqual(ipcItems)
+    // 늦게 온 첫 응답은 반영하지 않는다
+    resolveFirst([{ ...ipcItems[0], id: 'stale', label: '오래된 추천' }])
+    await flush()
+    expect(onChange.mock.calls.at(-1)![0].items).toEqual(ipcItems)
+    // 조회 중에도 지금 카드를 유지한다 (폴백으로 깜빡이지 않음)
+    controller.refresh()
+    expect(onChange.mock.calls.at(-1)![0]).toEqual({ items: ipcItems, loading: true })
+  })
+
+  it('다른 추천 버튼은 onRefresh 를 부른다', () => {
+    const onRefresh = vi.fn()
+    const tree = SuggestionGrid({ suggestions: ipcItems, loading: false, onSelect: () => {}, onRefresh })
+    const refresh = collectButtons(tree).find((b) => b.props.title === '다른 추천 질문 보기')
+    refresh!.props.onClick!()
+    expect(onRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('형식이 틀린 항목은 버리고 모자라면 폴백으로 8개를 채운다', () => {
+    const items = normalizeSuggestions([ipcItems[0], { id: 'x', category: 'nope', label: 'a', prompt: 'b' }, null])
+    expect(items).toHaveLength(8)
+    expect(items[0]).toEqual(ipcItems[0])
+    expect(normalizeSuggestions('bad')).toEqual(FALLBACK_SUGGESTIONS)
   })
 })

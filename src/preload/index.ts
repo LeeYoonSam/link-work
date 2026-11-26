@@ -98,6 +98,7 @@ const api = {
     getModel: () => ipcRenderer.invoke('ai:getModel'),
     setModel: (model: string) => ipcRenderer.invoke('ai:setModel', model),
     getModelOptions: () => ipcRenderer.invoke('ai:getModelOptions'),
+    suggestions: (variant?: number) => ipcRenderer.invoke('ai:suggestions', variant),
     bitbucketStatus: () => ipcRenderer.invoke('ai:bitbucketStatus'),
     bitbucketSaveToken: (email: string, token: string) =>
       ipcRenderer.invoke('ai:bitbucketSaveToken', email, token),

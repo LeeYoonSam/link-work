@@ -11,6 +11,8 @@ import type {
   AiChatModelOption,
   AiMessage,
   AiStatus,
+  AiSuggestion,
+  AiSuggestionCategory,
   AiWriteMode
 } from '../../types'
 import { AlertTriangleIcon, Card, ImageIcon, XIcon, button } from '../ui'
@@ -51,14 +53,226 @@ const MAX_ATTACHMENTS = 4
 const MAX_ATTACHMENT_MB = 8
 const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 
-// 빈 화면 추천 질문. 클릭하면 새 채팅에 바로 보낸다.
-// 링크·대상이 필요한 질문은 넣지 않는다 (빈 값으로 전송되기 때문)
-const EXAMPLE_PROMPTS = [
-  '오늘 마감인 할 일 알려줘',
-  '끝나지 않은 회의 액션아이템 정리해줘',
-  '이번 주 일정 알려줘',
-  '끝나지 않은 할 일을 우선순위별로 보여줘'
+// 빈 화면 추천 질문 개수 (2열 × 4행). main 의 ai:suggestions 도 항상 이 개수를 준다
+export const SUGGESTION_COUNT = 8
+
+// 빈 화면 추천 질문 폴백. ai:suggestions 응답 전이나 실패 시 보여 준다.
+// 클릭하면 새 채팅에 바로 보낸다. 링크·대상이 필요한 질문은 넣지 않는다 (빈 값으로 전송되기 때문).
+// 새 채팅은 자동 쓰기 모드이므로 조회만 하는 질문만 넣는다. AI 도구로 답할 수 있어야 한다
+export const FALLBACK_SUGGESTIONS: AiSuggestion[] = [
+  { id: 'fallback-todo-due', category: 'todo', label: '오늘 마감인 할 일 알려줘', prompt: '오늘 마감인 할 일 알려줘' },
+  {
+    id: 'fallback-meeting-actions',
+    category: 'meeting',
+    label: '끝나지 않은 회의 액션아이템 정리해줘',
+    prompt: '끝나지 않은 회의 액션아이템 정리해줘'
+  },
+  { id: 'fallback-schedule-week', category: 'schedule', label: '이번 주 일정 알려줘', prompt: '이번 주 일정 알려줘' },
+  {
+    id: 'fallback-todo-priority',
+    category: 'todo',
+    label: '끝나지 않은 할 일을 우선순위별로 보여줘',
+    prompt: '끝나지 않은 할 일을 우선순위별로 보여줘'
+  },
+  {
+    id: 'fallback-project-mine',
+    category: 'project',
+    label: '나에게 할당된 진행 중인 Jira 티켓 보여줘',
+    prompt: '나에게 할당된 진행 중인 Jira 티켓 보여줘'
+  },
+  { id: 'fallback-release-recent', category: 'release', label: '최근 릴리스 노트 목록 보여줘', prompt: '최근 릴리스 노트 목록 보여줘' },
+  { id: 'fallback-memo-starred', category: 'memo', label: '중요 표시한 메모 요약해줘', prompt: '중요 표시한 메모 요약해줘' },
+  {
+    id: 'fallback-meeting-owners',
+    category: 'meeting',
+    label: '최근 2주 회의 액션아이템을 담당자별로 정리해줘',
+    prompt: '최근 2주 회의 액션아이템을 담당자별로 정리해줘',
+    feature: '회의 액션아이템'
+  }
 ]
+
+// 추천 카드의 카테고리 칩. 색은 약하게 둔다
+export const SUGGESTION_CATEGORY_META: Record<AiSuggestionCategory, { label: string; className: string }> = {
+  todo: { label: '할 일', className: 'bg-blue-50 text-blue-700' },
+  meeting: { label: '회의록', className: 'bg-violet-50 text-violet-700' },
+  project: { label: '프로젝트', className: 'bg-indigo-50 text-indigo-700' },
+  release: { label: '릴리스', className: 'bg-emerald-50 text-emerald-700' },
+  memo: { label: '메모', className: 'bg-amber-50 text-amber-800' },
+  schedule: { label: '일정', className: 'bg-rose-50 text-rose-700' }
+}
+
+function isSuggestion(value: unknown): value is AiSuggestion {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.id === 'string' &&
+    typeof v.label === 'string' &&
+    v.label.trim() !== '' &&
+    typeof v.prompt === 'string' &&
+    v.prompt.trim() !== '' &&
+    typeof v.category === 'string' &&
+    v.category in SUGGESTION_CATEGORY_META
+  )
+}
+
+// main 응답을 카드 8개로 맞춘다. 형식이 틀린 항목은 버리고, 모자라면 폴백으로 채운다
+export function normalizeSuggestions(value: unknown): AiSuggestion[] {
+  const items = Array.isArray(value) ? value.filter(isSuggestion) : []
+  const result = items.slice(0, SUGGESTION_COUNT)
+  const usedIds = new Set(result.map((s) => s.id))
+  const usedPrompts = new Set(result.map((s) => s.prompt))
+  for (const fallback of FALLBACK_SUGGESTIONS) {
+    if (result.length >= SUGGESTION_COUNT) break
+    if (usedIds.has(fallback.id) || usedPrompts.has(fallback.prompt)) continue
+    result.push(fallback)
+  }
+  return result
+}
+
+// main 이 받는 variant 상한 (0~1000). 넘으면 0 으로 되돌린다
+const SUGGESTION_VARIANT_LIMIT = 1000
+
+export interface SuggestionController {
+  // 현재 variant 로 다시 조회한다 (빈 화면이 다시 나타날 때)
+  load: () => void
+  // variant 를 하나 올려 다른 추천을 조회한다 ("다른 추천" 버튼)
+  refresh: () => void
+  // 이후 도착하는 응답을 모두 버린다 (언마운트)
+  dispose: () => void
+}
+
+// 추천 질문 조회 상태기. 요청마다 번호를 매겨 마지막 요청의 응답만 반영한다.
+// 새 응답이 오기 전까지 지금 카드를 유지하고, 실패하면 지금 카드(처음엔 폴백)를 그대로 둔다
+export function createSuggestionController(
+  fetchSuggestions: (variant: number) => Promise<unknown>,
+  onChange: (state: { items: AiSuggestion[]; loading: boolean }) => void,
+  initialItems: AiSuggestion[] = FALLBACK_SUGGESTIONS
+): SuggestionController {
+  let variant = 0
+  let requestId = 0
+  let disposed = false
+  let items = initialItems
+
+  const run = (): void => {
+    const id = ++requestId
+    onChange({ items, loading: true })
+    let request: Promise<unknown>
+    try {
+      request = Promise.resolve(fetchSuggestions(variant))
+    } catch (err) {
+      request = Promise.reject(err)
+    }
+    request.then(
+      (value) => {
+        if (disposed || id !== requestId) return
+        const next = normalizeSuggestions(value)
+        // 유효한 항목이 하나도 없으면 실패와 같게 다룬다
+        if (Array.isArray(value) && value.some(isSuggestion)) items = next
+        onChange({ items, loading: false })
+      },
+      () => {
+        if (disposed || id !== requestId) return
+        onChange({ items, loading: false })
+      }
+    )
+  }
+
+  return {
+    load: run,
+    refresh: () => {
+      variant = (variant + 1) % (SUGGESTION_VARIANT_LIMIT + 1)
+      run()
+    },
+    dispose: () => {
+      disposed = true
+    }
+  }
+}
+
+// 빈 화면이 보이는 동안(active) 추천 질문을 조회한다. active 가 다시 true 가 되면 새로 조회한다
+function useAiSuggestions(active: boolean): {
+  items: AiSuggestion[]
+  loading: boolean
+  refresh: () => void
+} {
+  const [state, setState] = useState<{ items: AiSuggestion[]; loading: boolean }>({
+    items: FALLBACK_SUGGESTIONS,
+    loading: false
+  })
+  const controllerRef = useRef<SuggestionController | null>(null)
+
+  useEffect(() => {
+    const controller = createSuggestionController(
+      (variant) => window.api.ai.suggestions(variant),
+      setState
+    )
+    controllerRef.current = controller
+    return () => {
+      controller.dispose()
+      controllerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    if (active) controllerRef.current?.load()
+  }, [active])
+
+  return {
+    items: state.items,
+    loading: state.loading,
+    refresh: () => controllerRef.current?.refresh()
+  }
+}
+
+// 빈 화면 추천 질문 그리드 (2열 × 4행). 카드: 카테고리 칩 + 질문 + 소개 기능
+export function SuggestionGrid({
+  suggestions,
+  loading,
+  onSelect,
+  onRefresh
+}: {
+  suggestions: AiSuggestion[]
+  loading: boolean
+  onSelect: (prompt: string) => void
+  onRefresh: () => void
+}): React.ReactNode {
+  return (
+    <div className="w-full max-w-2xl">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-medium text-gray-500">추천 질문</span>
+        <button
+          type="button"
+          onClick={onRefresh}
+          aria-busy={loading}
+          className={`px-2 py-0.5 text-xs ${button.ghost}`}
+          title="다른 추천 질문 보기"
+        >
+          ↻ 다른 추천
+        </button>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {suggestions.map((s) => {
+          const meta = SUGGESTION_CATEGORY_META[s.category]
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => onSelect(s.prompt)}
+              title={s.prompt}
+              className={`px-3 py-2.5 text-left flex flex-col gap-1 ${button.subtle} border border-gray-200 hover:border-gray-300`}
+            >
+              <span className={`self-start px-1.5 py-0.5 rounded text-[10px] font-medium ${meta.className}`}>
+                {meta.label}
+              </span>
+              <span className="text-sm line-clamp-2">{s.label}</span>
+              {s.feature && <span className="text-[11px] text-gray-400">✦ {s.feature}</span>}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 function formatChatTime(value: string): string {
   const date = new Date(value.replace(' ', 'T'))
@@ -103,6 +317,8 @@ export default function AiChatView(): React.ReactNode {
   }, [])
 
   const aiUnavailable = aiStatus !== null && !aiStatus.available
+  // 빈 화면이 다시 나타날 때마다 최신 데이터로 추천을 새로 받는다
+  const suggestions = useAiSuggestions(!currentChatId && !aiUnavailable)
 
   const handleExampleClick = async (prompt: string): Promise<void> => {
     await createChat()
@@ -205,7 +421,7 @@ export default function AiChatView(): React.ReactNode {
           <div className="flex-1 flex flex-col items-center justify-center p-8">
             <div className="text-4xl mb-3">✦</div>
             <h3 className="text-lg font-semibold text-gray-800 mb-1">LinkWork AI</h3>
-            <p className="text-sm text-gray-500 mb-6">
+            <p className="text-sm text-gray-500 mb-2">
               할 일·메모를 찾아 정리하고, Jira 티켓·릴리스 노트·회의 액션아이템·캘린더 일정을 조회합니다.
               <br />
               Notion·Bitbucket·Slack 문서와 웹 링크를 읽고, 첨부한 이미지를 보고 답할 수 있습니다.
@@ -213,23 +429,21 @@ export default function AiChatView(): React.ReactNode {
               할 일과 메모를 만들거나 수정해 드릴 수도 있습니다.
               (작성 방식은 입력창 아래에서 채팅별로 선택)
             </p>
+            <p className="text-xs text-gray-400 mb-6">
+              아래 추천은 최근 할 일·회의·프로젝트·메모를 보고 바뀝니다.
+            </p>
             {/* 채팅이 없을 때의 오류 (예: 다른 화면에서 대화 생성 실패). 새 채팅을 열면 지워진다 */}
             {error && (
               <p role="alert" className="mb-4 w-full max-w-xl px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
                 {error}
               </p>
             )}
-            <div className="grid grid-cols-2 gap-2 w-full max-w-xl">
-              {EXAMPLE_PROMPTS.map((prompt) => (
-                <button
-                  key={prompt}
-                  onClick={() => handleExampleClick(prompt)}
-                  className={`px-4 py-3 text-left text-sm ${button.subtle} border border-gray-200 hover:border-gray-300`}
-                >
-                  {prompt}
-                </button>
-              ))}
-            </div>
+            <SuggestionGrid
+              suggestions={suggestions.items}
+              loading={suggestions.loading}
+              onSelect={(prompt) => void handleExampleClick(prompt)}
+              onRefresh={suggestions.refresh}
+            />
           </div>
         )}
       </div>

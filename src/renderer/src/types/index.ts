@@ -242,6 +242,19 @@ export interface AiChatModelOption {
   description: string
 }
 
+// AI 대화 빈 화면의 추천 질문 (ai:suggestions). main 이 최근 할 일·회의·프로젝트·릴리스·메모와
+// 시간대를 보고 8개를 만든다. 카드에는 label, 클릭하면 prompt 를 새 채팅에 보낸다
+export type AiSuggestionCategory = 'todo' | 'meeting' | 'project' | 'release' | 'memo' | 'schedule'
+
+export interface AiSuggestion {
+  id: string
+  category: AiSuggestionCategory
+  label: string
+  prompt: string
+  // 이 질문이 소개하는 기능의 짧은 이름. 예: '회의 간 검색', 'Jira 커넥터'
+  feature?: string
+}
+
 export interface AiChat {
   id: number
   title: string
@@ -359,6 +372,8 @@ export interface AiAPI {
   setModel: (model: string) => Promise<{ success: boolean; model: string }>
   // 첫 호출은 main 의 모델 탐침 때문에 수 초 걸릴 수 있다
   getModelOptions: () => Promise<AiChatModelOption[]>
+  // 빈 화면 추천 질문 8개. variant 를 바꾸면 다른 문구·대상으로 돌린다
+  suggestions: (variant?: number) => Promise<AiSuggestion[]>
   bitbucketStatus: () => Promise<AiBitbucketStatus>
   bitbucketSaveToken: (email: string, token: string) => Promise<AiBitbucketSaveResult>
   bitbucketDisconnect: () => Promise<{ success: true }>
