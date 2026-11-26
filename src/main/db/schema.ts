@@ -338,7 +338,8 @@ export function applySchema(db: Database.Database): void {
       audio_compacted INTEGER NOT NULL DEFAULT 0,
       original_duration_ms INTEGER,
       -- 처리 파이프라인 버전. 0=구 파이프라인/미처리,
-      -- 2=무음 컷편집·용어집·참석자 힌트 파이프라인, 3=현재(전체 처리 시 meeting-pipeline이 기록).
+      -- 2=무음 컷편집·용어집·참석자 힌트 파이프라인, 3=세그먼트 분할·환각 필터, 4=현재(창 임베딩 화자분리·목소리 매칭,
+      -- 전체 처리 시 meeting-pipeline의 CURRENT_PIPELINE_VERSION을 기록).
       -- 요약 재생성 UI가 재분석 필요 여부 판단에 사용.
       pipeline_version INTEGER NOT NULL DEFAULT 0,
       project_id INTEGER,

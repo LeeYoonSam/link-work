@@ -5,12 +5,12 @@
 
 ## 0. 목표와 결정
 
-- **STT**: 로컬 Whisper(`@fugood/whisper.node` + `large-v3-turbo` q8_0, 모델은 첫 실행 때 `userData/models/`로 내려받는다). API 키를 쓰지 않는다.
-- **녹음 소스**: 마이크 + 시스템 오디오. **마이크=L / 시스템=R 스테레오로 나눠 저장**해 모델 없이도 2화자(나/상대)를 얻는다.
+- **STT**: 로컬 Whisper(`@fugood/whisper.node` + `large-v3-turbo` q8_0)와 whisper.node 내장 silero VAD(`ggml-silero-v5.1.2.bin`). 두 모델은 첫 사용 때 `userData/models/`로 내려받는다(`stt/model-manager.ts`). API 키를 쓰지 않는다.
+- **녹음 소스**: 마이크 + 시스템 오디오. 녹음은 **마이크=L / 시스템=R 스테레오**로 받고, 저장할 때 전사용 16kHz mono WAV와 L/R 에너지 envelope(`<id>.channels.json`, 100ms hop)로 나눈다. 원본 스테레오는 남지 않는다. envelope로 모델 없이도 2화자(나/상대)를 얻는다.
 - **화자 분리**: 다자 자동 분리 + **수동 보정**. `sherpa-onnx-node`의 화자 임베딩 모델(CAM++)만 쓰고, 클러스터링은 앱이 직접 한다(§5-3). 네이티브 입력은 호출당 2.25초 이하로 제한한다(배포 Electron 크래시 회피).
 - **목소리 등록**: 화자에 구성원 이름을 지정하면 그 화자의 목소리 임베딩을 구성원 표본으로 저장하고, 다음 회의부터 같은 목소리를 자동으로 그 구성원으로 지정·제안한다(§5-4). 표본은 로컬 DB에만 둔다.
 - **범위**: 녹음 → 전사 → 시간대별 타임라인 → AI 요약(회의: 키워드·TL;DR·결정사항·액션아이템·미결 질문·주제별 요약 / 면접 4분류) → 액션아이템을 할 일로 등록.
-- **AI 요약**: Claude Code 구독 로그인(`query()`)을 쓴다. 추가 과금이 없다.
+- **AI 요약**: Claude Code 구독 로그인(`query()`, 모델 `SUMMARY_MODEL` = `claude-opus-5-5`)을 쓴다. 추가 과금이 없다. 오디오는 외부로 보내지 않고 전사 텍스트만 보낸다.
 
 ## 1. 아키텍처 개요
 
@@ -209,7 +209,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_member_voice_samples_src ON member_voice_s
 
 ## 3. 공용 타입
 
-렌더러 타입은 `src/renderer/src/types/index.ts`에 있다: `MeetingStatus`, `MeetingSource`(`'mic' | 'mic+system'`), `MeetingKind`(`'meeting' | 'interview'`), `Meeting`(위 `meetings` 행), `MeetingSpeaker`, `MeetingSegment`, `MeetingCut`, `ActionItem`, `SummaryTextItem`, `SummaryTopic`, `InterviewQaPair`, `InterviewCompetency`, `MeetingSummary`(JSON 컬럼을 배열로 푼 형태), `MeetingDetail`, `RecordingStreamEvent`, `ChannelEnergy`, `GlossaryEntry`, `Member`, `Attendee`, `RecordingAPI`, `RecorderBridgeAPI`, `RecognitionAidsAPI`, `MeetingNoteFilter`, `MeetingNoteItem`, `MeetingNotesAPI`.
+렌더러 타입은 `src/renderer/src/types/index.ts`에 있다: `MeetingStatus`, `MeetingSource`(`'mic' | 'mic+system'`), `MeetingKind`(`'meeting' | 'interview'`), `Meeting`(위 `meetings` 행), `MeetingSpeaker`, `MeetingSegment`, `MeetingCut`, `ActionItem`, `SummaryTextItem`, `SummaryTopic`, `InterviewQaPair`, `InterviewCompetency`, `MeetingSummary`(JSON 컬럼을 배열로 푼 형태), `MeetingDetail`, `RecordingStreamEvent`, `ChannelEnergy`, `GlossaryEntry`, `Member`, `Attendee`, `SpeakerVoiceResult`(목소리 버튼 결과), `MemberVoiceprint`(구성원별 표본 요약), `RecordingAPI`, `RecorderBridgeAPI`, `RecognitionAidsAPI`, `MeetingNoteFilter`, `MeetingNoteItem`, `MeetingNotesAPI`.
 메인 쪽 어댑터·요약 타입은 `src/main/services/meeting-types.ts`에 있다.
 
 꼭 지켜야 하는 형태:
@@ -283,22 +283,22 @@ interface RecordingStreamEvent {
 |---|---|---|
 | `recording:list` | — | `Meeting[]` (`started_at DESC`) |
 | `recording:get` | `id` | `MeetingDetail \| null` |
-| `recording:createDraft` | `{title?, source?, kind?, expected_speakers?, attendee_ids?, compact_audio?}` | `{id}` |
+| `recording:createDraft` | `{title?, source?, kind?, expected_speakers?, attendee_ids?, compact_audio?}` | `{id}` (`status='recording'` 행. 제목이 비면 `제목 없는 회의`/`제목 없는 면접`. `expected_speakers`는 1 이상이면 반올림 후 20 상한, 없으면 면접 2·회의 NULL. `compact_audio`는 `false`일 때만 0) |
 | `recording:discardDraft` | `id` | `{success}` (오디오가 없는 `status='recording'` 행만 지운다. 그 외는 `false`) |
-| `recording:saveAudio` | `id, ArrayBuffer, {mime, durationMs}, channelEnergy?` | `{path}` |
-| `recording:process` | `id, {skipTranscribe?}?` | `{success, error?}` |
+| `recording:saveAudio` | `id, ArrayBuffer, {mime, durationMs}, channelEnergy?` | `{path}` (파일명 `<id>.wav`/`.ogg`/`.webm`. 채널 에너지가 있으면 `<id>.channels.json`에 쓰고 없으면 지운다. 채널 에너지 없는 `mic+system`은 `source='mic'`으로 내린다. 길이는 WAV 헤더 값을 먼저 쓴다) |
+| `recording:process` | `id, {skipTranscribe?}?` | `{success, error?, transcribed?}` (`transcribed:false` = 전사 엔진이 없어 안내 세그먼트만 넣음. 렌더러는 이때 자동 요약을 건너뛴다) |
 | `recording:cancel` | `id` | `{success}` (활성 파이프라인 abort, 완료는 stream phase `cancelled`) |
 | `recording:summarize` | `id` | `{success, error?}` |
-| `recording:rename` | `id, title` | `{success}` |
+| `recording:rename` | `id, title` | `{success}` (trim 후 빈 제목은 `false`) |
 | `recording:remove` | `id` | `{success}` |
 | `recording:updateSpeaker` | `speakerId, {display_name?, color?, label?}` | `{success, member_id, enrolled}` (`display_name`을 바꾸면 구성원 연결·목소리 등록을 동기화, §5-4) |
 | `recording:enrollSpeakerVoice` | `speakerId` | `{success, error?, member_id?, enrolled?, created?}` (목소리가 없거나 발화 20초 미만이면 구성원을 만들기 전에 `success:false`, "발화가 짧아 목소리를 등록할 수 없습니다(20초 이상 필요).". 이름이 구성원이 아니면 그 이름으로 구성원을 만든 뒤 등록) |
 | `recording:confirmSpeakerMatch` | `speakerId` | `{success, error?, member_id?, enrolled?}` (`auto`/`suggested` → `manual`, 이름 확정, 표본 등록. 발화가 20초 미만이어도 확정·이름 지정은 하고 `enrolled:false`) |
-| `recording:rejectSpeakerMatch` | `speakerId` | `{success}` (거절 목록에 추가, 연결 해제, `auto`였으면 이름을 비움, 그 화자의 표본 삭제) |
+| `recording:rejectSpeakerMatch` | `speakerId` | `{success}` (연결된 구성원이 없으면 `false`. 거절 목록에 추가, 연결 해제, `auto`였으면 이름을 비움, 그 화자의 표본 삭제) |
 | `recording:reassignSegment` | `segmentId, speakerId \| null` | `{success}` |
 | `recording:updateSegmentText` | `segmentId, text` | `{success}` (`text_corrected=1`) |
 | `recording:addSpeaker` | `meetingId, name` | `{success, id?, existed?, error?}` (같은 이름이 있으면 그 화자를 쓴다) |
-| `recording:mergeSpeakers` | `meetingId, from, into` | `{success, error?}` (같은 회의의 서로 다른 화자가 아니면 `success:false`, "같은 회의의 서로 다른 화자만 합칠 수 있습니다.") |
+| `recording:mergeSpeakers` | `meetingId, from, into` | `{success, error?}` (같은 회의의 서로 다른 화자가 아니면 `success:false`, "같은 회의의 서로 다른 화자만 합칠 수 있습니다.". `from`의 세그먼트를 `into`로 옮기며 `speaker_corrected=1`로 표시하고 `from` 행을 지운다) |
 | `recording:toggleCut` | `cutId, enabled` | `{success}` |
 | `recording:actionItemToTodo` | `meetingId, index` | `{todo_id}` |
 | `recording:setExpectedSpeakers` | `id, n \| null` | `{success}` (0 이하·null 은 자동 추정) |
@@ -361,19 +361,24 @@ interface VadAdapter {
 
 **오디오 변환**: main에는 변환 단계가 없다. 렌더러가 저장 전에 `utils/audio.ts`의 `blobToWav16kMono`(Web Audio 디코드·리샘플)로 webm/opus를 16kHz mono 16-bit WAV로 바꾸고 채널 에너지(`<id>.channels.json`)를 함께 만든다. 변환이 실패하면 원본 webm을 그대로 저장하며, 이 경우 컷편집은 적용되지 않는다(§11, WAV 전용, §15).
 
-**파이프라인(meeting-pipeline.ts)**: `process(id)`
+**파이프라인(meeting-pipeline.ts)**: `runMeetingPipeline(id, send, {skipTranscribe?})`. `recording:process`가 먼저 `status='processing'`으로 바꾼 뒤 부른다. 같은 회의의 파이프라인이 이미 돌고 있으면(`pipeline-abort.ts` `beginPipeline`) DB를 건드리지 않고 phase:error만 보낸다. `audio_path`가 없으면 `failed`로 끝난다.
 0. **compact** (phase:compact, §11): `!skipTranscribe && compact_audio=1 && audio_compacted=0 && WAV`일 때만 `compactRecording` → 적용되면 파일 교체 + `duration_ms`/`original_duration_ms`/`audio_compacted=1` 갱신 + 기존 세그먼트·컷·회의 요약 근거 시각(`remapSummaryTimes`: `topics[].start_ms`, `decisions`·`action_items`·`open_questions`의 `at_ms`)·면접 요약 `qa_pairs[].start_ms` 재매핑(`remapExistingTimelines`). 실패/미적용은 치명적이지 않다(원본으로 계속). 컷편집이 검출한 발화 구간은 STT에 넘기지 않는다(§11).
 1. `buildInitialPrompt(...)`로 initial_prompt를 조립한다(STT 실행 여부와 무관 — 빠른 재적용의 환각 필터도 같은 값을 쓴다).
-2. `stt.transcribe` → raw segments (phase:transcribe, progress) → `cleanSegments` → `filterHallucinations(segments, { prompt })` → `applyGlossary`(§12) → WAV 길이 클램프. 정제 3단계는 `skipTranscribe` 경로에도 적용된다(단, 사용자가 고친 발언은 건너뜀 — §5-4).
-3. `vad.detectSilence` → cuts[] (phase:vad)
+2. `stt.transcribe` → raw segments (phase:transcribe, progress) → `cleanSegments` → `filterHallucinations(segments, { prompt })` → `applyGlossary`(§12) → WAV 길이 클램프(시각을 `[0, WAV 길이]`로 자르고 빈 구간 제거). 정제 3단계는 `skipTranscribe` 경로에도 적용된다(단, 사용자가 고친 발언은 건너뜀 — §5-4).
+   - `skipTranscribe`는 기존 `meeting_segments`를 재사용한다. 기존 세그먼트 끝 시각이 WAV 길이의 1.5배를 넘거나 세그먼트가 없으면 전체 재전사로 바꾼다.
+   - STT 어댑터가 `manual`(whisper 미설치)이면 "전사 엔진(Whisper)이 설치되지 않았습니다…" 안내 세그먼트 1개를 넣고 `transcribed:false`를 돌려준다.
+3. `vad.detectSilence(audioPath, {minSilenceMs: 500})` → cuts[] (phase:vad). 실패하면 컷 없이 계속한다. 이 VAD는 `silero-vad-node`(optional, 없으면 STT 세그먼트 사이 공백으로 추정하는 `gap-adapter`)이고, 전사·컷편집이 쓰는 whisper.node 내장 VAD와 다르다.
 4. `diarizeWithFallback` → turns (phase:diarize). `note`가 있으면 스트림 메시지로 보낸다. `diarizeWithFallback` 자체가 throw하면(취소 제외) 단일 화자로 계속하고 "화자분리에 실패해 화자를 구분하지 않았습니다. (원인)"을 보낸다. 이어서 `postprocessTurns`(옵션 분기는 §5-3).
 5. **merge**: 각 STT segment를 speaker_key에 귀속(§5-4 규칙). speakers[] 생성(중복 key 통합, 색상/라벨 부여 + 옛 화자 속성·구성원 연결 승계 + 목소리 자동 매칭). (phase:merge)
-6. DB 저장(meeting_speakers, meeting_speaker_voices, meeting_segments, meeting_cuts — 트랜잭션으로 삭제 후 재삽입), meeting.status='transcribed'.
+6. DB 저장(meeting_speakers, meeting_speaker_voices, meeting_segments, meeting_cuts — 트랜잭션으로 삭제 후 재삽입. 그래서 컷 토글 상태는 다시 처리하면 초기화된다), meeting.status='transcribed'(요약 행이 있어도 같다. 렌더러가 이어서 요약을 다시 만든다). `duration_ms`는 WAV 헤더 길이 → 마지막 세그먼트 끝 → 기존 값 순으로 정한다. 트랜잭션 직전에 마지막으로 취소를 확인해, 취소되면 기존 데이터가 그대로 남는다.
 7. 실패 시 status='failed', error 기록, phase:error.
+8. **취소**(`recording:cancel` → AbortSignal): 단계 경계마다 확인한다. 취소되면 요약이 있으면 `summarized`, 세그먼트가 있으면 `transcribed`, 둘 다 없으면 `failed`("사용자가 취소했습니다.")로 되돌리고 phase:cancelled를 보낸다(`restoreAfterCancel`). 화자분리 워커는 kill한다.
 
 ### 5-1. STT 전사 (stt/whisper-adapter.ts)
 - 언어는 `meetings.language`(현재 항상 `ko`, 선택 UI 없음 — §15).
-- 전사용 VAD: 어댑터가 (컷편집된) 파일에 silero VAD를 기본 임계값 0.5(`VAD_PARAMS.threshold`)로 직접 돌려 발화 구간만 전사한다. VAD 실패·포맷 불일치 시 전체 파일 전사로 폴백.
+- 전사용 VAD: 어댑터가 (컷편집된) 파일에 silero VAD를 기본 임계값 0.5(`VAD_PARAMS.threshold`)로 직접 돌려 발화 구간만 전사한다. VAD 실패·포맷 불일치(16k/mono/16bit WAV가 아님) 시 전체 파일 전사로 폴백.
+- **전사 청크**: 발화 구간을 그대로 전사하면 쉼마다 잘게 쪼개져 호출이 수백 번으로 늘고 문맥이 끊긴다. 그래서 `coalesceRegions`(`stt/vad-segmenter.ts`)가 간격 2초 이하 구간을 침묵째 합치고 28초에서 자른다(`COALESCE_OPTIONS = {joinGapMs: 2000, maxChunkMs: 28000}`). 청크마다 raw PCM을 잘라 전사하고 세그먼트 시각을 파일 절대 ms로 되돌린다. VAD 세그먼트 시각은 센티초라 ×10 한다.
+- **initial_prompt**(`stt/initial-prompt.ts` `buildInitialPrompt`): 언어가 `ko`일 때만 만든다. `다음은 한국어 회의 녹음입니다.`(면접은 `채용 면접`) 뒤에 ` 주제: <제목>.`(기본 제목이면 생략), ` 일정: <일정 제목>.`(제목과 같으면 생략), ` 참석자: <이름들>.`(이전 처리의 화자 실명 + 참석자, 최대 5명), ` 용어: ….`(§12) 순서로 붙인다. 전체 360자를 넘기는 조각은 통째로 뺀다.
 - **세그먼트 분할**: 화자 귀속이 세그먼트 단위라 긴 세그먼트 안의 화자 교대가 사라진다. 그래서 `tokenTimestamps: true` + `maxLen: 30`(`SEGMENT_MAX_LEN`, UTF-8 글자 수)으로 세그먼트를 짧게 자른다. whisper.node 1.0.22는 `tokenTimestamps`가 true일 때만 `maxLen`을 적용한다. 분할로 흔들릴 수 있는 타임스탬프는 `stt/segment-split.ts`의 `sanitizeSegmentTimes`가 보정한다(음수·역전·상한 초과, start 오름차순).
 - **깨진 글자 방어**: 분할 결과에 U+FFFD가 든 세그먼트가 있으면(토큰 경계가 한 글자의 UTF-8 바이트 중간에 걸린 경우, `hasBrokenText`) 해당 호출만 분할 옵션 없이 정확히 1회 다시 전사해 그 결과를 쓴다. 더 반복하지 않는다.
 - **실측 근거**(2026-11-18, 실제 녹음 3건 · 28초 청크 128개 · 약 60분, whisper.node 1.0.22 + large-v3-turbo-q8_0, `tokenTimestamps:true, maxLen:30` 유무 비교): 최장 세그먼트 12~16초 → 7.5~8초, 세그먼트 수 +8~13%, 처리 시간 차이 없음, 비정상 타임스탬프 0건. 깨진 글자(U+FFFD)는 한 파일에서 세그먼트 566개 중 8개 발생(나머지 두 파일은 0건)해, 위의 "감지 시 해당 호출만 옵션 없이 1회 재전사" 방어를 둔 근거가 됐다.
@@ -441,9 +446,9 @@ interface VadAdapter {
 
 ## 6. AI 요약 (meeting-summary.ts)
 
-Claude Agent SDK의 `query()`를 Claude Code 구독 로그인으로 부른다. SDK lazy load, 실행 파일 찾기, 환경 변수 정리, `toFriendlyError`(미로그인·미설치 안내)는 `ai-agent.ts`와 같은 방식으로 이 파일 안에 따로 둔다. 요약은 데이터 조회가 아니라 변환이므로 도구를 모두 끈다(`tools: []`, `allowedTools: []`, `settingSources: []`, MCP 없음).
+Claude Agent SDK의 `query()`를 Claude Code 구독 로그인으로 부른다. SDK lazy load, 실행 파일 찾기, 환경 변수 정리, `toFriendlyError`(미로그인·미설치 안내)는 `ai-agent.ts`와 같은 방식으로 이 파일 안에 따로 둔다. 요약은 데이터 조회가 아니라 변환이므로 도구를 모두 끈다(`tools: []`, `allowedTools: []`, `settingSources: []`, MCP 없음). 모델은 `SUMMARY_MODEL`(`claude-opus-5-5`), `maxTurns: 3`, `cwd`는 `userData`다. 구독 로그인만 쓰도록 자식 프로세스 환경에서 `ANTHROPIC_API_KEY`·`ANTHROPIC_AUTH_TOKEN`·`CLAUDE_CODE_USE_BEDROCK`·`CLAUDE_CODE_USE_VERTEX`를 뺀다. `claude` 실행 파일은 `/opt/homebrew/bin`·`/usr/local/bin`·`~/.local/bin`·`~/.claude/local` 순으로 찾는다.
 
-- 입력: 전사본을 `[mm:ss] 화자명: 텍스트` 줄로 직렬화한다(`formatTranscriptLines`). 80,000자(`MAX_TRANSCRIPT_CHARS`)를 넘으면 `fitTranscript`가 줄을 시간순으로 균등 샘플링해 앞·중간·끝을 모두 남기고, 끝에 발췌본이라는 안내를 붙인다. 앞에 `buildSummaryContextBlock(loadPromptContext(db, meetingId))`의 `[참고 정보]` 블록(참석자·용어집, §12)을 붙인다 — 비어 있으면 생략. `SummarySpec.buildPrompt(transcript, contextBlock)`.
+- 입력: 전사본을 `[mm:ss] 화자명: 텍스트` 줄로 직렬화한다(`formatTranscriptLines`, 화자명은 `display_name` → `label` → `화자`, 빈 발언 제외). 세그먼트가 없거나 텍스트가 모두 비면 Claude를 부르지 않고 오류로 끝난다. 80,000자(`MAX_TRANSCRIPT_CHARS`)를 넘으면 `fitTranscript`가 줄을 시간순으로 균등 샘플링해 앞·중간·끝을 모두 남기고, 끝에 발췌본이라는 안내를 붙인다. 앞에 `buildSummaryContextBlock(loadPromptContext(db, meetingId))`의 `[참고 정보]` 블록(참석자·용어집, §12)을 붙인다 — 비어 있으면 생략. `SummarySpec.buildPrompt(transcript, contextBlock)`.
 - 시스템 프롬프트(회의): `MEETING_SPEC.systemPrompt`. 원칙 블록 → 출력 키 블록(`MEETING_OUTPUT_KEYS`, 회의 종류별 템플릿에서 갈아끼울 수 있게 분리) 순서다.
   - 원칙: 전사록에 없는 내용 금지(불확실하면 빈 배열·null). 시각은 근거 전사 줄의 `mm:ss`를 그대로 복사하고 계산·추정하지 않는다(못 찾으면 null). 화자명이 `화자 1` 같은 기본 라벨이면 실명을 추측하지 않고 문장 주어·assignee로 쓰지 않는다. assignee는 전사록에 이름으로 드러날 때만 채운다(`[참고 정보]`의 참석자는 표기 맞춤용). 같은 내용을 여러 키에 반복하지 않는다.
   - 출력 키: `tldr`(결론 2~3문장), `keywords`(핵심 명사구 5~10개), `topics`(`[{title, start, points}]` 시간순 주제 3~8개, 10분 미만 회의는 1~3개, points 2~5개), `decisions`(`[{text, at}]`), `action_items`(`[{text, assignee, due, at}]`), `open_questions`(`[{text, at}]` 회의 안에서 답이 나오지 않은 질문). 옛 `key_points`는 주제별 요약으로, `next_steps`는 액션아이템·미결 질문으로 흡수해 새 요약은 둘 다 `[]`다.
@@ -453,7 +458,7 @@ Claude Agent SDK의 `query()`를 Claude Code 구독 로그인으로 부른다. S
   - `decisions`·`open_questions`는 문자열 항목도 받아 `at_ms: null`로 바꾼다.
 - **타임스탬프 규약**(회의·면접 공통): AI에게 ms 정수를 만들게 하지 않는다. 전사 줄의 `[mm:ss]`를 그대로 돌려받아 `summary-spec.ts`의 `parseTimestamp`가 ms로 환산한다. 받는 형식은 `mm:ss`(분 1~3자리, 초 00~59), `h:mm:ss`, 대괄호로 감싼 `[mm:ss]`다. 그 밖의 형식(`00:75`, `3분 12초`)과 빈 값은 `null`이고, 화면은 시각 버튼·표기를 숨긴다. 회귀 테스트: `summary-spec.test.ts`.
 - 실측: `LINKWORK_LIVE_SUMMARY_ID=<회의 id> npx vitest run src/main/services/meeting-summary.live.test.ts`가 실제 회의 전사로 claude CLI를 불러 주제 수(3~8)·points 수(≥2)·키워드 수(5~10)·시각 범위·시각이 전사 줄에 있는 비율(≥90%)·주제 시간순·기본 라벨 담당자 0건을 단언한다. 환경변수가 없으면 건너뛴다. DB는 `sqlite3 -readonly`로 읽고 응답 본문은 쓰지 않는다.
-- 진행률: phase:summarize, 완료 시 phase:done. 실패하면 친절한 오류 문구로 바꿔 보낸다.
+- 진행률: phase:summarize(응답 메시지마다 0.1→0.7, 파싱 0.8), 완료 시 phase:done. 성공하면 `meetings.status='summarized'`로 바꾸고 `logActivity('meeting', 'update', …, '요약 생성')`을 남긴다(비서 스케줄러가 새 액션아이템을 반영한다). 실패하면 친절한 오류 문구(미로그인·미설치·결제·사용량 한도)로 바꿔 보낸다. 파싱 실패 문구에는 원본 응답 앞 500자를 붙인다.
 
 ### 6-1. 종류별 요약 스펙 (SummarySpec)
 
@@ -493,17 +498,26 @@ utils/processing-progress.ts   # phase 가중치로 전체 진행률 계산 (§1
 components/recording/
   RecordingView.tsx            # 좌: [새 녹음]으로 여는 녹음 컨트롤 + 종류 필터(전체/회의/면접) + "인식 보조" 패널 토글 + 목록, 우: 상세
   RecognitionAidsPanel.tsx     # 용어집/구성원 탭 편집 + 텍스트 가져오기, 구성원별 "목소리 N건" + [목소리 삭제] (§12). 설정 > 회의 녹음에도 같은 패널이 있다
-  RecorderControls.tsx         # 종류(회의/면접) + 소스 선택 + 참석자 칩 + 무음 제거 체크, 시작/일시정지/종료 + 레벨미터
-  RecordingList.tsx            # 녹음 카드 목록(상태 pill, 면접 배지), kindFilter 적용
-  MeetingDetail.tsx            # 헤더(제목/날짜/상태) + 탭(타임라인/요약/화자), kind별 패널 분기, 화자 탭의 "화자 다시 분리"
-  SpeakerTimeline.tsx          # 시간대별 화자 발언 (클릭→오디오 점프), 발언 수정, 컷 토글
+  RecorderControls.tsx         # 종류(회의/면접) + 소스 선택 + 참석자 칩 + 참석 인원(비우면 자동, 참석자 수로 제안) + 무음 제거 체크 + 면접 동의 체크, 시작/일시정지/종료 + 레벨미터
+  RecordingList.tsx            # 녹음 카드 목록(상태 pill, 면접 배지, 길이, 일정 제목, 처리 중 전체 진행 바 + 취소), kindFilter 적용
+  MeetingDetail.tsx            # 헤더(제목 편집/날짜/상태/무음 배지/참석자 칩) + 재처리 메뉴 + 처리 진행률·취소 + 실패 배너 + 탭(타임라인/요약/화자), kind별 패널 분기, 화자 탭의 "화자 다시 분리"
+  SpeakerTimeline.tsx          # 화자별 발언 비율 바 + 미니 타임라인(재생 위치, 클릭·드래그 시킹) + 발언 목록(클릭→오디오 점프, 재생 중 자동 스크롤, 세그먼트 화자 재할당·새 화자 즉석 추가, 발언 수정) + 컷 토글
   SummaryPanel.tsx             # [회의] 키워드 칩(표시 전용)→TL;DR→핵심 포인트(구버전)→결정사항→액션아이템("+ TODO")→미결 질문→다음 단계(구버전)→주제별 요약. onSeek(MeetingDetail의 handleSeek)가 있고 시각이 있으면 항목마다 시각 버튼("이 시점부터 듣기", 클릭→그 시점 재생)
   InterviewPanel.tsx           # [면접] Q&A(클릭→질문 시점 재생)/근거/추가 확인/레퍼런스 체크
-  SpeakerEditor.tsx            # 화자 실명 입력/색상/병합/세그먼트 재할당 (면접 프리셋 지원), 목소리 매칭 배지·확인/거절·등록
-  AudioPlayer.tsx              # <audio> + seek, cuts enabled 구간 skip(비파괴)
+  SpeakerEditor.tsx            # 화자 실명 입력/색상/병합, 이름 프리셋(면접은 면접관/지원자 + 참석자, 회의는 참석자, 최대 8개), 목소리 매칭 배지·확인/거절·등록
+  AudioPlayer.tsx              # <audio src="linkwork-media://audio/<파일명>"> + seek, cuts enabled 구간 skip(비파괴)
 ```
 
 디자인은 `components/ui/tokens.ts`(button/typo/status pill), `ui/index.tsx`(Card/Badge/IconButton/EmptyState/SectionTitle), `ui/icons.tsx`를 쓴다. 새 색이나 커스텀 CSS 없이 Tailwind v4 인라인 클래스 + 토큰으로 그린다.
+
+**오디오 재생**: main `index.ts`의 `linkwork-media` 프로토콜이 `userData/recordings/<파일명>`(basename만 받아 경로 탈출 차단)을 스트리밍한다. `<audio>` 시킹이 보내는 HTTP Range 요청을 206 Partial Content로 돌려준다.
+
+**상세 화면 재처리 메뉴**(`MeetingDetail`, 오디오가 있고 녹음 중이 아닐 때):
+- 화자 다시 분리: 참석 인원(1~20, 비우면 자동)을 `recording:setExpectedSpeakers`로 저장한 뒤 빠른 재적용.
+- AI 요약 다시 생성 / 면접 기록 다시 정리: §13 분기.
+- 전체 다시 처리: 재전사 포함, 요약도 다시 만든다.
+- 빠른 재적용: 재전사 없이 정제·화자분리만(`skipTranscribe`). 전사가 나오면 요약도 다시 만든다.
+- 처리 중에는 전체 진행률·단계 경과 시간·메시지와 [취소] 버튼(`recording:cancel`)를 보인다. `failed`면 오류 문구와 [다시 처리]를 보인다.
 
 **화자 탭의 목소리 UX**(§5-4):
 - `SpeakerEditor` 화자 행: `auto` → "목소리로 자동 지정 · 82%" 배지 + [맞음] [이 사람 아님]. `suggested` → "혹시 OOO?" + [지정] [아님]. `manual`이고 `voice_enrolled`(표본이 실제로 있음) → "목소리 등록됨". 이름은 있는데 구성원이 아니고 `has_voice` → [목소리 등록].
