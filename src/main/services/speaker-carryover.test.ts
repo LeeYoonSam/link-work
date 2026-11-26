@@ -103,7 +103,7 @@ describe('isCustomLabel', () => {
   it('키·순서로 만든 기본 라벨과 비교한다', () => {
     expect(isCustomLabel(spk(1, 'spk_0', 0))).toBe(false)
     expect(isCustomLabel(spk(1, 'mic', 0, { label: '나' }))).toBe(false)
-    expect(isCustomLabel(spk(1, 'spk_0', 0, { label: '면접관' }))).toBe(true)
+    expect(isCustomLabel(spk(1, 'spk_0', 0, { label: '진행자' }))).toBe(true)
   })
 })
 

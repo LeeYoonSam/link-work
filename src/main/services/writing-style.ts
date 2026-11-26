@@ -3,11 +3,10 @@
 // 이 파일의 조각을 AI 가 텍스트를 생성하는 모든 시스템 프롬프트가 import 한다.
 // - ai-agent.ts 의 buildSystemPrompt: AI 채팅 답변과 메모·문서 작성 도구 텍스트
 // - meeting-summary.ts 의 MEETING_SPEC: 회의 요약 JSON 의 문자열 값
-// - interview-summary.ts 의 INTERVIEW_SPEC: 면접 기록 요약 JSON 의 문자열 값
 // 규칙을 바꿀 때는 이 파일만 고친다. 각 프롬프트에 규칙 문장을 복사하지 않는다.
 //
 // 비서 말투 규칙(ASSISTANT_SPEECH_RULES)은 회의 전 브리핑(assistant-briefing.ts)이 쓴다 (docs/ASSISTANT.md §13).
-// 이 규칙은 해요체다. 채팅·회의 요약·면접 요약은 위 글쓰기 규칙을 그대로 쓴다.
+// 이 규칙은 해요체다. 채팅·회의 요약은 위 글쓰기 규칙을 그대로 쓴다.
 
 export const WRITING_STYLE_RULES = `## 글쓰기 규칙 (ASD-STE100)
 - 한 문장에 한 가지 정보만 쓴다.

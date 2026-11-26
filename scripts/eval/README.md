@@ -88,6 +88,7 @@ shasum -a 256 -c checksum.txt   # checksum.txt 에 받은 파일의 SHA-256 을 
 CAM++(`campplus`)는 앱이 쓰는 `<userData>/models/sherpa-embedding.onnx`를 그대로 쓴다.
 
 **2) 벤치 실행** — `diar_bench.py`가 회의마다 `node scripts/diar-regress.mjs --only <ids> --model <path> --tag <name> --dump-hyp out/hyp --chunk 200`을 부르고 결과를 모은다. `--chunk N`(기본 200, 0이면 나누지 않음)은 창 임베딩을 N개씩 cli 자식 프로세스로 나눠 뽑는다. sherpa-onnx-node가 창마다 네이티브 메모리를 돌려주지 않아 ERes2NetV2(약 8MB/창) 같은 큰 모델이 긴 회의에서 메모리 부족으로 죽기 때문이다. 모든 모델에 같게 적용하고, 임베딩 값은 나누지 않을 때와 같다. 처리 시간에는 자식 기동·모델 로드가 더해진다.
+앱도 같은 이유로 창 300개마다 embed 워커를 새로 띄운다. 앱 경로의 메모리 상한은 `npm run check:diar-mem`(`scripts/diar-mem.mjs`, 회의 51, 프로세스 트리 최대 RSS 2,048MB 이하)으로 확인한다([docs/MEETING_RECORDING.md](../../docs/MEETING_RECORDING.md) §5-3).
 ```bash
 python3 diar_bench.py --models campplus,eres2netv2,wespeaker_r34lm \
     --meetings 53,50,51,44,40,45,46 --mode label-free          # 정답 없이
@@ -132,6 +133,11 @@ python3 label.py --meeting 51 --minutes 10                            # 저장�
 앱 회의록 Markdown과 같은 순서로 직렬화해 채점에 넘긴다. 시각(`at_ms`·`start_ms`)이 있으면 `[mm:ss]`로 붙인다.
 `decisions`는 옛 요약의 문자열 배열과 새 요약의 `{text, at_ms}` 배열을 모두 읽는다. `topics`·`open_questions`·`keywords`
 컬럼이 없는 옛 DB도 그대로 읽는다(빈 배열).
+
+요약 형식(템플릿)은 요약할 때 정해진다. 수동 고정(`manual`) → 사용자 제목 정규식(`title`) → 같은 요약 호출에서 모델이 선택(`auto`) 순이고,
+결과는 `meeting_summaries.template_id`(실제로 쓴 형식)·`template_source`·`template_reason`(선택 이유)에 남는다.
+`eval_summary.py`는 이 세 컬럼을 채점에 쓰지 않는다. 형식별로 비교하려면 `sqlite3 -readonly`로 세 컬럼을 함께 읽어 회의를 나눈다.
+규칙은 [docs/MEETING_RECORDING.md](../../docs/MEETING_RECORDING.md) §6-1.
 
 요약 프롬프트의 출력 형식(주제 수·포인트 수·키워드 수·시각이 전사 줄에 있는지·기본 화자 라벨 담당자)은 앱 쪽 실측 테스트로 확인한다:
 ```bash

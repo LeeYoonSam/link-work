@@ -8,7 +8,6 @@ import { speakerCountPrompt } from '../../utils/speakerCountPrompt'
 import AudioPlayer from './AudioPlayer'
 import SpeakerTimeline from './SpeakerTimeline'
 import SummaryPanel from './SummaryPanel'
-import InterviewPanel from './InterviewPanel'
 import SpeakerEditor from './SpeakerEditor'
 import type { AudioPlayerHandle } from './AudioPlayer'
 
@@ -89,6 +88,25 @@ function formatDateTime(dateStr: string): string {
 
 interface Props {
   onClose: () => void
+}
+
+/** 제목을 비웠을 때 붙는 기본 제목(main meeting-templates.ts DEFAULT_MEETING_TITLE과 같은 값). */
+const DEFAULT_MEETING_TITLE = '제목 없는 회의'
+
+/** '자동 제목' 배지: 요약이 실제로 기본 제목을 바꾼 경우에만 단다. */
+export function showsAutoTitleBadge(m: Pick<Meeting, 'title' | 'title_auto' | 'status'>): boolean {
+  const title = m.title.trim()
+  return m.title_auto === 1 && m.status === 'summarized' && !!title && title !== DEFAULT_MEETING_TITLE
+}
+
+/**
+ * 제목 편집 저장 시 rename을 부를지. 같은 문자열이라도 자동 제목(title_auto=1)이면 불러
+ * 사용자 제목으로 굳힌다(title_auto=0 — 다음 요약이 덮지 않는다).
+ */
+export function shouldRenameTitle(m: Pick<Meeting, 'title' | 'title_auto'>, value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed) return false
+  return trimmed !== m.title || m.title_auto === 1
 }
 
 export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
@@ -228,9 +246,8 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
 
   const handleTitleSave = async (): Promise<void> => {
     setEditingTitle(false)
-    const trimmed = titleValue.trim()
-    if (!trimmed || trimmed === meeting.title) return
-    await renameMeeting(meeting.id, trimmed)
+    if (!shouldRenameTitle(meeting, titleValue)) return
+    await renameMeeting(meeting.id, titleValue.trim())
     await refreshCurrent()
   }
 
@@ -328,13 +345,9 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
   // 요약 재생성 항목이 "전체 재분석 후 요약"으로 승격되는 회의인지 (메뉴 문구·동작이 함께 갈린다)
   const reanalyzeBeforeSummary = needsFullReanalysis(meeting)
 
-  // 면접 녹음은 요약 스키마와 상세 패널이 다르다 (meetings.kind)
-  const isInterview = meeting.kind === 'interview'
-  const kindNoun = isInterview ? '면접' : '회의'
-
   const TABS: { id: Tab; label: string }[] = [
     { id: 'timeline', label: `타임라인 (${segments.length})` },
-    { id: 'summary', label: isInterview ? '면접 기록' : '요약' },
+    { id: 'summary', label: '요약' },
     { id: 'speakers', label: `화자 (${speakers.length})` }
   ]
 
@@ -425,20 +438,12 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
 
                       <ReprocessMenuItem
                         title={
-                          reanalyzeBeforeSummary
-                            ? isInterview
-                              ? '다시 분석 후 면접 기록 정리'
-                              : '다시 분석 후 요약 생성'
-                            : isInterview
-                              ? '면접 기록 다시 정리'
-                              : 'AI 요약 다시 생성'
+                          reanalyzeBeforeSummary ? '다시 분석 후 요약 생성' : 'AI 요약 다시 생성'
                         }
                         desc={
                           reanalyzeBeforeSummary
                             ? '무음 컷편집 · 용어집/참석자 반영 · 재전사 (수동 수정 초기화)'
-                            : isInterview
-                              ? '전사 기반 질문·답변 재정리'
-                              : '전사 기반 5분류 요약 재생성'
+                            : '전사 기반 요약 재생성'
                         }
                         disabled={busy}
                         onClick={() => {
@@ -483,9 +488,13 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
 
         {/* 메타 정보 */}
         <div className="flex items-center gap-2 flex-wrap">
-          {isInterview && (
-            <Badge color="bg-purple-100 text-purple-700" size="xs">
-              면접
+          {showsAutoTitleBadge(meeting) && (
+            <Badge
+              color="bg-gray-100 text-gray-500"
+              size="xs"
+              title="요약에서 만든 제목입니다. 제목을 고치면 다시 바뀌지 않습니다"
+            >
+              자동 제목
             </Badge>
           )}
           <Badge color={statusStyle.badge} size="xs">
@@ -734,16 +743,12 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
           />
         )}
         {tab === 'summary' &&
-          (isInterview ? (
-            <InterviewPanel summary={summary} meetingId={meeting.id} onSeek={handleSeek} />
-          ) : (
-            <SummaryPanel
-              summary={summary}
-              meetingId={meeting.id}
-              onSeek={handleSeek}
-              currentMs={currentMs}
-            />
-          ))}
+          <SummaryPanel
+            summary={summary}
+            meetingId={meeting.id}
+            onSeek={handleSeek}
+            currentMs={currentMs}
+          />}
         {tab === 'speakers' && (
           <div className="space-y-3">
             {canRediarize(meeting, speakers) && (
@@ -764,7 +769,6 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
             <SpeakerEditor
               speakers={speakers}
               meetingId={meeting.id}
-              kind={meeting.kind}
               attendees={attendees}
             />
           </div>
@@ -781,7 +785,7 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
             className="bg-white rounded-xl shadow-xl p-6 w-80 space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-sm font-semibold text-gray-800">{kindNoun} 삭제</p>
+            <p className="text-sm font-semibold text-gray-800">회의 삭제</p>
             <p className="text-sm text-gray-600">
               <span className="font-medium">"{meeting.title}"</span>을(를) 삭제합니다.
               오디오 파일과 전사 내용이 모두 삭제되며 복구할 수 없습니다.

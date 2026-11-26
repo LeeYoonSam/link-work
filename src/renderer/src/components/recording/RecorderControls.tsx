@@ -3,33 +3,37 @@ import { formatElapsed, useRecorderStore } from '../../stores/recorderStore'
 import { cancelSession, retrySave, startSession, stopAndSave } from '../../stores/recorderSession'
 import { useRecognitionAidsStore } from '../../stores/recognitionAidsStore'
 import { useRecordingStore } from '../../stores/recordingStore'
-import type { MeetingKind, MeetingSource, MeetingTemplateId, SummaryTemplateOption } from '../../types'
+import type { MeetingSource } from '../../types'
+import type { StartSessionInput } from '../../stores/recorderSession'
 import { button } from '../ui'
 
 interface Props {
   onDone: () => void
 }
 
-const KIND_LABEL: Record<MeetingKind, string> = {
-  meeting: '회의',
-  interview: '면접'
-}
-
-// 요약 형식 칩. main 목록을 못 읽으면 이 고정 목록을 쓴다('default'는 '자동' 칩과 겹쳐 뺀다).
-const FALLBACK_TEMPLATES: SummaryTemplateOption[] = [
-  { id: 'one_on_one', name: '1:1' },
-  { id: 'standup', name: '스탠드업' },
-  { id: 'review', name: '리뷰·회고' }
-]
-
 const HEADCOUNT_CHIPS = [2, 3, 4, 5, 6]
 
-// 종료 시 참석 인원을 물을지(#8). 회의인데 참석 인원을 비워 두고 시작했을 때만 묻는다.
-export function shouldAskHeadcountOnStop(input: {
-  kind: MeetingKind
-  speakersInput: string
-}): boolean {
-  return input.kind === 'meeting' && input.speakersInput.trim() === ''
+// 종료 시 참석 인원을 물을지(#8). 참석 인원을 비워 두고 시작했을 때만 묻는다.
+export function shouldAskHeadcountOnStop(input: { speakersInput: string }): boolean {
+  return input.speakersInput.trim() === ''
+}
+
+// 녹음 시작 화면의 입력을 startSession 입력으로 바꾼다. 빈 참석 인원은 자동 추정(null).
+// 요약 형식은 여기서 고르지 않는다 — 요약할 때 내용으로 자동 선택한다.
+export function buildStartSessionInput(input: {
+  source: MeetingSource
+  speakerCount: string
+  attendeeIds: number[]
+  compactAudio: boolean
+}): StartSessionInput {
+  const parsed = input.speakerCount.trim() === '' ? NaN : parseInt(input.speakerCount, 10)
+  const expected_speakers = Number.isNaN(parsed) ? null : parsed
+  return {
+    source: input.source,
+    expected_speakers,
+    attendee_ids: input.attendeeIds,
+    compact_audio: input.compactAudio
+  }
 }
 
 // 녹음 중 남긴 메모(화면 표시용 최근 목록)
@@ -61,7 +65,7 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
     resume,
     setSaveError
   } = useRecorderStore()
-  // 녹음 중인 draft 회의 행. 화면을 다시 열어 지역 상태(종류·참석 인원)가 초기화돼도
+  // 녹음 중인 draft 회의 행. 화면을 다시 열어 지역 상태(참석 인원)가 초기화돼도
   // 종료 시 참석 인원 질문은 실제 회의 값으로 판단한다.
   const draftMeeting = useRecordingStore((st) =>
     draftId == null ? undefined : st.meetings.find((m) => m.id === draftId)
@@ -70,8 +74,7 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
   const { members, fetchAll } = useRecognitionAidsStore()
 
   const [source, setSource] = useState<MeetingSource>('mic')
-  const [kind, setKind] = useState<MeetingKind>('meeting')
-  // 참석 인원(화자분리 클러스터 수). 빈 값이면 자동 추정. 면접 기본 2, 회의 기본 자동.
+  // 참석 인원(화자분리 클러스터 수). 빈 값이면 자동 추정.
   const [speakerCount, setSpeakerCount] = useState('')
   // 참석 인원 입력에 우리가 마지막으로 자동으로 넣은 값.
   // 사용자가 직접 고쳐 넣은 숫자는 참석자를 더 골라도 덮지 않기 위해 구분한다.
@@ -80,13 +83,8 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
   const [attendeeIds, setAttendeeIds] = useState<number[]>([])
   // 처리 전 긴 침묵을 잘라낼지. 기본 on — 전사·화자분리 시간이 눈에 띄게 줄어든다.
   const [compactAudio, setCompactAudio] = useState(true)
-  // 면접 녹음은 지원자 동의가 전제다. 고지를 확인해야만 시작 버튼이 활성화된다.
-  const [consent, setConsent] = useState(false)
   // 시작 진행 중(권한 팝업·화면 선택창 대기) — 버튼 중복 클릭을 막는다
   const [starting, setStarting] = useState(false)
-  // 요약 형식(#10). null=제목으로 자동 판별
-  const [summaryTemplate, setSummaryTemplate] = useState<MeetingTemplateId | null>(null)
-  const [templateOptions, setTemplateOptions] = useState<SummaryTemplateOption[]>(FALLBACK_TEMPLATES)
   // 녹음 중 메모·북마크(#11)
   const [memoText, setMemoText] = useState('')
   // 입력란이 빈 상태에서 첫 글자가 들어온 순간의 녹음 경과 — 메모 시각은 쓰기 시작한 시점이다
@@ -100,21 +98,6 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
   // 참석자 칩에 쓸 구성원 목록. 인식 보조 패널에서 방금 추가했을 수도 있으니 열 때마다 읽는다.
   useEffect(() => {
     void fetchAll()
-  }, [])
-
-  // 요약 형식 이름은 main 목록에서 읽는다. 실패하면 고정 목록 그대로.
-  useEffect(() => {
-    let alive = true
-    window.api.recording
-      .listSummaryTemplates()
-      .then((list) => {
-        const opts = list.filter((t) => t.id !== 'default')
-        if (alive && opts.length > 0) setTemplateOptions(opts)
-      })
-      .catch((e) => console.warn('[RecorderControls] 요약 형식 목록 실패', e))
-    return () => {
-      alive = false
-    }
   }, [])
 
   // 녹음(draft)이 바뀌면 이전 녹음의 메모 표시·질문 패널을 비운다
@@ -133,19 +116,6 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
   const BAR_COUNT = 20
   const activeBars = Math.round(level * BAR_COUNT)
 
-  const isInterview = kind === 'interview'
-
-  // 종류를 바꾸면 참석 인원 기본값도 리셋한다(면접=2, 회의=자동).
-  // 이 기본값도 "우리가 넣은 값"이므로, 뒤이어 참석자를 고르면 그 수로 덮인다.
-  const handleKindChange = (k: MeetingKind): void => {
-    setKind(k)
-    // 면접은 요약 형식이 따로 있으므로 회의 형식 선택을 비운다
-    if (k === 'interview') setSummaryTemplate(null)
-    const preset = k === 'interview' ? '2' : ''
-    setSpeakerCount(preset)
-    setAutoFilledCount(preset)
-  }
-
   // 참석자를 고르면 참석 인원을 그 수로 제안한다.
   // 단 사용자가 직접 입력한 숫자(= 우리가 넣은 값과 다른 숫자)는 건드리지 않는다.
   const toggleAttendee = (memberId: number): void => {
@@ -156,8 +126,8 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
 
     const untouched = speakerCount.trim() === '' || speakerCount === autoFilledCount
     if (!untouched) return
-    // 참석자를 모두 해제하면 종류별 기본값으로 되돌린다(면접=2, 회의=자동).
-    const fallback = kind === 'interview' ? '2' : ''
+    // 참석자를 모두 해제하면 자동 추정(빈 값)으로 되돌린다.
+    const fallback = ''
     const suggested = next.length > 0 ? String(next.length) : fallback
     setSpeakerCount(suggested)
     setAutoFilledCount(suggested)
@@ -169,16 +139,9 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
     if (starting) return
     setStarting(true)
     try {
-      const parsed = speakerCount.trim() === '' ? NaN : parseInt(speakerCount, 10)
-      const expected_speakers = Number.isNaN(parsed) ? null : parsed
-      await startSession({
-        source,
-        kind,
-        expected_speakers,
-        attendee_ids: attendeeIds,
-        compact_audio: compactAudio,
-        summary_template: kind === 'meeting' ? summaryTemplate : null
-      })
+      await startSession(
+        buildStartSessionInput({ source, speakerCount, attendeeIds, compactAudio })
+      )
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : '녹음 시작 실패')
     } finally {
@@ -198,17 +161,16 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
     }
   }
 
-  // 종료 버튼 — 회의인데 참석 인원을 비워 두었으면 먼저 묻는다(녹음은 계속된다).
+  // 종료 버튼 — 참석 인원을 비워 두었으면 먼저 묻는다(녹음은 계속된다).
   const handleStopClick = (): void => {
     if (saving) return
     const ask = shouldAskHeadcountOnStop(
       draftMeeting
         ? {
-            kind: draftMeeting.kind,
             speakersInput:
               draftMeeting.expected_speakers == null ? '' : String(draftMeeting.expected_speakers)
           }
-        : { kind, speakersInput: speakerCount }
+        : { speakersInput: speakerCount }
     )
     if (ask) {
       setHeadcountInput('')
@@ -324,30 +286,10 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
 
   return (
     <div className="px-4 py-3 space-y-3">
-      {/* 종류 · 소스 선택 (idle 상태에서만) */}
+      {/* 소스 선택 (idle 상태에서만) */}
       {isIdle && (
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            {/* 녹음 종류 — 요약 형식과 상세 화면이 이 값으로 갈린다 */}
-            <div className="flex bg-gray-100 rounded-md p-0.5 w-fit">
-              {(['meeting', 'interview'] as MeetingKind[]).map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => handleKindChange(k)}
-                  className={`px-3 py-1 text-xs rounded font-medium transition-colors ${
-                    kind === k
-                      ? 'bg-white text-gray-900 shadow-sm'
-                      : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  {KIND_LABEL[k]}
-                </button>
-              ))}
-            </div>
-
-            <span className="text-gray-200">|</span>
-
             <div className="flex bg-gray-100 rounded-md p-0.5 w-fit">
               {(['mic', 'mic+system'] as MeetingSource[]).map((s) => (
                 <button
@@ -365,33 +307,6 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
               ))}
             </div>
           </div>
-
-          {/* 요약 형식 — 회의만. 자동이면 제목으로 판별한다 */}
-          {!isInterview && (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs text-gray-500 shrink-0">요약 형식</span>
-              {[{ id: null, name: '자동' } as { id: MeetingTemplateId | null; name: string }]
-                .concat(templateOptions)
-                .map((t) => {
-                  const selected = summaryTemplate === t.id
-                  return (
-                    <button
-                      key={t.id ?? 'auto'}
-                      type="button"
-                      onClick={() => setSummaryTemplate(t.id)}
-                      aria-pressed={selected}
-                      className={`px-2 py-0.5 text-[11px] rounded-full border transition-colors ${
-                        selected
-                          ? 'bg-blue-50 border-blue-200 text-blue-600 font-medium'
-                          : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
-                      }`}
-                    >
-                      {t.name}
-                    </button>
-                  )
-                })}
-            </div>
-          )}
 
           {/* 참석자 — 전사 힌트·화자 이름 프리셋·요약 담당자 매칭에 함께 쓰인다 */}
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -453,23 +368,6 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
             </span>
           </label>
 
-          {/* 면접: 동의 고지 (개인정보보호법상 사전 동의 필요) */}
-          {isInterview && (
-            <label className="flex items-start gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-md cursor-pointer">
-              <input
-                type="checkbox"
-                checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
-                className="mt-0.5 accent-amber-600"
-              />
-              <span className="text-[11px] text-amber-800 leading-relaxed">
-                지원자에게 녹음 사실과 목적을 알리고 동의를 받았습니다.
-                <span className="block text-amber-600">
-                  기록은 답변 확인용이며, AI 요약은 합격 판정 근거로 사용하지 않습니다.
-                </span>
-              </span>
-            </label>
-          )}
         </div>
       )}
 
@@ -624,12 +522,11 @@ export default function RecorderControls({ onDone }: Props): React.ReactNode {
           <button
             type="button"
             onClick={handleStart}
-            disabled={starting || (isInterview && !consent)}
-            title={isInterview && !consent ? '동의 확인 후 시작할 수 있습니다' : undefined}
+            disabled={starting}
             className={`px-3 py-1.5 text-xs font-medium ${button.primary} flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed`}
           >
             <RecordIcon />
-            {starting ? '시작 중...' : isInterview ? '면접 녹음 시작' : '녹음 시작'}
+            {starting ? '시작 중...' : '녹음 시작'}
           </button>
         )}
 

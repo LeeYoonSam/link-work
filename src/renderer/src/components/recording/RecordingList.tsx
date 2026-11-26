@@ -76,11 +76,6 @@ export function MeetingCard({
         >
           {meeting.title}
         </span>
-        {meeting.kind === 'interview' && (
-          <Badge color="bg-purple-100 text-purple-700" size="xs">
-            면접
-          </Badge>
-        )}
         <Badge color={statusStyle.badge} size="xs">
           {statusStyle.label}
         </Badge>
@@ -148,7 +143,7 @@ export function MeetingCard({
 }
 
 export default function RecordingList(): React.ReactNode {
-  const { meetings, kindFilter, setKindFilter } = useRecordingStore()
+  const { meetings } = useRecordingStore()
   const request = useFocusRequest('recording')
   const [flashId, flash] = useFlash<number>()
 
@@ -159,42 +154,25 @@ export default function RecordingList(): React.ReactNode {
     const target = meetings.find((m) => m.id === request.id)
     // 목록이 아직 안 왔으면 기다린다. 끝내 없으면 TTL 이 요청을 지운다
     if (!target) return
-    if (kindFilter !== 'all' && target.kind !== kindFilter) setKindFilter('all')
     flash(target.id)
     useFocusStore.getState().consume(request.nonce)
-  }, [request, meetings, kindFilter, setKindFilter, flash])
+  }, [request, meetings, flash])
 
-  const visible =
-    kindFilter === 'all' ? meetings : meetings.filter((m) => m.kind === kindFilter)
-
-  if (visible.length === 0) {
-    // 녹음이 아예 없는 것과, 필터에 걸려 안 보이는 것은 다른 상황이다
-    const filtered = meetings.length > 0
+  if (meetings.length === 0) {
     return (
       <EmptyState>
         <div className="mb-2 text-gray-300">
           <MicOffIcon />
         </div>
-        {filtered ? (
-          <>
-            <p>{kindFilter === 'interview' ? '면접' : '회의'} 녹음이 없습니다</p>
-            <p className="text-[11px] mt-1 text-gray-300">
-              전체 탭에서 다른 녹음을 볼 수 있습니다
-            </p>
-          </>
-        ) : (
-          <>
-            <p>녹음된 항목이 없습니다</p>
-            <p className="text-[11px] mt-1 text-gray-300">상단 버튼으로 첫 녹음을 시작하세요</p>
-          </>
-        )}
+        <p>녹음이 없습니다</p>
+        <p className="text-[11px] mt-1 text-gray-300">상단 버튼으로 첫 녹음을 시작하세요</p>
       </EmptyState>
     )
   }
 
   return (
     <div>
-      {visible.map((m) => (
+      {meetings.map((m) => (
         <MeetingCard key={m.id} meeting={m} highlighted={m.id === flashId} />
       ))}
     </div>

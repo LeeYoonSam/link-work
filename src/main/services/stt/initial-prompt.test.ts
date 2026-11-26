@@ -4,38 +4,28 @@ import { buildInitialPrompt } from './initial-prompt'
 describe('buildInitialPrompt', () => {
   it('비한국어 전사에는 프롬프트를 붙이지 않는다', () => {
     // 한국어 문장으로 구성된 힌트라 en/ja 등에는 오히려 방해가 된다 → undefined.
-    expect(buildInitialPrompt({ kind: 'meeting', language: 'en' })).toBeUndefined()
-    expect(buildInitialPrompt({ kind: 'meeting', language: 'ja' })).toBeUndefined()
+    expect(buildInitialPrompt({ language: 'en' })).toBeUndefined()
+    expect(buildInitialPrompt({ language: 'ja' })).toBeUndefined()
   })
 
   it('한국어 계열(ko/ko-KR)은 기본 문장만이라도 반환한다', () => {
-    expect(buildInitialPrompt({ kind: 'meeting', language: 'ko' })).toBe(
+    expect(buildInitialPrompt({ language: 'ko' })).toBe(
       '다음은 한국어 회의 녹음입니다.'
     )
-    expect(buildInitialPrompt({ kind: 'meeting', language: 'ko-KR' })).toBe(
+    expect(buildInitialPrompt({ language: 'ko-KR' })).toBe(
       '다음은 한국어 회의 녹음입니다.'
-    )
-  })
-
-  it('면접(kind=interview)은 면접 기본 문장을 쓴다', () => {
-    expect(buildInitialPrompt({ kind: 'interview', language: 'ko' })).toBe(
-      '다음은 한국어 채용 면접 녹음입니다.'
     )
   })
 
   it('자동 부여 기본 제목은 주제로 넣지 않는다', () => {
-    // '제목 없는 회의'/'제목 없는 면접'은 힌트 가치가 없다.
-    expect(
-      buildInitialPrompt({ kind: 'meeting', language: 'ko', title: '제목 없는 회의' })
-    ).toBe('다음은 한국어 회의 녹음입니다.')
-    expect(
-      buildInitialPrompt({ kind: 'interview', language: 'ko', title: '제목 없는 면접' })
-    ).toBe('다음은 한국어 채용 면접 녹음입니다.')
+    // '제목 없는 회의'는 힌트 가치가 없다.
+    expect(buildInitialPrompt({ language: 'ko', title: '제목 없는 회의' })).toBe(
+      '다음은 한국어 회의 녹음입니다.'
+    )
   })
 
   it('제목·참석자를 우선순위 순으로 덧붙인다', () => {
     const r = buildInitialPrompt({
-      kind: 'meeting',
       language: 'ko',
       title: 'API 연동 설계',
       speakerNames: ['김철수', '이영희']
@@ -45,7 +35,6 @@ describe('buildInitialPrompt', () => {
 
   it('일정 제목이 회의 제목과 같으면 중복으로 넣지 않는다', () => {
     const r = buildInitialPrompt({
-      kind: 'meeting',
       language: 'ko',
       title: '주간 회의',
       calendarEventTitle: '주간 회의'
@@ -55,7 +44,6 @@ describe('buildInitialPrompt', () => {
 
   it('일정 제목이 회의 제목과 다르면 덧붙인다', () => {
     const r = buildInitialPrompt({
-      kind: 'meeting',
       language: 'ko',
       title: '주간 회의',
       calendarEventTitle: '스프린트 플래닝'
@@ -65,7 +53,6 @@ describe('buildInitialPrompt', () => {
 
   it('참석자는 공백/빈 문자열 제거·중복 제거 후 최대 5명까지만 넣는다', () => {
     const r = buildInitialPrompt({
-      kind: 'meeting',
       language: 'ko',
       // 앞뒤 공백, 빈 문자열, 중복(김철수), 6번째 이름(한소희)이 섞여 있다.
       speakerNames: ['  김철수 ', '', '이영희', '김철수', '박민수', '최지우', '정해인', '한소희']
@@ -76,7 +63,6 @@ describe('buildInitialPrompt', () => {
 
   it('총 길이 상한(360자)을 넘기는 항목은 통째로 제외한다', () => {
     const r = buildInitialPrompt({
-      kind: 'meeting',
       language: 'ko',
       title: '가'.repeat(400)
     })
@@ -88,7 +74,6 @@ describe('buildInitialPrompt', () => {
   it('용어집 힌트는 맨 끝에 쉼표 나열로 붙인다', () => {
     // whisper는 마지막 224토큰만 반영하므로 가장 살리고 싶은 용어를 끝에 둔다.
     const r = buildInitialPrompt({
-      kind: 'meeting',
       language: 'ko',
       title: 'API 연동 설계',
       speakerNames: ['김철수'],
@@ -102,7 +87,6 @@ describe('buildInitialPrompt', () => {
   it('용어는 공백 제거·중복 제거 후 최대 15개까지만 넣는다', () => {
     const terms = Array.from({ length: 20 }, (_, i) => `T${i + 1}`)
     const r = buildInitialPrompt({
-      kind: 'meeting',
       language: 'ko',
       glossaryTerms: ['  T1  ', 't1', ...terms]
     })
@@ -115,7 +99,6 @@ describe('buildInitialPrompt', () => {
 
   it('용어 조각은 120자 예산을 넘지 않는다', () => {
     const r = buildInitialPrompt({
-      kind: 'meeting',
       language: 'ko',
       glossaryTerms: Array.from({ length: 10 }, (_, i) => `${'가'.repeat(19)}${i}`)
     })
@@ -127,7 +110,6 @@ describe('buildInitialPrompt', () => {
   it('정답 표기만 넣고 오인식 표기(alias)는 넣지 않는다', () => {
     // 호출측(recognition-aids)이 term만 전달한다 — 잘못된 표기를 힌트로 주면 그쪽으로 유도된다.
     const r = buildInitialPrompt({
-      kind: 'meeting',
       language: 'ko',
       glossaryTerms: ['LinkWork']
     })
@@ -137,7 +119,6 @@ describe('buildInitialPrompt', () => {
 
   it('앞 항목이 예산을 다 쓰면 용어 항목도 통째로 제외된다', () => {
     const r = buildInitialPrompt({
-      kind: 'meeting',
       language: 'ko',
       title: '가'.repeat(330),
       glossaryTerms: ['LinkWork']
@@ -149,10 +130,10 @@ describe('buildInitialPrompt', () => {
 
   it('용어가 없으면 용어 조각을 붙이지 않는다', () => {
     expect(
-      buildInitialPrompt({ kind: 'meeting', language: 'ko', glossaryTerms: [] })
+      buildInitialPrompt({ language: 'ko', glossaryTerms: [] })
     ).toBe('다음은 한국어 회의 녹음입니다.')
     expect(
-      buildInitialPrompt({ kind: 'meeting', language: 'ko', glossaryTerms: ['  ', ''] })
+      buildInitialPrompt({ language: 'ko', glossaryTerms: ['  ', ''] })
     ).toBe('다음은 한국어 회의 녹음입니다.')
   })
 })

@@ -1,15 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useMeetingNotesStore } from '../../stores/meetingNotesStore'
-import type { MeetingNoteFilter } from '../../types'
 import MeetingNoteList from './MeetingNoteList'
 import MeetingNoteDoc from './MeetingNoteDoc'
 import { EmptyState } from '../ui'
-
-const KINDS: { id: NonNullable<MeetingNoteFilter['kind']>; label: string }[] = [
-  { id: 'all', label: '전체' },
-  { id: 'meeting', label: '회의' },
-  { id: 'interview', label: '면접' }
-]
 
 export default function MeetingNotesView(): React.ReactNode {
   const { filter, setFilter, fetch, selectedId, select } = useMeetingNotesStore()
@@ -40,24 +33,6 @@ export default function MeetingNotesView(): React.ReactNode {
             placeholder="제목·요약 검색"
             className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-md focus:outline-none focus:border-blue-400"
           />
-          <div className="flex items-center gap-2">
-            <div className="flex gap-1">
-              {KINDS.map((k) => (
-                <button
-                  key={k.id}
-                  type="button"
-                  onClick={() => setFilter({ kind: k.id })}
-                  className={`px-2 py-1 text-xs rounded-md transition-colors ${
-                    (filter.kind ?? 'all') === k.id
-                      ? 'bg-gray-900 text-white'
-                      : 'text-gray-500 hover:bg-gray-100'
-                  }`}
-                >
-                  {k.label}
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
         <div className="flex-1 overflow-y-auto">
           <MeetingNoteList />

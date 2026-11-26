@@ -34,7 +34,6 @@ const RESULT: Result = { blob: new Blob(['a']), durationMs: 1000, mime: 'audio/w
 
 const INPUT = {
   source: 'mic' as const,
-  kind: 'meeting' as const,
   expected_speakers: null,
   attendee_ids: [],
   compact_audio: true

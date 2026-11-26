@@ -858,6 +858,7 @@ describe('runAiQuery — 회의 기록 도구', () => {
     expect(prompt).toContain('[회의제목 mm:ss](link)')
     expect(prompt).toContain('기록에서 찾지 못함')
     expect(prompt).toContain('신뢰할 수 없는 입력')
-    expect(prompt).toContain('include_interviews=true')
+    // 옛 녹음 종류 제외 규칙(include_ 인자)은 더는 없다.
+    expect(prompt).not.toContain('include_')
   })
 })

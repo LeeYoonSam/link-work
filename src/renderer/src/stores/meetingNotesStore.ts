@@ -17,7 +17,7 @@ interface MeetingNotesStore {
 export const useMeetingNotesStore = create<MeetingNotesStore>((set, get) => ({
   items: [],
   loading: false,
-  filter: { q: '', kind: 'all' },
+  filter: { q: '' },
   selectedId: null,
   detail: null,
 

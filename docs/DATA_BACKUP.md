@@ -39,6 +39,8 @@
 - `meeting_marks`(녹음 중·후 메모·북마크)는 회의 그룹이다. `meetings` 를 FK(ON DELETE CASCADE)로 가리킨다([MEETING_RECORDING.md](MEETING_RECORDING.md) §2).
 - `meeting_members`·`stt_glossary` 는 회의 그룹이다. `meeting_attendees` 가 `meeting_members` 를 FK 로 가리키고, 둘 다 회의 인식 보조다.
 - `meeting_speaker_voices`(회의 화자 목소리)·`member_voice_samples`(구성원 목소리 표본)도 회의 그룹이다. `meeting_speakers`·`meeting_members`·`meetings` 를 FK 로 가리킨다. 목소리 임베딩(오디오 아님)이 **백업 파일에 포함된다** — 새 PC 에서도 목소리 자동 지정이 이어진다([MEETING_RECORDING.md](MEETING_RECORDING.md) §12).
+- `meeting_summaries` 의 옛 면접 요약 컬럼(`qa_pairs`·`competencies`·`follow_ups`·`fact_checks`)은 앱이 더 읽거나 쓰지 않지만 스키마에 남아 있다. 복원은 모르는 컬럼이 있는 백업을 거부하므로(§3), 컬럼을 지우지 않아야 옛 백업과 새 백업이 서로 복원된다. 값도 그대로 백업·복원된다.
+- 옛 백업을 복원하면 `prepareBackupDb` 의 `applySchema` 가 회의 마이그레이션(`migrateMeetingUnify`)도 적용한다. 옛 면접 녹음은 `kind='meeting'` 이 되고, `meetings.title_auto` 가 없던 백업은 기본 제목 행만 `title_auto=1` 이 된다. `meeting_summaries.template_source`·`template_reason` 이 없던 백업은 NULL 로 채워진다([MEETING_RECORDING.md](MEETING_RECORDING.md) §2). X4 는 `action_items[*].todo_id` 만 보므로 이 컬럼들과 무관하다.
 - **새 테이블을 만들면 반드시 한 그룹(또는 백업 제외)에 넣는다.** 빠지면 테스트 G1 이 실패한다. 그룹을 추가·변경하면 `formatVersion` 을 올린다.
 
 **그룹을 넘는 참조.** 기본 규칙은 **정체성 일치**다 — 참조 대상 행의 `id` 와 `created_at` 이 모두 같을 때만 같은 엔터티로 본다(id 만 같은 다른 기기의 행에 붙지 않게).

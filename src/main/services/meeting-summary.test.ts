@@ -25,8 +25,9 @@ vi.mock('./recognition-aids', async (importOriginal) => {
 })
 
 // SQL 문자열로 분기하는 가짜 DB. 실행한 쓰기 SQL 을 기록한다.
-type MeetingRowFixture = { kind: string; title: string; summary_template?: string | null }
-const meetingRow = { value: { kind: 'meeting', title: '주간 회의' } as MeetingRowFixture | undefined }
+type MeetingRowFixture = { title: string; title_auto: number; summary_template: string | null }
+const DEFAULT_ROW: MeetingRowFixture = { title: '주간 회의', title_auto: 0, summary_template: null }
+const meetingRow = { value: { ...DEFAULT_ROW } as MeetingRowFixture | undefined }
 const marksRows = { value: [] as Array<{ at_ms: number; text: string }> }
 const runs: string[] = []
 const runArgs: unknown[][] = []
@@ -57,9 +58,15 @@ import {
   fitTranscript,
   formatTranscriptLines,
   formatTranscriptLinesWithMs,
+  normalizeSummaryTitle,
   runMeetingSummary
 } from './meeting-summary'
-import { MEETING_OUTPUT_KEYS as TEMPLATE_OUTPUT_KEYS, getTemplate } from './meeting-templates'
+import {
+  AUTO_TEMPLATE_OUTPUT_KEYS,
+  MEETING_OUTPUT_KEYS as TEMPLATE_OUTPUT_KEYS,
+  getTemplate,
+  type MeetingTemplateId
+} from './meeting-templates'
 import { buildMarksBlock } from './recognition-aids'
 import type { MeetingSummaryResult } from './meeting-types'
 
@@ -86,7 +93,7 @@ beforeEach(() => {
   send.mockReset()
   runs.length = 0
   runArgs.length = 0
-  meetingRow.value = { kind: 'meeting', title: '주간 회의' }
+  meetingRow.value = { ...DEFAULT_ROW }
   marksRows.value = []
 })
 
@@ -99,16 +106,6 @@ describe('runMeetingSummary 활동 기록', () => {
     expect(logActivityMock).toHaveBeenCalledTimes(1)
     expect(logActivityMock).toHaveBeenCalledWith('meeting', 'update', 7, '주간 회의', '요약 생성')
     expect(runs.some((sql) => sql.includes("status = 'summarized'"))).toBe(true)
-  })
-
-  it('면접(kind=interview) 요약 성공도 같은 경로로 logActivity 를 호출한다', async () => {
-    meetingRow.value = { kind: 'interview', title: '면접' }
-    queryMock.mockReturnValue(textMessages(JSON.stringify({ overview: '개요' })))
-    const result = await runMeetingSummary(9, send)
-
-    expect(result).toEqual({ success: true })
-    expect(logActivityMock).toHaveBeenCalledTimes(1)
-    expect(logActivityMock.mock.calls[0].slice(0, 3)).toEqual(['meeting', 'update', 9])
   })
 
   it('SDK 오류면 logActivity 를 호출하지 않는다', async () => {
@@ -171,7 +168,10 @@ describe('MEETING_SPEC.validate — 새 요약 스키마', () => {
       action_items: [{ text: '견적 요청', assignee: '이영희', due: '다음 주', at_ms: 3723000 }],
       open_questions: [{ text: '수수료 부담 주체', at_ms: null }],
       key_points: [],
-      next_steps: []
+      next_steps: [],
+      title: null,
+      template_id: 'default',
+      template_reason: null
     })
   })
 
@@ -333,16 +333,40 @@ function persistDb(prev?: { action_items: string | null }): {
   return { db: db as never, calls }
 }
 
+const fixed = (id: MeetingTemplateId, source: 'manual' | 'title' = 'manual', reason: string | null = null) =>
+  ({ mode: 'fixed', template: getTemplate(id), source, reason }) as const
+const AUTO = { mode: 'auto' } as const
+
 describe('buildMeetingSpec', () => {
-  it('기본 형식 프롬프트는 출력 키 블록을 그대로 담고, 출력 키는 meeting-templates 의 것을 다시 내보낸다', () => {
-    expect(buildMeetingSpec(getTemplate('default')).systemPrompt).toContain(MEETING_OUTPUT_KEYS)
+  it('고정 기본 형식 프롬프트는 출력 키 블록을 그대로 담고, 출력 키는 meeting-templates 의 것을 다시 내보낸다', () => {
+    const p = buildMeetingSpec(fixed('default')).systemPrompt
+    expect(p).toContain(MEETING_OUTPUT_KEYS)
     expect(MEETING_OUTPUT_KEYS).toBe(TEMPLATE_OUTPUT_KEYS)
-    expect(MEETING_SPEC.systemPrompt).toBe(buildMeetingSpec(getTemplate('default')).systemPrompt)
-    expect(MEETING_SPEC.systemPrompt).not.toContain('[회의 형식]')
+    expect(p).not.toContain('[회의 형식]')
+    expect(p).not.toContain('[회의 형식 고르기]')
+  })
+
+  it('MEETING_SPEC 은 자동 선택 모드다: 형식 고르기 블록과 template_id·template_reason·title 키를 담는다', () => {
+    const p = MEETING_SPEC.systemPrompt
+    expect(p).toBe(buildMeetingSpec(AUTO).systemPrompt)
+    for (const s of ['[회의 형식 고르기]', 'template_id(string)', 'template_reason(string)', 'title(string)']) {
+      expect(p).toContain(s)
+    }
+    expect(p).not.toContain('[회의 형식]\n')
+    expect(p).toContain(`${MEETING_OUTPUT_KEYS}\n${AUTO_TEMPLATE_OUTPUT_KEYS}`)
+    expect(p.indexOf('[회의 형식 고르기]')).toBeGreaterThan(p.indexOf('원칙\n'))
+    expect(p).toContain('keywords, title, template_id 는 문장이 아닌 명사구나 값이다.')
+  })
+
+  it('고정 one_on_one 은 [회의 형식] 과 title 키를 담고 template_id 키는 없다', () => {
+    const p = buildMeetingSpec(fixed('one_on_one')).systemPrompt
+    expect(p).toContain('[회의 형식]')
+    expect(p).toContain('title(string)')
+    expect(p).not.toContain('template_id(string)')
   })
 
   it('비기본 형식은 원칙 블록 뒤, 출력 키 앞에 [회의 형식] 블록을 넣는다', () => {
-    const p = buildMeetingSpec(getTemplate('one_on_one')).systemPrompt
+    const p = buildMeetingSpec(fixed('one_on_one')).systemPrompt
     const principles = p.indexOf('원칙\n')
     const block = p.indexOf('[회의 형식]')
     const keys = p.indexOf('출력 키\n')
@@ -364,7 +388,7 @@ describe('buildMeetingSpec', () => {
     const parsed = validate({ tldr: '요약' })
     for (const id of ['default', 'standup'] as const) {
       const { db, calls } = persistDb()
-      buildMeetingSpec(getTemplate(id)).persist(db, 3, parsed, 'm')
+      buildMeetingSpec(fixed(id)).persist(db, 3, parsed, 'm')
       const [insertPart, updatePart] = calls[0].sql.split('ON CONFLICT')
       expect(insertPart).toContain('template_id')
       expect(updatePart).toContain('template_id = excluded.template_id')
@@ -383,6 +407,115 @@ describe('buildMeetingSpec', () => {
       { text: '보고서 작성', assignee: null, due: null, at_ms: null, todo_id: 41 },
       { text: '새 일', assignee: null, due: null, at_ms: null }
     ])
+  })
+})
+
+describe('validate — 형식 자동 선택·요약 제목', () => {
+  const autoValidate = (raw: unknown): MeetingSummaryResult => buildMeetingSpec(AUTO).validate(raw)
+  const fixedValidate = (raw: unknown): MeetingSummaryResult => buildMeetingSpec(fixed('review')).validate(raw)
+
+  it('자동 모드: 허용 id 는 그대로, 이유는 trim 한다', () => {
+    const r = autoValidate({ template_id: 'standup', template_reason: ' 돌아가며 진행 공유 ' })
+    expect(r.template_id).toBe('standup')
+    expect(r.template_reason).toBe('돌아가며 진행 공유')
+  })
+
+  it.each(['legacy', 'foo'])('자동 모드: 허용 목록 밖 id %s 는 default, 이유는 null', (id) => {
+    const r = autoValidate({ template_id: id, template_reason: '근거' })
+    expect(r.template_id).toBe('default')
+    expect(r.template_reason).toBeNull()
+  })
+
+  it('자동 모드: id 가 없으면 default', () => {
+    expect(autoValidate({}).template_id).toBe('default')
+  })
+
+  it('자동 모드: 81자 이상 이유는 80자로 자른다', () => {
+    const r = autoValidate({ template_id: 'review', template_reason: '가'.repeat(100) })
+    expect(Array.from(r.template_reason ?? '')).toHaveLength(80)
+  })
+
+  it('고정 모드: template_id·template_reason 은 null', () => {
+    const r = fixedValidate({ template_id: 'standup', template_reason: '근거' })
+    expect(r.template_id).toBeNull()
+    expect(r.template_reason).toBeNull()
+  })
+
+  it('title 을 정규화한다', () => {
+    expect(autoValidate({ title: ' "결제 개편." ' }).title).toBe('결제 개편')
+    expect(fixedValidate({}).title).toBeNull()
+  })
+})
+
+describe('normalizeSummaryTitle', () => {
+  it.each([
+    ['  "혜택 탭 UX 개선 논의."  ', '혜택 탭 UX 개선 논의'],
+    ['A\nB', 'A'],
+    ['「결제   개편」', '결제 개편'],
+    ['(『정산 일정』)!', '정산 일정'],
+    // 제목의 일부인 괄호는 짝이 전체를 감쌀 때만 벗긴다
+    ['결제 개편 (2차)', '결제 개편 (2차)'],
+    ['[Q3] 로드맵 정리', '[Q3] 로드맵 정리'],
+    ['(주)카카오 계약 검토', '(주)카카오 계약 검토'],
+    ['"(주)카카오 계약 검토"', '(주)카카오 계약 검토'],
+    ['(A) 와 (B) 비교', '(A) 와 (B) 비교'],
+    ['"배포" 점검 "회의"', '"배포" 점검 "회의"']
+  ])('%j → %j', (input, expected) => {
+    expect(normalizeSummaryTitle(input)).toBe(expected)
+  })
+
+  it('30코드포인트에서 자른다', () => {
+    const out = normalizeSummaryTitle('가'.repeat(40))
+    expect(out).toBe('가'.repeat(30))
+  })
+
+  it.each(['', '   ', undefined, null, 123, '제목 없는 회의', '"  "'])('%j 는 null', (input) => {
+    expect(normalizeSummaryTitle(input)).toBeNull()
+  })
+})
+
+describe('validate — 부가 메타 키의 형식 오류', () => {
+  it('title·template_id·template_reason 이 문자열이 아니어도 요약은 살리고 기본값으로 떨어뜨린다', () => {
+    const v = buildMeetingSpec(AUTO).validate({
+      tldr: '요약',
+      title: ['배포 점검'],
+      template_id: 2,
+      template_reason: { why: 'x' }
+    })
+    expect(v.tldr).toBe('요약')
+    expect(v.title).toBeNull()
+    expect(v.template_id).toBe('default')
+    expect(v.template_reason).toBeNull()
+  })
+
+  it('목록 형식이면 문자열이 아닌 이유는 null', () => {
+    const v = buildMeetingSpec(AUTO).validate({ tldr: '요약', template_id: 'standup', template_reason: 3 })
+    expect(v.template_id).toBe('standup')
+    expect(v.template_reason).toBeNull()
+  })
+})
+
+describe('persist — 형식 결정 경로', () => {
+  it('자동 모드: 옛 요약 컬럼(qa_pairs 등)을 쓰지 않고 template_source·template_reason 을 INSERT·ON CONFLICT 양쪽에 쓴다', () => {
+    const spec = buildMeetingSpec(AUTO)
+    const parsed = spec.validate({ tldr: '요약', template_id: 'standup', template_reason: '돌아가며 공유' })
+    const { db, calls } = persistDb()
+    spec.persist(db, 3, parsed, 'm')
+    const { sql, args } = calls[0]
+    expect(sql).not.toContain('qa_pairs')
+    const [insertPart, updatePart] = sql.split('ON CONFLICT')
+    for (const col of ['template_source', 'template_reason']) {
+      expect(insertPart).toContain(col)
+      expect(updatePart).toContain(`${col} = excluded.${col}`)
+    }
+    expect(args.slice(10)).toEqual(['standup', 'auto', '돌아가며 공유'])
+  })
+
+  it('제목 고정: title source 와 형식 id·이유를 쓴다', () => {
+    const spec = buildMeetingSpec(fixed('one_on_one', 'title', '제목의 "1on1"'))
+    const { db, calls } = persistDb()
+    spec.persist(db, 3, spec.validate({ tldr: '요약' }), 'm')
+    expect(calls[0].args.slice(10)).toEqual(['one_on_one', 'title', '제목의 "1on1"'])
   })
 })
 
@@ -481,28 +614,58 @@ describe('runMeetingSummary 형식 선택·메모', () => {
     return { systemPrompt: options.systemPrompt as string, prompt, templateArg: runArgs[insertIdx]?.[10] }
   }
 
-  it('summary_template 이 있으면 그 형식을 쓰고 template_id 로 남긴다', async () => {
-    meetingRow.value = { kind: 'meeting', title: '주간 회의', summary_template: 'review' }
+  const insertArgs = (): unknown[] => runArgs[runs.findIndex((sql) => sql.includes('INSERT INTO meeting_summaries'))]
+
+  it('summary_template 이 있으면 그 형식을 쓰고 manual 로 남긴다', async () => {
+    meetingRow.value = { ...DEFAULT_ROW, summary_template: 'review' }
     const r = await promptOf()
     expect(r.systemPrompt).toContain('검토·회고 회의입니다.')
+    expect(r.systemPrompt).not.toContain('[회의 형식 고르기]')
     expect(r.templateArg).toBe('review')
+    expect(insertArgs().slice(10)).toEqual(['review', 'manual', null])
   })
 
-  it('summary_template 이 없으면 제목으로 형식을 고른다', async () => {
-    meetingRow.value = { kind: 'meeting', title: '데일리 스탠드업', summary_template: null }
+  it('summary_template 이 없으면 사용자 제목으로 형식을 고른다', async () => {
+    meetingRow.value = { ...DEFAULT_ROW, title: '형태 윤삼 1on1' }
     const r = await promptOf()
-    expect(r.systemPrompt).toContain('스탠드업')
-    expect(r.templateArg).toBe('standup')
+    expect(r.systemPrompt).toContain('1:1 미팅입니다.')
+    expect(insertArgs().slice(10)).toEqual(['one_on_one', 'title', '제목의 "1on1"'])
   })
 
   it('명시 default 는 제목과 무관하게 기본 형식이다', async () => {
-    meetingRow.value = { kind: 'meeting', title: '1:1 미팅', summary_template: 'default' }
+    meetingRow.value = { ...DEFAULT_ROW, title: '1:1 미팅', summary_template: 'default' }
     const r = await promptOf()
     expect(r.systemPrompt).not.toContain('[회의 형식]')
+    expect(r.systemPrompt).not.toContain('[회의 형식 고르기]')
     expect(r.templateArg).toBe('default')
   })
 
+  it('형식이 안 정해지면 자동 모드로 돌고 모델이 고른 id 와 이유를 auto 로 남긴다', async () => {
+    meetingRow.value = { ...DEFAULT_ROW, title: '혜탭 탭 API 논의' }
+    queryMock.mockReturnValue(
+      textMessages(JSON.stringify({ template_id: 'review', template_reason: '산출물 검토', tldr: '요약' }))
+    )
+    await runMeetingSummary(7, send)
+    const { prompt, options } = queryMock.mock.calls[0][0]
+    expect(options.systemPrompt as string).toContain('[회의 형식 고르기]')
+    expect(prompt.startsWith('회의 제목(사용자 입력, 참고용): 혜탭 탭 API 논의\n\n다음 회의 전사록')).toBe(true)
+    expect(insertArgs().slice(10)).toEqual(['review', 'auto', '산출물 검토'])
+  })
+
+  it('자동 모드라도 시스템 제목(title_auto=1)은 프롬프트에 넣지 않는다', async () => {
+    meetingRow.value = { ...DEFAULT_ROW, title: '혜탭 탭 API 논의', title_auto: 1 }
+    const r = await promptOf()
+    expect(r.prompt).not.toContain('회의 제목(사용자 입력, 참고용)')
+  })
+
+  it('기본 제목은 프롬프트에 넣지 않는다', async () => {
+    meetingRow.value = { ...DEFAULT_ROW, title: '제목 없는 회의' }
+    const r = await promptOf()
+    expect(r.prompt).not.toContain('회의 제목(사용자 입력, 참고용)')
+  })
+
   it('메모가 있으면 [사용자 메모] 블록을 전사록 앞에 붙인다', async () => {
+    meetingRow.value = { ...DEFAULT_ROW, title: '제목 없는 회의', title_auto: 1 }
     marksRows.value = [
       { at_ms: 5000, text: '중요' },
       { at_ms: 1000, text: '' }
@@ -511,12 +674,47 @@ describe('runMeetingSummary 형식 선택·메모', () => {
     expect(r.prompt.startsWith('[사용자 메모]\n[00:01] (북마크)\n[00:05] 중요\n\n다음 회의 전사록')).toBe(true)
   })
 
-  it('면접도 같은 경로로 메모 블록을 붙인다', async () => {
-    meetingRow.value = { kind: 'interview', title: '면접' }
+  it('사용자 제목 줄과 메모 블록이 함께 있으면 제목 줄이 맨 앞이다', async () => {
+    meetingRow.value = { ...DEFAULT_ROW, title: '혜탭 탭 API 논의' }
     marksRows.value = [{ at_ms: 0, text: '질문 3' }]
-    queryMock.mockReturnValue(textMessages(JSON.stringify({ overview: '개요' })))
-    await runMeetingSummary(9, send)
-    const { prompt } = queryMock.mock.calls[0][0]
-    expect(prompt.startsWith('[사용자 메모]\n[00:00] 질문 3\n\n다음 면접 전사록')).toBe(true)
+    const r = await promptOf()
+    expect(
+      r.prompt.startsWith('회의 제목(사용자 입력, 참고용): 혜탭 탭 API 논의\n\n[사용자 메모]\n[00:00] 질문 3\n\n다음 회의 전사록')
+    ).toBe(true)
+  })
+})
+
+describe('runMeetingSummary 요약 제목 적용', () => {
+  const titleUpdates = (): Array<{ sql: string; args: unknown[] }> =>
+    runs.map((sql, i) => ({ sql, args: runArgs[i] })).filter((r) => r.sql.includes('UPDATE meetings SET title'))
+
+  it('시스템 제목(title_auto=1)이고 응답에 title 이 있으면 조건부 UPDATE 로 바꾸고 활동 기록에 새 제목을 쓴다', async () => {
+    meetingRow.value = { ...DEFAULT_ROW, title: '제목 없는 회의', title_auto: 1 }
+    queryMock.mockReturnValue(textMessages(JSON.stringify({ title: '"보고서 일정 조율."', tldr: '요약' })))
+    await runMeetingSummary(7, send)
+    const ups = titleUpdates()
+    expect(ups).toHaveLength(1)
+    expect(ups[0].sql).toContain('title_auto = 1')
+    expect(ups[0].args).toContain('보고서 일정 조율')
+    expect(ups[0].args).toContain(7)
+    expect(logActivityMock.mock.calls[0][3]).toBe('보고서 일정 조율')
+    // 상태 갱신 뒤에 제목을 바꾼다.
+    const statusIdx = runs.findIndex((sql) => sql.includes("status = 'summarized'"))
+    expect(runs.findIndex((sql) => sql.includes('UPDATE meetings SET title'))).toBeGreaterThan(statusIdx)
+  })
+
+  it('사용자 제목(title_auto=0)이면 제목을 바꾸지 않는다', async () => {
+    queryMock.mockReturnValue(textMessages(JSON.stringify({ title: '새 제목', tldr: '요약' })))
+    await runMeetingSummary(7, send)
+    expect(titleUpdates()).toHaveLength(0)
+    expect(logActivityMock.mock.calls[0][3]).toBe('주간 회의')
+  })
+
+  it('응답에 title 이 없으면 제목을 바꾸지 않는다', async () => {
+    meetingRow.value = { ...DEFAULT_ROW, title: '제목 없는 회의', title_auto: 1 }
+    queryMock.mockReturnValue(textMessages(VALID_MEETING_JSON))
+    await runMeetingSummary(7, send)
+    expect(titleUpdates()).toHaveLength(0)
+    expect(logActivityMock.mock.calls[0][3]).toBe('제목 없는 회의')
   })
 })

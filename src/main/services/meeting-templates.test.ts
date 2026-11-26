@@ -1,32 +1,84 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AUTO_TEMPLATE_OUTPUT_KEYS,
+  DEFAULT_MEETING_TITLE,
   MEETING_OUTPUT_KEYS,
   MEETING_TEMPLATES,
   buildOutputKeys,
   buildTemplateBlock,
+  buildTemplateSelectionBlock,
   getTemplate,
   isTemplateId,
   listTemplateOptions,
-  resolveTemplate
+  resolveTemplatePlan
 } from './meeting-templates'
 
-describe('resolveTemplate', () => {
+describe('resolveTemplatePlan', () => {
+  type Expected = 'auto' | { source: 'manual' | 'title'; id: string }
   it.each([
-    [null, '제목 없는 회의', 'default'],
-    [null, '제목 없는 면접', 'default'],
-    [undefined, '주간 1:1 김OO', 'one_on_one'],
-    [null, '1 on 1 미팅', 'one_on_one'],
-    [null, 'Daily standup', 'standup'],
-    [null, '스프린트 회고', 'review'],
-    [null, '코드 리뷰', 'review'],
-    ['standup', '1:1', 'standup'],
-    ['default', '스프린트 회고', 'default'],
-    ['bogus', '회고', 'review'],
-    [null, '', 'default'],
-    [null, null, 'default'],
-    [null, '주간 회의', 'default']
-  ] as const)('explicit=%s, title=%s → %s', (explicit, title, expected) => {
-    expect(resolveTemplate(explicit, title).id).toBe(expected)
+    ['standup', '형태 윤삼 1on1', false, { source: 'manual', id: 'standup' }],
+    ['default', '형태 윤삼 1on1', false, { source: 'manual', id: 'default' }],
+    ['default', '스프린트 회고', true, { source: 'manual', id: 'default' }],
+    [null, '형태 윤삼 1on1', false, { source: 'title', id: 'one_on_one' }],
+    [null, '형태 윤삼 1on1', true, 'auto'],
+    [null, '제목 없는 회의', false, 'auto'],
+    [null, '브랜드 키워드 광고 - 스크럼', false, { source: 'title', id: 'standup' }],
+    [null, '혜택 탭 UX 리뷰', false, { source: 'title', id: 'review' }],
+    [null, '혜탭 탭 API 논의', false, 'auto'],
+    ['bogus', '', false, 'auto'],
+    [undefined, null, false, 'auto']
+  ] as Array<[string | null | undefined, string | null, boolean, Expected]>)(
+    'explicit=%s, title=%s, titleAuto=%s',
+    (explicit, title, titleAuto, expected) => {
+      const plan = resolveTemplatePlan({ explicit, title, titleAuto })
+      if (expected === 'auto') {
+        expect(plan).toEqual({ mode: 'auto' })
+        return
+      }
+      expect(plan.mode).toBe('fixed')
+      if (plan.mode !== 'fixed') return
+      expect(plan.source).toBe(expected.source)
+      expect(plan.template.id).toBe(expected.id)
+      if (expected.source === 'manual') expect(plan.reason).toBeNull()
+    }
+  )
+
+  it('제목 판별은 맞은 부분을 이유로 남긴다', () => {
+    const plan = resolveTemplatePlan({ explicit: null, title: '형태 윤삼 1on1', titleAuto: false })
+    expect(plan.mode === 'fixed' && plan.reason).toBe('제목의 "1on1"')
+  })
+
+  it('기본 제목 상수', () => {
+    expect(DEFAULT_MEETING_TITLE).toBe('제목 없는 회의')
+  })
+})
+
+describe('buildTemplateSelectionBlock', () => {
+  it('4개 형식 id·선택 기준과 비기본 형식의 목적·주제 후보를 담는다', () => {
+    const block = buildTemplateSelectionBlock()
+    const lines = block.split('\n')
+    expect(lines[0]).toBe('[회의 형식 고르기]')
+    for (const t of MEETING_TEMPLATES) {
+      expect(block).toContain(`- ${t.id}(${t.name}): ${t.selectHint}`)
+      if (t.id === 'default') continue
+      expect(block).toContain(t.purpose)
+      for (const title of t.topicTitles) expect(block).toContain(title)
+    }
+    expect(block).toContain('출력 키 힌트: tldr — 상대의 현재 상태와 핵심 약속 중심; action_items — 양쪽이 한 약속 모두')
+    expect(lines[lines.length - 1]).toBe('JSON은 template_id와 template_reason을 맨 앞에 쓰세요.')
+  })
+
+  it('자동 선택 출력 키는 template_id·template_reason 두 줄이다', () => {
+    const lines = AUTO_TEMPLATE_OUTPUT_KEYS.split('\n')
+    expect(lines).toHaveLength(2)
+    expect(lines[0].startsWith('- template_id(string):')).toBe(true)
+    expect(lines[1].startsWith('- template_reason(string):')).toBe(true)
+  })
+})
+
+describe('MEETING_OUTPUT_KEYS', () => {
+  it('둘째 줄이 title 키다', () => {
+    expect(MEETING_OUTPUT_KEYS.split('\n')[1].startsWith('- title(string):')).toBe(true)
   })
 })
 

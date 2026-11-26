@@ -40,10 +40,6 @@ const summary: MeetingSummary = {
   action_items: [],
   open_questions: [],
   next_steps: [],
-  qa_pairs: [],
-  competencies: [],
-  follow_ups: [],
-  fact_checks: [],
   model: 'claude-opus-5-5',
   generated_at: '2026-10-23 10:00:00'
 }
@@ -172,7 +168,55 @@ describe('SummaryPanel 요약 형식·내 메모', () => {
     )
     expect(html).toContain('형식: 기본')
     expect(html).toContain('형식 바꿔 다시 요약')
-    expect(html).toContain('>자동<')
+    expect(html).toContain('>자동(내용으로 판단)<')
+    // 형식 근거가 없는(형식 도입 이전) 요약은 접미사·이유 줄이 없다
+    expect(html).not.toContain('형식: 기본 ·')
+    expect(html).not.toContain('자동 선택 이유')
+  })
+
+  it('모델이 고른 형식은 "· 자동"과 자동 선택 이유를 그린다', () => {
+    const html = renderToStaticMarkup(
+      <SummaryPanel
+        summary={{
+          ...summary,
+          template_id: 'standup',
+          template_source: 'auto',
+          template_reason: '세 사람이 진행 공유'
+        }}
+        meetingId={7}
+      />
+    )
+    expect(html).toContain('형식: 스탠드업 · 자동')
+    expect(html).toContain('자동 선택 이유: 세 사람이 진행 공유')
+  })
+
+  it('사용자가 고정한 형식은 "· 직접 선택"을 그리고 이유 줄은 없다', () => {
+    const html = renderToStaticMarkup(
+      <SummaryPanel
+        summary={{ ...summary, template_id: 'review', template_source: 'manual', template_reason: null }}
+        meetingId={7}
+      />
+    )
+    expect(html).toContain('· 직접 선택')
+    expect(html).not.toContain('자동 선택 이유')
+    expect(html).not.toContain('제목 기준:')
+  })
+
+  it('제목 규칙으로 고른 형식은 "· 제목 기준"과 맞은 제목 단어를 그린다', () => {
+    const html = renderToStaticMarkup(
+      <SummaryPanel
+        summary={{
+          ...summary,
+          template_id: 'one_on_one',
+          template_source: 'title',
+          template_reason: '제목의 "1on1"'
+        }}
+        meetingId={7}
+      />
+    )
+    expect(html).toContain('· 제목 기준')
+    expect(html).toContain('제목 기준: 제목의 &quot;1on1&quot;')
+    expect(html).not.toContain('자동 선택 이유')
   })
 
   it('template_id의 이름을 배지에 그린다', () => {

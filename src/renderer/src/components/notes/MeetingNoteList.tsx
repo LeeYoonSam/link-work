@@ -55,11 +55,6 @@ export function MeetingNoteRow({
         <span className="flex-1 min-w-0 truncate text-sm font-medium text-gray-800">
           {n.title}
         </span>
-        {n.kind === 'interview' && (
-          <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-purple-50 text-purple-600">
-            면접
-          </span>
-        )}
       </div>
       <div className="mt-0.5 text-[11px] text-gray-400">
         {n.started_at.slice(0, 10)} · {formatDuration(n.duration_ms)}

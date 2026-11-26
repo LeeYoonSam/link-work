@@ -115,7 +115,7 @@ describe('toMeetingRef', () => {
 function makeMeetingDb(): Database.Database {
   const db = new Database(':memory:')
   db.exec(`
-    CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT, kind TEXT, started_at TEXT,
+    CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT, started_at TEXT,
       calendar_event_title TEXT);
     CREATE TABLE meeting_summaries (id INTEGER PRIMARY KEY, meeting_id INTEGER UNIQUE, tldr TEXT,
       action_items TEXT, generated_at TEXT);
@@ -130,9 +130,9 @@ const MEETING: MeetingRef = {
   endAt: '2026-11-02 15:00:00'
 }
 
-function meetingRow(id: number, title: string, startedAt: string, kind = 'meeting', calTitle: string | null = null): string {
+function meetingRow(id: number, title: string, startedAt: string, calTitle: string | null = null): string {
   const q = (v: string | null): string => (v === null ? 'NULL' : `'${v.replace(/'/g, "''")}'`)
-  return `(${id}, ${q(title)}, ${q(kind)}, ${q(startedAt)}, ${q(calTitle)})`
+  return `(${id}, ${q(title)}, ${q(startedAt)}, ${q(calTitle)})`
 }
 
 function summaryRow(meetingId: number, tldr: string | null, actions: unknown[]): string {
@@ -147,13 +147,12 @@ describe('collectMeetingContext', () => {
     expect(ctx.meeting).toBe(MEETING)
   })
 
-  it('지난 회의는 같은 제목만 고르고 calendar_event_title 도 본다. 면접·회의 시작 이후는 뺀다', () => {
+  it('지난 회의는 같은 제목만 고르고 calendar_event_title 도 본다. 회의 시작 이후는 뺀다', () => {
     const db = makeMeetingDb()
     seed(db, 'meetings', [
       meetingRow(1, '결제 개편 · 정산 주간회의', '2026-10-26 14:00:00'),
-      meetingRow(2, '녹음 1', '2026-10-19 14:00:00', 'meeting', '결제 개편·정산 주간 회의'),
+      meetingRow(2, '녹음 1', '2026-10-19 14:00:00', '결제 개편·정산 주간 회의'),
       meetingRow(3, '다른 회의', '2026-10-30 10:00:00'),
-      meetingRow(4, '결제 개편·정산 주간 회의', '2026-10-28 10:00:00', 'interview'),
       meetingRow(5, '결제 개편·정산 주간 회의', '2026-11-02 14:00:00'),
       meetingRow(6, '결제 개편·정산 주간 회의', '2026-10-12 14:00:00')
     ])
@@ -161,7 +160,6 @@ describe('collectMeetingContext', () => {
       summaryRow(1, '  일정 합의  ', [{ text: '문서 공유' }, { text: '옮김', todo_id: 3 }, { text: ' ' }]),
       summaryRow(2, null, [{ text: '견적 확인' }]),
       summaryRow(3, '무관', [{ text: '무관 액션' }]),
-      summaryRow(4, '면접', [{ text: '면접 액션' }]),
       summaryRow(5, '지금', [{ text: '지금 액션' }])
     ])
     const ctx = collectMeetingContext(db, MEETING)

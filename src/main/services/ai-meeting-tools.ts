@@ -42,8 +42,7 @@ const SUMMARY_SEARCH_COLUMNS = [
   's.next_steps',
   's.topics',
   's.open_questions',
-  's.keywords',
-  's.qa_pairs'
+  's.keywords'
 ]
 
 const SEARCHABLE_STATUSES = "m.status IN ('transcribed','summarized')"
@@ -83,7 +82,6 @@ export interface SearchMeetingsArgs {
   project_id?: number
   person?: string
   meeting_ids?: number[]
-  include_interviews?: boolean
 }
 
 export interface MeetingSnippet {
@@ -98,7 +96,6 @@ export interface MeetingSearchHit {
   meeting_id: number
   title: string
   started_at: string | null
-  kind: string
   project: string | null
   speakers: string[]
   tldr: string
@@ -112,7 +109,6 @@ export interface SearchMeetingsResult {
     to: string
     project_id: number | null
     person: string | null
-    include_interviews: boolean
   }
   meetings: MeetingSearchHit[]
   notice?: string
@@ -156,7 +152,6 @@ interface CandidateRow {
   id: number
   title: string | null
   started_at: string | null
-  kind: string
   project: string | null
   tldr: string | null
   seg_hits: number
@@ -180,10 +175,9 @@ function joinContext(prev: string, cur: string, next: string): string {
 export function searchMeetings(db: Db, args: SearchMeetingsArgs, now: Date = new Date()): SearchMeetingsResult {
   const terms = cleanTerms(args?.terms)
   const { from, to, narrowed } = resolveRange(args ?? { terms: [] }, now)
-  const includeInterviews = args?.include_interviews === true
   const projectId = typeof args?.project_id === 'number' ? args.project_id : null
   const person = typeof args?.person === 'string' && args.person.trim() ? args.person.trim().slice(0, 50) : null
-  const scope_applied = { from, to, project_id: projectId, person, include_interviews: includeInterviews }
+  const scope_applied = { from, to, project_id: projectId, person }
   const notices: string[] = []
   if (narrowed) notices.push('기간이 길어 최근 365일로 좁혔습니다.')
 
@@ -197,7 +191,6 @@ export function searchMeetings(db: Db, args: SearchMeetingsArgs, now: Date = new
 
   const where: string[] = [SEARCHABLE_STATUSES, 'm.started_at >= ?', 'm.started_at < ?']
   const whereParams: unknown[] = [`${from} 00:00:00`, `${addDays(to, 1)} 00:00:00`]
-  if (!includeInterviews) where.push("m.kind = 'meeting'")
   if (projectId !== null) {
     where.push('m.project_id = ?')
     whereParams.push(projectId)
@@ -236,7 +229,7 @@ export function searchMeetings(db: Db, args: SearchMeetingsArgs, now: Date = new
 
   const rows = db
     .prepare(
-      `SELECT m.id, m.title, m.started_at, m.kind, p.name AS project, s.tldr,
+      `SELECT m.id, m.title, m.started_at, p.name AS project, s.tldr,
               ${termCols.join(',\n              ')},
               (SELECT COUNT(*) FROM meeting_segments g WHERE g.meeting_id = m.id AND (${anySeg})) AS seg_hits
          FROM meetings m
@@ -325,7 +318,6 @@ export function searchMeetings(db: Db, args: SearchMeetingsArgs, now: Date = new
       meeting_id: row.id,
       title: cut(row.title, ITEM_MAX),
       started_at: row.started_at,
-      kind: row.kind,
       project: row.project ?? null,
       speakers,
       tldr: cut(row.tldr, TLDR_MAX),
@@ -354,7 +346,6 @@ export interface ExcerptArgs {
   meeting_id: number
   from_ms?: number
   to_ms?: number
-  include_interviews?: boolean
 }
 
 export interface ExcerptItem {
@@ -365,12 +356,11 @@ export interface ExcerptItem {
 }
 
 export type ExcerptResult =
-  | { error: 'not_found' | 'interview_excluded' }
+  | { error: 'not_found' }
   | {
       meeting_id: number
       title: string
       started_at: string | null
-      kind: string
       note_link: string
       mode: 'summary'
       summary: {
@@ -379,7 +369,6 @@ export type ExcerptResult =
         decisions: ExcerptItem[]
         action_items: Array<ExcerptItem & { assignee: string | null; due: string | null }>
         open_questions: ExcerptItem[]
-        qa_pairs?: ExcerptItem[]
       }
       hint: string
     }
@@ -387,7 +376,6 @@ export type ExcerptResult =
       meeting_id: number
       title: string
       started_at: string | null
-      kind: string
       note_link: string
       mode: 'transcript'
       from_ms: number
@@ -412,16 +400,14 @@ function msOrNull(v: unknown): number | null {
 
 export function getMeetingExcerpt(db: Db, args: ExcerptArgs): ExcerptResult {
   const meeting = db
-    .prepare(`SELECT m.id, m.title, m.kind, m.started_at FROM meetings m WHERE m.id = ? AND ${SEARCHABLE_STATUSES}`)
-    .get(args?.meeting_id) as { id: number; title: string | null; kind: string; started_at: string | null } | undefined
+    .prepare(`SELECT m.id, m.title, m.started_at FROM meetings m WHERE m.id = ? AND ${SEARCHABLE_STATUSES}`)
+    .get(args?.meeting_id) as { id: number; title: string | null; started_at: string | null } | undefined
   if (!meeting) return { error: 'not_found' }
-  if (meeting.kind === 'interview' && args?.include_interviews !== true) return { error: 'interview_excluded' }
 
   const base = {
     meeting_id: meeting.id,
     title: cut(meeting.title, ITEM_MAX),
     started_at: meeting.started_at,
-    kind: meeting.kind,
     note_link: noteLink(meeting.id)
   }
   const fromArg = msOrNull(args?.from_ms)
@@ -430,7 +416,7 @@ export function getMeetingExcerpt(db: Db, args: ExcerptArgs): ExcerptResult {
   if (fromArg == null && toArg == null) {
     const s = db
       .prepare(
-        `SELECT tldr, topics, decisions, action_items, open_questions, qa_pairs
+        `SELECT tldr, topics, decisions, action_items, open_questions
            FROM meeting_summaries WHERE meeting_id = ?`
       )
       .get(meeting.id) as
@@ -440,16 +426,12 @@ export function getMeetingExcerpt(db: Db, args: ExcerptArgs): ExcerptResult {
           decisions: string | null
           action_items: string | null
           open_questions: string | null
-          qa_pairs: string | null
         }
       | undefined
     if (s) {
       const id = meeting.id
       const actions = parseJsonArray<Record<string, unknown>>(s.action_items).filter(
         (a) => a && typeof a.text === 'string' && a.text.trim()
-      )
-      const qa = parseJsonArray<Record<string, unknown>>(s.qa_pairs).filter(
-        (q) => q && typeof q.question === 'string' && q.question.trim()
       )
       return {
         ...base,
@@ -466,18 +448,7 @@ export function getMeetingExcerpt(db: Db, args: ExcerptArgs): ExcerptResult {
             assignee: typeof a.assignee === 'string' ? cut(a.assignee, 50) : null,
             due: typeof a.due === 'string' ? cut(a.due, 50) : null
           })),
-          open_questions: parseTextItems(s.open_questions).map((q) => item(id, q.text, q.at_ms)),
-          ...(meeting.kind === 'interview'
-            ? {
-                qa_pairs: qa.map((q) =>
-                  item(
-                    id,
-                    `${String(q.question).trim()} — ${typeof q.answer_summary === 'string' ? q.answer_summary : ''}`,
-                    msOrNull(q.start_ms)
-                  )
-                )
-              }
-            : {})
+          open_questions: parseTextItems(s.open_questions).map((q) => item(id, q.text, q.at_ms))
         },
         hint: '원문이 필요하면 from_ms·to_ms(최대 10분)로 다시 요청'
       }
@@ -564,7 +535,7 @@ const dateArg = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD 형식')
 export function buildMeetingTools(tool: SdkTool): SdkMcpToolDefinition<any>[] {
   const searchTool = tool(
     'search_meetings',
-    '녹음·전사한 회의의 요약과 원문을 키워드로 검색한다. "지난 회의에서 ~ 얘기한 것" 같은 질문에 쓴다. 검색어끼리는 OR 이고, 회의마다 매칭 발언 발췌(snippets)와 그 시각의 link 를 준다. 기간을 주지 않으면 최근 180일, 최대 365일이다. 면접은 사용자가 명시적으로 요청할 때만 include_interviews=true.',
+    '녹음·전사한 회의의 요약과 원문을 키워드로 검색한다. "지난 회의에서 ~ 얘기한 것" 같은 질문에 쓴다. 검색어끼리는 OR 이고, 회의마다 매칭 발언 발췌(snippets)와 그 시각의 link 를 준다. 기간을 주지 않으면 최근 180일, 최대 365일이다.',
     {
       terms: z
         .array(z.string().trim().min(1).max(40))
@@ -575,8 +546,7 @@ export function buildMeetingTools(tool: SdkTool): SdkMcpToolDefinition<any>[] {
       to: dateArg.optional().describe('회의 시작일 상한 YYYY-MM-DD(그날 포함)'),
       project_id: z.number().int().positive().optional().describe('프로젝트 id'),
       person: z.string().trim().min(1).max(50).optional().describe('화자 이름 또는 참석자 이름'),
-      meeting_ids: z.array(z.number().int().positive()).max(50).optional().describe('이 회의들 안에서만 검색'),
-      include_interviews: z.boolean().default(false).describe('면접 기록도 포함할지(기본 false)')
+      meeting_ids: z.array(z.number().int().positive()).max(50).optional().describe('이 회의들 안에서만 검색')
     },
     async (args) => {
       try {
@@ -593,8 +563,7 @@ export function buildMeetingTools(tool: SdkTool): SdkMcpToolDefinition<any>[] {
     {
       meeting_id: z.number().int().positive().describe('회의 id(search_meetings 결과의 meeting_id)'),
       from_ms: z.number().int().min(0).optional().describe('구간 시작(ms)'),
-      to_ms: z.number().int().min(0).optional().describe('구간 끝(ms). from_ms 에서 최대 10분'),
-      include_interviews: z.boolean().default(false).describe('면접 기록이면 true 여야 읽는다')
+      to_ms: z.number().int().min(0).optional().describe('구간 끝(ms). from_ms 에서 최대 10분')
     },
     async (args) => {
       try {

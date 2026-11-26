@@ -15,7 +15,8 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "check:docs": "node scripts/check-docs.mjs",
-    "check:diar": "node scripts/diar-regress.mjs"
+    "check:diar": "node scripts/diar-regress.mjs",
+    "check:diar-mem": "node scripts/diar-mem.mjs --id 51 --chunk 300 --max-rss-mb 2048"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.170",

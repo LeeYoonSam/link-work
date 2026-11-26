@@ -5,6 +5,7 @@
 
 // 프롬프트의 "출력 키" 블록. 템플릿은 keyHints로 이 블록의 키 줄 묶음 뒤에 한 줄씩만 덧붙인다.
 export const MEETING_OUTPUT_KEYS = `출력 키
+- title(string): 이 회의 내용을 나타내는 제목. 30자 이하의 명사구. 날짜와 "회의"·"미팅" 같은 일반어는 빼고 핵심 주제를 쓰세요.
 - tldr(string): 회의 전체의 결론 2~3문장.
 - keywords(string[]): 회의에서 반복해 나온 핵심 명사구 5~10개. 전사록의 표기를 그대로 쓰세요. 중복 금지. 5개를 채울 수 없으면 있는 만큼만 쓰세요.
 - topics: [{title, start, points}] 회의를 시간순 주제(안건) 3~8개로 나누세요. 10분 미만 회의는 1~3개도 됩니다.
@@ -28,18 +29,28 @@ export interface MeetingTemplate {
   topicTitles: string[]
   /** 출력 키별로 덧붙일 "이 회의 유형" 힌트. */
   keyHints: Partial<Record<OutputKey, string>>
-  /** 명시 형식이 없을 때 제목으로 자동 판별하는 패턴. */
+  /** 자동 선택 때 모델에게 주는 선택 기준 한 줄. */
+  selectHint: string
+  /** 명시 형식이 없을 때 사용자가 입력한 제목으로 판별하는 패턴. */
   titlePattern?: RegExp
 }
 
 export const MEETING_TEMPLATES: readonly MeetingTemplate[] = [
-  { id: 'default', name: '기본', purpose: '', topicTitles: [], keyHints: {} },
+  {
+    id: 'default',
+    name: '기본',
+    purpose: '',
+    topicTitles: [],
+    keyHints: {},
+    selectHint: '여러 안건을 논의하는 일반 회의. 아래 유형에 뚜렷이 맞지 않으면 이것.'
+  },
   {
     id: 'one_on_one',
     name: '1:1',
     purpose: '1:1 미팅입니다. 두 사람의 현재 상태, 진행, 막힌 점, 피드백, 성장을 중심으로 정리하세요.',
     topicTitles: ['체크인', '진행 상황', '막힌 점', '피드백', '성장·커리어'],
     keyHints: { tldr: '상대의 현재 상태와 핵심 약속 중심', action_items: '양쪽이 한 약속 모두' },
+    selectHint: '두 사람이 서로의 현재 상태·진행·막힌 점·피드백·성장을 이야기하는 1:1 대화.',
     titlePattern: /1\s*on\s*1|1:1|1-on-1|원온원|일대일/i
   },
   {
@@ -48,6 +59,7 @@ export const MEETING_TEMPLATES: readonly MeetingTemplate[] = [
     purpose: '짧은 진행 공유 회의(스탠드업)입니다. 사람별 지난 진행, 오늘 할 일, 블로커를 중심으로 정리하세요.',
     topicTitles: ['지난 진행', '오늘 할 일', '블로커'],
     keyHints: { open_questions: '블로커 중 해결 담당이 정해지지 않은 것' },
+    selectHint: '여러 사람이 돌아가며 지난 진행·오늘 할 일·블로커를 짧게 공유하는 회의.',
     titlePattern: /스탠드업|데일리|daily|stand-?up|스크럼/i
   },
   {
@@ -56,12 +68,13 @@ export const MEETING_TEMPLATES: readonly MeetingTemplate[] = [
     purpose: '검토·회고 회의입니다. 검토 대상, 잘된 점, 문제점과 원인, 개선안을 중심으로 정리하세요.',
     topicTitles: ['검토 대상', '잘된 점', '문제점·원인', '개선안'],
     keyHints: { decisions: '승인·반려·보류 판정을 명시' },
+    selectHint: '문서·디자인·기획·코드 같은 산출물이나 지난 일을 검토해 문제점과 개선안을 정하는 리뷰·회고.',
     titlePattern: /리뷰|review|회고|retro|KPT|포스트모템|post-?mortem/i
   }
 ]
 
-/** 제목을 비워 두었을 때 붙는 기본 제목. 이 제목으로는 형식을 판별하지 않는다. */
-export const UNTITLED_TITLES = ['제목 없는 회의', '제목 없는 면접']
+/** 제목을 비워 두었을 때 붙는 기본 제목(recording:createDraft). 이 제목으로는 형식을 판별하지 않는다. */
+export const DEFAULT_MEETING_TITLE = '제목 없는 회의'
 
 export function isTemplateId(v: unknown): v is MeetingTemplateId {
   return typeof v === 'string' && MEETING_TEMPLATES.some((t) => t.id === v)
@@ -71,22 +84,66 @@ export function getTemplate(id: MeetingTemplateId): MeetingTemplate {
   return MEETING_TEMPLATES.find((t) => t.id === id) ?? MEETING_TEMPLATES[0]
 }
 
+export type TemplateSource = 'manual' | 'title' | 'auto'
+
 /**
- * 명시 형식이 유효하면 그 형식('default' 포함). 아니면 제목으로 판별한다:
- * 빈 제목·기본 제목은 default, 그 외 one_on_one → standup → review 순으로 먼저 맞는 것, 없으면 default.
+ * 요약에 쓸 형식 계획. fixed는 형식이 이미 정해진 경우(수동 고정 또는 사용자 제목), auto는
+ * 같은 요약 호출에서 모델이 전사 내용을 보고 형식을 고르는 경우다.
  */
-export function resolveTemplate(
-  explicit: string | null | undefined,
+export type TemplatePlan =
+  | { mode: 'fixed'; template: MeetingTemplate; source: 'manual' | 'title'; reason: string | null }
+  | { mode: 'auto' }
+
+/**
+ * 형식 결정 순서:
+ * 1. 명시 형식(meetings.summary_template)이 유효하면 수동 고정('default' 포함).
+ * 2. 사용자가 입력한 제목(titleAuto=false)이 one_on_one → standup → review 순으로 패턴에 맞으면 그 형식.
+ *    시스템이 붙인 제목(기본·요약 제목)에는 적용하지 않는다(자기 강화 방지).
+ * 3. 그 외는 모델 자동 선택.
+ */
+export function resolveTemplatePlan(input: {
+  explicit: string | null | undefined
   title: string | null | undefined
-): MeetingTemplate {
-  if (isTemplateId(explicit)) return getTemplate(explicit)
-  const t = (title ?? '').trim()
-  if (!t || UNTITLED_TITLES.includes(t)) return getTemplate('default')
-  for (const id of ['one_on_one', 'standup', 'review'] as const) {
-    const tpl = getTemplate(id)
-    if (tpl.titlePattern && tpl.titlePattern.test(t)) return tpl
+  titleAuto: boolean
+}): TemplatePlan {
+  if (isTemplateId(input.explicit)) {
+    return { mode: 'fixed', template: getTemplate(input.explicit), source: 'manual', reason: null }
   }
-  return getTemplate('default')
+  const t = (input.title ?? '').trim()
+  if (!input.titleAuto && t && t !== DEFAULT_MEETING_TITLE) {
+    for (const id of ['one_on_one', 'standup', 'review'] as const) {
+      const tpl = getTemplate(id)
+      const m = tpl.titlePattern?.exec(t)
+      if (m) return { mode: 'fixed', template: tpl, source: 'title', reason: `제목의 "${m[0]}"` }
+    }
+  }
+  return { mode: 'auto' }
+}
+
+// 자동 선택 모드에서 MEETING_OUTPUT_KEYS 뒤에 덧붙이는 메타 출력 키.
+export const AUTO_TEMPLATE_OUTPUT_KEYS = `- template_id(string): [회의 형식 고르기]에서 고른 형식 id. default, one_on_one, standup, review 중 하나.
+- template_reason(string): 그 형식을 고른 근거 한 문장. 50자 이하.`
+
+/** 자동 선택 모드 프롬프트의 [회의 형식 고르기] 블록. MEETING_TEMPLATES 데이터로 만든다. */
+export function buildTemplateSelectionBlock(): string {
+  const lines = [
+    '[회의 형식 고르기]',
+    '전사록의 실제 대화 내용을 보고 아래 형식 중 하나를 고르세요. 제목보다 대화 내용을 따르세요. 뚜렷하게 맞는 형식이 없으면 default를 고르세요.'
+  ]
+  for (const t of MEETING_TEMPLATES) lines.push(`- ${t.id}(${t.name}): ${t.selectHint}`)
+  lines.push('고른 형식이 default가 아니면 그 형식의 지시도 따르세요.')
+  for (const t of MEETING_TEMPLATES) {
+    if (t.id === 'default') continue
+    const hints = (Object.entries(t.keyHints) as Array<[OutputKey, string]>)
+      .map(([k, h]) => `${k} — ${h}`)
+      .join('; ')
+    lines.push(`- ${t.id}: ${t.purpose} topics의 title 후보: ${t.topicTitles.join(', ')}. 출력 키 힌트: ${hints}`)
+  }
+  lines.push(
+    'topics의 title 후보는 실제로 다뤄진 것만 그대로 쓰고, 목록에 없는 논의는 자유 제목으로 추가하세요. 다뤄지지 않은 후보 이름은 만들지 마세요.'
+  )
+  lines.push('JSON은 template_id와 template_reason을 맨 앞에 쓰세요.')
+  return lines.join('\n')
 }
 
 /**

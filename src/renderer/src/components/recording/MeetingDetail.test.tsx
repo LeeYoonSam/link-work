@@ -1,5 +1,43 @@
-import { describe, it, expect } from 'vitest'
-import { canRediarize, compactionSummary, needsFullReanalysis } from './MeetingDetail'
+import { describe, it, expect, vi } from 'vitest'
+import { renderToStaticMarkup } from 'react-dom/server'
+import type { Meeting, MeetingDetail } from '../../types'
+
+// 상세 화면 렌더 테스트용 스토어 목. zustand v5는 서버 렌더에서 초기 상태를 돌려주므로
+// setState 대신 훅 자체를 모킹한다(RecordingList.test와 같은 방식).
+const state: { current: MeetingDetail | null } = { current: null }
+const noop = async (): Promise<void> => {}
+vi.mock('../../stores/recordingStore', () => ({
+  useRecordingStore: () => ({
+    current: state.current,
+    processing: {},
+    cancelling: {},
+    renameMeeting: noop,
+    removeMeeting: noop,
+    reprocessMeeting: noop,
+    summarizeMeeting: noop,
+    setExpectedSpeakers: noop,
+    setAttendees: noop,
+    cancelProcessing: noop,
+    refreshCurrent: noop,
+    pendingSeek: null,
+    consumePendingSeek: () => null
+  })
+}))
+vi.mock('../../stores/recognitionAidsStore', () => ({
+  useRecognitionAidsStore: () => ({ members: [], fetchAll: noop })
+}))
+vi.mock('./AudioPlayer', () => ({ default: () => null }))
+vi.mock('./SpeakerTimeline', () => ({ default: () => null }))
+vi.mock('./SummaryPanel', () => ({ default: () => null }))
+vi.mock('./SpeakerEditor', () => ({ default: () => null }))
+
+const {
+  default: MeetingDetailView,
+  canRediarize,
+  compactionSummary,
+  needsFullReanalysis,
+  shouldRenameTitle
+} = await import('./MeetingDetail')
 
 // 무음 컷편집 배지의 표시 조건과 절감 비율을 고정한다.
 // 비율의 분모를 현재 길이로 잘못 잡으면 "52분에서 12분 뺐다"가 24%가 아니라 31%로 부풀려진다.
@@ -84,5 +122,76 @@ describe('canRediarize', () => {
     expect(canRediarize({ source: 'mic', status: 'recording' }, noVoice)).toBe(false)
     expect(canRediarize({ source: 'mic', status: 'processing' }, noVoice)).toBe(false)
     expect(canRediarize({ source: 'mic', status: 'failed' }, noVoice)).toBe(false)
+  })
+})
+
+// F4 — 요약에서 만든 제목이면 '자동 제목' 배지를 단다. 사용자 제목(title_auto=0)에는 달지 않는다.
+describe('MeetingDetailView 헤더', () => {
+  const meeting = (over: Partial<Meeting>): Meeting => ({
+    id: 5,
+    title: '결제 모듈 배포 점검',
+    title_auto: 1,
+    status: 'summarized',
+    audio_path: null,
+    audio_mime: 'audio/wav',
+    duration_ms: 60_000,
+    language: 'ko',
+    source: 'mic',
+    expected_speakers: 3,
+    compact_audio: 1,
+    audio_compacted: 0,
+    original_duration_ms: null,
+    pipeline_version: 3,
+    speakers_confirmed: 1,
+    project_id: null,
+    calendar_event_id: null,
+    calendar_event_title: null,
+    error: null,
+    started_at: '2026-07-22 10:00:00',
+    created_at: '2026-07-22 10:00:00',
+    updated_at: '2026-07-22 10:00:00',
+    ...over
+  })
+  const render = (m: Meeting): string => {
+    state.current = { meeting: m, speakers: [], segments: [], cuts: [], summary: null, attendees: [] }
+    return renderToStaticMarkup(<MeetingDetailView onClose={() => {}} />)
+  }
+
+  it('title_auto=1이고 요약이 끝났으면 자동 제목 배지를 그린다', () => {
+    const html = render(meeting({ title_auto: 1, status: 'summarized' }))
+    expect(html).toContain('자동 제목')
+    expect(html).toContain('요약에서 만든 제목입니다')
+  })
+
+  it('사용자 제목(title_auto=0)이면 배지가 없다', () => {
+    expect(render(meeting({ title_auto: 0 }))).not.toContain('자동 제목')
+  })
+
+  it('요약 전(기본 제목)에는 배지가 없다', () => {
+    expect(render(meeting({ title_auto: 1, status: 'transcribed' }))).not.toContain('자동 제목')
+  })
+
+  it('요약이 끝났어도 제목이 기본 제목이거나 비어 있으면 배지가 없다', () => {
+    expect(render(meeting({ title: '제목 없는 회의' }))).not.toContain('자동 제목')
+    expect(render(meeting({ title: '  ' }))).not.toContain('자동 제목')
+  })
+
+  it('요약 탭 라벨은 요약이다', () => {
+    const html = render(meeting({}))
+    expect(html).toContain('>요약<')
+  })
+})
+
+// F4 — 자동 제목을 그대로 저장해도 사용자 제목으로 굳혀야 다음 요약이 덮지 않는다.
+describe('shouldRenameTitle', () => {
+  it('자동 제목은 바꾸지 않고 저장해도 rename한다', () => {
+    expect(shouldRenameTitle({ title: '결제 모듈 배포 점검', title_auto: 1 }, '결제 모듈 배포 점검')).toBe(true)
+  })
+  it('사용자 제목을 그대로 저장하면 rename하지 않는다', () => {
+    expect(shouldRenameTitle({ title: '결제 모듈 배포 점검', title_auto: 0 }, ' 결제 모듈 배포 점검 ')).toBe(false)
+  })
+  it('바꾼 제목은 rename하고, 빈 값은 하지 않는다', () => {
+    expect(shouldRenameTitle({ title: 'A', title_auto: 0 }, 'B')).toBe(true)
+    expect(shouldRenameTitle({ title: 'A', title_auto: 1 }, '   ')).toBe(false)
   })
 })

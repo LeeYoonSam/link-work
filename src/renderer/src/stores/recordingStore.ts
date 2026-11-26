@@ -2,7 +2,6 @@ import { create } from 'zustand'
 import type {
   Meeting,
   MeetingDetail,
-  MeetingKind,
   MeetingTemplateId,
   ReassignResult,
   ReassignScope,
@@ -45,9 +44,6 @@ export function voiceActionOutcome(
   return { ok: true, message: null }
 }
 
-// 목록 필터 — 'all'이면 회의·면접을 함께 본다
-export type KindFilter = 'all' | MeetingKind
-
 interface RecordingStore {
   meetings: Meeting[]
   current: MeetingDetail | null
@@ -58,10 +54,6 @@ interface RecordingStore {
   // 취소 요청을 보낸 회의 (meetingId → true). 취소 버튼 중복 클릭을 막고
   // 버튼을 "취소 중…"으로 표시한다. phase:'cancelled' 수신 시 해제된다.
   cancelling: Record<number, boolean>
-  // 다른 메뉴에 다녀와도 보고 있던 필터가 유지되도록 전역 상태로 둔다
-  // (RecordingView는 메뉴 전환 시 언마운트된다).
-  kindFilter: KindFilter
-  setKindFilter: (f: KindFilter) => void
   // 다른 화면(회의록 등)에서 "이 시점부터 듣기"를 눌렀을 때 상세 화면이 열리며 소비할 재생 위치(#13).
   pendingSeek: { meetingId: number; ms: number } | null
   setPendingSeek: (v: { meetingId: number; ms: number } | null) => void
@@ -78,15 +70,12 @@ interface RecordingStore {
   createDraft: (input: {
     title?: string
     source: 'mic' | 'mic+system'
-    kind?: MeetingKind
-    // 참석 인원(화자분리 클러스터 수). 미지정 시 면접=2, 회의=자동 추정.
+    // 참석 인원(화자분리 클러스터 수). 미지정 시 자동 추정.
     expected_speakers?: number | null
     // 참석자로 지정할 구성원 id. 전사 힌트·화자 이름 프리셋·요약 참석자에 쓰인다.
     attendee_ids?: number[]
     // 처리 전 긴 침묵을 잘라낼지 여부(기본 true)
     compact_audio?: boolean
-    // 요약 형식. null이면 제목으로 자동 판별
-    summary_template?: MeetingTemplateId | null
   }) => Promise<number>
   // 녹음 오디오 저장 — 실패하면 throw한다(호출자가 blob을 보존해 재시도할 수 있게).
   saveRecording: (meetingId: number, blob: Blob, durationMs: number, mime: string) => Promise<void>
@@ -147,10 +136,7 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
   loading: false,
   processing: {},
   cancelling: {},
-  kindFilter: 'all',
   pendingSeek: null,
-
-  setKindFilter: (f) => set({ kindFilter: f }),
 
   setPendingSeek: (v) => set({ pendingSeek: v }),
 
@@ -204,11 +190,9 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
     const result = await window.api.recording.createDraft({
       title: input.title,
       source: input.source,
-      kind: input.kind,
       expected_speakers: input.expected_speakers,
       attendee_ids: input.attendee_ids,
-      compact_audio: input.compact_audio,
-      summary_template: input.summary_template
+      compact_audio: input.compact_audio
     })
     await get().fetchMeetings()
     return result.id
@@ -278,13 +262,16 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
   summarizeMeeting: async (id) => {
     try {
       const result = await window.api.recording.summarize(id)
-      await get().refreshCurrent()
       if (!result.success) {
         console.error('[recordingStore] summarize failed:', result.error)
       }
     } catch (err) {
       console.error('[recordingStore] summarizeMeeting error:', err)
     }
+    // 요약이 기본·자동 제목을 요약 제목으로 바꿨을 수 있다 — 목록과 상세를 함께 다시 읽는다.
+    // 실패 경로에서도 상태(failed 등)가 바뀌므로 똑같이 부른다. 두 함수 모두 throw하지 않는다.
+    await get().fetchMeetings()
+    await get().refreshCurrent()
   },
 
   reprocessMeeting: async (id, fast = false) => {

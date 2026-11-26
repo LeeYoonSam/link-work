@@ -1,4 +1,4 @@
-// 요약 스펙 인터페이스 — 녹음 종류(meetings.kind)별로 프롬프트/검증/저장만 갈아끼운다.
+// 요약 스펙 인터페이스 — 회의 형식(템플릿)별로 프롬프트/검증/저장만 갈아끼운다.
 // 실행 인프라(Claude SDK 호출, 전사 직렬화, JSON 추출, 진행률 스트림)는 공통이며
 // meeting-summary.ts가 담당한다.
 import type Database from 'better-sqlite3'
@@ -16,7 +16,7 @@ export interface SummarySpec<T> {
 }
 
 // AI에게 ms 정수를 직접 만들게 하면 신뢰도가 낮다. 전사록에 이미 [mm:ss]가 붙어 있으므로
-// 그 표기를 그대로 돌려받아 여기서 ms로 환산한다. 회의·면접 스펙이 함께 쓴다.
+// 그 표기를 그대로 돌려받아 여기서 ms로 환산한다. 회의 요약 스펙이 쓴다.
 // 허용: "mm:ss"(분 1~3자리, 1시간을 넘으면 분이 60을 넘는다), "h:mm:ss", 앞뒤 대괄호("[12:34]").
 // 그 밖의 표기("00:75", "3분 12초")와 빈 값은 null → 재생 점프 버튼을 숨긴다.
 export function parseTimestamp(at: string | null | undefined): number | null {

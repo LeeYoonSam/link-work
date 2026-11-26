@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import { speakerCountPrompt } from './speakerCountPrompt'
 
 const base = {
-  kind: 'meeting' as const,
   status: 'summarized' as const,
   expected_speakers: null,
   speakers_confirmed: 0
@@ -11,10 +10,6 @@ const speakers = [{ id: 1 }, { id: 2 }, { id: 3 }]
 const segments = [{ speaker_id: 1 }, { speaker_id: 2 }, { speaker_id: 1 }, { speaker_id: null }]
 
 describe('speakerCountPrompt', () => {
-  it('면접이면 묻지 않는다', () => {
-    expect(speakerCountPrompt({ ...base, kind: 'interview' }, speakers, segments)).toBeNull()
-  })
-
   it('이미 확인했으면(speakers_confirmed=1) 묻지 않는다', () => {
     expect(speakerCountPrompt({ ...base, speakers_confirmed: 1 }, speakers, segments)).toBeNull()
   })

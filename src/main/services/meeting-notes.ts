@@ -1,10 +1,6 @@
 // 회의록 — 요약 완료된 회의를 문서처럼 다루기 위한 순수 함수 모음.
 // DB 접근 없이 입력만으로 결과가 정해지므로 단위 테스트로 검증한다.
-import type {
-  SummaryActionItem,
-  InterviewQaPair,
-  InterviewCompetency
-} from './meeting-types'
+import type { SummaryActionItem } from './meeting-types'
 
 export function parseJsonArray<T>(raw: string | null | undefined): T[] {
   if (!raw) return []
@@ -117,7 +113,6 @@ export function escapeLike(q: string): string {
 
 export interface NoteMeeting {
   title: string
-  kind: 'meeting' | 'interview'
   started_at: string
   duration_ms: number
 }
@@ -142,10 +137,6 @@ export interface NoteSummary {
   // 구버전 요약에만 값이 있다 (새 요약은 [])
   key_points: string[]
   next_steps: string[]
-  qa_pairs: InterviewQaPair[]
-  competencies: InterviewCompetency[]
-  follow_ups: string[]
-  fact_checks: string[]
 }
 export interface NoteDetail {
   meeting: NoteMeeting
@@ -271,62 +262,39 @@ export function buildMeetingNoteMarkdown(detail: NoteDetail): string {
 
   const meta = [
     `일시: ${meeting.started_at}`,
-    `길이: ${formatDuration(meeting.duration_ms)}`,
-    `종류: ${meeting.kind === 'interview' ? '면접' : '회의'}`
+    `길이: ${formatDuration(meeting.duration_ms)}`
   ]
   if (attendees.length > 0) meta.push(`참석자: ${attendees.map((a) => a.name).join(', ')}`)
   out.push(meta.join(' · '), '')
 
   if (summary) {
     const tldr = summary.tldr?.trim() ? [summary.tldr.trim()] : []
-    if (meeting.kind === 'interview') {
-      out.push(...section('면접 개요', tldr))
-      const qa: string[] = []
-      summary.qa_pairs.forEach((p, i) => {
-        const at = p.start_ms != null ? ` [${formatClock(p.start_ms)}]` : ''
-        qa.push(`### Q${i + 1}. ${p.question}${at}`, '', p.answer_summary)
-        if (p.quote?.trim()) qa.push('', `> ${p.quote.trim()}`)
-        qa.push('')
+    const keywords = (summary.keywords ?? []).filter((k) => k?.trim()).map((k) => k.trim())
+    out.push(...section('키워드', keywords.length > 0 ? [keywords.join(' · ')] : []))
+    out.push(...section('TL;DR', tldr))
+    out.push(...section('핵심 포인트', bullets(summary.key_points)))
+    out.push(...section('결정사항', textItemBullets(summary.decisions)))
+    const actions = summary.action_items
+      .filter((a) => a?.text?.trim())
+      .map((a) => {
+        const extra = [a.assignee ? `담당: ${a.assignee}` : '', a.due ? `기한: ${a.due}` : '']
+          .filter(Boolean)
+          .join(', ')
+        return `- [${a.todo_id != null ? 'x' : ' '}] ${a.text.trim()}${extra ? ` (${extra})` : ''}${atSuffix(a.at_ms)}`
       })
-      if (qa.length > 0) qa.pop()
-      out.push(...section('질문과 답변', qa))
-      const comp: string[] = []
-      for (const c of summary.competencies) {
-        comp.push(`- **${c.topic}**`)
-        for (const e of c.evidence ?? []) if (e?.trim()) comp.push(`  - ${e.trim()}`)
-        if (c.note?.trim()) comp.push(`  - 메모: ${c.note.trim()}`)
-      }
-      out.push(...section('역량별 근거', comp))
-      out.push(...section('후속 질문', bullets(summary.follow_ups)))
-      out.push(...section('확인 필요', bullets(summary.fact_checks)))
-    } else {
-      const keywords = (summary.keywords ?? []).filter((k) => k?.trim()).map((k) => k.trim())
-      out.push(...section('키워드', keywords.length > 0 ? [keywords.join(' · ')] : []))
-      out.push(...section('TL;DR', tldr))
-      out.push(...section('핵심 포인트', bullets(summary.key_points)))
-      out.push(...section('결정사항', textItemBullets(summary.decisions)))
-      const actions = summary.action_items
-        .filter((a) => a?.text?.trim())
-        .map((a) => {
-          const extra = [a.assignee ? `담당: ${a.assignee}` : '', a.due ? `기한: ${a.due}` : '']
-            .filter(Boolean)
-            .join(', ')
-          return `- [${a.todo_id != null ? 'x' : ' '}] ${a.text.trim()}${extra ? ` (${extra})` : ''}${atSuffix(a.at_ms)}`
-        })
-      out.push(...section('액션아이템', actions))
-      out.push(...section('미결 질문', textItemBullets(summary.open_questions ?? [])))
-      out.push(...section('다음 단계', bullets(summary.next_steps)))
-      const topics: string[] = []
-      const titled = (summary.topics ?? []).filter((t) => t?.title?.trim())
-      titled.forEach((t, i) => {
-        topics.push(`### ${i + 1}. ${t.title.trim()}${atSuffix(t.start_ms)}`)
-        const points = bullets(t.points ?? [])
-        if (points.length > 0) topics.push('', ...points)
-        topics.push('')
-      })
-      if (topics.length > 0) topics.pop()
-      out.push(...section('주제별 요약', topics))
-    }
+    out.push(...section('액션아이템', actions))
+    out.push(...section('미결 질문', textItemBullets(summary.open_questions ?? [])))
+    out.push(...section('다음 단계', bullets(summary.next_steps)))
+    const topics: string[] = []
+    const titled = (summary.topics ?? []).filter((t) => t?.title?.trim())
+    titled.forEach((t, i) => {
+      topics.push(`### ${i + 1}. ${t.title.trim()}${atSuffix(t.start_ms)}`)
+      const points = bullets(t.points ?? [])
+      if (points.length > 0) topics.push('', ...points)
+      topics.push('')
+    })
+    if (topics.length > 0) topics.pop()
+    out.push(...section('주제별 요약', topics))
   }
 
   const marks = [...(detail.marks ?? [])]

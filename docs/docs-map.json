@@ -97,11 +97,12 @@
     {
       "name": "회의 녹음·전사·요약",
       "patterns": [
-        "src/main/services/{meeting-pipeline,meeting-summary,meeting-types,interview-summary,summary-spec,writing-style}.ts",
+        "src/main/services/{meeting-pipeline,meeting-summary,meeting-types,meeting-draft,summary-spec,writing-style}.ts",
         "src/main/services/{audio-compaction,wav-util,system-audio-loopback,pipeline-abort,transcript-cleaner}.ts",
         "src/main/services/{recording-guard,recording-recovery,speaker-assign,speaker-carryover,recognition-aids}.ts",
         "src/main/services/{voiceprint,meeting-templates,meeting-marks,speaker-correction}.ts",
         "scripts/diar-regress.mjs",
+        "scripts/diar-mem.mjs",
         "src/main/services/stt/**",
         "src/main/services/vad/**",
         "src/main/services/diarization/**",
@@ -209,7 +210,7 @@
     },
     {
       "name": "빌드 엔트리",
-      "$comment": "모바일 페이지(mobile.html)와 화자 분리 워커(diarization-worker) 엔트리를 정의한다",
+      "$comment": "모바일 페이지(mobile.html)와 화자 분리 워커(diarization-worker)·실측 cli(diarization-cli)·메모리 실측 probe(diarization-mem-probe) 엔트리를 정의한다",
       "patterns": ["electron.vite.config.ts"],
       "docs": ["docs/MOBILE_VIEW.md", "docs/MEETING_RECORDING.md"]
     },

@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
 import type { VoiceAction } from '../../stores/recordingStore'
-import type { Attendee, MeetingKind, MeetingSpeaker } from '../../types'
+import type { Attendee, MeetingSpeaker } from '../../types'
 import { Badge } from '../ui'
 import RematchDialog from './RematchDialog'
 
 interface Props {
   speakers: MeetingSpeaker[]
   meetingId: number
-  kind?: MeetingKind
   /** 이 회의의 참석자. 화자 이름 프리셋으로 쓴다. */
   attendees?: Attendee[]
 }
@@ -18,12 +17,8 @@ const PRESET_COLORS = [
   '#EC4899', '#06B6D4', '#84CC16', '#F97316', '#6B7280'
 ]
 
-// 면접에서 화자 이름을 한 번에 지정하기 위한 프리셋. 요약 프롬프트가 "질문하는 쪽=면접관"을
-// 추론하긴 하지만, 이름을 명시해두면 Q&A 귀속이 훨씬 안정적이다.
-const INTERVIEW_NAME_PRESETS = ['면접관', '지원자']
-
-// 프리셋 이름이 이미 다른 화자에게 쓰이고 있으면 '면접관 2', '면접관 3'…처럼
-// 다음 빈 번호를 붙여 돌려준다. 다인 면접(면접관·지원자 여럿)에서 이름 충돌을 막는다.
+// 프리셋 이름(참석자 이름)이 이미 다른 화자에게 쓰이고 있으면 '홍길동 2', '홍길동 3'…처럼
+// 다음 빈 번호를 붙여 돌려준다. 같은 참석자 이름을 여러 화자에 눌렀을 때 이름 충돌을 막는다.
 export function nextPresetName(base: string, usedNames: string[]): string {
   const used = new Set(usedNames.map((n) => n.trim()).filter(Boolean))
   if (!used.has(base)) return base
@@ -37,13 +32,12 @@ export function nextPresetName(base: string, usedNames: string[]): string {
 // 행을 밀어내고 실명 입력칸을 잡아먹지 않도록 자른다.
 const MAX_NAME_PRESETS = 8
 
-// 면접은 기존 역할 프리셋 뒤에 참석자 이름을 붙이고, 회의는 참석자 이름만 쓴다.
-export function buildNamePresets(kind: MeetingKind | undefined, attendees: Attendee[]): string[] {
-  const base = kind === 'interview' ? INTERVIEW_NAME_PRESETS : []
+// 화자 이름 프리셋은 참석자 이름만 쓴다(빈 이름·중복 제거, 상한 MAX_NAME_PRESETS).
+export function buildNamePresets(attendees: Attendee[]): string[] {
   const names = attendees.map((a) => a.name.trim()).filter(Boolean)
   const seen = new Set<string>()
   const out: string[] = []
-  for (const n of [...base, ...names]) {
+  for (const n of names) {
     if (seen.has(n)) continue
     seen.add(n)
     out.push(n)
@@ -222,7 +216,6 @@ export function RematchPrompt({ onOpen }: { onOpen: () => void }): React.ReactNo
 export default function SpeakerEditor({
   speakers,
   meetingId,
-  kind,
   attendees
 }: Props): React.ReactNode {
   const {
@@ -241,7 +234,7 @@ export default function SpeakerEditor({
   const [voiceNotice, setVoiceNotice] = useState<{ ok: boolean; message: string } | null>(null)
   const [rematchOpen, setRematchOpen] = useState(false)
 
-  const namePresets = buildNamePresets(kind, attendees ?? [])
+  const namePresets = buildNamePresets(attendees ?? [])
 
   if (speakers.length === 0) {
     return (
@@ -288,15 +281,11 @@ export default function SpeakerEditor({
     <div className="space-y-3">
       <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">화자 보정</p>
 
-      {kind === 'interview' ? (
-        <p className="text-[11px] text-gray-400">
-          화자 이름을 지정하면 질문·답변 정리가 더 정확해집니다
-        </p>
-      ) : namePresets.length > 0 ? (
+      {namePresets.length > 0 && (
         <p className="text-[11px] text-gray-400">
           참석자 이름을 눌러 화자를 바로 지정할 수 있습니다
         </p>
-      ) : null}
+      )}
 
       {shouldOfferRematch(speakers) && <RematchPrompt onOpen={() => setRematchOpen(true)} />}
 
@@ -425,7 +414,7 @@ function SpeakerRow({
   }
 
   const handlePresetName = async (base: string): Promise<void> => {
-    // 같은 프리셋 이름을 이미 다른 화자가 쓰고 있으면 '면접관 2'처럼 번호를 붙인다.
+    // 같은 프리셋 이름을 이미 다른 화자가 쓰고 있으면 '홍길동 2'처럼 번호를 붙인다.
     const name = nextPresetName(base, usedNames)
     if (name === speaker.display_name) return
     setNameValue(name)
@@ -524,7 +513,7 @@ function SpeakerRow({
         </button>
       )}
 
-      {/* 면접 프리셋 이름 (아직 이름이 없는 화자에만 노출) */}
+      {/* 참석자 이름 프리셋 (아직 이름이 없는 화자에만 노출) */}
       {!isMergeTarget && !editingName && !speaker.display_name && namePresets.length > 0 && (
         <div className="flex items-center gap-1 shrink-0">
           {namePresets.map((name) => (

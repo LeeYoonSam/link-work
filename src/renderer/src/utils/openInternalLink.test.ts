@@ -29,9 +29,9 @@ describe('openInternalLink', () => {
     api = stubApi()
     useNavigationStore.setState({ view: 'ai', projectsTab: 'tickets' })
     useTodoStore.setState({ filterTagId: 5, selectedTodoId: null })
-    useRecordingStore.setState({ kindFilter: 'meeting' as never, current: null, pendingSeek: null })
+    useRecordingStore.setState({ current: null, pendingSeek: null })
     useMeetingNotesStore.setState({
-      filter: { q: 'abc', kind: 'meeting' as never },
+      filter: { q: 'abc' },
       selectedId: null,
       detail: null
     })
@@ -96,9 +96,8 @@ describe('openInternalLink', () => {
     expect(useNavigationStore.getState()).toMatchObject({ view: 'projects', projectsTab: 'tickets' })
   })
 
-  it('recording: 종류 필터를 풀고 회의를 열고 포커스를 요청한다', async () => {
+  it('recording: 회의를 열고 포커스를 요청한다', async () => {
     await openInternalLink('linkwork://recording/3')
-    expect(useRecordingStore.getState().kindFilter).toBe('all')
     expect(api.recordingGet).toHaveBeenCalledWith(3)
     expect(useFocusStore.getState().request).toMatchObject({ entity: 'recording', id: 3 })
     expect(useNavigationStore.getState().view).toBe('recordings')
@@ -131,7 +130,7 @@ describe('openInternalLink', () => {
 
   it('note: 필터를 비우고 회의록을 선택하고 포커스를 요청한다', async () => {
     await openInternalLink('linkwork://note/3')
-    expect(useMeetingNotesStore.getState().filter).toEqual({ q: '', kind: 'all' })
+    expect(useMeetingNotesStore.getState().filter).toEqual({ q: '' })
     expect(useMeetingNotesStore.getState().selectedId).toBe(3)
     expect(api.recordingGet).toHaveBeenCalledWith(3)
     expect(useFocusStore.getState().request).toMatchObject({ entity: 'note', id: 3 })

@@ -278,7 +278,7 @@ describe('TodayView 이동', () => {
 
   it('openNote: 회의록 필터를 풀고 선택·포커스 요청 후 회의록 화면으로 간다', () => {
     openNote(31)
-    expect(notesStore.setFilter).toHaveBeenCalledWith({ q: '', kind: 'all' })
+    expect(notesStore.setFilter).toHaveBeenCalledWith({ q: '' })
     expect(notesStore.select).toHaveBeenCalledWith(31)
     expect(focus.requestFocus).toHaveBeenCalledWith({ entity: 'note', id: 31 })
     expect(nav.setView).toHaveBeenCalledWith('notes')

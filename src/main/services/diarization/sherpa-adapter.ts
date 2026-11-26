@@ -1,14 +1,15 @@
 // Sherpa-ONNX 화자분리 어댑터 (sherpa-onnx-node — optionalDependency, 네이티브 addon)
 // mic-only 단일 채널 녹음을 STT 세그먼트 위 창 임베딩 + 자체 클러스터링으로 N명 화자로 나눈다.
-// 임베딩 추출이 동기 블로킹이라 utilityProcess 워커에서 실행한다 (worker.ts → embedding-diarizer.ts).
+// 임베딩 추출이 동기 블로킹이라 utilityProcess 워커에서 실행한다. sherpa 가 창마다 네이티브 메모리를 돌려주지 않으므로
+// 창 DIAR_CHUNK_WINDOWS개마다 embed 워커를 새로 띄우고 마지막 cluster 워커에서 클러스터링한다
+// (chunk-runner.ts → worker.ts → embedding-diarizer.ts). 워커는 한 번에 하나만 산다.
 import { utilityProcess, app } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { createRequire } from 'module'
 import type { DiarizationAdapter, DiarTurn, SttSegment } from '../meeting-types'
 import { areDiarizationModelsReady, embeddingModelPath } from './model-manager'
-import type { EmbeddingDiarizeResult } from './embedding-diarizer'
-import type { DiarWorkerRequest, DiarWorkerResponse } from './worker'
+import { runChunkedDiarization, type DiarWorkerChild } from './chunk-runner'
 
 /** 화자별 목소리: 클러스터 centroid(L2 정규화, 192차원)와 누적 발화 ms. */
 export interface SpeakerVoice {
@@ -17,7 +18,7 @@ export interface SpeakerVoice {
   speech_ms: number
 }
 
-// 워커 타임아웃 기본값: 30분. 긴 회의도 이 안에 끝나며, 넘으면 워커가 멈춘 것으로 본다.
+// 화자분리 전체 기한 기본값(모든 워커 합계): 30분. 긴 회의도 이 안에 끝나며, 넘으면 워커가 멈춘 것으로 본다.
 const DEFAULT_WORKER_TIMEOUT_MS = 30 * 60 * 1000
 
 /** sherpa를 쓸 수 없는 이유. null이면 사용 가능. */
@@ -55,6 +56,8 @@ export class SherpaAdapter implements DiarizationAdapter {
   lastVoices: SpeakerVoice[] | undefined
   /** lastVoices 를 만든 임베딩 식별자(VOICE_EMBEDDING_MODEL). */
   lastEmbeddingModel: string | undefined
+  /** 마지막 diarize() 실행 통계(embed 워커 수·워커 최대 RSS). 호출 시작 시 초기화된다. */
+  lastRunStats: { chunks: number; peakWorkerRssMb: number } | undefined
   private readonly timeoutMs: number
 
   constructor(opts: { timeoutMs?: number } = {}) {
@@ -82,28 +85,31 @@ export class SherpaAdapter implements DiarizationAdapter {
       source?: string
       segments?: SttSegment[]
       signal?: AbortSignal
+      /** 진행률(0~1, 비감소). 임베딩 0~0.95, 클러스터링 0.95~1. */
+      onProgress?: (ratio: number) => void
     }
   ): Promise<DiarTurn[]> {
     this.lastVoices = undefined
     this.lastEmbeddingModel = undefined
+    this.lastRunStats = undefined
     if (opts.signal?.aborted) throw abortError()
     const embModel = embeddingModelPath()
     if (!existsSync(embModel)) {
       throw new Error('화자분리 모델이 준비되지 않았습니다.')
     }
 
-    const result = await runDiarizationWorker(
-      workerPath(),
-      {
-        audioPath,
-        embModel,
-        segments: (opts.segments ?? []).map((s) => ({ start_ms: s.start_ms, end_ms: s.end_ms })),
-        numSpeakers: opts.numSpeakers,
-        maxSpeakers: opts.maxSpeakers
-      },
-      opts.signal,
-      this.timeoutMs
-    )
+    const result = await runChunkedDiarization({
+      audioPath,
+      embModel,
+      segments: (opts.segments ?? []).map((s) => ({ start_ms: s.start_ms, end_ms: s.end_ms })),
+      numSpeakers: opts.numSpeakers,
+      maxSpeakers: opts.maxSpeakers,
+      fork: () => utilityProcess.fork(workerPath()) as unknown as DiarWorkerChild,
+      timeoutMs: this.timeoutMs,
+      signal: opts.signal,
+      onProgress: opts.onProgress
+    })
+    this.lastRunStats = { chunks: result.chunks, peakWorkerRssMb: result.peakWorkerRssMb }
     this.lastVoices = result.voices.map((v) => ({
       speaker_key: v.speaker_key,
       embedding: Float32Array.from(v.embedding),
@@ -112,69 +118,4 @@ export class SherpaAdapter implements DiarizationAdapter {
     this.lastEmbeddingModel = result.info.model
     return result.turns
   }
-}
-
-/**
- * 화자분리 워커를 fork해 한 번의 작업을 수행하고 결과를 받는다.
- * 워커는 작업 후 종료한다(단발성). 비정상 종료/타임아웃은 reject.
- * 타임아웃(timeoutMs) 초과 시 워커를 kill하고 "화자분리가 시간 초과되었습니다"로 reject한다.
- */
-function runDiarizationWorker(
-  path: string,
-  req: DiarWorkerRequest,
-  signal: AbortSignal | undefined,
-  timeoutMs: number
-): Promise<EmbeddingDiarizeResult> {
-  return new Promise((resolve, reject) => {
-    // 시작 시점에 이미 취소됐으면 fork 자체를 생략한다.
-    if (signal?.aborted) {
-      reject(abortError())
-      return
-    }
-    const child = utilityProcess.fork(path)
-    let settled = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-
-    const finish = (fn: () => void): void => {
-      if (settled) return
-      settled = true
-      // 정상 종료·에러·취소·타임아웃 어느 경로로 끝나든 취소 리스너와 타이머를 해제한다.
-      signal?.removeEventListener('abort', onAbort)
-      if (timer) clearTimeout(timer)
-      try {
-        child.kill()
-      } catch {
-        // 이미 종료됐으면 무시
-      }
-      fn()
-    }
-
-    // 취소 시 워커를 즉시 kill하고 AbortError로 reject한다.
-    const onAbort = (): void => finish(() => reject(abortError()))
-    signal?.addEventListener('abort', onAbort)
-
-    // 타임아웃: 워커가 멈추거나 비정상적으로 오래 걸리면 kill하고 reject한다(finish가 kill 수행).
-    if (timeoutMs > 0) {
-      timer = setTimeout(
-        () => finish(() => reject(new Error('화자분리가 시간 초과되었습니다'))),
-        timeoutMs
-      )
-    }
-
-    child.on('message', (msg: DiarWorkerResponse) => {
-      if (msg?.ok && msg.result) {
-        const out = msg.result
-        finish(() => resolve(out))
-      } else {
-        const error = msg && !msg.ok ? msg.error : undefined
-        finish(() => reject(new Error(error || '화자분리 워커가 실패했습니다.')))
-      }
-    })
-
-    child.on('exit', (code) => {
-      if (!settled) finish(() => reject(new Error(`화자분리 워커가 비정상 종료했습니다 (code ${code}).`)))
-    })
-
-    child.postMessage(req)
-  })
 }

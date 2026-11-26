@@ -1,4 +1,4 @@
-// whisper initial_prompt(native 옵션명 `prompt`) 조립 — 한국어 회의/면접 전사에서
+// whisper initial_prompt(native 옵션명 `prompt`) 조립 — 한국어 회의 전사에서
 // 고유명사(참석자·주제) 오인식을 줄이기 위한 도메인 컨텍스트 힌트를 만든다.
 //
 // 제약(중요): whisper는 프롬프트의 마지막 224토큰만 반영하고, 장황하거나 단정적인
@@ -10,8 +10,8 @@
 // 가장 살리고 싶은 용어집 힌트를 맨 끝에 둔다.
 
 interface InitialPromptInput {
-  kind: string // 'meeting' | 'interview'
   language: string // meetings.language, 기본 'ko'
+  // 사용자 제목만. 자동 제목(title_auto=1)이면 호출부가 null을 넘긴다.
   title?: string | null
   calendarEventTitle?: string | null
   speakerNames?: string[] // meeting_speakers.display_name (사용자 지정 실명만)
@@ -31,7 +31,7 @@ const MAX_GLOSSARY_TERMS = 15
 const MAX_GLOSSARY_CHARS = 120
 
 // 자동 부여되는 기본 제목은 힌트 가치가 없으므로 주제로 넣지 않는다(recording.ipc와 동일 규약).
-const DEFAULT_TITLES = new Set(['제목 없는 회의', '제목 없는 면접'])
+const DEFAULT_TITLES = new Set(['제목 없는 회의'])
 
 /**
  * 화자 실명 목록을 공백 제거 · 빈 문자열 제거 · 중복 제거하고 최대 MAX_SPEAKERS명까지 자른다.
@@ -93,10 +93,7 @@ export function buildInitialPrompt(input: InitialPromptInput): string | undefine
     return undefined
   }
 
-  const base =
-    input.kind === 'interview'
-      ? '다음은 한국어 채용 면접 녹음입니다.'
-      : '다음은 한국어 회의 녹음입니다.'
+  const base = '다음은 한국어 회의 녹음입니다.'
 
   // base는 무조건 포함(수십 자 수준). 이후 항목은 주제 > 프로젝트 > 일정 > 참석자 > 용어 순으로
   // 누적하되, 추가 시 상한을 넘기면 그 항목은 통째로 제외한다. 결과는 항상 MAX_PROMPT_CHARS 이내.

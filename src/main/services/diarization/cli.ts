@@ -1,4 +1,5 @@
 // 화자분리 실측 CLI — 앱과 같은 본체(runEmbeddingDiarization)를 배포 Electron 런타임에서 돌린다.
+// (앱 경로는 같은 본체를 창 청크마다 새 워커에 나눠 맡긴다 — chunk-runner.ts. 메모리 실측은 mem-probe.ts.)
 // electron 모듈을 import 하지 않는다(ELECTRON_RUN_AS_NODE=1 로 실행). 빌드 산출물: out/main/diarization-cli.js
 //
 // 사용: ELECTRON_RUN_AS_NODE=1 <LinkWork 바이너리> out/main/diarization-cli.js \

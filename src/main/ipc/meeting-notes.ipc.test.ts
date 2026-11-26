@@ -36,7 +36,7 @@ const ids = (db: DatabaseSync, filter?: Parameters<typeof listMeetingNotes>[1]):
 describe('listMeetingNotes', () => {
   it('프로젝트 연결 여부와 관계없이 전체를 돌려준다', () => {
     const db = seed()
-    expect(ids(db, { q: '', kind: 'all' })).toEqual([3, 2, 1])
+    expect(ids(db, { q: '' })).toEqual([3, 2, 1])
     expect(ids(db)).toEqual([3, 2, 1])
   })
 
@@ -46,9 +46,20 @@ describe('listMeetingNotes', () => {
     expect(notes[1]).not.toHaveProperty('project_name')
   })
 
-  it('kind 로 거른다', () => {
-    expect(ids(seed(), { kind: 'interview' })).toEqual([])
-    expect(ids(seed(), { kind: 'meeting' })).toEqual([3, 2, 1])
+  it('녹음 종류 값과 무관하게 모두 돌려주고 종류 필드를 싣지 않는다', () => {
+    const db = seed()
+    db.exec("UPDATE meetings SET kind = 'legacy' WHERE id = 2")
+    expect(ids(db, { kind: 'meeting' } as never)).toEqual([3, 2, 1])
+    expect(listMeetingNotes(db as unknown as Parameters<typeof listMeetingNotes>[0])[1]).not.toHaveProperty('kind')
+  })
+
+  it('옛 4분류 컬럼(qa_pairs)은 검색하지 않는다', () => {
+    const db = seed()
+    db.exec(`
+      CREATE TABLE meeting_segments (meeting_id INTEGER, text TEXT);
+      UPDATE meeting_summaries SET qa_pairs = '[{"question":"옛질문"}]' WHERE meeting_id = 1;
+    `)
+    expect(ids(db, { q: '옛질문' })).toEqual([])
   })
 })
 

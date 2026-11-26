@@ -481,7 +481,7 @@ claude.ai **Slack 커넥터**가 연결돼 있으면 헤드리스 SDK 쿼리에�
 - **DB 는 읽기 전용 커넥션만 쓴다**(`getAiReadOnlyDatabase`, 1절). 핸들러는 상태를 바꾸지 않는다. 쓰기 도구는 없다.
 - **네트워크를 쓰지 않는다.** 로컬 DB 의 전사·요약만 읽는다.
 - **오디오·목소리 데이터는 읽지 않는다.** `meetings.audio_path`, `meeting_speaker_voices.*`, `member_voice_samples.*` 를 SELECT 하지 않는다. 대상은 `status` 가 `transcribed`·`summarized` 인 회의다.
-- **면접은 기본으로 뺀다.** `include_interviews` 가 true 일 때만 검색·열람한다. 시스템 프롬프트가 사용자가 명시적으로 요청할 때만 true 로 쓰도록 지시한다. 면접을 열람하려 하면 `interview_excluded` 를 돌려준다.
+- **녹음 종류로 거르지 않는다.** 녹음은 회의 하나로 일원화돼 있어 옛 면접 녹음(현재 `kind='meeting'`)도 검색·열람 대상이다. 결과에 `kind` 필드는 없다.
 - 입력은 zod 로 검증한다. SQL 은 바인딩 파라미터만 쓰고, LIKE 는 `escapeLike` + `ESCAPE '\'` 로 쓴다.
 - **감사**: 호출은 다른 도구처럼 `tool_call`(입력)으로 남긴다. 결과 내용은 감사 로그에 쓰지 않는다. 누적 길이만 메모리에서 센다. 예산 초과 거부는 `tool_denied`(detail 에 누적 글자 수)다.
 - **누적 예산**: 메시지 루프가 회의 도구 `tool_result` 블록 길이를 질의마다 더한다. `canUseTool` 은 허용할 때 그 도구의 결과 상한(검색 8,000자·원문 12,000자)을 예약하고 결과가 오면 실제 길이로 바꾼다. 그래서 한 턴에 병렬로 온 호출도 결과가 오기 전에 센다. 도착분 + 예약분 + 이번 호출의 예약이 60,000자를 넘으면 그 호출에 `{"error":"budget_exceeded","hint":"지금까지 찾은 근거로 답하라"}` 로 거부한다. 회의 원문으로 컨텍스트를 채워 다른 지시를 밀어내는 것을 제한한다.

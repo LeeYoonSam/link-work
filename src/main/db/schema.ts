@@ -323,7 +323,9 @@ export function applySchema(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS meetings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL DEFAULT '제목 없는 회의',
-      -- 'meeting' | 'interview'. 요약 스키마와 상세 UI가 이 값으로 갈린다.
+      -- 1이면 시스템이 붙인 제목(기본 제목 또는 요약 제목)이라 요약이 바꿀 수 있고, 0이면 사용자 제목이다.
+      title_auto INTEGER NOT NULL DEFAULT 0,
+      -- 항상 'meeting'. 옛 'interview' 행은 시작 시 'meeting'으로 바꾼다(migrateMeetingUnify).
       kind TEXT NOT NULL DEFAULT 'meeting',
       status TEXT NOT NULL DEFAULT 'recording',
       audio_path TEXT,
@@ -342,9 +344,10 @@ export function applySchema(db: Database.Database): void {
       -- 전체 처리 시 meeting-pipeline의 CURRENT_PIPELINE_VERSION을 기록).
       -- 요약 재생성 UI가 재분석 필요 여부 판단에 사용.
       pipeline_version INTEGER NOT NULL DEFAULT 0,
-      -- 요약 형식(services/meeting-templates.ts의 MeetingTemplateId). NULL=제목으로 자동 판별.
+      -- 사용자가 고정한 요약 형식(services/meeting-templates.ts의 MeetingTemplateId).
+      -- NULL=자동(제목 규칙 또는 요약 호출에서 모델이 고름).
       summary_template TEXT,
-      -- 화자 수·구성을 사용자가 확인했는지(1=확인). 참석 인원을 고르거나 면접이면 1.
+      -- 화자 수·구성을 사용자가 확인했는지(1=확인). 참석 인원을 고르면 1.
       speakers_confirmed INTEGER NOT NULL DEFAULT 0,
       project_id INTEGER,
       calendar_event_id TEXT,
@@ -402,8 +405,7 @@ export function applySchema(db: Database.Database): void {
       decisions TEXT,
       action_items TEXT,
       next_steps TEXT,
-      -- 면접(kind='interview') 전용 4분류. 회의에서는 비어 있고, 면접에서는
-      -- decisions/action_items/next_steps가 비어 있다 (meetings.kind로 분기).
+      -- 옛 면접 요약 값. 백업 호환을 위해 컬럼만 남기고 코드는 읽거나 쓰지 않는다.
       qa_pairs TEXT,
       competencies TEXT,
       follow_ups TEXT,
@@ -411,6 +413,10 @@ export function applySchema(db: Database.Database): void {
       model TEXT,
       -- 이 요약을 만들 때 쓴 요약 형식. NULL=형식 도입 이전 요약.
       template_id TEXT,
+      -- 요약 형식을 정한 경로: 'manual'|'title'|'auto'. NULL=도입 전 요약.
+      template_source TEXT,
+      -- 자동 선택(auto) 때 모델이 쓴 짧은 선택 이유. 그 외 NULL.
+      template_reason TEXT,
       generated_at TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
     );
@@ -582,7 +588,7 @@ export function applySchema(db: Database.Database): void {
     db.exec('UPDATE meetings SET speakers_confirmed = 1')
   }
 
-  // 면접 요약 4분류 (회의 요약 행에서는 NULL로 남는다)
+  // 옛 면접 요약 4분류(읽지 않음)·요약 형식
   const summaryColumns = db.prepare("PRAGMA table_info(meeting_summaries)").all() as { name: string }[]
   const summaryColumnNames = summaryColumns.map((c) => c.name)
   if (summaryColumns.length > 0) {
@@ -601,4 +607,35 @@ export function applySchema(db: Database.Database): void {
 
   migrateReleaseNotesDropProject(db)
   migrateMeetingSummaryFormatColumns(db)
+  migrateMeetingUnify(db)
+}
+
+/**
+ * 녹음 일원화(면접 제거)·자동 제목 플래그·요약 형식 선택 메타. 멱등이다.
+ * 옛 백업 복원도 prepareBackupDb의 applySchema로 이 경로를 탄다.
+ */
+export function migrateMeetingUnify(db: Database.Database): void {
+  const meetingColumns = db.prepare('PRAGMA table_info(meetings)').all() as { name: string }[]
+  if (meetingColumns.length > 0) {
+    const names = meetingColumns.map((c) => c.name)
+    // 컬럼을 붙일 때만 기본 제목 행을 1로 둔다. 재실행 시 사용자 제목(title_auto=0)을 건드리지 않는다.
+    if (!names.includes('title_auto')) {
+      db.exec('ALTER TABLE meetings ADD COLUMN title_auto INTEGER NOT NULL DEFAULT 0')
+      db.exec(
+        "UPDATE meetings SET title_auto = 1 WHERE trim(title) = '' OR title IN ('제목 없는 회의', '제목 없는 면접')"
+      )
+    }
+    if (names.includes('kind')) {
+      db.exec("UPDATE meetings SET kind = 'meeting' WHERE kind <> 'meeting'")
+    }
+    // 옛 기본 제목만 바꾼다. 사용자가 붙인 같은 문자열(title_auto=0)은 덮지 않는다.
+    db.exec("UPDATE meetings SET title = '제목 없는 회의' WHERE title = '제목 없는 면접' AND title_auto = 1")
+  }
+  const summaryColumns = db.prepare('PRAGMA table_info(meeting_summaries)').all() as { name: string }[]
+  if (summaryColumns.length > 0) {
+    const names = summaryColumns.map((c) => c.name)
+    for (const col of ['template_source', 'template_reason']) {
+      if (!names.includes(col)) db.exec(`ALTER TABLE meeting_summaries ADD COLUMN ${col} TEXT`)
+    }
+  }
 }

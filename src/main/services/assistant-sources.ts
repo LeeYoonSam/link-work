@@ -60,7 +60,7 @@ function readPastMeetings(db: Database.Database, meeting: MeetingRef): MeetingPa
       `SELECT m.id AS meeting_id, m.title, m.calendar_event_title, m.started_at, ms.tldr, ms.action_items
        FROM meetings m
        JOIN meeting_summaries ms ON ms.meeting_id = m.id
-       WHERE m.kind = 'meeting' AND m.started_at >= ? AND m.started_at < ?
+       WHERE m.started_at >= ? AND m.started_at < ?
        ORDER BY m.started_at DESC, m.id DESC
        LIMIT ?`
     )

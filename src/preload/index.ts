@@ -120,14 +120,11 @@ const api = {
     createDraft: (input: {
       title?: string
       source?: string
-      kind?: string
       expected_speakers?: number | null
       // 회의 참석자로 지정할 구성원 id (전사 힌트/요약 담당자 매칭에 쓰인다)
       attendee_ids?: number[]
       // 처리 시 무음 구간을 잘라낼지 (기본 true)
       compact_audio?: boolean
-      // 요약 형식('default' | 'one_on_one' | 'standup' | 'review'). null·생략이면 제목으로 자동 판별
-      summary_template?: string | null
     }) => ipcRenderer.invoke('recording:createDraft', input),
     saveAudio: (
       id: number,
@@ -170,7 +167,7 @@ const api = {
     setAttendees: (meetingId: number, memberIds: number[]) =>
       ipcRenderer.invoke('recording:setAttendees', meetingId, memberIds),
     discardDraft: (id: number) => ipcRenderer.invoke('recording:discardDraft', id),
-    // 요약 형식 — 저장만 한다(재요약은 summarize로 따로)
+    // 요약 형식 고정 — 저장만 한다(재요약은 summarize로 따로). null=자동(내용으로 판단)
     setSummaryTemplate: (meetingId: number, templateId: string | null) =>
       ipcRenderer.invoke('recording:setSummaryTemplate', meetingId, templateId),
     listSummaryTemplates: () => ipcRenderer.invoke('recording:listSummaryTemplates'),
@@ -188,7 +185,7 @@ const api = {
   },
   // 회의록 — 요약 완료된 회의 목록·검색·Markdown (docs/MEETING_RECORDING.md §10)
   meetingNotes: {
-    list: (filter?: { q?: string; kind?: string }) =>
+    list: (filter?: { q?: string }) =>
       ipcRenderer.invoke('meetingNotes:list', filter),
     markdown: (id: number) => ipcRenderer.invoke('meetingNotes:markdown', id)
   },

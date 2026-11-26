@@ -65,7 +65,7 @@ import { migrateMeetingSummaryFormatColumns } from './schema'
 const dbPath = join(testDir, 'linkwork.db')
 const FORMAT_COLUMNS = ['topics', 'open_questions', 'keywords']
 
-// 요약 포맷 개편 전 meeting_summaries (면접 4분류까지 있는 상태)
+// 요약 포맷 개편 전 meeting_summaries (옛 4분류까지 있는 상태)
 const LEGACY_DDL = `
   CREATE TABLE meetings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

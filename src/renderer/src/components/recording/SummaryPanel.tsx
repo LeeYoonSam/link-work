@@ -45,7 +45,15 @@ function formatMarkTime(ms: number): string {
   return h > 0 ? `${h}:${mmss}` : mmss
 }
 
-// InterviewPanel과 같은 m:ss 표기
+// 형식 배지 접미사 — 형식을 누가 정했는지(manual=사용자 고정, title=제목 규칙, auto=모델 판단)
+export function templateSourceSuffix(source: MeetingSummary['template_source']): string {
+  if (source === 'auto') return ' · 자동'
+  if (source === 'title') return ' · 제목 기준'
+  if (source === 'manual') return ' · 직접 선택'
+  return ''
+}
+
+// 시각 버튼용 m:ss 표기
 function formatTime(ms: number): string {
   const totalSec = Math.floor(ms / 1000)
   const m = Math.floor(totalSec / 60)
@@ -252,7 +260,14 @@ export default function SummaryPanel({
       <div className="flex items-center gap-2 flex-wrap">
         <Badge color="bg-gray-100 text-gray-600" size="xs">
           형식: {templateName(summary.template_id)}
+          {templateSourceSuffix(summary.template_source)}
         </Badge>
+        {summary.template_reason && summary.template_source === 'auto' && (
+          <span className="text-[11px] text-gray-400">자동 선택 이유: {summary.template_reason}</span>
+        )}
+        {summary.template_reason && summary.template_source === 'title' && (
+          <span className="text-[11px] text-gray-400">제목 기준: {summary.template_reason}</span>
+        )}
         <label className="flex items-center gap-1 text-[11px] text-gray-400">
           <span>형식 바꿔 다시 요약</span>
           <select
@@ -265,7 +280,7 @@ export default function SummaryPanel({
             disabled={summarizing}
             className="text-[11px] text-gray-600 border border-gray-200 rounded px-1 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:opacity-50"
           >
-            <option value={AUTO_VALUE}>자동</option>
+            <option value={AUTO_VALUE}>자동(내용으로 판단)</option>
             {templateOptions.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
@@ -487,7 +502,10 @@ export default function SummaryPanel({
           >
             <p className="text-sm font-semibold text-gray-800">요약 형식 변경</p>
             <p className="text-sm text-gray-600">
-              현재 요약을 덮어씁니다. 할 일로 옮긴 항목은 같은 문장이면 연결을 유지합니다.
+              현재 요약을 덮어씁니다. 할 일로 옮긴 항목은 같은 문장이면 연결을 유지합니다.{' '}
+              {pendingTemplate === null
+                ? '내용으로 형식을 다시 고릅니다.'
+                : '이 회의는 그 형식으로 고정됩니다.'}
             </p>
             <div className="flex gap-2 justify-end">
               <button
@@ -696,7 +714,7 @@ function ActionItemRow({
   )
 }
 
-// 시각 버튼: 시각이 있고 onSeek가 주어졌을 때만 그린다(InterviewPanel QaRow 규약).
+// 시각 버튼: 시각이 있고 onSeek가 주어졌을 때만 그린다.
 function SeekButton({
   ms,
   onSeek

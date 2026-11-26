@@ -25,6 +25,8 @@ interface DiarizeOptions {
   ensureModels?: () => Promise<void>
   // 취소 신호. sherpa 화자분리로 전달되며, abort 시 폴백 체인을 계속 타지 않고 AbortError를 전파한다.
   signal?: AbortSignal
+  // sherpa 화자분리 진행률(0~1, 비감소). 채널 분리는 즉시 끝나 보고하지 않는다.
+  onProgress?: (ratio: number) => void
 }
 
 // 취소를 나타내는 에러. name='AbortError'로 파이프라인이 취소로 분류한다.
@@ -100,8 +102,10 @@ export async function diarizeWithFallback(audioPath: string, opts: DiarizeOption
         source: opts.source,
         segments: opts.segments,
         numSpeakers: opts.numSpeakers,
-        signal: opts.signal
+        signal: opts.signal,
+        onProgress: opts.onProgress
       })
+      logRunStats(sherpa)
       if (turns.length > 0) {
         const result: DiarizeResult = { turns, adapter: 'sherpa' }
         if (sherpa.lastVoices) {
@@ -137,6 +141,12 @@ async function runEnsureModels(opts: DiarizeOptions): Promise<string | undefined
     if (opts.signal?.aborted || isAbortError(err)) throw abortError()
     return errorMessage(err)
   }
+}
+
+/** sherpa 청크 실행 통계(embed 워커 수·워커 최대 RSS)를 남긴다. 메모리 상한 회귀를 로그로 확인하는 용도. */
+function logRunStats(sherpa: SherpaAdapter): void {
+  const st = sherpa.lastRunStats
+  if (st) console.info(`[diarization] chunks=${st.chunks}, peakWorkerRssMb=${st.peakWorkerRssMb}`)
 }
 
 function isAbortError(err: unknown): boolean {
@@ -194,8 +204,10 @@ async function tryTwoStage(
       source: opts.source,
       segments: opts.segments,
       numSpeakers: expected,
-      signal: opts.signal
+      signal: opts.signal,
+      onProgress: opts.onProgress
     })
+    logRunStats(sherpa)
   } catch (err) {
     // 취소는 채널 결과 폴백으로 삼키지 않고 그대로 전파한다.
     if (opts.signal?.aborted || isAbortError(err)) throw abortError()

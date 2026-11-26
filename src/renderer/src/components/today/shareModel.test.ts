@@ -69,7 +69,6 @@ const event = (id: string, summary: string, d: number, h: number, m = 0, dur = 3
 const meetingNote = (id: number, title: string, started_at: string, tldr: string | null = null): MeetingNoteItem => ({
   id,
   title,
-  kind: 'meeting',
   started_at,
   duration_ms: 1_800_000,
   tldr,

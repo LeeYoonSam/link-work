@@ -34,7 +34,7 @@
 | Granola | (템플릿별) 예: Context → Discussion summary → Key decisions → Action items → Open questions | 사용자 메모가 뼈대. AI 보강은 회색. 불릿마다 근거 인용 |
 | CLOVA Note | 키워드 칩 → 주요 주제 → 주제별 소제목 요약 → 다음 할 일 | 1차 축이 "주제(안건)" |
 | Fireflies | Keywords → Overview → Notes → Time-stamped Notes → 화자별 Action Items | 타임스탬프 노트 |
-| LinkWork 현재 | 키워드 → 내 메모 → TL;DR → 결정사항 → 액션아이템 → 미결 질문 → 주제별 요약 | 항목마다 근거 시각, 요약 형식 4종(기본·1:1·스탠드업·리뷰·회고), 녹음 중 메모를 주제에 배정 |
+| LinkWork 현재 | 키워드 → 내 메모 → TL;DR → 결정사항 → 액션아이템 → 미결 질문 → 주제별 요약 | 항목마다 근거 시각, 요약 형식 4종(기본·1:1·스탠드업·리뷰·회고)을 요약할 때 자동 선택, 요약 기반 자동 제목, 녹음 중 메모를 주제에 배정 |
 
 **공통 패턴**: ① 주제(안건)별 묶음 ② 각 항목에 전사 시각(근거) 링크 ③ 미결 질문(Open questions) 분리 ④ 회의 유형별 템플릿.
 
@@ -60,7 +60,7 @@
 | 7 | 화자 수정 범위 3단계(이 구간만 / 이후 / 전체) | CLOVA | 하 | P1 | 한 클러스터에 두 사람이 섞인 경우를 한 번에 교정 | 구현 |
 | 8 | 녹음 종료 시 참석 인원 확인 | CLOVA | 하 | P1 | 화자 수 추정 오류 제거 | 구현 |
 | 9 | 발화 점유율 | Otter, CLOVA | 하 | P1 | 1on1·회의 진행 회고 | 구현 |
-| 10 | 회의 유형별 템플릿(1on1·스탠드업·리뷰 등, 섹션별 지시문) | Granola, Otter, CLOVA | 중 | P1 | 회의 성격에 맞는 정리 | 구현 |
+| 10 | 회의 유형별 템플릿(1on1·스탠드업·리뷰 등, 섹션별 지시문) | Granola, Otter, CLOVA | 중 | P1 | 회의 성격에 맞는 정리 | 구현 — 요약할 때 자동 선택(수동 고정 → 사용자 제목 → 같은 호출에서 모델), 요약 화면에서 바꿔 고정 |
 | 11 | 녹음 중 북마크·메모 → 요약의 뼈대로 사용, AI 보강과 시각 구분 | Granola, CLOVA | 중 | P1 | 사용자 의도 반영 | 구현 |
 | 12 | 과거 회의 소급 매칭(Rematch) | Otter | 하 | P1 | 등록 이전 회의에도 이름 부여 | 구현 |
 | 13 | 회의 간 AI 질의(범위 지정, 출처 표시) | Otter, Granola | 상 | P2 | 회의 기록 재활용 | 구현 |
@@ -79,6 +79,6 @@
 >
 > - **착수 골격**: Swift CLI 자식 프로세스가 화상회의 앱 창의 발화자 표시를 JSONL로 낸다. 앱별 일치 문자열은 `adapters.json`에 둔다. 녹음 일시정지 보정용 시각 표시 IPC(예: clockMark)와 손쉬운 사용 API 지연 보정 상수(AX_LAG_MS)를 둔다. 결과는 시스템 쪽 화자(`sys_N`)에만 `suggested`로 겹치고, `display_name`은 자동으로 확정하지 않는다. 헬퍼가 죽으면 최대 3회 다시 띄운다. 채팅·자막 노드는 순회하지 않는다.
 
-**구현 상태**: #1~#6은 구현했다. #7~#13은 구현했다([decisions.md](decisions.md), 계약은 [../../MEETING_RECORDING.md](../../MEETING_RECORDING.md)·[../../AI_CHAT_ARCHITECTURE.md](../../AI_CHAT_ARCHITECTURE.md)·[../../AI_GUARDRAILS.md](../../AI_GUARDRAILS.md)). #14는 보류다(바로 위 단락). #15는 평가 경로만 만들었다(앱 기본 모델·임계값은 그대로, 절차는 [../../../scripts/eval/README.md](../../../scripts/eval/README.md)). 라벨 없는 1차 비교(회의 7건)에서 ERes2NetV2는 기준을 통과했고(margin은 CAM++보다 좁고 회의 51 처리 162초), WeSpeaker ResNet34_LM은 1on1 5건을 모두 1명으로 나눠 탈락했다. 처음에 난 크래시는 sherpa-onnx-node의 창별 네이티브 메모리 누적 때문이었고, 평가 cli를 `--chunk`로 나눠 돌려 없앴다. 교체 판정 기준은 decisions.md #15에 있다.
+**구현 상태**: #1~#6은 구현했다. 녹음 종류는 회의 하나다(면접 종류는 없앴다, decisions.md F2). #7~#13은 구현했다([decisions.md](decisions.md), 계약은 [../../MEETING_RECORDING.md](../../MEETING_RECORDING.md)·[../../AI_CHAT_ARCHITECTURE.md](../../AI_CHAT_ARCHITECTURE.md)·[../../AI_GUARDRAILS.md](../../AI_GUARDRAILS.md)). #14는 보류다(바로 위 단락). #15는 평가 경로만 만들었다(앱 기본 모델·임계값은 그대로, 절차는 [../../../scripts/eval/README.md](../../../scripts/eval/README.md)). 라벨 없는 1차 비교(회의 7건)에서 ERes2NetV2는 기준을 통과했고(margin은 CAM++보다 좁고 회의 51 처리 162초), WeSpeaker ResNet34_LM은 1on1 5건을 모두 1명으로 나눠 탈락했다. 처음에 난 크래시는 sherpa-onnx-node의 창별 네이티브 메모리 누적 때문이었고, 평가 cli를 `--chunk`로 나눠 돌려 없앴다. 앱 화자분리 워커도 같은 이유로 창 300개마다 새 워커를 띄워 최대 메모리를 묶는다(decisions.md F1). 교체 판정 기준은 decisions.md #15에 있다.
 
 **하지 않을 것**: 오디오를 외부 서버로 보내는 STT·화자 분리(로컬 우선 정책), 동의 없는 음성 프로필 수집(Otter BIPA 소송 사례 — 프로필은 사용자가 이름을 지정할 때만 만들고 로컬에만 둔다).

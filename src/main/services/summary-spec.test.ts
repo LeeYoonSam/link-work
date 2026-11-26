@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseTimestamp } from './summary-spec'
 
-// 회의·면접 요약이 함께 쓰는 시각 환산. 이 변환이 깨지면 "이 시점부터 듣기" 버튼과
+// 회의 요약이 쓰는 시각 환산. 이 변환이 깨지면 "이 시점부터 듣기" 버튼과
 // 회의록의 [mm:ss] 표기가 조용히 사라진다.
 describe('parseTimestamp', () => {
   it('mm:ss 를 ms 로 환산한다 (1시간을 넘으면 분이 60을 넘는다)', () => {

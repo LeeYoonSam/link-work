@@ -2,7 +2,16 @@ import { describe, it, expect, afterAll } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { runEmbeddingDiarization, type SherpaEmbeddingApi, type SherpaStream } from './embedding-diarizer'
+import {
+  extractWindowEmbeddings,
+  planDiarizationWindows,
+  planWindowsFromWav,
+  runEmbeddingDiarization,
+  windowSampleRange,
+  type SherpaEmbeddingApi,
+  type SherpaStream
+} from './embedding-diarizer'
+import { readWavPcm16Range } from './wav-pcm'
 import { VOICE_EMBEDDING_MODEL, WINDOW_MAX_SEC } from './window-plan'
 
 const SR = 16000
@@ -103,5 +112,66 @@ describe('runEmbeddingDiarization', () => {
     const p = join(dir, '8k.wav')
     writeWav(p, new Int16Array(8000), 8000)
     expect(() => runEmbeddingDiarization(fakeSherpa([]), { audioPath: p, embModel: 'x', segments })).toThrow(/16kHz/)
+  })
+})
+
+describe('창 범위만 읽기(청크 워커 경로)', () => {
+  // 끝 부분이 파일 끝을 넘는 세그먼트를 넣어 창 끝 경계(totalSamples 로 자름)도 확인한다.
+  const n = 20 * SR + 1234
+  const pcm = new Int16Array(n)
+  for (let i = 0; i < n; i++) pcm[i] = ((i * 131) % 20000) - 10000
+  const audioPath = join(dir, 'range.wav')
+  writeWav(audioPath, pcm)
+  const segments = [
+    { start_ms: 0, end_ms: 4300 },
+    { start_ms: 5000, end_ms: 6100 },
+    { start_ms: 8000, end_ms: 13900 },
+    { start_ms: 18500, end_ms: 25000 }
+  ]
+
+  /** 가짜 추출기: 입력 샘플을 그대로 기록한다. */
+  function recordingSherpa(out: Float32Array[]): SherpaEmbeddingApi {
+    class Stream implements SherpaStream {
+      samples: Float32Array = new Float32Array(0)
+      acceptWaveform(o: { samples: Float32Array; sampleRate: number }): void {
+        this.samples = o.samples
+      }
+      inputFinished(): void {}
+    }
+    class Extractor {
+      dim = 2
+      createStream(): Stream {
+        return new Stream()
+      }
+      compute(stream: SherpaStream): Float32Array {
+        out.push((stream as Stream).samples)
+        return new Float32Array([1, 0])
+      }
+    }
+    return { SpeakerEmbeddingExtractor: Extractor as unknown as SherpaEmbeddingApi['SpeakerEmbeddingExtractor'] }
+  }
+
+  it('planWindowsFromWav 는 planDiarizationWindows 와 같은 창을 깐다', () => {
+    expect(planWindowsFromWav(audioPath, segments)).toEqual(planDiarizationWindows({ audioPath, segments }).wins)
+    const p = join(dir, '8k-plan.wav')
+    writeWav(p, new Int16Array(8000), 8000)
+    expect(() => planWindowsFromWav(p, segments)).toThrow(/16kHz/)
+  })
+
+  it('청크별 range 디코드의 창 입력이 전체 디코드와 같다', () => {
+    const { audio, wins } = planDiarizationWindows({ audioPath, segments })
+    const full: Float32Array[] = []
+    extractWindowEmbeddings(recordingSherpa(full), { embModel: 'x' }, audio, wins)
+    const ranged: Float32Array[] = []
+    for (let a = 0; a < wins.length; a += 3) {
+      const slice = wins.slice(a, a + 3)
+      const [s, e] = windowSampleRange(slice, SR, n)
+      const part = readWavPcm16Range(audioPath, s, e)
+      extractWindowEmbeddings(recordingSherpa(ranged), { embModel: 'x' }, part, slice)
+    }
+    expect(ranged.length).toBe(full.length)
+    for (let i = 0; i < full.length; i++) expect(Array.from(ranged[i])).toEqual(Array.from(full[i]))
+    // 마지막 창은 파일 끝에서 잘린다
+    expect(Math.max(...wins.map((w) => w.e))).toBeCloseTo(n / SR)
   })
 })

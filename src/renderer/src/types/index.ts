@@ -472,8 +472,6 @@ export type MeetingStatus =
   | 'summarized'
   | 'failed'
 export type MeetingSource = 'mic' | 'mic+system'
-// 녹음 종류 — 요약 스키마와 상세 UI가 이 값으로 갈린다
-export type MeetingKind = 'meeting' | 'interview'
 
 // 요약 형식 — main services/meeting-templates.ts와 같은 id
 export type MeetingTemplateId = 'default' | 'one_on_one' | 'standup' | 'review'
@@ -506,7 +504,8 @@ export interface ReassignResult {
 export interface Meeting {
   id: number
   title: string
-  kind: MeetingKind
+  // 1=시스템이 붙인 제목(기본 제목 또는 요약 제목) — 요약이 다시 바꿀 수 있다. 0=사용자 제목
+  title_auto?: number
   status: MeetingStatus
   audio_path: string | null
   audio_mime: string
@@ -524,7 +523,7 @@ export interface Meeting {
   // 2=무음 컷편집·용어집·참석자 힌트 파이프라인, 3=현재(docs/MEETING_RECORDING.md §13).
   // 요약 재생성 시 "새 파이프라인으로 재분석할지"를 이 값으로 판단한다.
   pipeline_version: number
-  // 요약 형식. null=제목으로 자동 판별
+  // 사용자가 고정한 요약 형식. null=자동(내용으로 판단)
   summary_template?: MeetingTemplateId | null
   // 화자 구성을 사용자가 확인했는지(1=확인)
   speakers_confirmed?: number
@@ -622,28 +621,11 @@ export interface SummaryTopic {
   points: string[]
 }
 
-// ── 면접 기록 (kind='interview') 전용 요약 구조 ──
-// 점수·합불 판단을 담지 않는다. 실제 발언과 확인이 필요한 지점만 기록한다.
-export interface InterviewQaPair {
-  question: string
-  answer_summary: string
-  // 질문 시작 위치(ms). null이면 재생 점프 불가.
-  start_ms: number | null
-  quote?: string | null
-}
-
-export interface InterviewCompetency {
-  topic: string
-  evidence: string[]
-  note?: string | null
-}
-
 export interface MeetingSummary {
   id: number
   meeting_id: number
-  // 회의: TL;DR / 면접: 면접 개요
   tldr: string | null
-  // 회의 전용 필드 (면접에서는 빈 배열). key_points·next_steps는 구버전 요약에만 값이 있다.
+  // key_points·next_steps는 구버전 요약에만 값이 있다.
   keywords: string[]
   topics: SummaryTopic[]
   decisions: SummaryTextItem[]
@@ -651,14 +633,13 @@ export interface MeetingSummary {
   open_questions: SummaryTextItem[]
   key_points: string[]
   next_steps: string[]
-  // 면접 전용 4분류 (회의에서는 빈 배열)
-  qa_pairs: InterviewQaPair[]
-  competencies: InterviewCompetency[]
-  follow_ups: string[]
-  fact_checks: string[]
   model: string | null
   // 이 요약을 만든 형식. null=형식 도입 이전 요약
   template_id?: MeetingTemplateId | null
+  // 형식을 정한 근거: manual=사용자가 고정, title=제목 규칙, auto=모델이 내용으로 판단. null=형식 도입 이전 요약
+  template_source?: 'manual' | 'title' | 'auto' | null
+  // 형식 선택 이유(auto: 모델이 쓴 한 문장, title: 맞은 제목 단어). 없으면 null
+  template_reason?: string | null
   generated_at: string
 }
 
@@ -701,13 +682,11 @@ export interface ChannelEnergy {
 // ── 회의록 (요약 완료된 회의를 문서처럼 열람) — docs/MEETING_RECORDING.md §10 ──
 export interface MeetingNoteFilter {
   q?: string                      // 검색어(공백 trim, 빈 문자열은 무시)
-  kind?: 'all' | MeetingKind      // 기본 'all'
 }
 
 export interface MeetingNoteItem {
   id: number
   title: string
-  kind: MeetingKind
   started_at: string
   duration_ms: number
   tldr: string | null
@@ -730,15 +709,12 @@ export interface RecordingAPI {
   createDraft: (input: {
     title?: string
     source?: MeetingSource
-    kind?: MeetingKind
-    // 참석 인원(화자분리 클러스터 수). 미지정 시 면접=2, 회의=자동 추정(null).
+    // 참석 인원(화자분리 클러스터 수). 미지정 시 자동 추정(null).
     expected_speakers?: number | null
     // 참석자로 지정할 구성원 id 목록 (인원 수와 별개인 '누가' 들어왔는지의 명단)
     attendee_ids?: number[]
     // 처리 시 무음 구간 자동 제거 (기본 true)
     compact_audio?: boolean
-    // 요약 형식. null·생략이면 제목으로 자동 판별(면접은 무시)
-    summary_template?: MeetingTemplateId | null
   }) => Promise<{ id: number }>
   saveAudio: (
     id: number,
@@ -786,7 +762,7 @@ export interface RecordingAPI {
   setAttendees: (meetingId: number, memberIds: number[]) => Promise<{ success: boolean }>
   // 녹음 시작 실패·취소 시 draft 행 삭제. status='recording'이고 오디오가 없는 행만 지운다.
   discardDraft: (id: number) => Promise<{ success: boolean }>
-  // 요약 형식 저장(재요약은 summarize로 따로). null=자동
+  // 요약 형식 고정 저장(재요약은 summarize로 따로). null=자동(내용으로 판단)
   setSummaryTemplate: (
     meetingId: number,
     templateId: MeetingTemplateId | null

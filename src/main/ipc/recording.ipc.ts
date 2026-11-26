@@ -21,13 +21,8 @@ import { reassignSegments, mergeSpeakersInMeeting } from '../services/speaker-co
 import { isTemplateId, listTemplateOptions } from '../services/meeting-templates'
 import { listMarks, addMark, updateMark, deleteMark, type MarkOrigin } from '../services/meeting-marks'
 import { parseKeywords, parseTextItems, parseTopics } from '../services/meeting-notes'
-import type {
-  RecordingStreamEvent,
-  SendStream,
-  SummaryActionItem,
-  InterviewQaPair,
-  InterviewCompetency
-} from '../services/meeting-types'
+import { buildDraftRow } from '../services/meeting-draft'
+import type { RecordingStreamEvent, SendStream, SummaryActionItem } from '../services/meeting-types'
 
 // 녹음 오디오 저장 위치 (userData 밖이 아니라 안 — 백업/유지 일관성)
 function recordingsDir(): string {
@@ -57,12 +52,10 @@ interface SummaryRow {
   topics: string | null
   open_questions: string | null
   keywords: string | null
-  qa_pairs: string | null
-  competencies: string | null
-  follow_ups: string | null
-  fact_checks: string | null
   model: string | null
   template_id?: string | null
+  template_source?: string | null
+  template_reason?: string | null
   generated_at: string
 }
 
@@ -91,14 +84,11 @@ function mapSummary(row: SummaryRow | undefined): unknown {
     action_items: parseJsonArray<SummaryActionItem>(row.action_items),
     open_questions: parseTextItems(row.open_questions),
     next_steps: parseJsonArray<string>(row.next_steps),
-    // 면접 전용 4분류 (회의 요약에서는 빈 배열)
-    qa_pairs: parseJsonArray<InterviewQaPair>(row.qa_pairs),
-    competencies: parseJsonArray<InterviewCompetency>(row.competencies),
-    follow_ups: parseJsonArray<string>(row.follow_ups),
-    fact_checks: parseJsonArray<string>(row.fact_checks),
     model: row.model,
-    // 요약을 만들 때 쓴 형식(NULL=형식 도입 이전 요약)
+    // 요약을 만들 때 쓴 형식(NULL=형식 도입 이전 요약)과 그 형식을 정한 경로·자동 선택 이유
     template_id: row.template_id ?? null,
+    template_source: row.template_source ?? null,
+    template_reason: row.template_reason ?? null,
     generated_at: row.generated_at
   }
 }
@@ -224,38 +214,28 @@ export function registerRecordingIpc(): void {
       input: {
         title?: string
         source?: string
-        kind?: string
         expected_speakers?: number | null
         attendee_ids?: number[]
         compact_audio?: boolean
-        summary_template?: string | null
       }
     ) => {
-      const kind = input?.kind === 'interview' ? 'interview' : 'meeting'
-      const title =
-        (input?.title ?? '').trim() || (kind === 'interview' ? '제목 없는 면접' : '제목 없는 회의')
-      const source = input?.source === 'mic+system' ? 'mic+system' : 'mic'
-      // 참석 인원(화자분리 클러스터 수). 입력값이 유효한 정수(1~20)면 그 값을 쓰고,
-      // 없으면 면접은 면접관+지원자 2인 기본형(자동추정 과분할 방지), 회의는 자동 추정(null).
-      // 상세 화면에서 언제든 바꿔 재분리 가능.
-      const raw = input?.expected_speakers
-      const requested =
-        typeof raw === 'number' && Number.isFinite(raw) && raw >= 1
-          ? Math.min(20, Math.round(raw))
-          : null
-      const expectedSpeakers = requested ?? (kind === 'interview' ? 2 : null)
-      // 무음 컷편집은 기본 on. 명시적으로 false를 준 경우에만 끈다.
-      const compactAudio = input?.compact_audio === false ? 0 : 1
-      // 요약 형식: 면접은 쓰지 않는다. 알 수 없는 값은 NULL(=제목으로 자동 판별).
-      const summaryTemplate =
-        kind === 'interview' ? null : isTemplateId(input?.summary_template) ? input.summary_template : null
-      // 참석 인원을 직접 골랐거나 면접(2인 기본형)이면 화자 구성을 확인한 것으로 본다.
-      const speakersConfirmed = requested !== null || kind === 'interview' ? 1 : 0
+      // 제목·참석 인원·컷편집 여부를 정규화한다(services/meeting-draft.ts).
+      // 제목을 비우면 기본 제목과 title_auto=1 — 요약이 끝나면 요약 제목으로 바뀔 수 있다.
+      // kind는 DEFAULT 'meeting', summary_template은 NULL(=자동 선택)이다.
+      const row = buildDraftRow(input)
+      const title = row.title
       const result = db
         .prepare(
-          "INSERT INTO meetings (title, kind, status, source, expected_speakers, compact_audio, summary_template, speakers_confirmed) VALUES (?, ?, 'recording', ?, ?, ?, ?, ?)"
+          "INSERT INTO meetings (title, title_auto, status, source, expected_speakers, compact_audio, speakers_confirmed) VALUES (?, ?, 'recording', ?, ?, ?, ?)"
         )
-        .run(title, kind, source, expectedSpeakers, compactAudio, summaryTemplate, speakersConfirmed)
+        .run(
+          row.title,
+          row.title_auto,
+          row.source,
+          row.expected_speakers,
+          row.compact_audio,
+          row.speakers_confirmed
+        )
       const id = Number(result.lastInsertRowid)
       if (Array.isArray(input?.attendee_ids) && input.attendee_ids.length > 0) {
         setAttendees(db, id, input.attendee_ids)
@@ -363,8 +343,9 @@ export function registerRecordingIpc(): void {
   ipcMain.handle('recording:rename', (_e, id: number, title: string) => {
     const trimmed = (title ?? '').trim()
     if (!trimmed) return { success: false }
+    // 사용자가 정한 제목이므로 title_auto=0 — 이후 요약이 덮지 않는다.
     db.prepare(
-      "UPDATE meetings SET title = ?, updated_at = datetime('now','localtime') WHERE id = ?"
+      "UPDATE meetings SET title = ?, title_auto = 0, updated_at = datetime('now','localtime') WHERE id = ?"
     ).run(trimmed, id)
     return { success: true }
   })
@@ -575,11 +556,10 @@ export function registerRecordingIpc(): void {
 
   // ── 요약 형식 (services/meeting-templates.ts). 저장만 하고 재요약은 렌더러가 따로 요청한다 ──
   ipcMain.handle('recording:setSummaryTemplate', (_e, meetingId: number, templateId: string | null) => {
-    const row = db.prepare('SELECT kind FROM meetings WHERE id = ?').get(meetingId) as
-      | { kind: string }
+    const row = db.prepare('SELECT id FROM meetings WHERE id = ?').get(meetingId) as
+      | { id: number }
       | undefined
     if (!row) return { success: false, error: '존재하지 않는 회의입니다.' }
-    if (row.kind === 'interview') return { success: false, error: '면접에는 요약 형식을 쓰지 않습니다.' }
     if (templateId !== null && !isTemplateId(templateId)) {
       return { success: false, error: '알 수 없는 요약 형식입니다.' }
     }

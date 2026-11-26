@@ -87,7 +87,8 @@ afterAll(() => {
 
 interface MeetingSeed {
   title?: string
-  kind?: 'meeting' | 'interview'
+  // 옛 녹음 종류 값. 코드가 더는 보지 않으므로 어떤 값이어도 결과가 같아야 한다.
+  kind?: string
   status?: string
   started_at?: string
   project_id?: number | null
@@ -170,7 +171,7 @@ describe('searchMeetings', () => {
     const r = search({ terms: ['배포'] })
     expect(r.meetings).toHaveLength(1)
     const m = r.meetings[0]
-    expect(m).toMatchObject({ meeting_id: id, title: '주간 회의', kind: 'meeting', note_link: `linkwork://note/${id}` })
+    expect(m).toMatchObject({ meeting_id: id, title: '주간 회의', note_link: `linkwork://note/${id}` })
     expect(m.speakers).toEqual(['김철수'])
     expect(m.snippets).toEqual([
       {
@@ -242,10 +243,12 @@ describe('searchMeetings', () => {
     expect(r.meetings.map((m) => m.title).sort()).toEqual(['참석자', '화자'])
   })
 
-  it('면접은 기본 제외, include_interviews 면 포함한다', () => {
-    seedSegment(seedMeeting({ title: '면접', kind: 'interview' }), 0, '배포 경험')
-    expect(search({ terms: ['배포'] }).meetings).toEqual([])
-    expect(search({ terms: ['배포'], include_interviews: true }).meetings.map((m) => m.kind)).toEqual(['interview'])
+  it('녹음 종류 값과 무관하게 찾고, 결과·scope_applied 에 종류 필드를 싣지 않는다', () => {
+    seedSegment(seedMeeting({ title: '옛 녹음', kind: 'legacy' }), 0, '배포 경험')
+    const r = search({ terms: ['배포'] })
+    expect(r.meetings.map((m) => m.title)).toEqual(['옛 녹음'])
+    expect(r.meetings[0]).not.toHaveProperty('kind')
+    expect(Object.keys(r.scope_applied).sort()).toEqual(['from', 'person', 'project_id', 'to'])
   })
 
   it('전사만 끝난 회의(transcribed)도 찾고, 녹음 중·처리 중 회의는 뺀다', () => {
@@ -305,14 +308,27 @@ describe('searchMeetings', () => {
 })
 
 describe('getMeetingExcerpt', () => {
-  it('없는 회의·처리 중 회의는 not_found, 면접은 include_interviews 없이 interview_excluded', () => {
+  it('없는 회의·처리 중 회의는 not_found, 옛 종류 값의 회의도 읽는다', () => {
     expect(getMeetingExcerpt(db, { meeting_id: 999 })).toEqual({ error: 'not_found' })
     const rec = seedMeeting({ status: 'recording' })
     expect(getMeetingExcerpt(db, { meeting_id: rec })).toEqual({ error: 'not_found' })
-    const iv = seedMeeting({ kind: 'interview' })
-    seedSegment(iv, 0, '답변')
-    expect(getMeetingExcerpt(db, { meeting_id: iv })).toEqual({ error: 'interview_excluded' })
-    expect(getMeetingExcerpt(db, { meeting_id: iv, include_interviews: true })).toMatchObject({ kind: 'interview' })
+    const old = seedMeeting({ kind: 'legacy' })
+    seedSegment(old, 0, '답변')
+    const r = getMeetingExcerpt(db, { meeting_id: old })
+    expect(r).toMatchObject({ meeting_id: old, mode: 'transcript' })
+    expect(r).not.toHaveProperty('kind')
+  })
+
+  it('요약 발췌에 옛 4분류(qa_pairs)를 싣지 않는다', () => {
+    const id = seedMeeting({ title: '옛 요약' })
+    seedSummary(id, { tldr: '개요' })
+    db.prepare('UPDATE meeting_summaries SET qa_pairs = ? WHERE meeting_id = ?').run(
+      JSON.stringify([{ question: 'q', answer_summary: 'a', start_ms: 0 }]),
+      id
+    )
+    const r = getMeetingExcerpt(db, { meeting_id: id })
+    expect(r).toMatchObject({ mode: 'summary', summary: { tldr: '개요' } })
+    expect((r as { summary: object }).summary).not.toHaveProperty('qa_pairs')
   })
 
   it('구간이 없고 요약이 있으면 항목마다 시각·링크를 붙인 요약을 준다', () => {

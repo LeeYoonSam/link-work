@@ -179,7 +179,7 @@
 
 | 출처 | 읽기 | 상한(`MEETING_LIMITS`) |
 |------|------|------|
-| 지난 회의 | `meetings` JOIN `meeting_summaries`. `kind = 'meeting'`, 회의 시작 전 90일 안 | 후보 200건, 매칭 뒤 3건 |
+| 지난 회의 | `meetings` JOIN `meeting_summaries`. 회의 시작 전 90일 안(녹음 종류로 거르지 않는다) | 후보 200건, 매칭 뒤 3건 |
 | 미완료 액션아이템 | 매칭된 지난 회의의 `action_items` 가운데 `todo_id` 가 없는 항목 | 10건 |
 
 - 매칭은 `sameTitle(a, b)` 다. `normalizeTitle` 이 소문자로 바꾸고 공백·구두점·기호를 지운다. `meetings.title` 또는 `meetings.calendar_event_title` 이 같으면 매칭이다.
@@ -398,5 +398,5 @@
 - **한 번만**: 회의 브리핑과 아침 동기화는 `event_key` UNIQUE 로 하루 1번을 보장한다. 행 INSERT 가 알림보다 먼저다.
 - **직렬화**: 회의 브리핑 쓰기는 서비스의 쓰기 줄 하나로 처리한다. 헤드리스 LLM 호출은 `runLlmSerialized` 로 한 번에 하나씩 돈다. 회의 브리핑 판정은 `dueInFlight`, 아침 동기화는 모듈의 `inFlight` 로 동시에 1개만 돈다.
 - **AI 입력 격리**: 외부 문자열은 `[데이터]` 블록 안에만 넣는다. 출력은 zod 스키마로 검증하고 길이를 제한한다. 헤드리스 실행의 도구 차단은 `ai-headless.ts` 가 맡는다.
-- **말투**: 비서가 만드는 AI 문장은 해요체다. 규칙은 `writing-style.ts` 의 `ASSISTANT_SPEECH_RULES` 가 유일한 정의처다. AI 대화·회의 요약·면접 요약은 같은 파일의 `WRITING_STYLE_RULES` 를 쓴다.
+- **말투**: 비서가 만드는 AI 문장은 해요체다. 규칙은 `writing-style.ts` 의 `ASSISTANT_SPEECH_RULES` 가 유일한 정의처다. AI 대화·회의 요약은 같은 파일의 `WRITING_STYLE_RULES` 를 쓴다.
 - **거짓 경보 방어**: 오늘 대시보드는 연결되지 않은 데이터로 위험이나 '없음'을 말하지 않는다(§11.4).

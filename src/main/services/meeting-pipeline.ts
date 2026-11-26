@@ -1,4 +1,4 @@
-// 녹음 처리 파이프라인(회의·면접 공통): compact → STT → 정제(clean·환각 필터·용어집) → VAD → Diarization → merge → DB 저장
+// 녹음 처리 파이프라인: compact → STT → 정제(clean·환각 필터·용어집) → VAD → Diarization → merge → DB 저장
 // SSOT: docs/MEETING_RECORDING.md §5
 import { app } from 'electron'
 import { join } from 'path'
@@ -51,7 +51,8 @@ export { SPEAKER_COLORS } from './speaker-assign'
 interface MeetingRow {
   id: number
   title: string
-  kind: string
+  // 1이면 시스템이 붙인 제목(기본 제목·요약 제목) — whisper 초기 프롬프트에 넣지 않는다.
+  title_auto: number
   audio_path: string | null
   audio_mime: string
   duration_ms: number
@@ -111,7 +112,6 @@ function formatDurationKo(ms: number): string {
  * 정상 경로에서는 merge 트랜잭션이 segments/cuts를 어차피 지우고 다시 넣지만, 컷편집 직후
  * 취소되면 그 트랜잭션이 실행되지 않는다. 그때 옛 타임라인이 남아 있으면 재생 위치가 통째로
  * 어긋나므로(과거 duration_ms ×10 오염과 같은 부류의 버그) 여기서 미리 맞춰 둔다.
- * 면접 요약의 질문 점프 위치(qa_pairs[].start_ms)도 같은 이유로 옮긴다.
  * 실패는 비치명적이다.
  */
 function remapExistingTimelines(
@@ -172,26 +172,6 @@ function remapExistingTimelines(
     remapLiveMarks(db, meetingId, map)
   } catch (err) {
     console.warn('[meeting-pipeline] 메모 시각 재매핑 실패:', err)
-  }
-
-  try {
-    const row = db
-      .prepare('SELECT qa_pairs FROM meeting_summaries WHERE meeting_id = ?')
-      .get(meetingId) as { qa_pairs: string | null } | undefined
-    if (!row?.qa_pairs) return
-
-    const pairs = JSON.parse(row.qa_pairs) as Array<{ start_ms?: number | null }>
-    if (!Array.isArray(pairs) || pairs.length === 0) return
-
-    const mapped = pairs.map((p) =>
-      typeof p.start_ms === 'number' ? { ...p, start_ms: map(p.start_ms) } : p
-    )
-    db.prepare('UPDATE meeting_summaries SET qa_pairs = ? WHERE meeting_id = ?').run(
-      JSON.stringify(mapped),
-      meetingId
-    )
-  } catch {
-    // 무시 — 요약 본문은 그대로 유효하다.
   }
 }
 
@@ -284,9 +264,9 @@ export async function runMeetingPipeline(
     // 고유명사 오인식을 줄인다. 환각 필터(프롬프트 에코 검출)도 같은 값을 쓰므로 STT 실행 여부와
     // 무관하게 여기서 조립한다(순수·저비용, 조회 실패는 무해하게 생략된다).
     const prompt = buildInitialPrompt({
-      kind: meeting.kind,
       language: meeting.language || 'ko',
-      title: meeting.title,
+      // 자동 제목(기본·요약 제목)은 AI·시스템이 만든 문구라 전사를 유도하지 않도록 넣지 않는다.
+      title: meeting.title_auto === 1 ? null : meeting.title,
       calendarEventTitle: meeting.calendar_event_title,
       // 이전 처리에서 지정한 화자 실명 + 이 회의에 지정된 참석자(구성원) 이름.
       speakerNames: [...loadSpeakerNames(db, meetingId), ...aids.attendees.map((a) => a.name)],
@@ -553,6 +533,8 @@ export async function runMeetingPipeline(
     // 화자별 목소리 centroid(adapter 'sherpa'일 때만). merge 트랜잭션이 저장·자동 매칭에 쓴다.
     let diarVoices: SpeakerVoice[] = []
     let diarEmbeddingModel: string | null = null
+    // 화자분리 진행률은 정수 %가 바뀔 때만 보낸다(창 단위 보고가 IPC 를 채우지 않도록).
+    let lastDiarPct = -1
     try {
       const result = await diarizeWithFallback(audioPath, {
         source: meeting.source,
@@ -562,6 +544,13 @@ export async function runMeetingPipeline(
             ? meeting.expected_speakers
             : undefined,
         signal,
+        onProgress: (r) => {
+          const pct = Math.floor(r * 100)
+          if (pct !== lastDiarPct) {
+            lastDiarPct = pct
+            send({ meetingId, phase: 'diarize', progress: r, message: '화자 목소리 분석 중…' })
+          }
+        },
         ensureModels: () =>
           ensureDiarizationModels(({ ratio, label }) =>
             send({ meetingId, phase: 'diarize', progress: ratio, message: label })

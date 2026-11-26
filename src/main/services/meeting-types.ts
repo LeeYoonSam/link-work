@@ -1,6 +1,7 @@
 // 회의 녹음 — main 프로세스 공유 타입 (SSOT: docs/MEETING_RECORDING.md)
 // renderer의 types/index.ts와 형태를 일치시키되, main은 renderer 타입을 import하지 않는
 // 기존 컨벤션(ai-agent.ts)을 따라 여기에 독립 정의한다.
+import type { MeetingTemplateId } from './meeting-templates'
 
 export interface RecordingStreamEvent {
   meetingId: number
@@ -124,28 +125,9 @@ export interface MeetingSummaryResult {
   // 구버전 요약 호환 필드. 새 요약은 주제별 요약·액션아이템·미결 질문으로 흡수해 항상 [].
   key_points: string[]
   next_steps: string[]
-}
-
-// ── 면접 기록 (kind='interview') 전용 요약 구조 ──
-// 설계 원칙: 합격/불합격 판단이나 점수를 생성하지 않는다. 지원자의 실제 발언을
-// 질문 단위로 정리하고, 근거(인용)와 확인이 필요한 지점만 남긴다.
-export interface InterviewQaPair {
-  question: string
-  answer_summary: string
-  // 질문이 시작된 오디오 위치(ms). 파싱 실패 시 null → 재생 점프 버튼을 숨긴다.
-  start_ms: number | null
-  // 지원자 발언 원문 인용 (요약이 아닌 실제 문장)
-  quote?: string | null
-}
-export interface InterviewCompetency {
-  topic: string
-  evidence: string[]
-  note?: string | null
-}
-export interface InterviewSummaryResult {
-  overview: string
-  qa_pairs: InterviewQaPair[]
-  competencies: InterviewCompetency[]
-  follow_ups: string[]
-  fact_checks: string[]
+  // 같은 요약 호출이 함께 돌려주는 메타 값. title은 정규화한 요약 제목(없으면 null)이다.
+  // template_id·template_reason은 자동 선택 모드에서 모델이 고른 형식과 근거다. 고정 모드는 null.
+  title: string | null
+  template_id: MeetingTemplateId | null
+  template_reason: string | null
 }

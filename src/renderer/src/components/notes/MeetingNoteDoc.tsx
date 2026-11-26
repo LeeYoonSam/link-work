@@ -35,7 +35,6 @@ export default function MeetingNoteDoc(): React.ReactNode {
   }
 
   const { meeting, summary, speakers, segments, attendees } = detail
-  const isInterview = meeting.kind === 'interview'
   const speakerName = (id: number | null): string => {
     const sp = speakers.find((s) => s.id === id)
     return sp ? (sp.display_name ?? sp.label) : '알 수 없음'
@@ -86,38 +85,6 @@ export default function MeetingNoteDoc(): React.ReactNode {
 
       {!summary ? (
         <EmptyState>요약이 없습니다</EmptyState>
-      ) : isInterview ? (
-        <>
-          {summary.tldr && <Section title="면접 개요"><p>{summary.tldr}</p></Section>}
-          {summary.qa_pairs.length > 0 && (
-            <Section title="질문과 답변">
-              <div className="space-y-3">
-                {summary.qa_pairs.map((qa, i) => (
-                  <div key={i}>
-                    <p className="font-medium text-gray-800">Q. {qa.question}</p>
-                    <p className="mt-0.5">{qa.answer_summary}</p>
-                    {qa.quote && <p className="mt-0.5 text-xs text-gray-500 italic">“{qa.quote}”</p>}
-                  </div>
-                ))}
-              </div>
-            </Section>
-          )}
-          {summary.competencies.length > 0 && (
-            <Section title="역량별 근거">
-              <div className="space-y-3">
-                {summary.competencies.map((c, i) => (
-                  <div key={i}>
-                    <p className="font-medium text-gray-800">{c.topic}</p>
-                    <List items={c.evidence} />
-                    {c.note && <p className="mt-0.5 text-xs text-gray-500">{c.note}</p>}
-                  </div>
-                ))}
-              </div>
-            </Section>
-          )}
-          {summary.follow_ups.length > 0 && <Section title="후속 질문"><List items={summary.follow_ups} /></Section>}
-          {summary.fact_checks.length > 0 && <Section title="확인 필요"><List items={summary.fact_checks} /></Section>}
-        </>
       ) : (
         <>
           {summary.keywords.length > 0 && (

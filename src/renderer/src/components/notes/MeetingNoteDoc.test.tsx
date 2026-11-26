@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 // zustand v5 는 서버 렌더에서 초기 상태를 돌려주므로 회의록 스토어 훅을 모킹한다(MeetingNoteList.test 와 같은 방식)
 
 const detail = vi.hoisted(() => ({
-  meeting: { id: 5, title: '주간 회의', kind: 'meeting', started_at: '2026-11-20 10:00:00', duration_ms: 60000 },
+  meeting: { id: 5, title: '주간 회의', started_at: '2026-11-20 10:00:00', duration_ms: 60000 },
   summary: null as unknown,
   speakers: [],
   segments: [],
@@ -51,10 +51,6 @@ const BASE = {
   action_items: [],
   open_questions: [],
   next_steps: [],
-  qa_pairs: [],
-  competencies: [],
-  follow_ups: [],
-  fact_checks: [],
   model: null,
   generated_at: '2026-11-20 11:00:00'
 }

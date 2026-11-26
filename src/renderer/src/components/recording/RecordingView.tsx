@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import type { KindFilter } from '../../stores/recordingStore'
 import { useRecordingStore } from '../../stores/recordingStore'
 import { useRecorderStore } from '../../stores/recorderStore'
 import RecordingList from './RecordingList'
@@ -8,19 +7,11 @@ import RecognitionAidsPanel from './RecognitionAidsPanel'
 import MeetingDetailView from './MeetingDetail'
 import { button } from '../ui'
 
-const FILTERS: { id: KindFilter; label: string }[] = [
-  { id: 'all', label: '전체' },
-  { id: 'meeting', label: '회의' },
-  { id: 'interview', label: '면접' }
-]
-
 export default function RecordingView(): React.ReactNode {
   const {
     meetings,
     current,
     loading,
-    kindFilter,
-    setKindFilter,
     fetchMeetings,
     closeMeeting,
     subscribeStream
@@ -30,9 +21,6 @@ export default function RecordingView(): React.ReactNode {
   const [showAids, setShowAids] = useState(false)
   // 다른 메뉴에 다녀와도 녹음이 진행 중이면 컨트롤 패널을 다시 펼쳐서 보여준다.
   const recorderActive = useRecorderStore((s) => s.state !== 'idle')
-
-  const countOf = (f: KindFilter): number =>
-    f === 'all' ? meetings.length : meetings.filter((m) => m.kind === f).length
 
   useEffect(() => {
     fetchMeetings()
@@ -85,30 +73,6 @@ export default function RecordingView(): React.ReactNode {
             <RecognitionAidsPanel onClose={() => setShowAids(false)} />
           </div>
         )}
-
-        {/* 종류 필터 — 회의/면접을 한 목록에서 갈라 본다 */}
-        <div className="flex items-center gap-1 px-4 py-2 border-b border-gray-100">
-          {FILTERS.map((f) => {
-            const active = kindFilter === f.id
-            return (
-              <button
-                key={f.id}
-                type="button"
-                onClick={() => setKindFilter(f.id)}
-                className={`px-2.5 py-1 text-xs rounded-md font-medium transition-colors ${
-                  active
-                    ? 'bg-gray-900 text-white'
-                    : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'
-                }`}
-              >
-                {f.label}
-                <span className={`ml-1.5 tabular-nums ${active ? 'text-gray-400' : 'text-gray-300'}`}>
-                  {countOf(f.id)}
-                </span>
-              </button>
-            )
-          })}
-        </div>
 
         {/* 목록 */}
         <div className="flex-1 overflow-y-auto">

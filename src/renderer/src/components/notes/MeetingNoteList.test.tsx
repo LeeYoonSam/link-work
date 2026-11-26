@@ -16,7 +16,6 @@ const { FOCUS_RING_CLASS } = await import('../../hooks/useFocusFlash')
 const note = (id: number, title: string, startedAt: string): MeetingNoteItem => ({
   id,
   title,
-  kind: 'meeting',
   started_at: startedAt,
   duration_ms: 30 * 60_000,
   tldr: `${title} 요약`,

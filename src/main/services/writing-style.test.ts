@@ -21,7 +21,6 @@ vi.mock('./ai-headless', () => ({ runHeadlessJson: vi.fn() }))
 
 import { buildSystemPrompt } from './ai-agent'
 import { MEETING_SYSTEM_PROMPT } from './assistant-briefing'
-import { INTERVIEW_SPEC } from './interview-summary'
 import { MEETING_SPEC } from './meeting-summary'
 import {
   ASSISTANT_SPEECH_JSON_NOTE,
@@ -41,10 +40,7 @@ describe('WRITING_STYLE_RULES', () => {
 })
 
 // JSON 요약 프롬프트는 "순수 JSON만 출력" 문장이 마지막에 있어야 파싱이 안정적이다.
-describe.each([
-  ['INTERVIEW_SPEC', INTERVIEW_SPEC.systemPrompt],
-  ['MEETING_SPEC', MEETING_SPEC.systemPrompt]
-])('%s.systemPrompt', (_name, prompt) => {
+describe.each([['MEETING_SPEC', MEETING_SPEC.systemPrompt]])('%s.systemPrompt', (_name, prompt) => {
   it('공통 글쓰기 규칙과 JSON 보조 안내를 포함한다', () => {
     expect(prompt).toContain(WRITING_STYLE_RULES)
     expect(prompt).toContain(WRITING_STYLE_JSON_NOTE)
@@ -52,22 +48,6 @@ describe.each([
 
   it('"순수 JSON만 출력" 문장으로 끝난다', () => {
     expect(prompt.trim().endsWith(JSON_ONLY_LAST_LINE)).toBe(true)
-  })
-})
-
-describe('INTERVIEW_SPEC.systemPrompt 평가 금지 유지', () => {
-  it('평가 금지 규칙이 글쓰기 규칙보다 앞에 남아 있다', () => {
-    const prompt = INTERVIEW_SPEC.systemPrompt
-    const banIdx = prompt.indexOf('합격/불합격 의견')
-    expect(banIdx).toBeGreaterThan(-1)
-    expect(banIdx).toBeLessThan(prompt.indexOf(WRITING_STYLE_RULES))
-  })
-
-  // 글쓰기 규칙이 원문 인용을 명령형·능동태로 바꿔 쓰지 않게 한다.
-  it('인용 필드 3개를 글쓰기 규칙 적용 대상에서 제외한다', () => {
-    expect(INTERVIEW_SPEC.systemPrompt).toContain(
-      'question, quote, evidence 는 발언 원문을 유지하는 필드다. 이 3개 필드에는 글쓰기 규칙을 적용하지 않는다.'
-    )
   })
 })
 

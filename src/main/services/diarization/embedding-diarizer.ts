@@ -1,4 +1,4 @@
-// 창 임베딩 화자분리 본체 — 워커(worker.ts)와 실측 CLI(cli.ts)가 함께 쓴다. electron 을 import 하지 않는다.
+// 창 임베딩 화자분리 본체 — 워커(worker.ts)·청크 조정(chunk-runner.ts)·실측 CLI(cli.ts)가 함께 쓴다. electron 을 import 하지 않는다.
 // 1) STT 세그먼트 위에 짧은 창(≤ WINDOW_MAX_SEC)을 깔고 2) 창마다 화자 임베딩을 뽑아
 // 3) 이웃 평균 → 4~7) 클러스터링 → 8) turn 생성 → 9) 화자별 목소리(centroid) 산출.
 // sherpa 의 통합 화자분리(pyannote 분할 + 클러스터링) 기능은 쓰지 않는다(긴 입력에서 배포 Electron 이 죽는다).
@@ -7,10 +7,14 @@ import type { DiarTurn } from '../meeting-types'
 import { planWindows, HOP_SEC, VOICE_EMBEDDING_MODEL, type PlannedWindow } from './window-plan'
 import { clusterEmbeddings, l2normalize, smoothNeighbors } from './clustering'
 import { buildTurns } from './turn-build'
-import { decodeWavPcm16, sliceFloat32, type PcmAudio } from './wav-pcm'
+import { decodeWavPcm16, readWavInfo, sliceFloat32, type PcmAudio } from './wav-pcm'
 
 /** 모델이 요구하는 샘플레이트. */
-const REQUIRED_SAMPLE_RATE = 16000
+export const REQUIRED_SAMPLE_RATE = 16000
+
+function sampleRateMismatch(sr: number): Error {
+  return new Error(`샘플레이트 불일치 (모델 ${REQUIRED_SAMPLE_RATE}Hz, 오디오 ${sr}Hz). 16kHz mono WAV가 필요합니다.`)
+}
 
 // sherpa-onnx-node 런타임 중 임베딩 추출에 필요한 부분만 로컬 정의
 export interface SherpaStream {
@@ -70,16 +74,45 @@ export function planDiarizationWindows(req: Pick<EmbeddingDiarizeRequest, 'audio
   wins: PlannedWindow[]
 } {
   const audio = decodeWavPcm16(readFileSync(req.audioPath))
-  if (audio.sampleRate !== REQUIRED_SAMPLE_RATE) {
-    throw new Error(`샘플레이트 불일치 (모델 ${REQUIRED_SAMPLE_RATE}Hz, 오디오 ${audio.sampleRate}Hz). 16kHz mono WAV가 필요합니다.`)
-  }
+  if (audio.sampleRate !== REQUIRED_SAMPLE_RATE) throw sampleRateMismatch(audio.sampleRate)
   return { audio, wins: planWindows(req.segments, audio.pcm.length / audio.sampleRate) }
 }
 
 /**
+ * 창 계획 — WAV 헤더만 읽어(본문 디코드 없이) planDiarizationWindows 와 같은 창을 깐다.
+ * 앱 경로(chunk-runner)가 main 에서 녹음 전체를 메모리에 올리지 않으려고 쓴다.
+ */
+export function planWindowsFromWav(
+  audioPath: string,
+  segments: ReadonlyArray<{ start_ms: number; end_ms: number }>
+): PlannedWindow[] {
+  const info = readWavInfo(audioPath)
+  if (info.sampleRate !== REQUIRED_SAMPLE_RATE) throw sampleRateMismatch(info.sampleRate)
+  return planWindows(segments, info.samples / info.sampleRate)
+}
+
+/**
+ * 창들이 덮는 샘플 범위 [a, b) — extractWindowEmbeddings 의 창 경계(floor(s*sr), min(total, ceil(e*sr)))와 같은 규칙.
+ * 워커가 이 범위만 읽으면 창 슬라이스가 전체 디코드와 같다.
+ */
+export function windowSampleRange(wins: ReadonlyArray<PlannedWindow>, sr: number, total: number): [number, number] {
+  if (wins.length === 0) return [0, 0]
+  let a = Infinity
+  let b = 0
+  for (const w of wins) {
+    a = Math.min(a, Math.floor(w.s * sr))
+    b = Math.max(b, Math.ceil(w.e * sr))
+  }
+  b = Math.min(total, b)
+  a = Math.max(0, Math.min(a, b))
+  return [a, b]
+}
+
+/**
  * 창 [from, to) 의 L2 정규화 임베딩을 뽑는다. sherpa-onnx-node 1.13.3 은 창(스트림)마다 네이티브 메모리를
- * 돌려주지 않아(GC·이벤트 루프 양보로도 회수되지 않음) 창 수에 비례해 RSS 가 는다. 앱은 회의마다 utilityProcess 를
- * 새로 띄워 끝나면 회수하고, 실측 CLI 는 --chunk 로 구간을 자식 프로세스에 나눠 맡긴다.
+ * 돌려주지 않아(GC·이벤트 루프 양보로도 회수되지 않음) 창 수에 비례해 RSS 가 는다. 앱은 창 DIAR_CHUNK_WINDOWS개마다
+ * 워커를 새로 띄운다(chunk-runner.ts). 실측 CLI 는 --chunk 로 구간을 자식 프로세스에 나눠 맡긴다.
+ * audio 는 전체 디코드이거나 창 범위만 읽은 것(offset·totalSamples)이다. 창 끝은 파일 전체 샘플 수로 자른다.
  */
 export function extractWindowEmbeddings(
   sherpa: SherpaEmbeddingApi,
@@ -98,7 +131,7 @@ export function extractWindowEmbeddings(
   const step = Math.max(1, Math.floor(n / 100))
   for (let i = from; i < to; i++) {
     const a = Math.floor(wins[i].s * sr)
-    const b = Math.min(audio.pcm.length, Math.ceil(wins[i].e * sr))
+    const b = Math.min(audio.totalSamples ?? audio.pcm.length, Math.ceil(wins[i].e * sr))
     const samples = sliceFloat32(audio, a, b)
     maxWindowSec = Math.max(maxWindowSec, samples.length / sr)
     const stream = extractor.createStream()

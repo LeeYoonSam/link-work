@@ -1,8 +1,9 @@
 // AI 요약 실행 인프라 — Claude Code 구독 OAuth 패턴 재사용 (ai-agent.ts 인프라)
 // SSOT: docs/MEETING_RECORDING.md §6
 //
-// 녹음 종류(meetings.kind)에 따라 프롬프트/검증/저장만 SummarySpec으로 갈아끼운다.
-// 회의=MEETING_SPEC(이 파일), 면접=INTERVIEW_SPEC(interview-summary.ts).
+// 회의 형식(템플릿)에 따라 프롬프트/검증/저장만 SummarySpec으로 갈아끼운다.
+// 형식은 수동 고정 → 사용자 제목 패턴 → 같은 요약 호출에서 모델 자동 선택 순서로 정한다.
+// 같은 호출의 출력 키 title로 시스템 제목(meetings.title_auto=1)을 갱신한다.
 import { app } from 'electron'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
@@ -10,14 +11,17 @@ import { join } from 'path'
 import { z } from 'zod'
 import { getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
-import { INTERVIEW_SPEC } from './interview-summary'
 import { listMarks } from './meeting-marks'
 import {
+  AUTO_TEMPLATE_OUTPUT_KEYS,
+  DEFAULT_MEETING_TITLE,
+  MEETING_OUTPUT_KEYS,
   buildOutputKeys,
   buildTemplateBlock,
-  getTemplate,
-  resolveTemplate,
-  type MeetingTemplate
+  buildTemplateSelectionBlock,
+  isTemplateId,
+  resolveTemplatePlan,
+  type TemplatePlan
 } from './meeting-templates'
 import { parseJsonArray } from './meeting-notes'
 import { buildMarksBlock, buildSummaryContextBlock, loadPromptContext } from './recognition-aids'
@@ -28,6 +32,7 @@ import type {
   SummaryTopic
 } from './meeting-types'
 import { parseTimestamp, type SummarySpec } from './summary-spec'
+import type Database from 'better-sqlite3'
 import { WRITING_STYLE_JSON_NOTE, WRITING_STYLE_RULES } from './writing-style'
 
 // ── ai-agent.ts와 동일한 인증/환경 패턴 복제 (ai-agent.ts 수정 금지) ──
@@ -177,12 +182,78 @@ const SummarySchema = z.object({
   action_items: z.array(ActionItemSchema).default([]),
   open_questions: z.array(TextAtSchema).default([]),
   key_points: z.array(z.string()).default([]),
-  next_steps: z.array(z.string()).default([])
+  next_steps: z.array(z.string()).default([]),
+  // 부가 메타 키다. 형식이 틀려도 요약 전체를 실패시키지 않고 validate에서 기본값으로 떨어뜨린다.
+  title: z.unknown().optional(),
+  template_id: z.unknown().optional(),
+  template_reason: z.unknown().optional()
 })
 
 const MAX_KEYWORDS = 10
 const MAX_TOPICS = 12
 const MAX_TOPIC_POINTS = 8
+const MAX_SUMMARY_TITLE = 30
+const MAX_TEMPLATE_REASON = 80
+
+// 제목 전체를 감쌀 때만 벗기는 따옴표·괄호 쌍(여는 문자 → 닫는 문자)
+const TITLE_WRAP_PAIRS: Record<string, string> = {
+  '"': '"',
+  "'": "'",
+  '“': '”',
+  '‘': '’',
+  '「': '」',
+  '『': '』',
+  '[': ']',
+  '(': ')'
+}
+
+/** 첫 문자와 끝 문자가 한 쌍으로 제목 전체를 감싸는지. '(주)카카오'·'개편 (2차)'·'[Q3] 로드맵'은 false. */
+function wrapsWhole(t: string): boolean {
+  if (t.length < 2) return false
+  const open = t[0]
+  const close = TITLE_WRAP_PAIRS[open]
+  if (!close || t[t.length - 1] !== close) return false
+  const inner = t.slice(1, -1)
+  if (open === close) return !inner.includes(open)
+  let depth = 0
+  for (const ch of inner) {
+    if (ch === open) depth++
+    else if (ch === close && --depth < 0) return false
+  }
+  return depth === 0
+}
+
+/**
+ * 요약 응답의 title을 제목으로 쓸 수 있게 정규화한다. 첫 줄만 쓰고, 제목 전체를 감싼 따옴표·괄호 쌍과 끝 문장부호를
+ * 벗기고, 공백을 1칸으로 줄여 30코드포인트에서 자른다. 쓸 수 없으면 null.
+ */
+export function normalizeSummaryTitle(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  let t = (raw.split(/\r?\n/)[0] ?? '').trim()
+  for (;;) {
+    const before = t
+    while (wrapsWhole(t)) t = t.slice(1, -1).trim()
+    t = t.replace(/[.。!?]+$/u, '').trimEnd()
+    if (t === before) break
+  }
+  t = t.replace(/\s+/g, ' ')
+  t = Array.from(t).slice(0, MAX_SUMMARY_TITLE).join('').trimEnd()
+  if (!t || t === DEFAULT_MEETING_TITLE) return null
+  return t
+}
+
+/**
+ * 시스템 제목(title_auto=1)일 때만 요약 제목으로 바꾼다. 조건부 UPDATE라서 요약 도중 사용자가
+ * 이름을 바꾸면(rename이 title_auto=0) 덮지 않는다. 바꿨으면 true.
+ */
+export function applyAutoTitle(db: Database.Database, meetingId: number, title: string): boolean {
+  const r = db
+    .prepare(
+      "UPDATE meetings SET title = ?, updated_at = datetime('now','localtime') WHERE id = ? AND title_auto = 1 AND title <> ?"
+    )
+    .run(title, meetingId, title)
+  return r.changes > 0
+}
 
 function cleanStrings(items: string[]): string[] {
   return items.map((s) => s.trim()).filter(Boolean)
@@ -227,7 +298,7 @@ function toTopics(items: z.infer<typeof TopicSchema>[]): SummaryTopic[] {
 }
 
 // 프롬프트의 "출력 키" 블록. 회의 형식(템플릿)별 힌트는 meeting-templates.ts의 buildOutputKeys가 끼운다.
-export { MEETING_OUTPUT_KEYS } from './meeting-templates'
+export { MEETING_OUTPUT_KEYS }
 
 const MEETING_PRINCIPLES = `원칙
 - 전사록에 없는 내용을 만들지 마세요. 불확실하면 해당 배열을 비우거나 값을 null로 두세요.
@@ -264,14 +335,20 @@ export function carryTodoIds<T extends { text: string; todo_id?: number | null }
   })
 }
 
-// ── 회의 요약 스펙 (kind='meeting') ──
-// 면접 전용 4분류는 빈 배열로 덮어써, 종류를 바꿔 재요약했을 때 이전 종류의
-// 잔여 데이터가 남지 않게 한다 (INTERVIEW_SPEC.persist와 대칭).
+// ── 회의 요약 스펙 ──
 // key_points·next_steps는 주제별 요약·액션아이템·미결 질문으로 흡수했으므로 새 요약은 [].
-// 회의 형식(템플릿)마다 프롬프트의 [회의 형식] 블록과 출력 키 힌트만 다르다. persist는 template_id에
-// 그 형식 id를 남긴다.
-export function buildMeetingSpec(t: MeetingTemplate): SummarySpec<MeetingSummaryResult> {
-  const templateBlock = buildTemplateBlock(t)
+// fixed(수동 고정·사용자 제목)는 그 형식의 [회의 형식] 블록과 출력 키 힌트를 넣는다.
+// auto는 [회의 형식 고르기] 블록으로 모델이 template_id·template_reason을 고르고 그 형식 지시를 따르게 한다.
+// persist는 실제로 쓴 형식(template_id)·결정 경로(template_source)·이유(template_reason)를 남긴다.
+// 옛 요약 컬럼 4개(qa_pairs·competencies·follow_ups·fact_checks)는 백업 호환으로 DB에만 남고 여기서 읽거나 쓰지 않는다.
+export function buildMeetingSpec(plan: TemplatePlan): SummarySpec<MeetingSummaryResult> {
+  const formatSection =
+    plan.mode === 'fixed'
+      ? (() => {
+          const block = buildTemplateBlock(plan.template)
+          return `${block ? `${block}\n\n` : ''}${buildOutputKeys(plan.template)}`
+        })()
+      : `${buildTemplateSelectionBlock()}\n\n${MEETING_OUTPUT_KEYS}\n${AUTO_TEMPLATE_OUTPUT_KEYS}`
   return {
     systemPrompt: `회의 전사록을 분석해 한국어로 JSON만 출력하세요.
 
@@ -279,11 +356,11 @@ export function buildMeetingSpec(t: MeetingTemplate): SummarySpec<MeetingSummary
 
 ${MEETING_PRINCIPLES}
 
-${templateBlock ? `${templateBlock}\n\n` : ''}${buildOutputKeys(t)}
+${formatSection}
 
 ${WRITING_STYLE_RULES}
 ${WRITING_STYLE_JSON_NOTE}
-keywords 와 title 은 문장이 아닌 명사구다. 이 2개 필드에는 글쓰기 규칙의 문장 규칙을 적용하지 않는다.
+keywords, title, template_id 는 문장이 아닌 명사구나 값이다. 이 필드에는 글쓰기 규칙의 문장 규칙을 적용하지 않는다.
 
 코드펜스 없이 순수 JSON만 출력하세요.`,
 
@@ -294,6 +371,17 @@ keywords 와 title 은 문장이 아닌 명사구다. 이 2개 필드에는 글�
 
     validate: (raw) => {
       const v = SummarySchema.parse(raw)
+      let templateId: MeetingSummaryResult['template_id'] = null
+      let templateReason: string | null = null
+      if (plan.mode === 'auto') {
+        if (isTemplateId(v.template_id)) {
+          templateId = v.template_id
+          const reason = Array.from((typeof v.template_reason === 'string' ? v.template_reason : '').trim()).slice(0, MAX_TEMPLATE_REASON).join('').trim()
+          templateReason = reason || null
+        } else {
+          templateId = 'default'
+        }
+      }
       return {
         tldr: v.tldr.trim(),
         keywords: toKeywords(v.keywords),
@@ -309,7 +397,10 @@ keywords 와 title 은 문장이 아닌 명사구다. 이 2개 필드에는 글�
           .filter((item) => item.text),
         open_questions: toTextItems(v.open_questions),
         key_points: cleanStrings(v.key_points),
-        next_steps: cleanStrings(v.next_steps)
+        next_steps: cleanStrings(v.next_steps),
+        title: normalizeSummaryTitle(v.title),
+        template_id: templateId,
+        template_reason: templateReason
       }
     },
 
@@ -320,12 +411,15 @@ keywords 와 title 은 문장이 아닌 명사구다. 이 2개 필드에는 글�
         .get(meetingId) as { action_items: string | null } | undefined
       const prevItems = parseJsonArray<{ text: string; todo_id?: number | null }>(prevRow?.action_items)
       const actionItems = carryTodoIds<{ text: string; todo_id?: number | null }>(prevItems, parsed.action_items)
+      const templateId = plan.mode === 'fixed' ? plan.template.id : (parsed.template_id ?? 'default')
+      const templateSource = plan.mode === 'fixed' ? plan.source : 'auto'
+      const templateReason = plan.mode === 'fixed' ? plan.reason : parsed.template_reason
       db.prepare(
         `INSERT INTO meeting_summaries
            (meeting_id, tldr, key_points, decisions, action_items, next_steps,
             topics, open_questions, keywords,
-            qa_pairs, competencies, follow_ups, fact_checks, model, template_id, generated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', '[]', '[]', ?, ?, datetime('now','localtime'))
+            model, template_id, template_source, template_reason, generated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
          ON CONFLICT(meeting_id) DO UPDATE SET
            tldr = excluded.tldr,
            key_points = excluded.key_points,
@@ -335,12 +429,10 @@ keywords 와 title 은 문장이 아닌 명사구다. 이 2개 필드에는 글�
            topics = excluded.topics,
            open_questions = excluded.open_questions,
            keywords = excluded.keywords,
-           qa_pairs = excluded.qa_pairs,
-           competencies = excluded.competencies,
-           follow_ups = excluded.follow_ups,
-           fact_checks = excluded.fact_checks,
            model = excluded.model,
            template_id = excluded.template_id,
+           template_source = excluded.template_source,
+           template_reason = excluded.template_reason,
            generated_at = excluded.generated_at`
       ).run(
         meetingId,
@@ -353,14 +445,16 @@ keywords 와 title 은 문장이 아닌 명사구다. 이 2개 필드에는 글�
         JSON.stringify(parsed.open_questions),
         JSON.stringify(parsed.keywords),
         model,
-        t.id
+        templateId,
+        templateSource,
+        templateReason
       )
     }
   }
 }
 
-// 기본 형식의 회의 요약 스펙. 테스트가 공통 글쓰기 규칙 포함 여부를 확인할 수 있도록 export 한다.
-export const MEETING_SPEC: SummarySpec<MeetingSummaryResult> = buildMeetingSpec(getTemplate('default'))
+// 새 녹음이 받는 스펙(자동 선택 모드). 테스트가 공통 글쓰기 규칙 포함 여부를 확인할 수 있도록 export 한다.
+export const MEETING_SPEC: SummarySpec<MeetingSummaryResult> = buildMeetingSpec({ mode: 'auto' })
 
 // 응답에서 JSON 블록 추출 (코드펜스 ```json … ``` 허용)
 export function extractJson(text: string): string {
@@ -415,15 +509,19 @@ export async function runMeetingSummary(
 ): Promise<{ success: boolean; error?: string }> {
   const db = getDatabase()
 
-  // 녹음 종류에 따라 요약 스펙 선택 (기본=회의). 회의는 지정한 형식, 없으면 제목으로 형식을 고른다.
-  // 제목은 활동 기록에도 쓴다.
-  const kindRow = db
-    .prepare('SELECT kind, title, summary_template FROM meetings WHERE id = ?')
-    .get(meetingId) as { kind: string; title: string | null; summary_template: string | null } | undefined
-  const spec: SummarySpec<unknown> =
-    kindRow?.kind === 'interview'
-      ? (INTERVIEW_SPEC as SummarySpec<unknown>)
-      : (buildMeetingSpec(resolveTemplate(kindRow?.summary_template, kindRow?.title)) as SummarySpec<unknown>)
+  // 형식 결정: 수동 고정 → 사용자 제목 패턴 → 모델 자동 선택. 제목은 활동 기록에도 쓴다.
+  const row = db
+    .prepare('SELECT title, title_auto, summary_template FROM meetings WHERE id = ?')
+    .get(meetingId) as { title: string | null; title_auto: number | null; summary_template: string | null } | undefined
+  const titleAuto = row?.title_auto === 1
+  const plan = resolveTemplatePlan({ explicit: row?.summary_template, title: row?.title, titleAuto })
+  const spec = buildMeetingSpec(plan)
+  // 자동 모드에서 사용자가 입력한 제목은 형식 판단의 참고로만 넘긴다. 시스템 제목은 넘기지 않는다.
+  const userTitle = (row?.title ?? '').trim()
+  const titleLine =
+    plan.mode === 'auto' && !titleAuto && userTitle && userTitle !== DEFAULT_MEETING_TITLE
+      ? `회의 제목(사용자 입력, 참고용): ${userTitle}`
+      : ''
 
   // ── 1. 전사 로드 ──
   const segments = db
@@ -459,7 +557,7 @@ export async function runMeetingSummary(
   const transcript = fitTranscript(lines, {
     lineStartMs: startMs,
     keepRanges: marks.map((m) => [m.at_ms - 90_000, m.at_ms + 10_000] as [number, number]),
-    reserveChars: marksBlock.length
+    reserveChars: marksBlock.length + (titleLine ? titleLine.length + 2 : 0)
   })
 
   // ── 2. Claude query ──
@@ -469,7 +567,7 @@ export async function runMeetingSummary(
   // 사용자가 등록한 참석자·용어를 전사록 앞에 [참고 정보]로 붙인다. 표기 통일과 담당자
   // 매칭에만 쓰이며, 없으면 ''이라 프롬프트가 그대로다.
   // (프라이버시: 이 단계에서 참석자 이름과 용어, 사용자 메모가 전사록과 함께 Claude로 전송된다.)
-  const contextBlock = [buildSummaryContextBlock(loadPromptContext(db, meetingId)), marksBlock]
+  const contextBlock = [titleLine, buildSummaryContextBlock(loadPromptContext(db, meetingId)), marksBlock]
     .filter(Boolean)
     .join('\n\n')
   const prompt = spec.buildPrompt(transcript, contextBlock)
@@ -533,7 +631,7 @@ export async function runMeetingSummary(
   send({ meetingId, phase: 'summarize', progress: 0.8, message: 'JSON 파싱 중…' })
 
   // ── 3. JSON 파싱 + zod 검증 (스펙별) ──
-  let parsed: unknown
+  let parsed: MeetingSummaryResult
   try {
     const jsonStr = extractJson(responseText)
     parsed = spec.validate(JSON.parse(jsonStr))
@@ -551,8 +649,12 @@ export async function runMeetingSummary(
     "UPDATE meetings SET status = 'summarized', updated_at = datetime('now','localtime') WHERE id = ?"
   ).run(meetingId)
 
+  // 시스템 제목이면 요약 제목으로 바꾼다. 사용자 제목(title_auto=0)은 덮지 않는다.
+  let finalTitle = row?.title ?? undefined
+  if (titleAuto && parsed.title && applyAutoTitle(db, meetingId, parsed.title)) finalTitle = parsed.title
+
   // 비서가 새 액션아이템을 반영하도록 활동을 기록한다 (assistant-scheduler 가 구독).
-  logActivity('meeting', 'update', meetingId, kindRow?.title ?? undefined, '요약 생성')
+  logActivity('meeting', 'update', meetingId, finalTitle, '요약 생성')
 
   send({ meetingId, phase: 'done', progress: 1, message: '요약 완료' })
   return { success: true }

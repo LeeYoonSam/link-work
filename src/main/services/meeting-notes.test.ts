@@ -21,11 +21,7 @@ const emptySummary: NoteSummary = {
   decisions: [],
   action_items: [],
   open_questions: [],
-  next_steps: [],
-  qa_pairs: [],
-  competencies: [],
-  follow_ups: [],
-  fact_checks: []
+  next_steps: []
 }
 
 const base: Omit<NoteDetail, 'meeting' | 'summary'> = {
@@ -43,7 +39,7 @@ const base: Omit<NoteDetail, 'meeting' | 'summary'> = {
 describe('buildMeetingNoteMarkdown — 회의', () => {
   const md = buildMeetingNoteMarkdown({
     ...base,
-    meeting: { title: '주간 회의', kind: 'meeting', started_at: '2026-10-01 10:00:00', duration_ms: 1800000 },
+    meeting: { title: '주간 회의', started_at: '2026-10-01 10:00:00', duration_ms: 1800000 },
     summary: {
       ...emptySummary,
       tldr: '배포 일정 확정',
@@ -71,45 +67,14 @@ describe('buildMeetingNoteMarkdown — 회의', () => {
     expect(md).toContain('- [x] 공지')
   })
 
-  it('빈 섹션과 면접 섹션은 생략한다', () => {
+  it('빈 섹션은 생략하고 종류 메타는 쓰지 않는다', () => {
     expect(md).not.toContain('## 다음 단계')
-    expect(md).not.toContain('## 질문과 답변')
+    expect(md).not.toContain('종류:')
   })
 
   it('전사는 시간과 화자명을 붙인다', () => {
     expect(md).toContain('[00:05] **김철수**: 시작합니다')
     expect(md).toContain('[01:05] **SPEAKER_01**: 네 좋습니다')
-  })
-})
-
-describe('buildMeetingNoteMarkdown — 면접', () => {
-  const md = buildMeetingNoteMarkdown({
-    ...base,
-    meeting: { title: '백엔드 면접', kind: 'interview', started_at: '2026-10-02 14:00:00', duration_ms: 3600000 },
-    summary: {
-      ...emptySummary,
-      tldr: '경력 5년 지원자',
-      qa_pairs: [
-        { question: '최근 프로젝트는?', answer_summary: '결제 시스템 개발', start_ms: 90000, quote: '제가 리드했습니다' }
-      ],
-      competencies: [{ topic: '문제 해결', evidence: ['장애 대응 경험'], note: null }],
-      fact_checks: ['재직 기간 확인']
-    }
-  })
-
-  it('면접 섹션을 만들고 빈 섹션은 생략한다', () => {
-    expect(md).toContain('## 면접 개요')
-    expect(md).toContain('### Q1. 최근 프로젝트는? [01:30]')
-    expect(md).toContain('> 제가 리드했습니다')
-    expect(md).toContain('## 역량별 근거')
-    expect(md).toContain('  - 장애 대응 경험')
-    expect(md).toContain('## 확인 필요')
-    expect(md).toContain('종류: 면접')
-    expect(md).toContain('길이: 1시간 0분')
-    expect(md).not.toContain('## 후속 질문')
-    expect(md).not.toContain('## TL;DR')
-    expect(md).not.toContain('## 액션아이템')
-    expect(md).not.toContain('프로젝트:')
   })
 })
 
@@ -119,7 +84,7 @@ describe('헬퍼', () => {
       ...base,
       segments: [],
       attendees: [],
-      meeting: { title: 'x', kind: 'meeting', started_at: 't', duration_ms: 0 },
+      meeting: { title: 'x', started_at: 't', duration_ms: 0 },
       summary: null
     })
     expect(md).not.toContain('##')
@@ -144,7 +109,7 @@ describe('헬퍼', () => {
 describe('buildMeetingNoteMarkdown — 새 요약 포맷', () => {
   const md = buildMeetingNoteMarkdown({
     ...base,
-    meeting: { title: '스프린트 회의', kind: 'meeting', started_at: '2026-11-20 10:00:00', duration_ms: 1500000 },
+    meeting: { title: '스프린트 회의', started_at: '2026-11-20 10:00:00', duration_ms: 1500000 },
     summary: {
       ...emptySummary,
       tldr: '결제 개편 범위를 확정했다.',
@@ -190,11 +155,11 @@ describe('buildMeetingNoteMarkdown — 새 요약 포맷', () => {
 describe('buildMeetingNoteMarkdown — 구버전 요약', () => {
   // 새 포맷 도입 전 코드로 만든 출력. 구버전 요약(문자열 decisions, 새 필드 없음)은 바이트 단위로 같아야 한다.
   const LEGACY_MD =
-    '# 주간 회의\n\n일시: 2026-10-01 10:00:00 · 길이: 30분 · 종류: 회의 · 참석자: 김철수\n\n## TL;DR\n\n배포 일정 확정\n\n## 핵심 포인트\n\n- QA 완료\n\n## 결정사항\n\n- 금요일 배포\n\n## 액션아이템\n\n- [ ] 릴리즈 노트 작성 (담당: 김철수, 기한: 2026-10-03)\n- [x] 공지\n\n## 다음 단계\n\n- 모니터링\n\n## 전사\n\n[00:05] **김철수**: 시작합니다\n\n[01:05] 네\n'
+    '# 주간 회의\n\n일시: 2026-10-01 10:00:00 · 길이: 30분 · 참석자: 김철수\n\n## TL;DR\n\n배포 일정 확정\n\n## 핵심 포인트\n\n- QA 완료\n\n## 결정사항\n\n- 금요일 배포\n\n## 액션아이템\n\n- [ ] 릴리즈 노트 작성 (담당: 김철수, 기한: 2026-10-03)\n- [x] 공지\n\n## 다음 단계\n\n- 모니터링\n\n## 전사\n\n[00:05] **김철수**: 시작합니다\n\n[01:05] 네\n'
 
   it('저장된 구버전 JSON을 정규화해 만든 Markdown이 이전 출력과 같다', () => {
     const md = buildMeetingNoteMarkdown({
-      meeting: { title: '주간 회의', kind: 'meeting', started_at: '2026-10-01 10:00:00', duration_ms: 1800000 },
+      meeting: { title: '주간 회의', started_at: '2026-10-01 10:00:00', duration_ms: 1800000 },
       speakers: [{ id: 1, label: 'SPEAKER_00', display_name: '김철수' }],
       segments: [
         { start_ms: 5000, end_ms: 8000, speaker_id: 1, text: '시작합니다' },
@@ -354,7 +319,7 @@ describe('computeTalkShare', () => {
 })
 
 describe('buildMeetingNoteMarkdown — 내 메모·발화 점유율', () => {
-  const meeting = { title: '회의', kind: 'meeting' as const, started_at: '2026-10-01 10:00:00', duration_ms: 600000 }
+  const meeting = { title: '회의', started_at: '2026-10-01 10:00:00', duration_ms: 600000 }
   const speakers = [
     { id: 1, label: 'SPEAKER_00', display_name: '김철수' },
     { id: 2, label: 'SPEAKER_01', display_name: null }

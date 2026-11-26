@@ -81,10 +81,10 @@ export async function openRelease(release: Pick<NextRelease, 'jiraVersionId' | '
   useNavigationStore.getState().openProjectsTab('releases')
 }
 
-/** 회의록 → 회의록 화면의 그 회의록. 검색·종류 필터가 숨기지 않도록 먼저 푼다(openInternalLink 의 note 와 같다) */
+/** 회의록 → 회의록 화면의 그 회의록. 검색 필터가 숨기지 않도록 먼저 푼다(openInternalLink 의 note 와 같다) */
 export function openNote(noteId: number): void {
   const notes = useMeetingNotesStore.getState()
-  notes.setFilter({ q: '', kind: 'all' })
+  notes.setFilter({ q: '' })
   void notes.select(noteId)
   useFocusStore.getState().requestFocus({ entity: 'note', id: noteId })
   useNavigationStore.getState().setView('notes')

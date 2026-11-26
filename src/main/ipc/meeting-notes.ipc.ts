@@ -19,13 +19,11 @@ import {
 
 interface MeetingNoteFilter {
   q?: string
-  kind?: 'all' | 'meeting' | 'interview'
 }
 
 interface ListRow {
   id: number
   title: string
-  kind: 'meeting' | 'interview'
   started_at: string
   duration_ms: number
   tldr: string | null
@@ -44,8 +42,7 @@ const SEARCH_COLUMNS = [
   's.next_steps',
   's.topics',
   's.open_questions',
-  's.keywords',
-  's.qa_pairs'
+  's.keywords'
 ]
 
 type Db = ReturnType<typeof getDatabase>
@@ -64,14 +61,10 @@ export function listMeetingNotes(db: Db, filter?: MeetingNoteFilter) {
     where.push(`(${ors.join(' OR ')})`)
     for (let i = 0; i < ors.length; i++) params.push(pattern)
   }
-  if (filter?.kind === 'meeting' || filter?.kind === 'interview') {
-    where.push('m.kind = ?')
-    params.push(filter.kind)
-  }
 
   const rows = db
     .prepare(
-      `SELECT m.id, m.title, m.kind, m.started_at, m.duration_ms, s.tldr, s.key_points,
+      `SELECT m.id, m.title, m.started_at, m.duration_ms, s.tldr, s.key_points,
               s.decisions, s.action_items, s.generated_at
          FROM meetings m
          JOIN meeting_summaries s ON s.meeting_id = m.id
@@ -85,7 +78,6 @@ export function listMeetingNotes(db: Db, filter?: MeetingNoteFilter) {
     return {
       id: r.id,
       title: r.title,
-      kind: r.kind,
       started_at: r.started_at,
       duration_ms: r.duration_ms,
       tldr: r.tldr,
@@ -122,11 +114,7 @@ function meetingNoteMarkdown(db: Db, id: number): string {
         action_items: parseJsonArray(s.action_items),
         open_questions: parseTextItems(s.open_questions),
         key_points: parseJsonArray(s.key_points),
-        next_steps: parseJsonArray(s.next_steps),
-        qa_pairs: parseJsonArray(s.qa_pairs),
-        competencies: parseJsonArray(s.competencies),
-        follow_ups: parseJsonArray(s.follow_ups),
-        fact_checks: parseJsonArray(s.fact_checks)
+        next_steps: parseJsonArray(s.next_steps)
       }
     : null
   return buildMeetingNoteMarkdown({
