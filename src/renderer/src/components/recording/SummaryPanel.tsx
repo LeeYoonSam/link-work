@@ -1,8 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRecordingStore } from '../../stores/recordingStore'
 import { useMeetingNotesStore } from '../../stores/meetingNotesStore'
 import { useNavigationStore } from '../../stores/navigationStore'
-import type { ActionItem, MeetingSummary, SummaryTextItem, SummaryTopic } from '../../types'
+import type {
+  ActionItem,
+  MeetingMark,
+  MeetingSummary,
+  MeetingTemplateId,
+  SummaryTemplateOption,
+  SummaryTextItem,
+  SummaryTopic
+} from '../../types'
+import { assignMarksToTopics } from '../../utils/assignMarksToTopics'
 import { Badge, EmptyState, ProgressBar } from '../ui'
 import { taskTag } from '../ui/tokens'
 
@@ -11,6 +20,29 @@ interface Props {
   meetingId: number
   // 시각 버튼을 누르면 그 시점부터 재생한다. 없으면 시각 버튼을 그리지 않는다.
   onSeek?: (ms: number) => void
+  // 현재 재생 위치(ms). 요약 화면에서 메모를 더할 때 그 시각에 붙인다.
+  currentMs?: number
+}
+
+// main 목록을 읽기 전·실패 시 쓰는 형식 이름(main services/meeting-templates.ts와 같은 이름)
+const FALLBACK_TEMPLATES: SummaryTemplateOption[] = [
+  { id: 'default', name: '기본' },
+  { id: 'one_on_one', name: '1:1' },
+  { id: 'standup', name: '스탠드업' },
+  { id: 'review', name: '리뷰·회고' }
+]
+
+// 드롭다운에서 '자동'(null)을 나타내는 값
+const AUTO_VALUE = ''
+
+// 메모 시각 표기 [mm:ss] (녹음 화면과 같은 표기)
+function formatMarkTime(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000))
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const sec = totalSec % 60
+  const mmss = `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+  return h > 0 ? `${h}:${mmss}` : mmss
 }
 
 // InterviewPanel과 같은 m:ss 표기
@@ -21,8 +53,41 @@ function formatTime(ms: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-export default function SummaryPanel({ summary, meetingId, onSeek }: Props): React.ReactNode {
-  const { processing, summarizeMeeting, actionItemToTodo, refreshCurrent } = useRecordingStore()
+export default function SummaryPanel({
+  summary,
+  meetingId,
+  onSeek,
+  currentMs
+}: Props): React.ReactNode {
+  const {
+    current,
+    processing,
+    summarizeMeeting,
+    actionItemToTodo,
+    refreshCurrent,
+    setSummaryTemplate,
+    addMark,
+    updateMark,
+    deleteMark
+  } = useRecordingStore()
+  // 이 회의의 상세가 열려 있을 때만 형식·메모를 읽는다
+  const detail = current?.meeting.id === meetingId ? current : null
+  const meetingTemplate: MeetingTemplateId | null = detail?.meeting.summary_template ?? null
+  const marks = useMemo<MeetingMark[]>(
+    () => [...(detail?.marks ?? [])].sort((a, b) => a.at_ms - b.at_ms || a.id - b.id),
+    [detail?.marks]
+  )
+  const hasMarks = marks.length > 0
+  const [templateOptions, setTemplateOptions] = useState<SummaryTemplateOption[]>(FALLBACK_TEMPLATES)
+  // 형식 변경 확인창에 띄울 새 형식(undefined=닫힘, null=자동)
+  const [pendingTemplate, setPendingTemplate] = useState<MeetingTemplateId | null | undefined>(
+    undefined
+  )
+  // 메모를 더하거나 고친 뒤 아직 요약에 반영하지 않았는지(자동 재생성은 하지 않는다)
+  const [marksDirty, setMarksDirty] = useState(false)
+  const [addingMark, setAddingMark] = useState(false)
+  const [newMarkText, setNewMarkText] = useState('')
+  const [markError, setMarkError] = useState<string | null>(null)
   // 요약 재생성은 회의별로 독립 실행된다. SummaryPanel은 회의 전환 시 언마운트되지 않고
   // 재사용되므로, boolean 대신 트리거된 회의 id로 추적해 다른 회의에 "재생성 중…" 잔상이
   // 남지 않게 한다.
@@ -36,7 +101,31 @@ export default function SummaryPanel({ summary, meetingId, onSeek }: Props): Rea
   useEffect(() => {
     setSummaryError(null)
     setCopied(false)
+    setMarksDirty(false)
+    setAddingMark(false)
+    setNewMarkText('')
+    setMarkError(null)
+    setPendingTemplate(undefined)
   }, [meetingId])
+
+  // 형식 이름은 main 목록에서 읽는다. 실패하면 고정 목록 그대로.
+  useEffect(() => {
+    let alive = true
+    window.api.recording
+      .listSummaryTemplates()
+      .then((list) => {
+        if (alive && list.length > 0) setTemplateOptions(list)
+      })
+      .catch((e) => console.warn('[SummaryPanel] 요약 형식 목록 실패', e))
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const templateName = (id: MeetingTemplateId | null | undefined): string =>
+    templateOptions.find((t) => t.id === (id ?? 'default'))?.name ??
+    FALLBACK_TEMPLATES.find((t) => t.id === (id ?? 'default'))?.name ??
+    '기본'
 
   // 회의록 메뉴의 'Markdown 복사'와 같은 Markdown을 복사한다.
   const handleCopy = async (): Promise<void> => {
@@ -63,11 +152,52 @@ export default function SummaryPanel({ summary, meetingId, onSeek }: Props): Rea
     try {
       await summarizeMeeting(targetId)
       await refreshCurrent()
+      setMarksDirty(false)
     } catch (e) {
       setSummaryError(e instanceof Error ? e.message : '요약 생성 실패')
     } finally {
       setSummarizingId((prev) => (prev === targetId ? null : prev))
     }
+  }
+
+  // 형식 변경 확인 → 형식 저장 → 다시 요약
+  const handleConfirmTemplate = async (): Promise<void> => {
+    if (pendingTemplate === undefined) return
+    const next = pendingTemplate
+    setPendingTemplate(undefined)
+    const ok = await setSummaryTemplate(meetingId, next)
+    if (!ok) {
+      setSummaryError('요약 형식을 바꾸지 못했습니다.')
+      return
+    }
+    await handleSummarize()
+  }
+
+  const handleAddMark = async (): Promise<void> => {
+    const text = newMarkText.trim()
+    if (!text) return
+    const id = await addMark({ meetingId, raw_ms: currentMs ?? 0, text, origin: 'post' })
+    if (id == null) {
+      setMarkError('메모를 저장하지 못했습니다.')
+      return
+    }
+    setMarkError(null)
+    setNewMarkText('')
+    setAddingMark(false)
+    setMarksDirty(true)
+  }
+
+  const handleUpdateMark = async (id: number, text: string): Promise<boolean> => {
+    const ok = await updateMark({ id, text })
+    setMarkError(ok ? null : '메모를 저장하지 못했습니다.')
+    if (ok) setMarksDirty(true)
+    return ok
+  }
+
+  const handleDeleteMark = async (id: number): Promise<void> => {
+    const ok = await deleteMark(id)
+    setMarkError(ok ? null : '메모를 지우지 못했습니다.')
+    if (ok) setMarksDirty(true)
   }
 
   if (isProcessing) {
@@ -114,8 +244,52 @@ export default function SummaryPanel({ summary, meetingId, onSeek }: Props): Rea
     )
   }
 
+  const { byTopic } = assignMarksToTopics(summary.topics, marks)
+
   return (
     <div className="space-y-5">
+      {/* 요약 형식 · 형식 바꿔 다시 요약 · 메모 반영 */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <Badge color="bg-gray-100 text-gray-600" size="xs">
+          형식: {templateName(summary.template_id)}
+        </Badge>
+        <label className="flex items-center gap-1 text-[11px] text-gray-400">
+          <span>형식 바꿔 다시 요약</span>
+          <select
+            value={meetingTemplate ?? AUTO_VALUE}
+            onChange={(e) =>
+              setPendingTemplate(
+                e.target.value === AUTO_VALUE ? null : (e.target.value as MeetingTemplateId)
+              )
+            }
+            disabled={summarizing}
+            className="text-[11px] text-gray-600 border border-gray-200 rounded px-1 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:opacity-50"
+          >
+            <option value={AUTO_VALUE}>자동</option>
+            {templateOptions.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {marksDirty && (
+          <button
+            type="button"
+            onClick={() => void handleSummarize()}
+            disabled={summarizing}
+            className="px-2 py-0.5 text-[11px] font-medium rounded-md bg-amber-100 text-amber-800 hover:bg-amber-200 transition-colors disabled:opacity-50"
+          >
+            {summarizing ? '요약 중…' : '메모를 반영해 다시 요약'}
+          </button>
+        )}
+        {hasMarks && (
+          <span className="ml-auto text-[10px] text-gray-400">
+            <span className="text-amber-400">▌</span>내 메모 · AI 요약
+          </span>
+        )}
+      </div>
+
       {/* 키워드 (표시 전용) */}
       {summary.keywords.length > 0 && (
         <SummarySection title="키워드">
@@ -124,6 +298,55 @@ export default function SummaryPanel({ summary, meetingId, onSeek }: Props): Rea
               <Badge key={i} color={taskTag.domain} size="xs">{k}</Badge>
             ))}
           </div>
+        </SummarySection>
+      )}
+
+      {/* 내 메모 — 사용자가 직접 남긴 원문. AI 요약과 구분되게 왼쪽 강조선을 둔다 */}
+      {hasMarks && (
+        <SummarySection title="내 메모">
+          <ul className="space-y-1">
+            {marks.map((m) => (
+              <MarkRow
+                key={m.id}
+                mark={m}
+                onSeek={onSeek}
+                onSave={(text) => handleUpdateMark(m.id, text)}
+                onDelete={() => void handleDeleteMark(m.id)}
+              />
+            ))}
+          </ul>
+          {addingMark ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={newMarkText}
+                onChange={(e) => setNewMarkText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.nativeEvent.isComposing) return
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void handleAddMark()
+                  } else if (e.key === 'Escape') {
+                    setAddingMark(false)
+                    setNewMarkText('')
+                  }
+                }}
+                autoFocus
+                maxLength={500}
+                placeholder={`[${formatMarkTime(currentMs ?? 0)}] 메모 입력 후 Enter`}
+                className="flex-1 min-w-0 text-sm px-2 py-1 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setAddingMark(true)}
+              className="text-[11px] text-blue-500 hover:text-blue-700 transition-colors"
+            >
+              + 메모 추가
+            </button>
+          )}
+          {markError && <p className="text-[11px] text-red-500">{markError}</p>}
         </SummarySection>
       )}
 
@@ -208,7 +431,14 @@ export default function SummaryPanel({ summary, meetingId, onSeek }: Props): Rea
         <SummarySection title="주제별 요약">
           <ol className="space-y-3">
             {summary.topics.map((t, i) => (
-              <TopicRow key={i} topic={t} index={i} onSeek={onSeek} />
+              <TopicRow
+                key={i}
+                topic={t}
+                index={i}
+                onSeek={onSeek}
+                marks={byTopic.get(i) ?? []}
+                showAiTag={hasMarks}
+              />
             ))}
           </ol>
         </SummarySection>
@@ -244,7 +474,142 @@ export default function SummaryPanel({ summary, meetingId, onSeek }: Props): Rea
       {summaryError && (
         <p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-md">{summaryError}</p>
       )}
+
+      {/* 요약 형식 변경 확인 */}
+      {pendingTemplate !== undefined && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+          onClick={() => setPendingTemplate(undefined)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl p-6 w-80 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-semibold text-gray-800">요약 형식 변경</p>
+            <p className="text-sm text-gray-600">
+              현재 요약을 덮어씁니다. 할 일로 옮긴 항목은 같은 문장이면 연결을 유지합니다.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setPendingTemplate(undefined)}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirmTemplate()}
+                className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+              >
+                다시 요약
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+// 내 메모 한 줄 — [mm:ss] 시각, 원문(북마크는 칩), 인라인 수정(Enter 저장·Esc 취소)·삭제
+function MarkRow({
+  mark,
+  onSeek,
+  onSave,
+  onDelete
+}: {
+  mark: MeetingMark
+  onSeek?: (ms: number) => void
+  onSave: (text: string) => Promise<boolean>
+  onDelete: () => void
+}): React.ReactNode {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(mark.text)
+
+  const save = async (): Promise<void> => {
+    const text = draft.trim()
+    if (text === mark.text) {
+      setEditing(false)
+      return
+    }
+    if (await onSave(text)) setEditing(false)
+  }
+
+  return (
+    <li className="group flex items-start gap-2 border-l-2 border-amber-400 pl-2 text-sm">
+      <MarkTime ms={mark.at_ms} onSeek={onSeek} />
+      {editing ? (
+        <input
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              void save()
+            } else if (e.key === 'Escape') {
+              setDraft(mark.text)
+              setEditing(false)
+            }
+          }}
+          autoFocus
+          maxLength={500}
+          placeholder="비우면 북마크"
+          className="flex-1 min-w-0 text-sm px-1.5 py-0.5 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+        />
+      ) : (
+        <span className="flex-1 min-w-0 leading-snug">
+          {mark.text === '' ? (
+            <Badge color="bg-amber-50 text-amber-700" size="xs">
+              북마크
+            </Badge>
+          ) : (
+            mark.text
+          )}
+        </span>
+      )}
+      {!editing && (
+        <span className="shrink-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            type="button"
+            onClick={() => {
+              setDraft(mark.text)
+              setEditing(true)
+            }}
+            className="text-[11px] text-gray-400 hover:text-gray-600"
+          >
+            수정
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="text-[11px] text-gray-400 hover:text-red-500"
+          >
+            삭제
+          </button>
+        </span>
+      )}
+    </li>
+  )
+}
+
+// 메모 시각 [mm:ss]. onSeek가 있으면 그 시점으로 이동하는 버튼
+function MarkTime({ ms, onSeek }: { ms: number; onSeek?: (ms: number) => void }): React.ReactNode {
+  const label = `[${formatMarkTime(ms)}]`
+  if (!onSeek) {
+    return <span className="shrink-0 text-[11px] font-mono text-gray-400 mt-0.5">{label}</span>
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onSeek(ms)}
+      title="메모 시점부터 듣기"
+      className="shrink-0 text-[11px] font-mono text-blue-500 hover:text-blue-700 transition-colors mt-0.5"
+    >
+      {label}
+    </button>
   )
 }
 
@@ -374,11 +739,17 @@ function TextItemRow({
 function TopicRow({
   topic,
   index,
-  onSeek
+  onSeek,
+  marks,
+  showAiTag
 }: {
   topic: SummaryTopic
   index: number
   onSeek?: (ms: number) => void
+  // 이 주제 구간에 배정된 내 메모
+  marks: MeetingMark[]
+  // 메모가 있는 회의에서만 AI 요약 줄에 'AI' 표식을 단다
+  showAiTag: boolean
 }): React.ReactNode {
   return (
     <li className="space-y-1">
@@ -392,7 +763,29 @@ function TopicRow({
           {topic.points.map((pt, i) => (
             <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
               <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" />
-              {pt}
+              <span className="flex-1 min-w-0">{pt}</span>
+              {showAiTag && <span className="shrink-0 mt-0.5 text-[9px] text-gray-300">AI</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {marks.length > 0 && (
+        <ul className="space-y-1 pl-5">
+          {marks.map((m) => (
+            <li
+              key={m.id}
+              className="flex items-start gap-2 border-l-2 border-amber-400 pl-2 text-sm text-gray-800"
+            >
+              <MarkTime ms={m.at_ms} onSeek={onSeek} />
+              <span className="flex-1 min-w-0 leading-snug">
+                {m.text === '' ? (
+                  <Badge color="bg-amber-50 text-amber-700" size="xs">
+                    북마크
+                  </Badge>
+                ) : (
+                  m.text
+                )}
+              </span>
             </li>
           ))}
         </ul>

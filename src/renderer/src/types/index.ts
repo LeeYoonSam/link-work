@@ -433,6 +433,34 @@ export interface RecognitionAidsAPI {
   removeMember: (id: number) => Promise<{ success: boolean }>
   listVoiceprints: () => Promise<MemberVoiceprint[]>
   clearVoiceprint: (memberId: number) => Promise<{ success: boolean }>
+  // 등록된 목소리로 지난 회의 화자 다시 맞추기. preview는 저장하지 않고 계획만 돌려준다.
+  previewRematch: (opts?: RematchOptions) => Promise<RematchMeetingPlan[]>
+  applyRematch: (opts?: RematchOptions) => Promise<RematchResult>
+}
+
+// ── 화자 다시 맞추기(Rematch) ──
+export interface RematchOptions {
+  meetingIds?: number[]
+  memberIds?: number[]
+}
+export interface RematchSpeakerPlan {
+  speaker_id: number
+  speaker_label: string
+  member_id: number
+  member_name: string
+  source: 'auto' | 'suggested'
+  score: number
+}
+export interface RematchMeetingPlan {
+  meeting_id: number
+  title: string
+  started_at: string
+  speakers: RematchSpeakerPlan[]
+}
+export interface RematchResult {
+  meetings: number
+  auto: number
+  suggested: number
 }
 
 // ── 회의 녹음 (Meeting Recording) — docs/MEETING_RECORDING.md ──
@@ -446,6 +474,34 @@ export type MeetingStatus =
 export type MeetingSource = 'mic' | 'mic+system'
 // 녹음 종류 — 요약 스키마와 상세 UI가 이 값으로 갈린다
 export type MeetingKind = 'meeting' | 'interview'
+
+// 요약 형식 — main services/meeting-templates.ts와 같은 id
+export type MeetingTemplateId = 'default' | 'one_on_one' | 'standup' | 'review'
+export interface SummaryTemplateOption {
+  id: MeetingTemplateId
+  name: string
+}
+
+// 녹음 중·후 메모와 북마크(text=''이면 북마크). raw_ms=녹음 경과(불변), at_ms=현재 오디오 시간축
+export interface MeetingMark {
+  id: number
+  meeting_id: number
+  raw_ms: number
+  at_ms: number
+  text: string
+  origin: 'live' | 'post'
+  created_at: string
+  updated_at: string
+}
+
+// 발언 화자 교정 범위: 이 발언만 / 이 발언부터 같은 화자 / 같은 화자 전부
+export type ReassignScope = 'one' | 'forward' | 'all'
+export interface ReassignResult {
+  success: boolean
+  changed: number
+  merged: boolean
+  error?: string
+}
 
 export interface Meeting {
   id: number
@@ -468,6 +524,10 @@ export interface Meeting {
   // 2=무음 컷편집·용어집·참석자 힌트 파이프라인, 3=현재(docs/MEETING_RECORDING.md §13).
   // 요약 재생성 시 "새 파이프라인으로 재분석할지"를 이 값으로 판단한다.
   pipeline_version: number
+  // 요약 형식. null=제목으로 자동 판별
+  summary_template?: MeetingTemplateId | null
+  // 화자 구성을 사용자가 확인했는지(1=확인)
+  speakers_confirmed?: number
   project_id: number | null
   calendar_event_id: string | null
   calendar_event_title: string | null
@@ -597,6 +657,8 @@ export interface MeetingSummary {
   follow_ups: string[]
   fact_checks: string[]
   model: string | null
+  // 이 요약을 만든 형식. null=형식 도입 이전 요약
+  template_id?: MeetingTemplateId | null
   generated_at: string
 }
 
@@ -607,6 +669,7 @@ export interface MeetingDetail {
   cuts: MeetingCut[]
   summary: MeetingSummary | null
   attendees: Attendee[]
+  marks?: MeetingMark[]
 }
 
 export interface RecordingStreamEvent {
@@ -674,6 +737,8 @@ export interface RecordingAPI {
     attendee_ids?: number[]
     // 처리 시 무음 구간 자동 제거 (기본 true)
     compact_audio?: boolean
+    // 요약 형식. null·생략이면 제목으로 자동 판별(면접은 무시)
+    summary_template?: MeetingTemplateId | null
   }) => Promise<{ id: number }>
   saveAudio: (
     id: number,
@@ -700,7 +765,11 @@ export interface RecordingAPI {
   confirmSpeakerMatch: (speakerId: number) => Promise<SpeakerVoiceResult>
   // 자동 지정·제안 거절 → 연결 해제, 다시 제안하지 않음
   rejectSpeakerMatch: (speakerId: number) => Promise<SpeakerVoiceResult>
-  reassignSegment: (segmentId: number, speakerId: number | null) => Promise<{ success: boolean }>
+  reassignSegment: (
+    segmentId: number,
+    speakerId: number | null,
+    scope?: ReassignScope
+  ) => Promise<ReassignResult>
   updateSegmentText: (segmentId: number, text: string) => Promise<{ success: boolean }>
   addSpeaker: (
     meetingId: number,
@@ -710,13 +779,29 @@ export interface RecordingAPI {
     meetingId: number,
     fromSpeakerId: number,
     intoSpeakerId: number
-  ) => Promise<{ success: boolean }>
+  ) => Promise<{ success: boolean; error?: string }>
   toggleCut: (cutId: number, enabled: boolean) => Promise<{ success: boolean }>
   actionItemToTodo: (meetingId: number, index: number) => Promise<{ todo_id: number }>
   setExpectedSpeakers: (id: number, n: number | null) => Promise<{ success: boolean }>
   setAttendees: (meetingId: number, memberIds: number[]) => Promise<{ success: boolean }>
   // 녹음 시작 실패·취소 시 draft 행 삭제. status='recording'이고 오디오가 없는 행만 지운다.
   discardDraft: (id: number) => Promise<{ success: boolean }>
+  // 요약 형식 저장(재요약은 summarize로 따로). null=자동
+  setSummaryTemplate: (
+    meetingId: number,
+    templateId: MeetingTemplateId | null
+  ) => Promise<{ success: boolean; error?: string }>
+  listSummaryTemplates: () => Promise<SummaryTemplateOption[]>
+  // 메모·북마크
+  listMarks: (meetingId: number) => Promise<MeetingMark[]>
+  addMark: (input: {
+    meetingId: number
+    raw_ms: number
+    text?: string
+    origin?: 'live' | 'post'
+  }) => Promise<{ id: number }>
+  updateMark: (input: { id: number; text: string }) => Promise<{ success: boolean }>
+  deleteMark: (id: number) => Promise<{ success: boolean }>
   onStream: (cb: (e: RecordingStreamEvent) => void) => () => void
 }
 

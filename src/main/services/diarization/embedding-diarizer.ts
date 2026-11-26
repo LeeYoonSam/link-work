@@ -4,10 +4,10 @@
 // sherpa 의 통합 화자분리(pyannote 분할 + 클러스터링) 기능은 쓰지 않는다(긴 입력에서 배포 Electron 이 죽는다).
 import { readFileSync } from 'fs'
 import type { DiarTurn } from '../meeting-types'
-import { planWindows, HOP_SEC, VOICE_EMBEDDING_MODEL } from './window-plan'
+import { planWindows, HOP_SEC, VOICE_EMBEDDING_MODEL, type PlannedWindow } from './window-plan'
 import { clusterEmbeddings, l2normalize, smoothNeighbors } from './clustering'
 import { buildTurns } from './turn-build'
-import { decodeWavPcm16, sliceFloat32 } from './wav-pcm'
+import { decodeWavPcm16, sliceFloat32, type PcmAudio } from './wav-pcm'
 
 /** 모델이 요구하는 샘플레이트. */
 const REQUIRED_SAMPLE_RATE = 16000
@@ -64,29 +64,39 @@ export interface EmbeddingDiarizeResult {
 /** 진행률(0~1). 임베딩 추출이 대부분의 시간을 차지하므로 창 단위로 알린다. */
 export type DiarizeProgress = (ratio: number) => void
 
-export function runEmbeddingDiarization(
-  sherpa: SherpaEmbeddingApi,
-  req: EmbeddingDiarizeRequest,
-  onProgress?: DiarizeProgress
-): EmbeddingDiarizeResult {
+/** 창 계획 — 오디오를 디코드해 STT 세그먼트 위에 창을 깐다. 샘플레이트가 다르면 throw. */
+export function planDiarizationWindows(req: Pick<EmbeddingDiarizeRequest, 'audioPath' | 'segments'>): {
+  audio: PcmAudio
+  wins: PlannedWindow[]
+} {
   const audio = decodeWavPcm16(readFileSync(req.audioPath))
   if (audio.sampleRate !== REQUIRED_SAMPLE_RATE) {
     throw new Error(`샘플레이트 불일치 (모델 ${REQUIRED_SAMPLE_RATE}Hz, 오디오 ${audio.sampleRate}Hz). 16kHz mono WAV가 필요합니다.`)
   }
-  const sr = audio.sampleRate
-  const wins = planWindows(req.segments, audio.pcm.length / sr)
-  const empty: EmbeddingDiarizeResult = {
-    turns: [],
-    voices: [],
-    info: { rawClusters: 0, speakers: 0, windows: 0, maxWindowSec: 0, model: VOICE_EMBEDDING_MODEL }
-  }
-  if (wins.length === 0) return empty
+  return { audio, wins: planWindows(req.segments, audio.pcm.length / audio.sampleRate) }
+}
 
+/**
+ * 창 [from, to) 의 L2 정규화 임베딩을 뽑는다. sherpa-onnx-node 1.13.3 은 창(스트림)마다 네이티브 메모리를
+ * 돌려주지 않아(GC·이벤트 루프 양보로도 회수되지 않음) 창 수에 비례해 RSS 가 는다. 앱은 회의마다 utilityProcess 를
+ * 새로 띄워 끝나면 회수하고, 실측 CLI 는 --chunk 로 구간을 자식 프로세스에 나눠 맡긴다.
+ */
+export function extractWindowEmbeddings(
+  sherpa: SherpaEmbeddingApi,
+  req: Pick<EmbeddingDiarizeRequest, 'embModel' | 'numThreads'>,
+  audio: PcmAudio,
+  wins: PlannedWindow[],
+  from = 0,
+  to = wins.length,
+  onProgress?: DiarizeProgress
+): { embeddings: Float32Array[]; maxWindowSec: number } {
+  const sr = audio.sampleRate
   const extractor = new sherpa.SpeakerEmbeddingExtractor({ model: req.embModel, numThreads: req.numThreads ?? 2 })
-  const raw: Float32Array[] = []
+  const embeddings: Float32Array[] = []
   let maxWindowSec = 0
-  const step = Math.max(1, Math.floor(wins.length / 100))
-  for (let i = 0; i < wins.length; i++) {
+  const n = to - from
+  const step = Math.max(1, Math.floor(n / 100))
+  for (let i = from; i < to; i++) {
     const a = Math.floor(wins[i].s * sr)
     const b = Math.min(audio.pcm.length, Math.ceil(wins[i].e * sr))
     const samples = sliceFloat32(audio, a, b)
@@ -95,10 +105,20 @@ export function runEmbeddingDiarization(
     stream.acceptWaveform({ samples, sampleRate: sr })
     stream.inputFinished()
     // enableExternalBuffer=false: electron V8 은 external ArrayBuffer 를 거부하므로 복사본을 받는다.
-    raw.push(l2normalize(extractor.compute(stream, false)))
-    if (onProgress && (i % step === 0 || i === wins.length - 1)) onProgress((i + 1) / wins.length)
+    embeddings.push(l2normalize(extractor.compute(stream, false)))
+    const k = i - from
+    if (onProgress && (k % step === 0 || k === n - 1)) onProgress((k + 1) / n)
   }
+  return { embeddings, maxWindowSec }
+}
 
+/** 창 임베딩(창 순서대로 전부)에서 클러스터링 → turn → 화자 목소리를 만든다. */
+export function diarizeFromEmbeddings(
+  req: Pick<EmbeddingDiarizeRequest, 'numSpeakers' | 'maxSpeakers'>,
+  wins: PlannedWindow[],
+  raw: Float32Array[],
+  maxWindowSec: number
+): EmbeddingDiarizeResult {
   const X = smoothNeighbors(
     raw,
     wins.map((w) => w.si)
@@ -126,4 +146,24 @@ export function runEmbeddingDiarization(
       model: VOICE_EMBEDDING_MODEL
     }
   }
+}
+
+/** 빈 결과(창이 하나도 없을 때). */
+export function emptyDiarizeResult(): EmbeddingDiarizeResult {
+  return {
+    turns: [],
+    voices: [],
+    info: { rawClusters: 0, speakers: 0, windows: 0, maxWindowSec: 0, model: VOICE_EMBEDDING_MODEL }
+  }
+}
+
+export function runEmbeddingDiarization(
+  sherpa: SherpaEmbeddingApi,
+  req: EmbeddingDiarizeRequest,
+  onProgress?: DiarizeProgress
+): EmbeddingDiarizeResult {
+  const { audio, wins } = planDiarizationWindows(req)
+  if (wins.length === 0) return emptyDiarizeResult()
+  const { embeddings, maxWindowSec } = extractWindowEmbeddings(sherpa, req, audio, wins, 0, wins.length, onProgress)
+  return diarizeFromEmbeddings(req, wins, embeddings, maxWindowSec)
 }

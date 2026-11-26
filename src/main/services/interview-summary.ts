@@ -85,6 +85,7 @@ function validate(raw: unknown): InterviewSummaryResult {
 // overview는 회의 요약의 tldr 컬럼을 재사용한다(둘 다 "한 문단 개요"라 의미가 겹침).
 // 회의 전용 컬럼(key_points/decisions/action_items/next_steps/topics/open_questions/keywords)은
 // 빈 배열로 덮어써, 종류를 바꿔 재요약했을 때 이전 종류의 잔여 데이터가 남지 않게 한다.
+// 면접에는 회의 형식이 없으므로 template_id는 NULL이다.
 function persist(
   db: Database.Database,
   meetingId: number,
@@ -95,8 +96,8 @@ function persist(
     `INSERT INTO meeting_summaries
        (meeting_id, tldr, key_points, decisions, action_items, next_steps,
         topics, open_questions, keywords,
-        qa_pairs, competencies, follow_ups, fact_checks, model, generated_at)
-     VALUES (?, ?, '[]', '[]', '[]', '[]', '[]', '[]', '[]', ?, ?, ?, ?, ?, datetime('now','localtime'))
+        qa_pairs, competencies, follow_ups, fact_checks, model, template_id, generated_at)
+     VALUES (?, ?, '[]', '[]', '[]', '[]', '[]', '[]', '[]', ?, ?, ?, ?, ?, NULL, datetime('now','localtime'))
      ON CONFLICT(meeting_id) DO UPDATE SET
        tldr = excluded.tldr,
        key_points = excluded.key_points,
@@ -111,6 +112,7 @@ function persist(
        follow_ups = excluded.follow_ups,
        fact_checks = excluded.fact_checks,
        model = excluded.model,
+       template_id = excluded.template_id,
        generated_at = excluded.generated_at`
   ).run(
     meetingId,

@@ -3,6 +3,9 @@ import type {
   Meeting,
   MeetingDetail,
   MeetingKind,
+  MeetingTemplateId,
+  ReassignResult,
+  ReassignScope,
   RecordingStreamEvent,
   SpeakerVoiceResult
 } from '../types'
@@ -59,6 +62,11 @@ interface RecordingStore {
   // (RecordingView는 메뉴 전환 시 언마운트된다).
   kindFilter: KindFilter
   setKindFilter: (f: KindFilter) => void
+  // 다른 화면(회의록 등)에서 "이 시점부터 듣기"를 눌렀을 때 상세 화면이 열리며 소비할 재생 위치(#13).
+  pendingSeek: { meetingId: number; ms: number } | null
+  setPendingSeek: (v: { meetingId: number; ms: number } | null) => void
+  // 같은 회의면 ms를 돌려주고 비운다. 다른 회의면 null(예약은 그대로 둔다).
+  consumePendingSeek: (meetingId: number) => number | null
 
   // 목록/상세
   fetchMeetings: () => Promise<void>
@@ -77,6 +85,8 @@ interface RecordingStore {
     attendee_ids?: number[]
     // 처리 전 긴 침묵을 잘라낼지 여부(기본 true)
     compact_audio?: boolean
+    // 요약 형식. null이면 제목으로 자동 판별
+    summary_template?: MeetingTemplateId | null
   }) => Promise<number>
   // 녹음 오디오 저장 — 실패하면 throw한다(호출자가 blob을 보존해 재시도할 수 있게).
   saveRecording: (meetingId: number, blob: Blob, durationMs: number, mime: string) => Promise<void>
@@ -100,7 +110,12 @@ interface RecordingStore {
   enrollSpeakerVoice: (speakerId: number) => Promise<VoiceActionOutcome>
   confirmSpeakerMatch: (speakerId: number) => Promise<VoiceActionOutcome>
   rejectSpeakerMatch: (speakerId: number) => Promise<VoiceActionOutcome>
-  reassignSegment: (segmentId: number, speakerId: number | null) => Promise<void>
+  // 발언 화자 교정. 결과를 돌려주고 새로고침은 호출측이 한다. 예외면 null
+  reassignSegment: (
+    segmentId: number,
+    speakerId: number | null,
+    scope?: ReassignScope
+  ) => Promise<ReassignResult | null>
   updateSegmentText: (segmentId: number, text: string) => Promise<void>
   // 새 화자를 추가하고 id를 반환 (같은 이름이 있으면 기존 화자 id 재사용). 실패 시 null
   addSpeaker: (meetingId: number, name: string) => Promise<number | null>
@@ -110,6 +125,17 @@ interface RecordingStore {
   setExpectedSpeakers: (id: number, n: number | null) => Promise<void>
   // 회의 참석자(구성원 id 목록)를 통째로 교체한다
   setAttendees: (meetingId: number, memberIds: number[]) => Promise<void>
+  // 요약 형식 저장(null=자동). 재요약은 summarizeMeeting으로 따로 부른다
+  setSummaryTemplate: (meetingId: number, templateId: MeetingTemplateId | null) => Promise<boolean>
+  // 메모·북마크(#11). 열려 있는 회의의 메모면 상세를 새로고침한다
+  addMark: (input: {
+    meetingId: number
+    raw_ms: number
+    text?: string
+    origin?: 'live' | 'post'
+  }) => Promise<number | null>
+  updateMark: (input: { id: number; text: string }) => Promise<boolean>
+  deleteMark: (id: number) => Promise<boolean>
 
   // 처리 진행률 스트림 구독
   subscribeStream: () => () => void
@@ -122,8 +148,18 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
   processing: {},
   cancelling: {},
   kindFilter: 'all',
+  pendingSeek: null,
 
   setKindFilter: (f) => set({ kindFilter: f }),
+
+  setPendingSeek: (v) => set({ pendingSeek: v }),
+
+  consumePendingSeek: (meetingId) => {
+    const p = get().pendingSeek
+    if (!p || p.meetingId !== meetingId) return null
+    set({ pendingSeek: null })
+    return p.ms
+  },
 
   fetchMeetings: async () => {
     set({ loading: true })
@@ -171,7 +207,8 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
       kind: input.kind,
       expected_speakers: input.expected_speakers,
       attendee_ids: input.attendee_ids,
-      compact_audio: input.compact_audio
+      compact_audio: input.compact_audio,
+      summary_template: input.summary_template
     })
     await get().fetchMeetings()
     return result.id
@@ -370,12 +407,60 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
     }
   },
 
-  reassignSegment: async (segmentId, speakerId) => {
+  reassignSegment: async (segmentId, speakerId, scope = 'one') => {
     try {
-      await window.api.recording.reassignSegment(segmentId, speakerId)
-      await get().refreshCurrent()
+      return await window.api.recording.reassignSegment(segmentId, speakerId, scope)
     } catch (err) {
       console.error('[recordingStore] reassignSegment error:', err)
+      return null
+    }
+  },
+
+  setSummaryTemplate: async (meetingId, templateId) => {
+    try {
+      const r = await window.api.recording.setSummaryTemplate(meetingId, templateId)
+      if (!r.success) {
+        console.error('[recordingStore] setSummaryTemplate failed:', r.error)
+        return false
+      }
+      await get().refreshCurrent()
+      return true
+    } catch (err) {
+      console.error('[recordingStore] setSummaryTemplate error:', err)
+      return false
+    }
+  },
+
+  addMark: async (input) => {
+    try {
+      const r = await window.api.recording.addMark(input)
+      if (get().current?.meeting.id === input.meetingId) await get().refreshCurrent()
+      return r.id
+    } catch (err) {
+      console.error('[recordingStore] addMark error:', err)
+      return null
+    }
+  },
+
+  updateMark: async (input) => {
+    try {
+      const r = await window.api.recording.updateMark(input)
+      if (get().current?.marks?.some((m) => m.id === input.id)) await get().refreshCurrent()
+      return r.success
+    } catch (err) {
+      console.error('[recordingStore] updateMark error:', err)
+      return false
+    }
+  },
+
+  deleteMark: async (id) => {
+    try {
+      const r = await window.api.recording.deleteMark(id)
+      if (get().current?.marks?.some((m) => m.id === id)) await get().refreshCurrent()
+      return r.success
+    } catch (err) {
+      console.error('[recordingStore] deleteMark error:', err)
+      return false
     }
   },
 

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useRecognitionAidsStore } from '../../stores/recognitionAidsStore'
-import type { GlossaryEntry, Member, MemberVoiceprint } from '../../types'
+import type { GlossaryEntry, Member, MemberVoiceprint, RematchOptions } from '../../types'
 import { Badge, IconButton, TrashIcon } from '../ui'
+import RematchDialog from './RematchDialog'
 
 type AidsTab = 'glossary' | 'members'
 
@@ -420,6 +421,10 @@ function MembersTab({
   onClearVoice: (memberId: number) => Promise<boolean>
 }): React.ReactNode {
   const voiceByMember = new Map(voiceprints.map((v) => [v.member_id, v]))
+  // 목소리 표본이 있는 구성원이 있어야 지난 회의를 다시 찾을 수 있다
+  const hasAnyVoice = members.some((m) => (voiceByMember.get(m.id)?.sample_count ?? 0) > 0)
+  // 열린 다시 찾기 창의 조건. null 이면 닫힘
+  const [rematchOpts, setRematchOpts] = useState<RematchOptions | null>(null)
   const [newName, setNewName] = useState('')
   const [newRole, setNewRole] = useState('')
   const [adding, setAdding] = useState(false)
@@ -446,6 +451,19 @@ function MembersTab({
 
   return (
     <div className="space-y-2">
+      {members.length > 0 && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setRematchOpts({})}
+            disabled={!hasAnyVoice}
+            title="등록된 목소리와 비교해 이름 없는 화자를 찾습니다"
+            className="text-xs px-2.5 py-1 rounded-md bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40 disabled:hover:bg-gray-100"
+          >
+            등록된 목소리로 지난 회의 다시 찾기
+          </button>
+        </div>
+      )}
       {members.length === 0 ? (
         <p className="text-xs text-gray-400 py-3 text-center">
           등록된 구성원이 없습니다. 이름을 넣어 두면 참석자·화자 이름에 바로 쓸 수 있습니다.
@@ -460,10 +478,17 @@ function MembersTab({
               onUpsert={onUpsert}
               onRemove={onRemove}
               onClearVoice={onClearVoice}
+              onRematch={(memberId) => setRematchOpts({ memberIds: [memberId] })}
             />
           ))}
         </ul>
       )}
+
+      <RematchDialog
+        open={rematchOpts !== null}
+        opts={rematchOpts ?? {}}
+        onClose={() => setRematchOpts(null)}
+      />
 
       <div className="flex items-center gap-1.5">
         <input
@@ -504,13 +529,15 @@ function MemberRow({
   voiceprint,
   onUpsert,
   onRemove,
-  onClearVoice
+  onClearVoice,
+  onRematch
 }: {
   member: Member
   voiceprint: MemberVoiceprint | null
   onUpsert: UpsertMember
   onRemove: (id: number) => Promise<boolean>
   onClearVoice: (memberId: number) => Promise<boolean>
+  onRematch: (memberId: number) => void
 }): React.ReactNode {
   const [name, setName] = useState(member.name)
   const [aliases, setAliases] = useState(member.aliases.join(', '))
@@ -604,6 +631,14 @@ function MemberRow({
           >
             목소리 {voiceprint.sample_count}건
           </Badge>
+          <button
+            type="button"
+            onClick={() => onRematch(member.id)}
+            className="shrink-0 text-[10px] px-1.5 py-0.5 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+            title="이 구성원의 목소리로 지난 회의의 이름 없는 화자를 찾습니다"
+          >
+            지난 회의에서 찾기
+          </button>
           <button
             type="button"
             onClick={() => void onClearVoice(member.id)}

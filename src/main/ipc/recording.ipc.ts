@@ -15,10 +15,11 @@ import {
   enrollSpeakerVoice,
   confirmSpeakerMatch,
   rejectSpeakerMatch,
-  mergeSpeakerVoices,
-  speakersBelongToMeeting,
   parseRejectedIds
 } from '../services/voiceprint'
+import { reassignSegments, mergeSpeakersInMeeting } from '../services/speaker-correction'
+import { isTemplateId, listTemplateOptions } from '../services/meeting-templates'
+import { listMarks, addMark, updateMark, deleteMark, type MarkOrigin } from '../services/meeting-marks'
 import { parseKeywords, parseTextItems, parseTopics } from '../services/meeting-notes'
 import type {
   RecordingStreamEvent,
@@ -61,6 +62,7 @@ interface SummaryRow {
   follow_ups: string | null
   fact_checks: string | null
   model: string | null
+  template_id?: string | null
   generated_at: string
 }
 
@@ -95,6 +97,8 @@ function mapSummary(row: SummaryRow | undefined): unknown {
     follow_ups: parseJsonArray<string>(row.follow_ups),
     fact_checks: parseJsonArray<string>(row.fact_checks),
     model: row.model,
+    // 요약을 만들 때 쓴 형식(NULL=형식 도입 이전 요약)
+    template_id: row.template_id ?? null,
     generated_at: row.generated_at
   }
 }
@@ -202,7 +206,15 @@ export function registerRecordingIpc(): void {
         | SummaryRow
         | undefined
     )
-    return { meeting, speakers, segments, cuts, summary, attendees: listAttendees(db, id) }
+    return {
+      meeting,
+      speakers,
+      segments,
+      cuts,
+      summary,
+      attendees: listAttendees(db, id),
+      marks: listMarks(db, id)
+    }
   })
 
   ipcMain.handle(
@@ -216,6 +228,7 @@ export function registerRecordingIpc(): void {
         expected_speakers?: number | null
         attendee_ids?: number[]
         compact_audio?: boolean
+        summary_template?: string | null
       }
     ) => {
       const kind = input?.kind === 'interview' ? 'interview' : 'meeting'
@@ -233,11 +246,16 @@ export function registerRecordingIpc(): void {
       const expectedSpeakers = requested ?? (kind === 'interview' ? 2 : null)
       // 무음 컷편집은 기본 on. 명시적으로 false를 준 경우에만 끈다.
       const compactAudio = input?.compact_audio === false ? 0 : 1
+      // 요약 형식: 면접은 쓰지 않는다. 알 수 없는 값은 NULL(=제목으로 자동 판별).
+      const summaryTemplate =
+        kind === 'interview' ? null : isTemplateId(input?.summary_template) ? input.summary_template : null
+      // 참석 인원을 직접 골랐거나 면접(2인 기본형)이면 화자 구성을 확인한 것으로 본다.
+      const speakersConfirmed = requested !== null || kind === 'interview' ? 1 : 0
       const result = db
         .prepare(
-          "INSERT INTO meetings (title, kind, status, source, expected_speakers, compact_audio) VALUES (?, ?, 'recording', ?, ?, ?)"
+          "INSERT INTO meetings (title, kind, status, source, expected_speakers, compact_audio, summary_template, speakers_confirmed) VALUES (?, ?, 'recording', ?, ?, ?, ?, ?)"
         )
-        .run(title, kind, source, expectedSpeakers, compactAudio)
+        .run(title, kind, source, expectedSpeakers, compactAudio, summaryTemplate, speakersConfirmed)
       const id = Number(result.lastInsertRowid)
       if (Array.isArray(input?.attendee_ids) && input.attendee_ids.length > 0) {
         setAttendees(db, id, input.attendee_ids)
@@ -437,12 +455,18 @@ export function registerRecordingIpc(): void {
     return db.transaction(() => rejectSpeakerMatch(db, speakerId))()
   })
 
-  ipcMain.handle('recording:reassignSegment', (_e, segmentId: number, speakerId: number | null) => {
-    db.prepare(
-      'UPDATE meeting_segments SET speaker_id = ?, speaker_corrected = 1 WHERE id = ?'
-    ).run(speakerId, segmentId)
-    return { success: true }
-  })
+  // 발언 화자 교정. scope: 'one'(이 발언만, 기본) | 'forward'(이 발언부터 같은 화자) | 'all'(같은 화자 전부).
+  // 'all'이고 두 화자가 모두 있으면 화자 병합으로 처리한다(services/speaker-correction.ts).
+  ipcMain.handle(
+    'recording:reassignSegment',
+    (_e, segmentId: number, speakerId: number | null, scope?: string) => {
+      return reassignSegments(db, {
+        segmentId,
+        speakerId,
+        scope: scope === 'forward' || scope === 'all' ? scope : 'one'
+      })
+    }
+  )
 
   // ── 발언 텍스트 보정 (전사 오류 수동 수정) ──
   ipcMain.handle('recording:updateSegmentText', (_e, segmentId: number, text: string) => {
@@ -481,22 +505,7 @@ export function registerRecordingIpc(): void {
     'recording:mergeSpeakers',
     (_e, meetingId: number, fromSpeakerId: number, intoSpeakerId: number) => {
       // 두 화자가 서로 다르고 모두 이 회의 소속일 때만 병합한다.
-      if (!speakersBelongToMeeting(db, meetingId, [fromSpeakerId, intoSpeakerId])) {
-        return { success: false, error: '같은 회의의 서로 다른 화자만 합칠 수 있습니다.' }
-      }
-      const tx = db.transaction(() => {
-        // 두 centroid를 speech_ms 가중 평균해 into에 둔다(from의 표본은 지운다).
-        mergeSpeakerVoices(db, meetingId, fromSpeakerId, intoSpeakerId)
-        db.prepare(
-          'UPDATE meeting_segments SET speaker_id = ?, speaker_corrected = 1 WHERE meeting_id = ? AND speaker_id = ?'
-        ).run(intoSpeakerId, meetingId, fromSpeakerId)
-        db.prepare('DELETE FROM meeting_speakers WHERE id = ? AND meeting_id = ?').run(
-          fromSpeakerId,
-          meetingId
-        )
-      })
-      tx()
-      return { success: true }
+      return mergeSpeakersInMeeting(db, meetingId, fromSpeakerId, intoSpeakerId)
     }
   )
 
@@ -557,9 +566,43 @@ export function registerRecordingIpc(): void {
   // ── 참석 인원 설정 (화자분리 시 numClusters로 사용, null이면 자동 추정) ──
   ipcMain.handle('recording:setExpectedSpeakers', (_e, id: number, n: number | null) => {
     const v = n && n > 0 ? Math.round(n) : null
+    // 참석 인원을 고르면 화자 구성을 확인한 것으로 본다.
     db.prepare(
-      "UPDATE meetings SET expected_speakers = ?, updated_at = datetime('now','localtime') WHERE id = ?"
+      "UPDATE meetings SET expected_speakers = ?, speakers_confirmed = 1, updated_at = datetime('now','localtime') WHERE id = ?"
     ).run(v, id)
     return { success: true }
   })
+
+  // ── 요약 형식 (services/meeting-templates.ts). 저장만 하고 재요약은 렌더러가 따로 요청한다 ──
+  ipcMain.handle('recording:setSummaryTemplate', (_e, meetingId: number, templateId: string | null) => {
+    const row = db.prepare('SELECT kind FROM meetings WHERE id = ?').get(meetingId) as
+      | { kind: string }
+      | undefined
+    if (!row) return { success: false, error: '존재하지 않는 회의입니다.' }
+    if (row.kind === 'interview') return { success: false, error: '면접에는 요약 형식을 쓰지 않습니다.' }
+    if (templateId !== null && !isTemplateId(templateId)) {
+      return { success: false, error: '알 수 없는 요약 형식입니다.' }
+    }
+    db.prepare(
+      "UPDATE meetings SET summary_template = ?, updated_at = datetime('now','localtime') WHERE id = ?"
+    ).run(templateId, meetingId)
+    return { success: true }
+  })
+
+  ipcMain.handle('recording:listSummaryTemplates', () => listTemplateOptions())
+
+  // ── 메모·북마크 (services/meeting-marks.ts) ──
+  ipcMain.handle('recording:listMarks', (_e, meetingId: number) => listMarks(db, meetingId))
+
+  ipcMain.handle(
+    'recording:addMark',
+    (_e, input: { meetingId: number; raw_ms: number; text?: string; origin?: MarkOrigin }) =>
+      addMark(db, input)
+  )
+
+  ipcMain.handle('recording:updateMark', (_e, input: { id: number; text: string }) =>
+    updateMark(db, input)
+  )
+
+  ipcMain.handle('recording:deleteMark', (_e, id: number) => deleteMark(db, id))
 }

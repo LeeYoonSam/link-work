@@ -17,7 +17,7 @@
     {
       "name": "AI 대화",
       "patterns": [
-        "src/main/services/ai-{agent,tools,write-tools,assistant-tools,attachments,audit,model}.ts",
+        "src/main/services/ai-{agent,tools,write-tools,assistant-tools,meeting-tools,attachments,audit,model}.ts",
         "src/main/services/web-fetch.ts",
         "src/main/ipc/ai.ipc.ts",
         "src/renderer/src/components/ai/**",
@@ -100,7 +100,7 @@
         "src/main/services/{meeting-pipeline,meeting-summary,meeting-types,interview-summary,summary-spec,writing-style}.ts",
         "src/main/services/{audio-compaction,wav-util,system-audio-loopback,pipeline-abort,transcript-cleaner}.ts",
         "src/main/services/{recording-guard,recording-recovery,speaker-assign,speaker-carryover,recognition-aids}.ts",
-        "src/main/services/voiceprint.ts",
+        "src/main/services/{voiceprint,meeting-templates,meeting-marks,speaker-correction}.ts",
         "scripts/diar-regress.mjs",
         "src/main/services/stt/**",
         "src/main/services/vad/**",
@@ -109,7 +109,7 @@
         "src/renderer/src/components/recording/**",
         "src/renderer/src/components/settings/sections/RecordingSection.tsx",
         "src/renderer/src/stores/{recorderSession,recorderStore,recordingStore,recognitionAidsStore}.ts",
-        "src/renderer/src/utils/{audio,processing-progress}.ts"
+        "src/renderer/src/utils/{audio,processing-progress,assignMarksToTopics,speakerCountPrompt,speakerScope,talkShare}.ts"
       ],
       "docs": ["docs/MEETING_RECORDING.md"]
     },

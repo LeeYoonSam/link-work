@@ -62,20 +62,32 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
   // 시킹 목표(초). seek 완료 전 timeupdate가 옛 위치를 흘려 프로그레스바가 초기화되던
   // race를 막기 위해, 실제 위치가 목표에 도달하기 전까지 timeupdate를 무시한다.
   const seekTargetRef = useRef<number | null>(null)
+  // 메타데이터 로드 전에 받은 시킹 목표(초). 그 전에는 currentTime 대입이 무시될 수 있어
+  // loadedmetadata까지 보류했다가 적용한다(다른 화면에서 "이 시점부터 듣기"로 들어온 경우).
+  const deferredSeekRef = useRef<number | null>(null)
+
+  const applySeek = (audio: HTMLAudioElement, targetSec: number): void => {
+    seekTargetRef.current = targetSec
+    audio.currentTime = targetSec
+    setCurrentTime(targetSec)
+    if (audio.paused) {
+      audio.play().catch(() => setLoadError(true))
+      setPlaying(true)
+    }
+  }
 
   // 외부에서 seekTo 호출 가능하게 노출 (타임라인 클릭 → 정확히 그 위치로 이동, 컷 스킵 없음)
   useImperativeHandle(ref, () => ({
     seekTo(ms: number) {
       const audio = audioRef.current
-      if (!audio) return
       const targetSec = ms / 1000
-      seekTargetRef.current = targetSec
-      audio.currentTime = targetSec
-      setCurrentTime(targetSec)
-      if (audio.paused) {
-        audio.play().catch(() => setLoadError(true))
-        setPlaying(true)
+      if (!audio || audio.readyState < HTMLMediaElement.HAVE_METADATA) {
+        deferredSeekRef.current = targetSec
+        setCurrentTime(targetSec)
+        return
       }
+      deferredSeekRef.current = null
+      applySeek(audio, targetSec)
     }
   }))
 
@@ -88,6 +100,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
     setDuration(0)
     setPlaying(false)
     seekTargetRef.current = null
+    deferredSeekRef.current = null
   }, [audioPath])
 
   // 현재 재생 위치를 부모로 보고한다(타임라인 하이라이트/자동 스크롤 싱크용).
@@ -128,9 +141,15 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
   }
 
   const handleLoadedMetadata = (): void => {
-    if (audioRef.current) {
-      const d = audioRef.current.duration
-      setDuration(Number.isFinite(d) ? d : 0)
+    const audio = audioRef.current
+    if (!audio) return
+    const d = audio.duration
+    setDuration(Number.isFinite(d) ? d : 0)
+    // 메타데이터 전에 보류해 둔 시킹을 지금 적용한다
+    const deferred = deferredSeekRef.current
+    if (deferred !== null) {
+      deferredSeekRef.current = null
+      applySeek(audio, deferred)
     }
   }
 

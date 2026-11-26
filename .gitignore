@@ -18,6 +18,8 @@ scripts/eval/refs/*
 scripts/eval/out/*
 !scripts/eval/out/.gitkeep
 scripts/eval/.venv/
+# 평가용 후보 화자 임베딩 모델(내려받는 데이터, 커밋하지 않는다)
+scripts/eval/models/
 scripts/eval/**/__pycache__/
 
 # macOS

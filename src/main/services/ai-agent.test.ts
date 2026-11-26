@@ -46,7 +46,12 @@ vi.mock('../db/database', () => ({
 // runAiQuery 가 쓰는 도구·연동 모듈은 경계에서 막는다. 도구 이름 규약만 남긴다.
 vi.mock('./ai-tools', () => ({
   FETCH_URL_TOOL_NAME: 'mcp__linkwork__fetch_url',
-  LINKWORK_TOOL_NAMES: ['mcp__linkwork__list_memos'],
+  LINKWORK_TOOL_NAMES: [
+    'mcp__linkwork__list_memos',
+    'mcp__linkwork__search_meetings',
+    'mcp__linkwork__get_meeting_excerpt'
+  ],
+  MEETING_TOOL_NAMES: ['mcp__linkwork__search_meetings', 'mcp__linkwork__get_meeting_excerpt'],
   getLinkworkMcpServer: async () => ({})
 }))
 vi.mock('./ai-write-tools', () => ({
@@ -322,7 +327,8 @@ interface StreamEvent {
 async function runChat(
   writeMode: string,
   script: ScriptFn,
-  reply?: ApprovalReply
+  reply?: ApprovalReply,
+  prompt = '메모 x 를 만들어줘'
 ): Promise<{ sent: StreamEvent[]; options: QueryOptions }> {
   chats.set(CHAT_ID, { write_mode: writeMode, session_id: null })
   sdk.supportedModels.mockResolvedValue([])
@@ -341,7 +347,7 @@ async function runChat(
       }
     }
   }
-  await agent.runAiQuery(CHAT_ID, '메모 x 를 만들어줘', win as never)
+  await agent.runAiQuery(CHAT_ID, prompt, win as never)
   const { options } = sdk.query.mock.calls[0][0] as { options: QueryOptions }
   return { sent, options }
 }
@@ -726,5 +732,132 @@ describe('buildSystemPrompt — plan 모드', () => {
     expect(prompt).toContain('계획이 승인되기 전에는 쓰기 도구를 호출하지 마세요')
     expect(prompt).toContain('ExitPlanMode')
     expect(prompt).toContain('계획대로 실행하세요')
+  })
+})
+
+describe('runAiQuery — 회의 기록 도구', () => {
+  const PROMPT = 'https://example.com/spec 이 문서와 지난 회의 내용을 비교해줘'
+  const fetchInput = { url: 'https://example.com/spec' }
+
+  it('회의 도구를 쓰지 않은 질의는 사용자 메시지에 있는 호스트의 fetch_url 을 바로 허용한다', async () => {
+    const results: PermissionResultLike[] = []
+    const { sent } = await runChat(
+      'ask',
+      async function* (opts) {
+        results.push(await opts.canUseTool('mcp__linkwork__fetch_url', fetchInput, toolCtx('f1')))
+        yield RESULT_MESSAGE
+      },
+      undefined,
+      PROMPT
+    )
+    expect(results[0]).toEqual({ behavior: 'allow', updatedInput: fetchInput })
+    expect(sent.some((e) => e.event === 'approval')).toBe(false)
+  })
+
+  it('회의 도구를 쓴 질의의 fetch_url 은 사용자 메시지에 있는 호스트라도 승인 카드를 거친다', async () => {
+    const results: PermissionResultLike[] = []
+    const { sent } = await runChat(
+      'auto',
+      async function* (opts) {
+        results.push(await opts.canUseTool('mcp__linkwork__search_meetings', { terms: ['배포'] }, toolCtx('m1')))
+        results.push(await opts.canUseTool('mcp__linkwork__fetch_url', fetchInput, toolCtx('f2')))
+        yield RESULT_MESSAGE
+      },
+      { approved: false },
+      PROMPT
+    )
+    expect(results[0]).toEqual({ behavior: 'allow', updatedInput: { terms: ['배포'] } })
+    const approvals = sent.filter((e) => e.event === 'approval')
+    expect(approvals).toHaveLength(1)
+    expect(approvals[0].request).toMatchObject({ kind: 'fetch', name: 'fetch_url' })
+    expect(results[1].behavior).toBe('deny')
+  })
+
+  it('회의 도구는 자동 허용 목록에서 빠져 canUseTool 을 거친다', async () => {
+    const { options } = await runChat('ask', async function* () {
+      yield RESULT_MESSAGE
+    })
+    expect(options.allowedTools).toContain('mcp__linkwork__list_memos')
+    expect(options.allowedTools).not.toContain('mcp__linkwork__search_meetings')
+    expect(options.allowedTools).not.toContain('mcp__linkwork__get_meeting_excerpt')
+  })
+
+  it('한 질의의 회의 도구 결과 누적이 예산을 넘으면 다음 회의 도구 호출을 budget_exceeded 로 막는다', async () => {
+    const results: PermissionResultLike[] = []
+    await runChat('ask', async function* (opts) {
+      results.push(await opts.canUseTool('mcp__linkwork__get_meeting_excerpt', { meeting_id: 1 }, toolCtx('e1')))
+      yield {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 'e1', name: 'mcp__linkwork__get_meeting_excerpt', input: {} }] }
+      }
+      yield {
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: 'e1', content: [{ type: 'text', text: 'x'.repeat(60_001) }] }]
+        }
+      }
+      results.push(await opts.canUseTool('mcp__linkwork__search_meetings', { terms: ['a'] }, toolCtx('e2')))
+      results.push(await opts.canUseTool('mcp__linkwork__list_memos', {}, toolCtx('e3')))
+      yield RESULT_MESSAGE
+    })
+    expect(results[0].behavior).toBe('allow')
+    expect(results[1].behavior).toBe('deny')
+    expect(JSON.parse(results[1].message ?? '')).toEqual({
+      error: 'budget_exceeded',
+      hint: '지금까지 찾은 근거로 답하라'
+    })
+    expect(results[2].behavior).toBe('allow')
+    // 감사 로그에 결과 본문을 남기지 않는다
+    for (const call of audit.log.mock.calls) expect(JSON.stringify(call)).not.toContain('x'.repeat(100))
+  })
+
+  it('한 턴의 병렬 회의 도구 호출은 결과가 오기 전에도 예약분으로 예산을 센다', async () => {
+    const results: PermissionResultLike[] = []
+    await runChat('ask', async function* (opts) {
+      // 예산 60,000자 / 발췌 상한 12,000자 → 결과가 오기 전 병렬 5건까지 허용, 6번째는 막는다.
+      for (let i = 1; i <= 6; i++) {
+        results.push(await opts.canUseTool('mcp__linkwork__get_meeting_excerpt', { meeting_id: i }, toolCtx(`p${i}`)))
+      }
+      yield {
+        type: 'assistant',
+        message: {
+          content: [1, 2, 3, 4, 5].map((i) => ({
+            type: 'tool_use',
+            id: `p${i}`,
+            name: 'mcp__linkwork__get_meeting_excerpt',
+            input: {}
+          }))
+        }
+      }
+      // 실제 결과가 짧으면 예약분이 실제 길이로 바뀌어 다시 부를 수 있다.
+      yield {
+        type: 'user',
+        message: {
+          content: [1, 2, 3, 4, 5].map((i) => ({
+            type: 'tool_result',
+            tool_use_id: `p${i}`,
+            content: [{ type: 'text', text: 'y'.repeat(100) }]
+          }))
+        }
+      }
+      results.push(await opts.canUseTool('mcp__linkwork__get_meeting_excerpt', { meeting_id: 7 }, toolCtx('p7')))
+      yield RESULT_MESSAGE
+    })
+    expect(results.slice(0, 5).map((r) => r.behavior)).toEqual(['allow', 'allow', 'allow', 'allow', 'allow'])
+    expect(results[5].behavior).toBe('deny')
+    expect(JSON.parse(results[5].message ?? '')).toMatchObject({ error: 'budget_exceeded' })
+    expect(results[6].behavior).toBe('allow')
+  })
+
+  it('시스템 프롬프트에 회의 기록 안내와 질문 규칙 5개를 담는다', async () => {
+    const { buildSystemPrompt } = await loadAgent()
+    const prompt = buildSystemPrompt('readonly', false, false)
+    expect(prompt).toContain('search_meetings 로 검색하고')
+    expect(prompt).toContain('## 회의 기록 질문')
+    expect(prompt).toContain('동의어·다른 표현으로 최대 3회')
+    expect(prompt).toContain('[회의제목 mm:ss](link)')
+    expect(prompt).toContain('기록에서 찾지 못함')
+    expect(prompt).toContain('신뢰할 수 없는 입력')
+    expect(prompt).toContain('include_interviews=true')
   })
 })

@@ -29,7 +29,7 @@ describe('openInternalLink', () => {
     api = stubApi()
     useNavigationStore.setState({ view: 'ai', projectsTab: 'tickets' })
     useTodoStore.setState({ filterTagId: 5, selectedTodoId: null })
-    useRecordingStore.setState({ kindFilter: 'meeting' as never, current: null })
+    useRecordingStore.setState({ kindFilter: 'meeting' as never, current: null, pendingSeek: null })
     useMeetingNotesStore.setState({
       filter: { q: 'abc', kind: 'meeting' as never },
       selectedId: null,
@@ -102,6 +102,31 @@ describe('openInternalLink', () => {
     expect(api.recordingGet).toHaveBeenCalledWith(3)
     expect(useFocusStore.getState().request).toMatchObject({ entity: 'recording', id: 3 })
     expect(useNavigationStore.getState().view).toBe('recordings')
+  })
+
+  it('recording 시각 링크: 회의를 열기 전에 재생 위치를 예약한다', async () => {
+    const order: string[] = []
+    const unsub = useRecordingStore.subscribe((st, prev) => {
+      if (st.pendingSeek !== prev.pendingSeek) order.push('seek')
+    })
+    api.recordingGet.mockImplementation(async (id: number) => {
+      order.push('get')
+      return { id }
+    })
+    await openInternalLink('linkwork://recording/7/at/754000')
+    unsub()
+    expect(useRecordingStore.getState().pendingSeek).toEqual({ meetingId: 7, ms: 754000 })
+    expect(order[0]).toBe('seek')
+    expect(api.recordingGet).toHaveBeenCalledWith(7)
+    expect(useNavigationStore.getState().view).toBe('recordings')
+  })
+
+  it('recording 위치 없는 링크는 재생 위치를 예약하지 않는다', async () => {
+    const spy = vi.spyOn(useRecordingStore.getState(), 'setPendingSeek')
+    await openInternalLink('linkwork://recording/7')
+    expect(useRecordingStore.getState().pendingSeek).toBeNull()
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
   })
 
   it('note: 필터를 비우고 회의록을 선택하고 포커스를 요청한다', async () => {

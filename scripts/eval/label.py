@@ -9,6 +9,11 @@
     python3 label.py --meeting 5            # 처음부터(또는 진행분 이어서)
     python3 label.py --meeting 5 --restart  # 진행분 버리고 처음부터
     python3 label.py --meeting 5 --max-play 12   # 구간 최대 재생 길이(초)
+    python3 label.py --meeting 5 --prefill out/hyp/hyp_5_campplus.json  # 화자 미리 채우기를 DB 대신 이 가설로
+    python3 label.py --meeting 5 --minutes 10    # 시작 위치부터 10분 지나면 eval_window를 닫고 저장
+
+--prefill 은 새로 시작할 때(진행분이 없거나 --restart)만 적용된다. 세그먼트 경계·전사는 DB 것을 쓰고,
+화자만 그 파일에서 시간이 가장 많이 겹치는(없으면 가장 가까운) 세그먼트의 speaker 로 채운다.
 
 키:
     Enter   현재 화자 그대로 확정 → 다음
@@ -105,8 +110,30 @@ class Player:
         self._tmp = None
 
 
+def prefill_speakers(doc: seglst.EvalDoc, hyp: seglst.EvalDoc) -> seglst.EvalDoc:
+    """doc 세그먼트의 speaker 를 hyp 에서 겹침이 가장 큰(없으면 가장 가까운) 세그먼트의 speaker 로 바꾼다."""
+    hs = [h for h in hyp.segments if h.get("speaker")]
+    if not hs:
+        return doc
+    out = []
+    for s in doc.segments:
+        best, best_ov, best_gap = None, 0, None
+        for h in hs:
+            ov = min(s["end_ms"], h["end_ms"]) - max(s["start_ms"], h["start_ms"])
+            if ov > best_ov:
+                best, best_ov = h, ov
+            elif best_ov <= 0:
+                gap = max(0, h["start_ms"] - s["end_ms"], s["start_ms"] - h["end_ms"])
+                if best_gap is None or gap < best_gap:
+                    best, best_gap = h, gap
+        out.append({**s, "speaker": str(best["speaker"]) if best else s.get("speaker")})
+    return seglst.EvalDoc(doc.meeting_id, doc.audio, doc.duration_ms, out, doc.eval_window)
+
+
 class Labeler:
-    def __init__(self, meeting_id: int, max_play_sec: float, restart: bool) -> None:
+    def __init__(self, meeting_id: int, max_play_sec: float, restart: bool,
+                 prefill: str | None = None, minutes: float | None = None) -> None:
+        self.minutes = minutes
         self.meeting_id = meeting_id
         self.out_dir = os.path.join(OUT_DIR, f"meeting_{meeting_id}")
         os.makedirs(self.out_dir, exist_ok=True)
@@ -122,6 +149,9 @@ class Labeler:
 
         if restart or not os.path.exists(self.progress_path):
             doc = seglst.from_meeting(meeting)
+            if prefill:
+                doc = prefill_speakers(doc, seglst.load(prefill))
+                print(f"  화자 미리 채우기: {prefill}")
             self.segments = [
                 {**s, "_status": "pending"} for s in doc.segments
             ]
@@ -133,6 +163,8 @@ class Labeler:
             self.segments = data["segments"]
             self.duration_ms = data.get("duration_ms", 0)
             self.cursor = data.get("cursor", 0)
+            if prefill:
+                print("  (진행분이 있어 --prefill 은 무시합니다. 다시 채우려면 --restart)")
 
         # 화자 레지스트리(순서 보존): 가설 + 라벨 중 추가
         self.speakers: list[str] = []
@@ -210,9 +242,16 @@ class Labeler:
         print("  도중에 q로 종료해도 거기까지 저장됩니다(부분 라벨링).")
 
         i = self.cursor
+        limit_ms: int | None = None
+        if self.minutes and 0 <= i < len(self.segments):
+            limit_ms = self.segments[i]["start_ms"] + int(self.minutes * 60_000)
+            print(f"  --minutes {self.minutes:g}: {fmt_t(limit_ms)} 이후 세그먼트에서 멈추고 저장합니다.")
         while 0 <= i < len(self.segments):
             self.cursor = i
             seg = self.segments[i]
+            if limit_ms is not None and seg["start_ms"] >= limit_ms:
+                print(f"\n⏱ {self.minutes:g}분 구간을 마쳤습니다 — eval_window 를 닫고 저장합니다.")
+                break
             self.show(i)
             if self.player:
                 self.player.play(seg["start_ms"], seg["end_ms"])
@@ -289,9 +328,17 @@ def main() -> int:
     ap.add_argument("--meeting", type=int, required=True)
     ap.add_argument("--max-play", type=float, default=15.0, help="구간 최대 재생 길이(초)")
     ap.add_argument("--restart", action="store_true", help="진행분 버리고 처음부터")
+    ap.add_argument("--prefill", default=None, metavar="HYP_JSON",
+                    help="화자 미리 채우기를 DB 대신 이 가설 파일로(예: out/hyp/hyp_<id>_<tag>.json)")
+    ap.add_argument("--minutes", type=float, default=None, metavar="N",
+                    help="시작 위치부터 N분이 지나면 eval_window를 닫고 저장")
     args = ap.parse_args()
+    if args.minutes is not None and args.minutes <= 0:
+        ap.error("--minutes 는 0보다 커야 합니다")
+    if args.prefill and not os.path.exists(args.prefill):
+        ap.error(f"--prefill 파일이 없습니다: {args.prefill}")
 
-    labeler = Labeler(args.meeting, args.max_play, args.restart)
+    labeler = Labeler(args.meeting, args.max_play, args.restart, args.prefill, args.minutes)
     labeler.run()
     return 0
 

@@ -1,7 +1,7 @@
 # 도입 목록 #7~#15 설계 결정
 
 > [README.md](README.md) §4 표의 #7~#15를 어떻게 구현하는지(또는 왜 하지 않는지)를 정한 문서다. 계약 문서는 [../../MEETING_RECORDING.md](../../MEETING_RECORDING.md)다.
-> 결정은 지금 코드와 실제 데이터(`sqlite3 -readonly`로 읽음)를 기준으로 했다. 구현이 끝나면 계약은 MEETING_RECORDING.md·AI_CHAT_ARCHITECTURE.md·AI_GUARDRAILS.md로 옮겨지고, 이 문서에는 판단 근거만 남는다.
+> 결정은 지금 코드와 실제 데이터(`sqlite3 -readonly`로 읽음)를 기준으로 했다. 계약(채널·데이터 모델·화면 규칙)은 MEETING_RECORDING.md·AI_CHAT_ARCHITECTURE.md·AI_GUARDRAILS.md에 있고, 이 문서에는 판단 근거만 둔다.
 
 ## 요약
 
@@ -19,7 +19,7 @@
 
 ## #7 화자 수정 범위 3단계
 
-- **결정**: `recording:reassignSegment`에 선택 인자 `scope`(`one` | `forward` | `all`)를 더한다. 인자가 없으면 지금처럼 `one`이다.
+- **결정**: `recording:reassignSegment`에 선택 인자 `scope`(`one` | `forward` | `all`)를 더한다. 인자가 없으면 `one`이다. 범위 계산과 병합은 `src/main/services/speaker-correction.ts`에 있다.
   - `one`: 그 세그먼트만 바꾼다.
   - `forward`: 같은 회의에서 그 세그먼트의 현재 화자(화자 없음 포함)와 같은 화자를 가진 세그먼트 중, 정렬 순서(start_ms, sort_order, id)로 그 세그먼트와 같거나 뒤에 있는 것을 모두 바꾼다.
   - `all`: 그 화자의 세그먼트를 모두 바꾼다. 원래 화자와 대상 화자가 둘 다 있으면 `recording:mergeSpeakers`와 같은 병합(목소리 centroid 가중 평균, 원래 화자 행 삭제)을 한다.
@@ -48,8 +48,8 @@
 
 ## #10·#11 회의 유형별 템플릿, 녹음 중 메모·북마크
 
-- **결정**: 템플릿은 `kind='meeting'` 안에서 지시문만 바꾼다. 출력 스키마(tldr·keywords·topics·decisions·action_items·open_questions)는 바꾸지 않는다. 기본 4종은 코드 상수다. 회의별 선택은 `meetings.summary_template`(NULL=자동), 실제로 쓴 템플릿은 `meeting_summaries.template_id`에 둔다. 자동 선택은 제목 정규식이고, 맞는 것이 없으면 기본이다.
-- **메모**: `meeting_marks` 테이블. `raw_ms`는 녹음 경과 시각(불변), `at_ms`는 현재 오디오 시간축 시각이다. 컷편집 때 `at_ms = mapMsToCompacted(raw_ms, keep)`로 다시 계산한다(`origin='live'`만). 북마크는 text가 빈 메모다. 요약 프롬프트에 `[사용자 메모]` 블록을 넣고, 각 메모 시각 앞 90초~뒤 10초 전사는 샘플링에서 빠지지 않게 고정한다. 주제 카드 배정은 렌더러가 시각 구간으로 결정론적으로 한다.
+- **결정**: 템플릿은 `kind='meeting'` 안에서 지시문만 바꾼다. 출력 스키마(tldr·keywords·topics·decisions·action_items·open_questions)는 바꾸지 않는다. 기본 4종은 코드 상수다(`src/main/services/meeting-templates.ts`). 회의별 선택은 `meetings.summary_template`(NULL=자동), 실제로 쓴 템플릿은 `meeting_summaries.template_id`에 둔다. 자동 선택은 제목 정규식이고, 맞는 것이 없으면 기본이다.
+- **메모**: `meeting_marks` 테이블(`src/main/services/meeting-marks.ts`). `raw_ms`는 녹음 경과 시각(불변), `at_ms`는 현재 오디오 시간축 시각이다. 컷편집 때 `at_ms = mapMsToCompacted(raw_ms, keep)`로 다시 계산한다(`origin='live'`만). 북마크는 text가 빈 메모다. 요약 프롬프트에 `[사용자 메모]` 블록을 넣고, 각 메모 시각 앞 90초~뒤 10초 전사는 샘플링에서 빠지지 않게 고정한다. 주제 카드 배정은 렌더러가 시각 구간으로 결정론적으로 한다.
 - **근거**:
   - `meeting-summary.ts`의 출력 키 블록은 이미 갈아끼울 수 있게 분리돼 있다.
   - `meeting_summaries.meeting_id`가 UNIQUE이고 할 일 연결(todo_id)이 action_items JSON 안에 있다. 그래서 스키마를 넓히는 안은 소비처(SummaryPanel, 시각 재매핑, Markdown, 비서)를 모두 고쳐야 한다.
@@ -75,7 +75,7 @@
 
 ## #13 회의 간 AI 질의
 
-- **결정**: AI 대화의 in-process MCP 서버(`src/main/services/ai-tools.ts`)에 읽기 전용 도구 `search_meetings`·`get_meeting_excerpt`를 더한다. 검색은 LIKE 다중 키워드(OR)이고 점수로 정렬한다. 도구 결과에 `linkwork://recording/{id}/at/{ms}` 링크를 미리 넣어 주고, 렌더러는 그 링크로 녹음 상세를 열어 그 시각부터 재생한다. 면접은 기본으로 제외한다. 상한은 검색 8,000자, 원문 12,000자·10분 창, 질의당 누적 60,000자다. 질의에서 회의 도구를 한 번이라도 쓰면, 사용자 메시지에 있는 호스트라도 `fetch_url`은 승인 카드로 보낸다.
+- **결정**: AI 대화의 in-process MCP 서버(`src/main/services/ai-tools.ts`)에 읽기 전용 도구 `search_meetings`·`get_meeting_excerpt`를 더한다. 도구 정의는 `src/main/services/ai-meeting-tools.ts`에 둔다. 검색은 LIKE 다중 키워드(OR)이고 점수로 정렬한다. 도구 결과에 `linkwork://recording/{id}/at/{ms}` 링크를 미리 넣어 주고, 렌더러는 그 링크로 녹음 상세를 열어 그 시각부터 재생한다. 면접은 기본으로 제외한다. 상한은 검색 8,000자, 원문 12,000자·10분 창, 질의당 누적 60,000자다. 질의에서 회의 도구를 한 번이라도 쓰면, 사용자 메시지에 있는 호스트라도 `fetch_url`은 승인 카드로 보낸다.
 - **근거**: 회의 45건, 전사 약 67.5만 자라 LIKE 전체 스캔으로 충분하다. FTS5 trigram은 3자 미만 질의를 못 받는데 한국어 핵심어는 대부분 2음절이다. 파생 색인은 갱신 지점이 다섯 곳 이상이라 어긋날 위험이 있다. 감사, 읽기 전용 커넥션, 자동 허용 목록, 링크 처리는 이미 있다.
 - **보류**: 회의록 화면의 "회의에 질문" 진입점, `ai_chats.scope` 서버 강제, 인용 레지스트리·칩 UI, 추천 질문, FTS5 색인(회의가 수백 건을 넘거나 검색 실측이 50ms를 넘을 때), 로컬 임베딩, 문서 화면 시각 링크.
 
@@ -92,10 +92,12 @@
   - `src/main/services/diarization/cli.ts`: `--emit-segments 1`
   - `scripts/diar-regress.mjs`: `--model`, `--dump-hyp`
   - `scripts/eval/eval_diar.py`: `--hyp`
-  - 새 벤치 스크립트(라벨 없는 지표 + oracle/auto DER)
+  - `scripts/eval/diar_bench.py`(라벨 없는 지표 + oracle/auto DER)
   - `scripts/eval/label.py`: `--prefill`, `--minutes`
 
   후보 3종(CAM++ 현행, ERes2NetV2, WeSpeaker ResNet34_LM)은 라벨 없는 1차 비교만 실제로 돌린다.
+- **1차 비교 결과**(회의 7건, `diar_bench.py --mode label-free` 기본 `--chunk 200` 산출물 `out/diar_bench.md`): 모든 모델이 크래시 없이 끝났다. CAM++는 통과했다(1on1 5/5가 2명, 53↔50 margin 0.334, 회의 51 40.5초·최대 창 2.24초, 총 131.7초). ERes2NetV2도 라벨 없는 기준은 통과했다(1on1 5/5가 2명, margin 0.237로 CAM++보다 좁음, 회의 51 162.1초로 180초 한도 근처, 회의당 약 4배 느림, 총 549.8초). CAM++ 대비 라벨 불일치는 1on1에서 1.4~2.0%, 회의 51(3명 대 4명)에서 12.2%, 회의 44(1명 대 2명)에서 19.1%다. WeSpeaker ResNet34_LM은 7건 모두 1명으로 나눠 탈락했다(1on1 0/5, 불일치 19.1~47.0%). ERes2NetV2는 라벨 DER 판정 대상으로 남는다.
+- **크래시 원인과 조치**: 처음 비교에서 ERes2NetV2(회의 50·51·44·45)와 WeSpeaker(51·44)가 SIGTRAP으로 죽은 원인은 메모리 부족이다. sherpa-onnx-node 1.13.3은 창(스트림)마다 받은 네이티브 메모리를 돌려주지 않는다. 고정 길이 창에서도, GC를 강제해도, 이벤트 루프에 양보해도, 추출기를 다시 만들어도 회수되지 않았다. 그래서 RSS가 창 수에 비례해 는다(ERes2NetV2 약 8MB/창, 회의 50에서 7.6GB까지 오른 뒤 죽음. CAM++ 약 3MB/창). 조치는 평가 경로에만 했다. cli `--chunk N`이 창 임베딩을 N개씩 자식 프로세스에 맡기고 클러스터링은 부모가 한다. 임베딩 값은 나누지 않을 때와 같다(회의 53 CAM++ 가설·목소리 일치 확인). `diar-regress.mjs --chunk`와 `diar_bench.py --chunk`(기본 200)가 이 옵션을 넘긴다. 앱 경로는 바꾸지 않았다. 앱은 회의마다 utilityProcess 워커를 띄우고 끝나면 내리므로 메모리가 회수된다. 다만 CAM++도 회의 51(3,726창)에서 워커가 어림잡아 10GB 넘게 쓴다(이 Mac 48GB에서는 끝난다). 메모리가 작은 Mac이나 더 긴 회의를 지원하려면 앱 워커도 나눠야 한다. ERes2NetV2로 바꾸게 되면 워커도 같은 방식으로 나눠야 한다(회의 51은 약 30GB가 필요하다).
 - **근거**:
   - `scripts/eval/refs/`에는 템플릿만 있다. cli 출력에는 세그먼트별 화자가 없다.
   - DB의 화자 가설은 지금 알고리즘의 결과가 아니다(53·51은 1명, 50은 7명). 그래서 라벨 미리 채우기는 현행 cli 출력으로 해야 한다.

@@ -342,6 +342,10 @@ export function applySchema(db: Database.Database): void {
       -- 전체 처리 시 meeting-pipeline의 CURRENT_PIPELINE_VERSION을 기록).
       -- 요약 재생성 UI가 재분석 필요 여부 판단에 사용.
       pipeline_version INTEGER NOT NULL DEFAULT 0,
+      -- 요약 형식(services/meeting-templates.ts의 MeetingTemplateId). NULL=제목으로 자동 판별.
+      summary_template TEXT,
+      -- 화자 수·구성을 사용자가 확인했는지(1=확인). 참석 인원을 고르거나 면접이면 1.
+      speakers_confirmed INTEGER NOT NULL DEFAULT 0,
       project_id INTEGER,
       calendar_event_id TEXT,
       calendar_event_title TEXT,
@@ -405,9 +409,27 @@ export function applySchema(db: Database.Database): void {
       follow_ups TEXT,
       fact_checks TEXT,
       model TEXT,
+      -- 이 요약을 만들 때 쓴 요약 형식. NULL=형식 도입 이전 요약.
+      template_id TEXT,
       generated_at TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
     );
+
+    -- 녹음 중·후 메모와 북마크(services/meeting-marks.ts). text=''이면 북마크.
+    -- raw_ms=녹음 경과(일시정지 제외, 불변), at_ms=현재 오디오 시간축(컷편집 시 재매핑).
+    CREATE TABLE IF NOT EXISTS meeting_marks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+      raw_ms INTEGER NOT NULL,
+      at_ms INTEGER NOT NULL,
+      text TEXT NOT NULL DEFAULT '',
+      -- 'live'(녹음 중) | 'post'(재생 중 추가)
+      origin TEXT NOT NULL DEFAULT 'live',
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_meeting_marks_meeting ON meeting_marks(meeting_id, at_ms);
 
     -- 릴리스 노트: Jira 릴리스(Version) 미러링.
     -- 매칭 키는 이름이 아니라 불변 ID(jira_version_id)다 — Jira에서 버전 이름을 바꿔도
@@ -550,12 +572,21 @@ export function applySchema(db: Database.Database): void {
   if (meetingColumns.length > 0 && !meetingColumnNames.includes('pipeline_version')) {
     db.exec('ALTER TABLE meetings ADD COLUMN pipeline_version INTEGER NOT NULL DEFAULT 0')
   }
+  // 요약 형식. 기존 회의는 NULL(=제목으로 자동 판별).
+  if (meetingColumns.length > 0 && !meetingColumnNames.includes('summary_template')) {
+    db.exec('ALTER TABLE meetings ADD COLUMN summary_template TEXT')
+  }
+  // 화자 확인 여부. 이 열이 생기기 전의 회의는 확인된 것으로 본다.
+  if (meetingColumns.length > 0 && !meetingColumnNames.includes('speakers_confirmed')) {
+    db.exec('ALTER TABLE meetings ADD COLUMN speakers_confirmed INTEGER NOT NULL DEFAULT 0')
+    db.exec('UPDATE meetings SET speakers_confirmed = 1')
+  }
 
   // 면접 요약 4분류 (회의 요약 행에서는 NULL로 남는다)
   const summaryColumns = db.prepare("PRAGMA table_info(meeting_summaries)").all() as { name: string }[]
   const summaryColumnNames = summaryColumns.map((c) => c.name)
   if (summaryColumns.length > 0) {
-    for (const col of ['qa_pairs', 'competencies', 'follow_ups', 'fact_checks']) {
+    for (const col of ['qa_pairs', 'competencies', 'follow_ups', 'fact_checks', 'template_id']) {
       if (!summaryColumnNames.includes(col)) {
         db.exec(`ALTER TABLE meeting_summaries ADD COLUMN ${col} TEXT`)
       }

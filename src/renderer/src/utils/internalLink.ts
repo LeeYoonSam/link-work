@@ -6,7 +6,9 @@ import type { ProjectsTab } from '../stores/navigationStore'
 type InternalLinkTarget =
   // tab 은 view 가 'projects' 일 때 열 탭이다. 없으면 마지막으로 본 탭을 그대로 둔다
   | { kind: 'view'; view: ViewId; tab?: ProjectsTab }
-  | { kind: 'memo' | 'todo' | 'variable' | 'release' | 'recording' | 'note'; id: number }
+  | { kind: 'memo' | 'todo' | 'variable' | 'release' | 'note'; id: number }
+  // atMs 는 녹음을 열고 이동할 재생 위치(ms)다. linkwork://recording/{id}/at/{ms}
+  | { kind: 'recording'; id: number; atMs?: number }
   | { kind: 'calendar'; date: string; eventId: string | null }
   // focus 가 null 이면 오늘 화면만 연다
   | { kind: 'today'; focus: { kind: 'meeting'; id: string } | null }
@@ -15,6 +17,8 @@ const SCHEME = 'linkwork://'
 const NUM_RE = /^\d+$/
 const EVENT_ID_RE = /^[A-Za-z0-9_-]+$/
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/
+// 녹음 시각 링크가 받는 위치 상한(24시간 미만)
+const MAX_AT_MS = 86_400_000
 
 // id 하나만 받는 엔터티. 링크 형식은 linkwork://{kind}/{id} 다
 const SIMPLE_KINDS = new Set(['memo', 'todo', 'variable', 'release', 'recording', 'note'])
@@ -28,6 +32,13 @@ function parseId(value: string | undefined): number | null {
   if (value === undefined || !NUM_RE.test(value)) return null
   const n = Number(value)
   return Number.isSafeInteger(n) && n > 0 ? n : null
+}
+
+// 녹음 재생 위치(ms)를 읽는다. 0 이상 24시간 미만 정수만 받는다
+function parseAtMs(value: string | undefined): number | null {
+  if (value === undefined || !NUM_RE.test(value)) return null
+  const n = Number(value)
+  return Number.isSafeInteger(n) && n >= 0 && n < MAX_AT_MS ? n : null
 }
 
 // 캘린더 링크가 받는 연도 범위. 이유: 0001 년 같은 값은 엉뚱한 주로 이동한다
@@ -86,6 +97,14 @@ export function parseInternalLink(href: string): InternalLinkTarget | null {
   if (kind === 'document') {
     const id = rest.length === 1 ? parseId(rest[0]) : null
     return id === null ? null : { kind: 'view', view: 'projects', tab: 'docs' }
+  }
+
+  // 녹음 시각 링크. 위치가 틀리면 위치 없이 녹음만 연다
+  if (kind === 'recording' && rest.length === 3 && rest[1] === 'at') {
+    const id = parseId(rest[0])
+    if (id === null) return null
+    const atMs = parseAtMs(rest[2])
+    return atMs === null ? { kind: 'recording', id } : { kind: 'recording', id, atMs }
   }
 
   if (SIMPLE_KINDS.has(kind)) {

@@ -25,7 +25,7 @@
 | 그룹 ID | 화면 이름 (메뉴) | 테이블 | `app_settings` 키 | 파일 |
 |---|---|---|---|---|
 | `work` | 오늘·업무 (오늘, 프로젝트(릴리스 탭 포함), 할 일). `activity_log` 는 화면에 보이지 않지만 활동 기록으로 계속 쌓이고 이 그룹에 든다 | projects, tasks, todos, todo_tags, todo_tag_map, todo_history, release_notes, release_note_items, activity_log, daily_plans, plan_items, assistant_events, assistant_exclusions | `project_sync_created_keys` | 없음 |
-| `meetings` | 회의 (녹음, 회의록, 용어집·구성원) | meetings, meeting_speakers, meeting_segments, meeting_cuts, meeting_summaries, meeting_attendees, meeting_members, stt_glossary, meeting_speaker_voices, member_voice_samples | 없음 | `recordings/` |
+| `meetings` | 회의 (녹음, 회의록, 용어집·구성원) | meetings, meeting_speakers, meeting_segments, meeting_cuts, meeting_summaries, meeting_marks, meeting_attendees, meeting_members, stt_glossary, meeting_speaker_voices, member_voice_samples | 없음 | `recordings/` |
 | `library` | 자료 (메모, 변수, 예전 문서 메뉴의 문서) | documents, memos, memo_categories, variables | 없음 | 없음 |
 | `ai` | AI 대화 | ai_chats, ai_messages, ai_audit_log | 없음 | `ai-attachments/` |
 | `settings` | 설정·연동 | (없음 — `app_settings` 를 키 단위로) | `assistant_*`, `ai_model`, `ai_model_labels`, `google_client_id`, `jira_site_url`, `jira_email`, `jira_token_expires_at`, `jira_account_name`, `jira_default_project_key`, `bitbucket_email`, 그리고 분류되지 않은 모든 키(기본값) | 없음 |
@@ -36,6 +36,7 @@
 - `jira_board_issues`·`jira_board_sync` 는 프로젝트 보드의 Jira 캐시다(docs/PROJECT_BOARD.md §3). Jira 에서 다시 받을 수 있어 백업하지 않는다(`NON_GROUP_TABLES`, `CACHE_TABLES`).
 - `jira_epic_summaries` 는 보드 캐시로 만든 에픽 AI 요약이다(docs/PROJECT_BOARD.md §5.1). 버튼으로 다시 만들 수 있어 보드 캐시와 같이 취급한다(`NON_GROUP_TABLES`, `CACHE_TABLES`).
   내보낼 때 사본에서 세 테이블의 행을 지운다(`stripCaches`). 복원은 이 기기의 캐시를 그대로 두되, 복원으로 Jira 계정이 바뀌면 함께 지운다(아래 연동 묶음 규칙). 캐시가 비면 다음 화면 진입 때 보드가 전체 동기화를 한다.
+- `meeting_marks`(녹음 중·후 메모·북마크)는 회의 그룹이다. `meetings` 를 FK(ON DELETE CASCADE)로 가리킨다([MEETING_RECORDING.md](MEETING_RECORDING.md) §2).
 - `meeting_members`·`stt_glossary` 는 회의 그룹이다. `meeting_attendees` 가 `meeting_members` 를 FK 로 가리키고, 둘 다 회의 인식 보조다.
 - `meeting_speaker_voices`(회의 화자 목소리)·`member_voice_samples`(구성원 목소리 표본)도 회의 그룹이다. `meeting_speakers`·`meeting_members`·`meetings` 를 FK 로 가리킨다. 목소리 임베딩(오디오 아님)이 **백업 파일에 포함된다** — 새 PC 에서도 목소리 자동 지정이 이어진다([MEETING_RECORDING.md](MEETING_RECORDING.md) §12).
 - **새 테이블을 만들면 반드시 한 그룹(또는 백업 제외)에 넣는다.** 빠지면 테스트 G1 이 실패한다. 그룹을 추가·변경하면 `formatVersion` 을 올린다.

@@ -11,7 +11,16 @@ import { z } from 'zod'
 import { getDatabase } from '../db/database'
 import { logActivity } from '../utils/activity-logger'
 import { INTERVIEW_SPEC } from './interview-summary'
-import { buildSummaryContextBlock, loadPromptContext } from './recognition-aids'
+import { listMarks } from './meeting-marks'
+import {
+  buildOutputKeys,
+  buildTemplateBlock,
+  getTemplate,
+  resolveTemplate,
+  type MeetingTemplate
+} from './meeting-templates'
+import { parseJsonArray } from './meeting-notes'
+import { buildMarksBlock, buildSummaryContextBlock, loadPromptContext } from './recognition-aids'
 import type {
   SendStream,
   MeetingSummaryResult,
@@ -80,22 +89,58 @@ function toFriendlyError(raw: string): string {
 // 샘플링해 앞·중간·끝의 흐름을 모두 보존한다.
 const MAX_TRANSCRIPT_CHARS = 80000
 
-export function fitTranscript(lines: string[]): string {
-  const full = lines.join('\n')
-  if (full.length <= MAX_TRANSCRIPT_CHARS) return full
+const SAMPLED_NOTICE = '\n\n(회의가 길어 시간 순서대로 균등 샘플링한 발췌본입니다 — 일부 발언은 생략됨)'
 
-  // 평균 라인 길이로 목표 라인 수를 추정해 일정 간격으로 추출
-  const avgLen = full.length / lines.length
-  const targetLines = Math.max(1, Math.floor(MAX_TRANSCRIPT_CHARS / avgLen))
-  const step = lines.length / targetLines
-  const sampled: string[] = []
-  for (let i = 0; i < lines.length; i += step) {
-    sampled.push(lines[Math.floor(i)])
+export interface FitTranscriptOptions {
+  // lines[i]의 시작 시각(ms). keepRanges와 함께 쓴다.
+  lineStartMs?: number[]
+  // 이 구간([a, b], ms)에 시작하는 줄은 샘플링에서 빼지 않고 고정으로 넣는다(사용자 메모 주변).
+  keepRanges?: Array<[number, number]>
+  // 전사록 밖에 함께 보낼 블록(메모 블록 등)의 길이. 그만큼 전사 예산을 줄인다.
+  reserveChars?: number
+}
+
+// 줄 번호 목록을 일정 간격으로 추출한다. 평균 줄 길이로 목표 줄 수를 추정한다.
+function sampleEvenly(indices: number[], textLength: number, budget: number, minLines: number): number[] {
+  if (indices.length === 0) return []
+  const avgLen = textLength / indices.length
+  const targetLines = Math.max(minLines, Math.floor(budget / avgLen))
+  if (targetLines <= 0) return []
+  const step = indices.length / targetLines
+  const out: number[] = []
+  for (let i = 0; i < indices.length; i += step) out.push(indices[Math.floor(i)])
+  return out
+}
+
+export function fitTranscript(lines: string[], opts?: FitTranscriptOptions): string {
+  const full = lines.join('\n')
+  const budget = MAX_TRANSCRIPT_CHARS - Math.max(0, opts?.reserveChars ?? 0)
+  if (full.length <= budget) return full
+
+  const all = lines.map((_, i) => i)
+  const ranges = opts?.keepRanges ?? []
+  const startMs = opts?.lineStartMs
+  if (ranges.length > 0 && startMs) {
+    const pinned = new Set<number>()
+    for (let i = 0; i < lines.length; i++) {
+      const ms = startMs[i]
+      if (typeof ms === 'number' && ranges.some(([a, b]) => ms >= a && ms <= b)) pinned.add(i)
+    }
+    let pinnedChars = 0
+    for (const i of pinned) pinnedChars += lines[i].length + 1
+    // 고정 줄만으로 예산을 넘으면 고정 없이 균등 샘플링으로 되돌아간다.
+    if (pinned.size > 0 && pinnedChars <= budget) {
+      const rest = all.filter((i) => !pinned.has(i))
+      const restChars = rest.reduce((n, i) => n + lines[i].length + 1, 0)
+      const picked = new Set([...pinned, ...sampleEvenly(rest, restChars, budget - pinnedChars, 0)])
+      const ordered = all.filter((i) => picked.has(i)).map((i) => lines[i])
+      return ordered.join('\n') + SAMPLED_NOTICE
+    }
   }
-  return (
-    sampled.join('\n') +
-    '\n\n(회의가 길어 시간 순서대로 균등 샘플링한 발췌본입니다 — 일부 발언은 생략됨)'
-  )
+
+  // 시간순 라인을 균등 샘플링해 앞·중간·끝의 흐름을 모두 보존한다.
+  const sampled = sampleEvenly(all, full.length, budget, 1).map((i) => lines[i])
+  return sampled.join('\n') + SAMPLED_NOTICE
 }
 
 // 시간 포맷 mm:ss
@@ -181,37 +226,60 @@ function toTopics(items: z.infer<typeof TopicSchema>[]): SummaryTopic[] {
   return topics.slice(0, MAX_TOPICS)
 }
 
-// 프롬프트의 "출력 키" 블록. 회의 종류별 템플릿(P1)에서 이 블록만 갈아끼울 수 있게 분리한다.
-export const MEETING_OUTPUT_KEYS = `출력 키
-- tldr(string): 회의 전체의 결론 2~3문장.
-- keywords(string[]): 회의에서 반복해 나온 핵심 명사구 5~10개. 전사록의 표기를 그대로 쓰세요. 중복 금지. 5개를 채울 수 없으면 있는 만큼만 쓰세요.
-- topics: [{title, start, points}] 회의를 시간순 주제(안건) 3~8개로 나누세요. 10분 미만 회의는 1~3개도 됩니다.
-  - title: 주제를 나타내는 명사구. 30자 이하.
-  - start: 그 주제의 논의가 시작된 줄의 "mm:ss".
-  - points(string[]): 그 주제에서 나온 사실·주장·합의 2~5개.
-  - start 오름차순으로 나열하세요.
-- decisions: [{text, at}] 회의에서 확정된 결정. at은 결정이 내려진 줄의 "mm:ss".
-- action_items: [{text, assignee, due, at}] 회의 뒤에 누군가 할 일. due는 전사록에 나온 기한 표현을 그대로 쓰세요. 날짜가 명확하면 "YYYY-MM-DD". 없으면 null.
-- open_questions: [{text, at}] 제기됐지만 회의 안에서 답이나 결정이 나오지 않은 질문·쟁점.`
+// 프롬프트의 "출력 키" 블록. 회의 형식(템플릿)별 힌트는 meeting-templates.ts의 buildOutputKeys가 끼운다.
+export { MEETING_OUTPUT_KEYS } from './meeting-templates'
 
-// ── 회의 요약 스펙 (kind='meeting') ──
-// 면접 전용 4분류는 빈 배열로 덮어써, 종류를 바꿔 재요약했을 때 이전 종류의
-// 잔여 데이터가 남지 않게 한다 (INTERVIEW_SPEC.persist와 대칭).
-// key_points·next_steps는 주제별 요약·액션아이템·미결 질문으로 흡수했으므로 새 요약은 [].
-// 테스트가 공통 글쓰기 규칙 포함 여부를 확인할 수 있도록 export 한다.
-export const MEETING_SPEC: SummarySpec<MeetingSummaryResult> = {
-  systemPrompt: `회의 전사록을 분석해 한국어로 JSON만 출력하세요.
-
-전사록의 각 줄은 "[mm:ss] 화자명: 발언" 형식입니다. mm은 60을 넘을 수 있습니다.
-
-원칙
+const MEETING_PRINCIPLES = `원칙
 - 전사록에 없는 내용을 만들지 마세요. 불확실하면 해당 배열을 비우거나 값을 null로 두세요.
 - 시각(start, at)은 근거가 되는 전사 줄의 대괄호 안 "mm:ss"를 그대로 복사하세요. 시각을 계산하거나 추정하지 마세요. 근거 줄을 찾지 못하면 null로 두세요.
 - 화자명이 "화자 1", "화자 2" 같은 기본 라벨이면, 그 화자의 실제 이름을 추측하지 마세요. 기본 라벨을 문장의 주어나 assignee로 쓰지 마세요. 화자 라벨이 1개여도 여러 사람이 말했을 수 있습니다.
 - assignee는 전사록에서 담당자가 이름으로 드러날 때만 채우세요. [참고 정보]의 참석자 이름은 표기를 맞추는 데만 쓰세요. 담당자가 드러나지 않으면 null로 두세요.
 - 같은 내용을 여러 키에 반복하지 마세요. 확정된 것은 decisions, 누군가 할 일은 action_items, 결론이 나지 않은 것은 open_questions에만 넣으세요.
+- [사용자 메모]는 사용자가 회의 중 중요하다고 표시한 지점입니다. 메모는 보통 발언보다 늦게 적히므로 각 메모 시각 앞 90초~뒤 10초의 전사를 먼저 보세요. 그 논의를 topics·decisions·action_items·open_questions 중 알맞은 곳에 반영하세요. 메모 문구를 사실로 단정하지 말고 전사록에서 근거를 찾으세요. 시각은 메모 시각이 아니라 근거 전사 줄에서 복사하세요.`
 
-${MEETING_OUTPUT_KEYS}
+// ── 액션아이템 할 일 연결 승계 ──
+// 재요약하면 action_items가 새로 만들어져, 이미 할 일로 옮긴 항목의 todo_id가 사라진다.
+// 공백·문장부호·기호를 뺀 문장이 같은 항목끼리 todo_id를 옮겨 준다.
+function normalizeActionText(text: string): string {
+  return text.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '')
+}
+
+export function carryTodoIds<T extends { text: string; todo_id?: number | null }>(prev: T[], next: T[]): T[] {
+  const used = new Set<number>()
+  const candidates = prev
+    .map((p, index) => ({
+      index,
+      key: typeof p?.text === 'string' ? normalizeActionText(p.text) : '',
+      todoId: p?.todo_id
+    }))
+    .filter((c): c is { index: number; key: string; todoId: number } => typeof c.todoId === 'number' && c.key !== '')
+  return next.map((item) => {
+    if (typeof item.todo_id === 'number') return item
+    const key = normalizeActionText(item.text ?? '')
+    if (!key) return item
+    const hit = candidates.find((c) => !used.has(c.index) && c.key === key)
+    if (!hit) return item
+    used.add(hit.index)
+    return { ...item, todo_id: hit.todoId }
+  })
+}
+
+// ── 회의 요약 스펙 (kind='meeting') ──
+// 면접 전용 4분류는 빈 배열로 덮어써, 종류를 바꿔 재요약했을 때 이전 종류의
+// 잔여 데이터가 남지 않게 한다 (INTERVIEW_SPEC.persist와 대칭).
+// key_points·next_steps는 주제별 요약·액션아이템·미결 질문으로 흡수했으므로 새 요약은 [].
+// 회의 형식(템플릿)마다 프롬프트의 [회의 형식] 블록과 출력 키 힌트만 다르다. persist는 template_id에
+// 그 형식 id를 남긴다.
+export function buildMeetingSpec(t: MeetingTemplate): SummarySpec<MeetingSummaryResult> {
+  const templateBlock = buildTemplateBlock(t)
+  return {
+    systemPrompt: `회의 전사록을 분석해 한국어로 JSON만 출력하세요.
+
+전사록의 각 줄은 "[mm:ss] 화자명: 발언" 형식입니다. mm은 60을 넘을 수 있습니다.
+
+${MEETING_PRINCIPLES}
+
+${templateBlock ? `${templateBlock}\n\n` : ''}${buildOutputKeys(t)}
 
 ${WRITING_STYLE_RULES}
 ${WRITING_STYLE_JSON_NOTE}
@@ -219,68 +287,80 @@ keywords 와 title 은 문장이 아닌 명사구다. 이 2개 필드에는 글�
 
 코드펜스 없이 순수 JSON만 출력하세요.`,
 
-  buildPrompt: (transcript, contextBlock) =>
-    `${contextBlock ? `${contextBlock}\n\n` : ''}다음 회의 전사록을 분석해 JSON으로 요약하세요:\n\n${transcript}`,
+    buildPrompt: (transcript, contextBlock) =>
+      `${contextBlock ? `${contextBlock}\n\n` : ''}다음 회의 전사록을 분석해 JSON으로 요약하세요:\n\n${transcript}`,
 
-  progressMessage: 'AI 요약 생성 중…',
+    progressMessage: 'AI 요약 생성 중…',
 
-  validate: (raw) => {
-    const v = SummarySchema.parse(raw)
-    return {
-      tldr: v.tldr.trim(),
-      keywords: toKeywords(v.keywords),
-      topics: toTopics(v.topics),
-      decisions: toTextItems(v.decisions),
-      action_items: v.action_items
-        .map((item) => ({
-          text: item.text.trim(),
-          assignee: item.assignee?.trim() || null,
-          due: item.due?.trim() || null,
-          at_ms: parseTimestamp(item.at)
-        }))
-        .filter((item) => item.text),
-      open_questions: toTextItems(v.open_questions),
-      key_points: cleanStrings(v.key_points),
-      next_steps: cleanStrings(v.next_steps)
+    validate: (raw) => {
+      const v = SummarySchema.parse(raw)
+      return {
+        tldr: v.tldr.trim(),
+        keywords: toKeywords(v.keywords),
+        topics: toTopics(v.topics),
+        decisions: toTextItems(v.decisions),
+        action_items: v.action_items
+          .map((item) => ({
+            text: item.text.trim(),
+            assignee: item.assignee?.trim() || null,
+            due: item.due?.trim() || null,
+            at_ms: parseTimestamp(item.at)
+          }))
+          .filter((item) => item.text),
+        open_questions: toTextItems(v.open_questions),
+        key_points: cleanStrings(v.key_points),
+        next_steps: cleanStrings(v.next_steps)
+      }
+    },
+
+    persist: (db, meetingId, parsed, model) => {
+      // 재요약이면 기존 action_items의 todo_id(할 일 연결)를 같은 문장의 새 항목으로 옮긴다.
+      const prevRow = db
+        .prepare('SELECT action_items FROM meeting_summaries WHERE meeting_id = ?')
+        .get(meetingId) as { action_items: string | null } | undefined
+      const prevItems = parseJsonArray<{ text: string; todo_id?: number | null }>(prevRow?.action_items)
+      const actionItems = carryTodoIds<{ text: string; todo_id?: number | null }>(prevItems, parsed.action_items)
+      db.prepare(
+        `INSERT INTO meeting_summaries
+           (meeting_id, tldr, key_points, decisions, action_items, next_steps,
+            topics, open_questions, keywords,
+            qa_pairs, competencies, follow_ups, fact_checks, model, template_id, generated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', '[]', '[]', ?, ?, datetime('now','localtime'))
+         ON CONFLICT(meeting_id) DO UPDATE SET
+           tldr = excluded.tldr,
+           key_points = excluded.key_points,
+           decisions = excluded.decisions,
+           action_items = excluded.action_items,
+           next_steps = excluded.next_steps,
+           topics = excluded.topics,
+           open_questions = excluded.open_questions,
+           keywords = excluded.keywords,
+           qa_pairs = excluded.qa_pairs,
+           competencies = excluded.competencies,
+           follow_ups = excluded.follow_ups,
+           fact_checks = excluded.fact_checks,
+           model = excluded.model,
+           template_id = excluded.template_id,
+           generated_at = excluded.generated_at`
+      ).run(
+        meetingId,
+        parsed.tldr,
+        JSON.stringify(parsed.key_points),
+        JSON.stringify(parsed.decisions),
+        JSON.stringify(actionItems),
+        JSON.stringify(parsed.next_steps),
+        JSON.stringify(parsed.topics),
+        JSON.stringify(parsed.open_questions),
+        JSON.stringify(parsed.keywords),
+        model,
+        t.id
+      )
     }
-  },
-
-  persist: (db, meetingId, parsed, model) => {
-    db.prepare(
-      `INSERT INTO meeting_summaries
-         (meeting_id, tldr, key_points, decisions, action_items, next_steps,
-          topics, open_questions, keywords,
-          qa_pairs, competencies, follow_ups, fact_checks, model, generated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', '[]', '[]', ?, datetime('now','localtime'))
-       ON CONFLICT(meeting_id) DO UPDATE SET
-         tldr = excluded.tldr,
-         key_points = excluded.key_points,
-         decisions = excluded.decisions,
-         action_items = excluded.action_items,
-         next_steps = excluded.next_steps,
-         topics = excluded.topics,
-         open_questions = excluded.open_questions,
-         keywords = excluded.keywords,
-         qa_pairs = excluded.qa_pairs,
-         competencies = excluded.competencies,
-         follow_ups = excluded.follow_ups,
-         fact_checks = excluded.fact_checks,
-         model = excluded.model,
-         generated_at = excluded.generated_at`
-    ).run(
-      meetingId,
-      parsed.tldr,
-      JSON.stringify(parsed.key_points),
-      JSON.stringify(parsed.decisions),
-      JSON.stringify(parsed.action_items),
-      JSON.stringify(parsed.next_steps),
-      JSON.stringify(parsed.topics),
-      JSON.stringify(parsed.open_questions),
-      JSON.stringify(parsed.keywords),
-      model
-    )
   }
 }
+
+// 기본 형식의 회의 요약 스펙. 테스트가 공통 글쓰기 규칙 포함 여부를 확인할 수 있도록 export 한다.
+export const MEETING_SPEC: SummarySpec<MeetingSummaryResult> = buildMeetingSpec(getTemplate('default'))
 
 // 응답에서 JSON 블록 추출 (코드펜스 ```json … ``` 허용)
 export function extractJson(text: string): string {
@@ -307,14 +387,24 @@ interface SegmentRow {
 // 전사 직렬화에 필요한 최소 필드 (실측 테스트가 DB 행을 그대로 넘길 수 있게 좁게 둔다)
 export type TranscriptSegment = Pick<SegmentRow, 'start_ms' | 'text' | 'label' | 'display_name'>
 
-// 전사 텍스트 직렬화: [mm:ss] 화자명: 텍스트 (빈 발언 제외)
+// 전사 텍스트 직렬화: [mm:ss] 화자명: 텍스트 (빈 발언 제외). startMs[i]는 lines[i]의 시작 시각이다.
+export function formatTranscriptLinesWithMs(segments: TranscriptSegment[]): {
+  lines: string[]
+  startMs: number[]
+} {
+  const lines: string[] = []
+  const startMs: number[] = []
+  for (const s of segments) {
+    if (!s.text.trim()) continue
+    const speakerName = s.display_name || s.label || '화자'
+    lines.push(`[${formatTime(s.start_ms)}] ${speakerName}: ${s.text.trim()}`)
+    startMs.push(s.start_ms)
+  }
+  return { lines, startMs }
+}
+
 export function formatTranscriptLines(segments: TranscriptSegment[]): string[] {
-  return segments
-    .filter((s) => s.text.trim())
-    .map((s) => {
-      const speakerName = s.display_name || s.label || '화자'
-      return `[${formatTime(s.start_ms)}] ${speakerName}: ${s.text.trim()}`
-    })
+  return formatTranscriptLinesWithMs(segments).lines
 }
 
 export const SUMMARY_MODEL = 'claude-opus-5-5'
@@ -325,14 +415,15 @@ export async function runMeetingSummary(
 ): Promise<{ success: boolean; error?: string }> {
   const db = getDatabase()
 
-  // 녹음 종류에 따라 요약 스펙 선택 (기본=회의). 제목은 활동 기록에 쓴다.
-  const kindRow = db.prepare('SELECT kind, title FROM meetings WHERE id = ?').get(meetingId) as
-    | { kind: string; title: string | null }
-    | undefined
+  // 녹음 종류에 따라 요약 스펙 선택 (기본=회의). 회의는 지정한 형식, 없으면 제목으로 형식을 고른다.
+  // 제목은 활동 기록에도 쓴다.
+  const kindRow = db
+    .prepare('SELECT kind, title, summary_template FROM meetings WHERE id = ?')
+    .get(meetingId) as { kind: string; title: string | null; summary_template: string | null } | undefined
   const spec: SummarySpec<unknown> =
     kindRow?.kind === 'interview'
       ? (INTERVIEW_SPEC as SummarySpec<unknown>)
-      : (MEETING_SPEC as SummarySpec<unknown>)
+      : (buildMeetingSpec(resolveTemplate(kindRow?.summary_template, kindRow?.title)) as SummarySpec<unknown>)
 
   // ── 1. 전사 로드 ──
   const segments = db
@@ -352,7 +443,7 @@ export async function runMeetingSummary(
     return { success: false, error: err }
   }
 
-  const lines = formatTranscriptLines(segments)
+  const { lines, startMs } = formatTranscriptLinesWithMs(segments)
   const transcriptRaw = lines.join('\n')
 
   if (!transcriptRaw.trim()) {
@@ -361,7 +452,15 @@ export async function runMeetingSummary(
     return { success: false, error: err }
   }
 
-  const transcript = fitTranscript(lines)
+  // 회의 중 남긴 메모·북마크. 메모 블록 길이만큼 전사 예산을 비우고, 메모 주변(앞 90초~뒤 10초)
+  // 전사 줄은 샘플링에서 빼지 않는다.
+  const marks = listMarks(db, meetingId)
+  const marksBlock = buildMarksBlock(marks)
+  const transcript = fitTranscript(lines, {
+    lineStartMs: startMs,
+    keepRanges: marks.map((m) => [m.at_ms - 90_000, m.at_ms + 10_000] as [number, number]),
+    reserveChars: marksBlock.length
+  })
 
   // ── 2. Claude query ──
   send({ meetingId, phase: 'summarize', progress: 0, message: spec.progressMessage })
@@ -369,8 +468,11 @@ export async function runMeetingSummary(
   const systemPrompt = spec.systemPrompt
   // 사용자가 등록한 참석자·용어를 전사록 앞에 [참고 정보]로 붙인다. 표기 통일과 담당자
   // 매칭에만 쓰이며, 없으면 ''이라 프롬프트가 그대로다.
-  // (프라이버시: 이 단계에서 참석자 이름과 용어가 전사록과 함께 Claude로 전송된다.)
-  const prompt = spec.buildPrompt(transcript, buildSummaryContextBlock(loadPromptContext(db, meetingId)))
+  // (프라이버시: 이 단계에서 참석자 이름과 용어, 사용자 메모가 전사록과 함께 Claude로 전송된다.)
+  const contextBlock = [buildSummaryContextBlock(loadPromptContext(db, meetingId)), marksBlock]
+    .filter(Boolean)
+    .join('\n\n')
+  const prompt = spec.buildPrompt(transcript, contextBlock)
 
   const claudePath = findClaudeExecutable()
 

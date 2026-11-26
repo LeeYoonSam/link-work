@@ -28,7 +28,9 @@ vi.mock('../../stores/recognitionAidsStore', () => ({
     upsertMember: noop,
     removeMember: noop,
     voiceprints: state.voiceprints,
-    clearVoiceprint: noop
+    clearVoiceprint: noop,
+    previewRematch: async () => [],
+    applyRematch: async () => null
   })
 }))
 
@@ -131,5 +133,28 @@ describe('RecognitionAidsPanel', () => {
     const html = render({ members: [member(1, '홍길동', [], null)] }, 'members')
     expect(html).not.toContain('목소리 삭제')
     expect(html).not.toMatch(/목소리 \d+건/)
+  })
+
+  it('목소리 표본이 없으면 [등록된 목소리로 지난 회의 다시 찾기]가 비활성이다', () => {
+    const html = render({ members: [member(1, '홍길동', [], null)] }, 'members')
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>등록된 목소리로 지난 회의 다시 찾기<\/button>/)
+    expect(html).not.toContain('지난 회의에서 찾기')
+  })
+
+  it('목소리 표본이 있으면 다시 찾기 버튼이 활성이고 그 구성원 줄에 [지난 회의에서 찾기]가 붙는다', () => {
+    const html = render(
+      {
+        members: [member(1, '홍길동', [], null), member(2, '김철수', [], null)],
+        voiceprints: [
+          { member_id: 1, sample_count: 2, total_speech_ms: 60_000, updated_at: '2026-11-20 10:00:00' }
+        ]
+      },
+      'members'
+    )
+    const btn = /<button[^>]*>등록된 목소리로 지난 회의 다시 찾기<\/button>/.exec(html)
+    expect(btn).not.toBeNull()
+    expect(btn![0]).not.toContain('disabled=""')
+    expect(btn![0]).toContain('title="등록된 목소리와 비교해 이름 없는 화자를 찾습니다"')
+    expect(html.split('지난 회의에서 찾기').length - 1).toBe(1)
   })
 })

@@ -16,7 +16,13 @@ import {
   type GlossaryInput,
   type MemberInput
 } from '../services/recognition-aids'
-import { listVoiceprints, clearVoiceprint } from '../services/voiceprint'
+import {
+  listVoiceprints,
+  clearVoiceprint,
+  planRematch,
+  applyRematch,
+  type RematchOptions
+} from '../services/voiceprint'
 
 // 렌더러에서 온 값은 신뢰하지 않는다 — 타입이 어긋나면 조용히 기본값으로 떨어뜨린다.
 function asId(v: unknown): number | null {
@@ -39,6 +45,31 @@ function asNumber(v: unknown): number | undefined {
 
 function asBoolean(v: unknown): boolean | undefined {
   return typeof v === 'boolean' ? v : undefined
+}
+
+/** 다시 매칭 대상 id 목록 상한 */
+const REMATCH_MAX_IDS = 500
+
+/** 양의 안전 정수만 남기고 중복을 없앤다(최대 REMATCH_MAX_IDS개). 배열이 아니면 undefined. */
+function asIdList(v: unknown): number[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const ids = new Set<number>()
+  for (const x of v) {
+    if (typeof x === 'number' && Number.isSafeInteger(x) && x > 0) ids.add(x)
+    if (ids.size >= REMATCH_MAX_IDS) break
+  }
+  return [...ids]
+}
+
+export function sanitizeRematchOptions(raw: unknown): RematchOptions {
+  const r = (raw ?? {}) as Record<string, unknown>
+  const opts: RematchOptions = {}
+  if (typeof raw !== 'object' || raw === null) return opts
+  const meetingIds = asIdList(r.meetingIds)
+  if (meetingIds) opts.meetingIds = meetingIds
+  const memberIds = asIdList(r.memberIds)
+  if (memberIds) opts.memberIds = memberIds
+  return opts
 }
 
 export function registerRecognitionAidsIpc(): void {
@@ -111,4 +142,13 @@ export function registerRecognitionAidsIpc(): void {
     if (target === null) return { success: false, removed: 0 }
     return { success: true, ...clearVoiceprint(db, target) }
   })
+
+  // ── 다시 매칭: 옛 회의의 이름 없는 화자에 등록된 목소리를 다시 적용(표본은 만들지 않는다) ──
+  ipcMain.handle('recognitionAids:previewRematch', (_e, opts: unknown) =>
+    planRematch(db, sanitizeRematchOptions(opts))
+  )
+
+  ipcMain.handle('recognitionAids:applyRematch', (_e, opts: unknown) =>
+    db.transaction(() => applyRematch(db, planRematch(db, sanitizeRematchOptions(opts))))()
+  )
 }

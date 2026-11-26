@@ -8,8 +8,8 @@
 - **STT**: 로컬 Whisper(`@fugood/whisper.node` + `large-v3-turbo` q8_0)와 whisper.node 내장 silero VAD(`ggml-silero-v5.1.2.bin`). 두 모델은 첫 사용 때 `userData/models/`로 내려받는다(`stt/model-manager.ts`). API 키를 쓰지 않는다.
 - **녹음 소스**: 마이크 + 시스템 오디오. 녹음은 **마이크=L / 시스템=R 스테레오**로 받고, 저장할 때 전사용 16kHz mono WAV와 L/R 에너지 envelope(`<id>.channels.json`, 100ms hop)로 나눈다. 원본 스테레오는 남지 않는다. envelope로 모델 없이도 2화자(나/상대)를 얻는다.
 - **화자 분리**: 다자 자동 분리 + **수동 보정**. `sherpa-onnx-node`의 화자 임베딩 모델(CAM++)만 쓰고, 클러스터링은 앱이 직접 한다(§5-3). 네이티브 입력은 호출당 2.25초 이하로 제한한다(배포 Electron 크래시 회피).
-- **목소리 등록**: 화자에 구성원 이름을 지정하면 그 화자의 목소리 임베딩을 구성원 표본으로 저장하고, 다음 회의부터 같은 목소리를 자동으로 그 구성원으로 지정·제안한다(§5-4). 표본은 로컬 DB에만 둔다.
-- **범위**: 녹음 → 전사 → 시간대별 타임라인 → AI 요약(회의: 키워드·TL;DR·결정사항·액션아이템·미결 질문·주제별 요약 / 면접 4분류) → 액션아이템을 할 일로 등록.
+- **목소리 등록**: 화자에 구성원 이름을 지정하면 그 화자의 목소리 임베딩을 구성원 표본으로 저장하고, 다음 회의부터 같은 목소리를 자동으로 그 구성원으로 지정·제안한다(§5-4). 등록 전에 처리한 지난 회의에도 다시 찾기(Rematch)로 적용한다. 표본은 로컬 DB에만 둔다.
+- **범위**: 녹음(녹음 중 메모·북마크) → 전사 → 시간대별 타임라인(발화 점유율, 화자 교정 범위 3단계) → AI 요약(회의: 요약 형식 4종, 키워드·TL;DR·결정사항·액션아이템·미결 질문·주제별 요약 / 면접 4분류) → 액션아이템을 할 일로 등록. AI 대화에서 여러 회의의 기록을 검색해 질문할 수 있다(§6-3).
 - **AI 요약**: Claude Code 구독 로그인(`query()`, 모델 `SUMMARY_MODEL` = `claude-opus-5-5`)을 쓴다. 추가 과금이 없다. 오디오는 외부로 보내지 않고 전사 텍스트만 보낸다.
 
 ## 1. 아키텍처 개요
@@ -50,7 +50,7 @@ RecordingView ── recordingStore ──IPC──► recording.ipc.ts
 
 ## 2. 데이터 모델 (SQLite)
 
-`meetings`·`meeting_speakers`·`meeting_segments`·`meeting_cuts`·`meeting_summaries`는 `src/main/db/schema.ts`, 인식 보조 테이블(`stt_glossary`·`meeting_members`·`meeting_attendees`)은 `src/main/services/recognition-aids.ts`의 `RECOGNITION_AIDS_SCHEMA`가 만든다. 목소리 테이블(`meeting_speaker_voices`·`member_voice_samples`)과 `meeting_speakers`의 구성원 연결 컬럼은 `src/main/services/voiceprint.ts`의 `VOICEPRINT_SCHEMA`·`applyVoiceprintSchema`가 만들고, `schema.ts`가 `RECOGNITION_AIDS_SCHEMA` 뒤에 실행한다(`meeting_members`를 FK로 가리키므로). 모두 `CREATE TABLE IF NOT EXISTS`이고, 뒤에 붙은 컬럼은 `PRAGMA table_info` 확인 후 `ALTER TABLE`로 추가한다.
+`meetings`·`meeting_speakers`·`meeting_segments`·`meeting_cuts`·`meeting_summaries`·`meeting_marks`는 `src/main/db/schema.ts`, 인식 보조 테이블(`stt_glossary`·`meeting_members`·`meeting_attendees`)은 `src/main/services/recognition-aids.ts`의 `RECOGNITION_AIDS_SCHEMA`가 만든다. 목소리 테이블(`meeting_speaker_voices`·`member_voice_samples`)과 `meeting_speakers`의 구성원 연결 컬럼은 `src/main/services/voiceprint.ts`의 `VOICEPRINT_SCHEMA`·`applyVoiceprintSchema`가 만들고, `schema.ts`가 `RECOGNITION_AIDS_SCHEMA` 뒤에 실행한다(`meeting_members`를 FK로 가리키므로). 모두 `CREATE TABLE IF NOT EXISTS`이고, 뒤에 붙은 컬럼은 `PRAGMA table_info` 확인 후 `ALTER TABLE`로 추가한다.
 
 ```sql
 CREATE TABLE IF NOT EXISTS meetings (
@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS meetings (
   audio_compacted INTEGER NOT NULL DEFAULT 0, -- 컷편집이 실제 적용됐는지(멱등 가드)
   original_duration_ms INTEGER,               -- 컷편집 전 길이(NULL=미적용)
   pipeline_version INTEGER NOT NULL DEFAULT 0,-- 처리 파이프라인 버전(§13). 전체 처리 시 기록
+  summary_template TEXT,                      -- 요약 형식(MeetingTemplateId, §6-1). NULL=제목으로 자동 판별. 면접은 항상 NULL
+  speakers_confirmed INTEGER NOT NULL DEFAULT 0, -- 사용자가 화자 수를 확인했는지(§8). 이 열을 ALTER 로 붙일 때 기존 회의는 모두 1
   project_id INTEGER,                         -- 옛 프로젝트 귀속. 컬럼만 남고 쓰지 않는다
   calendar_event_id TEXT,                     -- 옛 캘린더 매칭. 새로 채우지 않는다
   calendar_event_title TEXT,                  -- 녹음 목록 카드 표시, 전사 초기 프롬프트, 비서의 회의 매칭에 쓴다
@@ -141,8 +143,22 @@ CREATE TABLE IF NOT EXISTS meeting_summaries (
   topics TEXT,                                -- JSON SummaryTopic[] 주제별 요약
   open_questions TEXT,                        -- JSON SummaryTextItem[] 미결 질문
   keywords TEXT,                              -- JSON string[] 키워드(최대 10)
+  template_id TEXT,                           -- 이 요약을 만든 요약 형식(§6-1). NULL=형식 도입 이전 요약 또는 면접
   FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
 );
+
+-- ── 메모·북마크 (§6-1, §8): 녹음 중(live)·재생 중(post)에 사용자가 남긴 메모. text=''이면 북마크 ──
+CREATE TABLE IF NOT EXISTS meeting_marks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+  raw_ms INTEGER NOT NULL,                    -- 녹음 경과 시각(일시정지 제외). 한 번 정하면 바뀌지 않는다
+  at_ms INTEGER NOT NULL,                     -- 현재 오디오 시간축 시각. live 메모는 컷편집 때 raw_ms 로 다시 계산한다(§11)
+  text TEXT NOT NULL DEFAULT '',              -- 최대 500자(MARK_TEXT_MAX). ''=북마크
+  origin TEXT NOT NULL DEFAULT 'live',        -- 'live'(녹음 중) | 'post'(상세 화면에서 추가, 이미 현재 시간축)
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_marks_meeting ON meeting_marks(meeting_id, at_ms);
 
 -- ── 인식 보조 장치 (§12): 사용자가 직접 입력하는 용어집·구성원. 로컬 DB에만 저장 ──
 CREATE TABLE IF NOT EXISTS stt_glossary (
@@ -209,7 +225,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_member_voice_samples_src ON member_voice_s
 
 ## 3. 공용 타입
 
-렌더러 타입은 `src/renderer/src/types/index.ts`에 있다: `MeetingStatus`, `MeetingSource`(`'mic' | 'mic+system'`), `MeetingKind`(`'meeting' | 'interview'`), `Meeting`(위 `meetings` 행), `MeetingSpeaker`, `MeetingSegment`, `MeetingCut`, `ActionItem`, `SummaryTextItem`, `SummaryTopic`, `InterviewQaPair`, `InterviewCompetency`, `MeetingSummary`(JSON 컬럼을 배열로 푼 형태), `MeetingDetail`, `RecordingStreamEvent`, `ChannelEnergy`, `GlossaryEntry`, `Member`, `Attendee`, `SpeakerVoiceResult`(목소리 버튼 결과), `MemberVoiceprint`(구성원별 표본 요약), `RecordingAPI`, `RecorderBridgeAPI`, `RecognitionAidsAPI`, `MeetingNoteFilter`, `MeetingNoteItem`, `MeetingNotesAPI`.
+렌더러 타입은 `src/renderer/src/types/index.ts`에 있다: `MeetingStatus`, `MeetingSource`(`'mic' | 'mic+system'`), `MeetingKind`(`'meeting' | 'interview'`), `Meeting`(위 `meetings` 행), `MeetingSpeaker`, `MeetingSegment`, `MeetingCut`, `ActionItem`, `SummaryTextItem`, `SummaryTopic`, `InterviewQaPair`, `InterviewCompetency`, `MeetingSummary`(JSON 컬럼을 배열로 푼 형태), `MeetingDetail`, `RecordingStreamEvent`, `ChannelEnergy`, `GlossaryEntry`, `Member`, `Attendee`, `SpeakerVoiceResult`(목소리 버튼 결과), `MemberVoiceprint`(구성원별 표본 요약), `MeetingTemplateId`·`SummaryTemplateOption`(요약 형식), `MeetingMark`(메모·북마크), `ReassignScope`·`ReassignResult`(화자 교정 범위), `RematchOptions`·`RematchSpeakerPlan`·`RematchMeetingPlan`·`RematchResult`(다시 찾기), `RecordingAPI`, `RecorderBridgeAPI`, `RecognitionAidsAPI`, `MeetingNoteFilter`, `MeetingNoteItem`, `MeetingNotesAPI`.
 메인 쪽 어댑터·요약 타입은 `src/main/services/meeting-types.ts`에 있다.
 
 꼭 지켜야 하는 형태:
@@ -252,8 +268,37 @@ interface MeetingSummary {    // 회의 필드. 면접 필드(qa_pairs 등)는 �
   open_questions: SummaryTextItem[]
   key_points: string[]        // 구버전 요약에만 값이 있다
   next_steps: string[]        // 구버전 요약에만 값이 있다
+  template_id?: MeetingTemplateId | null // 이 요약을 만든 형식. null=형식 도입 이전 요약 또는 면접
   // …면접 전용 qa_pairs·competencies·follow_ups·fact_checks
 }
+
+type MeetingTemplateId = 'default' | 'one_on_one' | 'standup' | 'review'
+
+interface MeetingMark {       // meeting_marks 행
+  id: number
+  meeting_id: number
+  raw_ms: number              // 녹음 경과(불변)
+  at_ms: number               // 현재 오디오 시간축
+  text: string                // ''=북마크
+  origin: 'live' | 'post'
+  created_at: string
+  updated_at: string
+}
+
+type ReassignScope = 'one' | 'forward' | 'all'
+interface ReassignResult { success: boolean; changed: number; merged: boolean; error?: string }
+
+interface RematchOptions { meetingIds?: number[]; memberIds?: number[] }
+interface RematchSpeakerPlan {
+  speaker_id: number
+  speaker_label: string       // meeting_speakers.label, 없으면 speaker_key
+  member_id: number
+  member_name: string
+  source: 'auto' | 'suggested'
+  score: number               // 코사인 유사도
+}
+interface RematchMeetingPlan { meeting_id: number; title: string; started_at: string; speakers: RematchSpeakerPlan[] }
+interface RematchResult { meetings: number; auto: number; suggested: number }
 
 interface MeetingDetail {
   meeting: Meeting
@@ -262,6 +307,7 @@ interface MeetingDetail {
   cuts: MeetingCut[]
   summary: MeetingSummary | null
   attendees: Attendee[]
+  marks?: MeetingMark[]       // at_ms, id 오름차순
 }
 
 /** 처리 진행률 스트림 (recording:stream) */
@@ -283,7 +329,7 @@ interface RecordingStreamEvent {
 |---|---|---|
 | `recording:list` | — | `Meeting[]` (`started_at DESC`) |
 | `recording:get` | `id` | `MeetingDetail \| null` |
-| `recording:createDraft` | `{title?, source?, kind?, expected_speakers?, attendee_ids?, compact_audio?}` | `{id}` (`status='recording'` 행. 제목이 비면 `제목 없는 회의`/`제목 없는 면접`. `expected_speakers`는 1 이상이면 반올림 후 20 상한, 없으면 면접 2·회의 NULL. `compact_audio`는 `false`일 때만 0) |
+| `recording:createDraft` | `{title?, source?, kind?, expected_speakers?, attendee_ids?, compact_audio?, summary_template?}` | `{id}` (`status='recording'` 행. 제목이 비면 `제목 없는 회의`/`제목 없는 면접`. `expected_speakers`는 1 이상이면 반올림 후 20 상한, 없으면 면접 2·회의 NULL. `compact_audio`는 `false`일 때만 0. `summary_template`은 회의이고 알려진 형식 id일 때만 저장하고, 면접이거나 알 수 없는 값이면 NULL. `speakers_confirmed`는 참석 인원을 지정했거나 면접이면 1, 아니면 0) |
 | `recording:discardDraft` | `id` | `{success}` (오디오가 없는 `status='recording'` 행만 지운다. 그 외는 `false`) |
 | `recording:saveAudio` | `id, ArrayBuffer, {mime, durationMs}, channelEnergy?` | `{path}` (파일명 `<id>.wav`/`.ogg`/`.webm`. 채널 에너지가 있으면 `<id>.channels.json`에 쓰고 없으면 지운다. 채널 에너지 없는 `mic+system`은 `source='mic'`으로 내린다. 길이는 WAV 헤더 값을 먼저 쓴다) |
 | `recording:process` | `id, {skipTranscribe?}?` | `{success, error?, transcribed?}` (`transcribed:false` = 전사 엔진이 없어 안내 세그먼트만 넣음. 렌더러는 이때 자동 요약을 건너뛴다) |
@@ -295,17 +341,23 @@ interface RecordingStreamEvent {
 | `recording:enrollSpeakerVoice` | `speakerId` | `{success, error?, member_id?, enrolled?, created?}` (목소리가 없거나 발화 20초 미만이면 구성원을 만들기 전에 `success:false`, "발화가 짧아 목소리를 등록할 수 없습니다(20초 이상 필요).". 이름이 구성원이 아니면 그 이름으로 구성원을 만든 뒤 등록) |
 | `recording:confirmSpeakerMatch` | `speakerId` | `{success, error?, member_id?, enrolled?}` (`auto`/`suggested` → `manual`, 이름 확정, 표본 등록. 발화가 20초 미만이어도 확정·이름 지정은 하고 `enrolled:false`) |
 | `recording:rejectSpeakerMatch` | `speakerId` | `{success}` (연결된 구성원이 없으면 `false`. 거절 목록에 추가, 연결 해제, `auto`였으면 이름을 비움, 그 화자의 표본 삭제) |
-| `recording:reassignSegment` | `segmentId, speakerId \| null` | `{success}` |
+| `recording:reassignSegment` | `segmentId, speakerId \| null, scope?` | `ReassignResult` `{success, changed, merged, error?}` (`scope`: `one`(기본, 알 수 없는 값도 `one`) / `forward` / `all`, §5-4. 바꾼 발언은 `speaker_corrected=1`. 대상 화자가 다른 회의 소속이면 `success:false`. 이미 그 화자면 `changed:0`. `all`이고 원래 화자와 대상 화자가 모두 있으면 `recording:mergeSpeakers`와 같은 병합을 하고 `merged:true`) |
 | `recording:updateSegmentText` | `segmentId, text` | `{success}` (`text_corrected=1`) |
 | `recording:addSpeaker` | `meetingId, name` | `{success, id?, existed?, error?}` (같은 이름이 있으면 그 화자를 쓴다) |
-| `recording:mergeSpeakers` | `meetingId, from, into` | `{success, error?}` (같은 회의의 서로 다른 화자가 아니면 `success:false`, "같은 회의의 서로 다른 화자만 합칠 수 있습니다.". `from`의 세그먼트를 `into`로 옮기며 `speaker_corrected=1`로 표시하고 `from` 행을 지운다) |
+| `recording:mergeSpeakers` | `meetingId, from, into` | `{success, error?}` (`speaker-correction.ts` `mergeSpeakersInMeeting`. 같은 회의의 서로 다른 화자가 아니면 `success:false`, "같은 회의의 서로 다른 화자만 합칠 수 있습니다.". 한 트랜잭션에서 목소리를 합치고(§5-4) `from`의 세그먼트를 `into`로 옮기며 `speaker_corrected=1`로 표시하고 `from` 행을 지운다) |
 | `recording:toggleCut` | `cutId, enabled` | `{success}` |
 | `recording:actionItemToTodo` | `meetingId, index` | `{todo_id}` |
-| `recording:setExpectedSpeakers` | `id, n \| null` | `{success}` (0 이하·null 은 자동 추정) |
+| `recording:setExpectedSpeakers` | `id, n \| null` | `{success}` (0 이하·null 은 자동 추정. 항상 `speakers_confirmed=1`도 쓴다) |
 | `recording:setAttendees` | `meetingId, memberIds[]` | `{success}` (`meeting_attendees` 교체) |
+| `recording:setSummaryTemplate` | `meetingId, templateId \| null` | `{success, error?}` (`meetings.summary_template`만 저장한다. 재요약은 렌더러가 `recording:summarize`로 따로 요청한다. 없는 회의, 면접, 알 수 없는 형식이면 `success:false`. `null`=자동) |
+| `recording:listSummaryTemplates` | — | `[{id, name}]` (`default`·`one_on_one`·`standup`·`review` 순, §6-1) |
+| `recording:listMarks` | `meetingId` | `MeetingMark[]` (`at_ms, id` 오름차순) |
+| `recording:addMark` | `{meetingId, raw_ms, text?, origin?}` | `{id}` (`raw_ms`는 0 이상 정수로 반올림하고 `at_ms`도 같은 값으로 시작한다. `text`는 trim 후 500자까지, 비면 북마크. `origin`은 `post`가 아니면 `live`. 없는 회의면 throw) |
+| `recording:updateMark` | `{id, text}` | `{success}` (text 를 같은 규칙으로 정리. 비우면 북마크가 된다) |
+| `recording:deleteMark` | `id` | `{success}` |
 | 이벤트 `recording:stream` | (main→renderer) `RecordingStreamEvent` | — |
 
-`recording:get`은 `attendees`를 함께 돌려주고, 화자마다 `has_voice`(목소리 centroid 유무), `voice_enrolled`(이 화자 목소리가 구성원 표본으로 실제 저장돼 있는지), `member_name`(연결된 구성원 이름)을 붙이고 `rejected_member_ids`를 배열로 푼다. 임베딩은 내보내지 않는다. `recording:remove`는 오디오·`<id>.channels.json`·`<id>.compaction.json`을 모두 지운다.
+`recording:get`은 `attendees`와 `marks`(`listMarks`)를 함께 돌려주고, `summary`에 `template_id`를 붙이고, 화자마다 `has_voice`(목소리 centroid 유무), `voice_enrolled`(이 화자 목소리가 구성원 표본으로 실제 저장돼 있는지), `member_name`(연결된 구성원 이름)을 붙이고 `rejected_member_ids`를 배열로 푼다. 임베딩은 내보내지 않는다. `recording:remove`는 오디오·`<id>.channels.json`·`<id>.compaction.json`을 모두 지운다.
 
 녹음기 브리지(preload `window.api.recorder`, §14): `recorder:state`(renderer→main, `{active, draftId}`), `recorder:command`(main→renderer, `stop-and-save`), `recorder:command-done`(renderer→main, 결과).
 
@@ -322,6 +374,10 @@ interface RecordingStreamEvent {
 | `recognitionAids:removeMember` | `id` | `{success}` (그 구성원의 목소리 표본도 지우고, 연결된 화자의 `member_id`를 NULL 로) |
 | `recognitionAids:listVoiceprints` | — | `[{member_id, sample_count, total_speech_ms, updated_at}]` |
 | `recognitionAids:clearVoiceprint` | `memberId` | `{success, removed}` (그 구성원의 표본 전부 삭제) |
+| `recognitionAids:previewRematch` | `RematchOptions?` | `RematchMeetingPlan[]` (DB를 바꾸지 않는다. 바뀔 화자가 있는 회의만, §5-4) |
+| `recognitionAids:applyRematch` | `RematchOptions?` | `RematchResult` (한 트랜잭션 안에서 계획을 다시 세워 적용한다. 표본은 만들지 않는다) |
+
+`RematchOptions`는 `sanitizeRematchOptions`(`recognition-aids.ipc.ts`)가 정리한다. `meetingIds`·`memberIds`는 배열일 때만 받고, 양의 안전 정수만 중복 없이 최대 500개 남긴다. 빈 배열은 "대상 없음"이라 빈 결과다. 생략하면 전체다.
 
 ## 5. 어댑터 인터페이스 (main/services)
 
@@ -362,7 +418,7 @@ interface VadAdapter {
 **오디오 변환**: main에는 변환 단계가 없다. 렌더러가 저장 전에 `utils/audio.ts`의 `blobToWav16kMono`(Web Audio 디코드·리샘플)로 webm/opus를 16kHz mono 16-bit WAV로 바꾸고 채널 에너지(`<id>.channels.json`)를 함께 만든다. 변환이 실패하면 원본 webm을 그대로 저장하며, 이 경우 컷편집은 적용되지 않는다(§11, WAV 전용, §15).
 
 **파이프라인(meeting-pipeline.ts)**: `runMeetingPipeline(id, send, {skipTranscribe?})`. `recording:process`가 먼저 `status='processing'`으로 바꾼 뒤 부른다. 같은 회의의 파이프라인이 이미 돌고 있으면(`pipeline-abort.ts` `beginPipeline`) DB를 건드리지 않고 phase:error만 보낸다. `audio_path`가 없으면 `failed`로 끝난다.
-0. **compact** (phase:compact, §11): `!skipTranscribe && compact_audio=1 && audio_compacted=0 && WAV`일 때만 `compactRecording` → 적용되면 파일 교체 + `duration_ms`/`original_duration_ms`/`audio_compacted=1` 갱신 + 기존 세그먼트·컷·회의 요약 근거 시각(`remapSummaryTimes`: `topics[].start_ms`, `decisions`·`action_items`·`open_questions`의 `at_ms`)·면접 요약 `qa_pairs[].start_ms` 재매핑(`remapExistingTimelines`). 실패/미적용은 치명적이지 않다(원본으로 계속). 컷편집이 검출한 발화 구간은 STT에 넘기지 않는다(§11).
+0. **compact** (phase:compact, §11): `!skipTranscribe && compact_audio=1 && audio_compacted=0 && WAV`일 때만 `compactRecording` → 적용되면 파일 교체 + `duration_ms`/`original_duration_ms`/`audio_compacted=1` 갱신 + 기존 세그먼트·컷·회의 요약 근거 시각(`remapSummaryTimes`: `topics[].start_ms`, `decisions`·`action_items`·`open_questions`의 `at_ms`)·녹음 중 메모(`origin='live'`) `at_ms`(`remapLiveMarks`)·면접 요약 `qa_pairs[].start_ms` 재매핑(`remapExistingTimelines`). 실패/미적용은 치명적이지 않다(원본으로 계속). 컷편집이 검출한 발화 구간은 STT에 넘기지 않는다(§11).
 1. `buildInitialPrompt(...)`로 initial_prompt를 조립한다(STT 실행 여부와 무관 — 빠른 재적용의 환각 필터도 같은 값을 쓴다).
 2. `stt.transcribe` → raw segments (phase:transcribe, progress) → `cleanSegments` → `filterHallucinations(segments, { prompt })` → `applyGlossary`(§12) → WAV 길이 클램프(시각을 `[0, WAV 길이]`로 자르고 빈 구간 제거). 정제 3단계는 `skipTranscribe` 경로에도 적용된다(단, 사용자가 고친 발언은 건너뜀 — §5-4).
    - `skipTranscribe`는 기존 `meeting_segments`를 재사용한다. 기존 세그먼트 끝 시각이 WAV 길이의 1.5배를 넘거나 세그먼트가 없으면 전체 재전사로 바꾼다.
@@ -418,7 +474,10 @@ interface VadAdapter {
   | 51 (다인) | 61.5분 | 1079 | 3726 | 2.24초 | 187 | 4 | 40.8초 |
 
   처리 시간은 임베딩이 대부분이고 창당 약 10ms다. 컷 직후의 조각 클러스터는 병합·재할당이 정리한다. 1on1 5건은 모두 2명으로 나뉜다. 다인 회의(51)는 정답 화자 수를 몰라 2~8명 범위만 확인한다.
-- **실측 회귀**(`scripts/diar-regress.mjs`, `npm run check:diar`): 앱 DB(읽기 전용)의 세그먼트와 녹음 파일로 `out/main/diarization-cli.js`(electron 모듈을 쓰지 않는 cli 엔트리, `--audio --segments --model [--num N]`, stdout 마지막 줄 JSON)를 배포 Electron 런타임(`ELECTRON_RUN_AS_NODE=1`)에서 회의별로 돌린다. cli의 최종 화자 수는 앱과 같은 후처리(`resolvePostprocessOptions({adapter:'sherpa'})` → `postprocessTurns` → 세그먼트별 `assignSpeaker`) 뒤의 고유 화자 수다. sherpa 모듈은 `LINKWORK_SHERPA_MODULE` → 일반 해석 → 배포 앱 `app.asar` 안 순서로 찾는다. 경로는 `LINKWORK_ELECTRON`·`LINKWORK_DIAR_CLI`·`LINKWORK_USERDATA`로 바꾼다. 단언: 회의 53·50·40·45·46 최종 화자 2명, 회의 51 2~8명이고 180초 이내, 모든 실행의 최대 창 ≤2.25초, 회의 50의 화자 목소리를 프로필로 회의 53의 두 주요 화자가 각각 서로 다른 50번 화자와 코사인 ≥0.70(최적 1:1)이고 교차 쌍 ≤0.62. 실패하면 종료 코드 1, 녹음·DB·Electron·cli·모델이 없으면 2. `--only 53,50`으로 일부만 돌린다. 녹음은 사용자 데이터라 이 회귀는 이 Mac에서만 돈다.
+- **실측 회귀**(`scripts/diar-regress.mjs`, `npm run check:diar`): 앱 DB(읽기 전용)의 세그먼트와 녹음 파일로 `out/main/diarization-cli.js`(electron 모듈을 쓰지 않는 cli 엔트리, `--audio --segments --model [--num N] [--emit-segments 1] [--chunk N]`, stdout 마지막 줄 JSON. `--emit-segments 1`이면 결과에 세그먼트별 화자 `segments:[{start_ms, end_ms, speaker}]`를 더한다. speaker 는 후처리 뒤 `assignSpeaker`가 붙인 키다. `0`이나 빈 값이면 끈다. `--chunk N`이면 창 임베딩을 N개씩 같은 cli 자식 프로세스(내부 인자 `--embed-range a:b`)에 나눠 뽑고 클러스터링은 부모가 한다. 임베딩 값은 나누지 않을 때와 같고 결과 끝에 `chunks`(자식 수)가 붙는다)를 배포 Electron 런타임(`ELECTRON_RUN_AS_NODE=1`)에서 회의별로 돌린다. cli의 최종 화자 수는 앱과 같은 후처리(`resolvePostprocessOptions({adapter:'sherpa'})` → `postprocessTurns` → 세그먼트별 `assignSpeaker`) 뒤의 고유 화자 수다. sherpa 모듈은 `LINKWORK_SHERPA_MODULE` → 일반 해석 → 배포 앱 `app.asar` 안 순서로 찾는다. 경로는 `LINKWORK_ELECTRON`·`LINKWORK_DIAR_CLI`·`LINKWORK_USERDATA`로 바꾼다. 단언: 회의 53·50·40·45·46 최종 화자 2명, 회의 51 2~8명이고 180초 이내, 모든 실행의 최대 창 ≤2.25초, 회의 50의 화자 목소리를 프로필로 회의 53의 두 주요 화자가 각각 서로 다른 50번 화자와 코사인 ≥0.70(최적 1:1)이고 교차 쌍 ≤0.62. 실패하면 종료 코드 1, 녹음·DB·Electron·cli·모델이 없으면 2. `--only 53,50`으로 일부만 돌린다. 녹음은 사용자 데이터라 이 회귀는 이 Mac에서만 돈다.
+  - 평가용 옵션: `--model <onnx>`(다른 임베딩 모델로 돌린다. 기본 모델이 아니면 회의 간 목소리 매칭 단언은 참고로만 출력하고 판정에서 뺀다. 화자 수·창 길이·처리 시간 단언은 그대로 판정한다), `--tag <이름>`(가설 파일 이름의 모델 태그, 기본은 앱 모델 `campplus` 또는 모델 파일명), `--num N`(화자 수 고정), `--dump-hyp <dir>`(cli를 `--emit-segments 1`로 돌려 회의마다 `hyp_<id>_<tag>.json`(SegLST)과 `stats_<id>_<tag>.json`(화자 수·창·처리 시간·목소리)을 쓴다. 이때 `--only`에 기대값이 없는 회의도 화자 수 단언 없이 돈다), `--chunk N`(cli `--chunk N`으로 넘긴다. 기본 0은 앱과 같은 단일 프로세스 경로).
+  - 네이티브 메모리: sherpa-onnx-node 1.13.3은 창(스트림)마다 받은 네이티브 메모리를 돌려주지 않는다(GC를 강제하거나 이벤트 루프에 양보해도, 추출기를 다시 만들어도 회수되지 않는다). 그래서 한 프로세스의 RSS가 창 수에 비례해 는다(CAM++ 약 3MB/창, ERes2NetV2 약 8MB/창). 앱은 회의마다 utilityProcess 워커를 띄우고 끝나면 내려 회수한다(창 수가 많은 긴 회의는 그동안 워커 메모리가 크다. 회의 51 3,726창이면 CAM++로 어림잡아 10GB 이상). 큰 후보 모델을 긴 회의에 돌리는 평가는 `--chunk`로 프로세스당 창 수를 묶는다.
+  - `check:diar`는 정답 라벨 없이 도는 **구조 회귀 관문**이다(화자 수·창 길이·처리 시간·목소리 매칭). 화자 귀속 정확도(DER)는 평가 하네스(`scripts/eval/`, [scripts/eval/README.md](../scripts/eval/README.md))가 정답 라벨로 잰다.
 - **후처리 옵션 분기**(`speaker-assign.ts`의 `resolvePostprocessOptions({ adapter, expectedSpeakers })`, `postprocess.ts`는 그대로):
   | 조건 | smoothing | 소수 화자 흡수 |
   |---|---|---|
@@ -440,7 +499,20 @@ interface VadAdapter {
   - **등록(수동, `syncSpeakerEnrollment`)**: 화자 이름(`display_name`)을 켜진 구성원의 이름이나 별칭과 같게(앞뒤 공백·대소문자 무시) 지정하면 그 구성원에 연결하고(`member_source='manual'`), 그 화자의 centroid를 표본으로 upsert한다(`speech_ms` ≥ 20초(`ENROLL_MIN_SPEECH_MS`)일 때만, 출처 `(member_id, meeting_id, speaker_key)`당 1건). 이름을 지우거나 구성원이 아닌 이름으로 바꾸면 연결과 그 표본을 지운다. 구성원이 아닌 이름은 [목소리 등록] 버튼(`recording:enrollSpeakerVoice`)으로 구성원을 만든 뒤 등록한다. 이 버튼은 그 화자의 목소리가 없거나 발화가 20초 미만이면 구성원을 만들지 않고 거절한다(`SHORT_VOICE_ERROR`).
   - **자동 지정은 표본으로 등록하지 않는다.** 사용자가 [맞음] 버튼(`recording:confirmSpeakerMatch`)을 눌러야 `manual`이 되고 표본이 생긴다(발화 20초 미만이면 확정·이름 지정만 하고 표본은 만들지 않는다). [이 사람 아님] 버튼(`recording:rejectSpeakerMatch`)은 거절 목록에 넣고 연결을 끊는다.
   - **재처리 승계**: `planSpeakerCarryover`가 옛 화자를 이어받은 새 화자는 옛 행의 `rejected_member_ids`를 이어받는다. 승계한 이름이 구성원 이름이면 그 구성원에 연결한다 — 옛 연결이 같은 구성원의 `auto`였으면 `auto`와 점수를 그대로 두고(사용자가 확정하지 않았다), 아니면 `manual`로 연결하고 이 회의에서 온 그 구성원의 표본을 새 centroid로 바꾼다. 새 centroid가 없거나 발화 20초 미만이면 옛 표본을 그대로 두고 출처 `speaker_key`만 새 화자 키로 옮긴다. 승계한 이름이 구성원이 아니면 연결하지 않는다.
-  - **수동 병합**(`recording:mergeSpeakers` → `mergeSpeakerVoices`, 같은 회의의 서로 다른 두 화자만): 두 화자의 centroid를 `speech_ms` 가중 평균해 남는 화자에 두고, 없어지는 화자에서 온 표본은 지운다. 남는 화자가 `manual`로 연결돼 있으면 합친 centroid로 표본을 갱신한다. 세그먼트 단위 화자 변경(`recording:reassignSegment`)은 centroid를 갱신하지 않는다(§15).
+  - **수동 병합**(`recording:mergeSpeakers` → `speaker-correction.ts` `mergeSpeakersInMeeting` → `mergeSpeakerVoices`, 같은 회의의 서로 다른 두 화자만): 두 화자의 centroid를 `speech_ms` 가중 평균해 남는 화자에 두고, 없어지는 화자에서 온 표본은 지운다. 남는 화자가 `manual`로 연결돼 있으면 합친 centroid로 표본을 갱신한다.
+  - **화자 교정 범위**(`recording:reassignSegment` → `speaker-correction.ts` `reassignSegments`): 발언 하나를 기준으로 범위 3단계를 고른다. 범위 계산은 순수 함수 `planReassign`이다(렌더러 `utils/speakerScope.ts`의 `planReassignIds`가 같은 규칙으로 안내 문구의 발언 수를 센다). 정렬은 `(start_ms, sort_order, id)`이고, 화자 없음(`NULL`)끼리도 같은 화자로 본다.
+    - `one`(이 구간만): 그 발언만 바꾼다.
+    - `forward`(이 구간부터): 기준 발언과 같은 화자의 발언 중 기준 발언과 같거나 뒤에 있는 것을 모두 바꾼다.
+    - `all`(전체): 기준 발언과 같은 화자의 발언을 모두 바꾼다. 원래 화자와 대상 화자가 모두 있으면 수동 병합과 같은 경로(`mergeSpeakersInMeeting`)를 타고 원래 화자 행이 없어진다. 어느 한쪽이 화자 없음이면 발언만 옮긴다.
+    - 바뀐 발언은 모두 `speaker_corrected=1`이라 빠른 재적용이 이 지정을 보존한다. `one`·`forward`는 화자 centroid를 다시 계산하지 않는다(오디오 없이는 계산할 수 없다). 섞인 화자의 centroid는 섞인 채 남는다(§15).
+  - **다시 찾기(Rematch, `planRematch`·`applyRematch`)**: 지금 등록된 구성원 목소리로 지난 회의의 이름 없는 화자를 다시 매칭한다. 매칭 규칙은 자동 매칭의 `planVoiceMatches`를 그대로 쓴다.
+    - 대상 회의: `status`가 `transcribed`·`summarized`(`meetingIds`를 주면 그 안), `started_at` 내림차순.
+    - 대상 화자: 목소리 centroid가 있고, 이름(`display_name`)이 비어 있고, `member_source`가 NULL 또는 `suggested`인 화자. 대상이 아닌 화자에 연결된 구성원은 그 회의의 후보에서 뺀다. 참석자가 지정된 회의는 참석자로 좁히고, 화자별 `rejected_member_ids`를 지킨다.
+    - 목소리 모델(`meeting_speaker_voices.model`)별로 프로필을 따로 계산한다. 한 모델 묶음에서 고른 구성원은 같은 회의의 다음 묶음에서 다시 고르지 않는다.
+    - `memberIds`는 전체 구성원으로 계획한 뒤 결과만 거른다. 좁혀서 계획하면 2순위 점수 차가 커져 자동 지정이 늘기 때문이다.
+    - 지금 상태와 같은 결과(같은 구성원·같은 source)는 계획에서 뺀다.
+    - 적용은 2단계다. 미리 보기(`recognitionAids:previewRematch`)로 바뀔 화자 목록을 보여 주고, 적용(`recognitionAids:applyRematch`)은 트랜잭션 안에서 같은 조건으로 계획을 다시 세워 쓴다. `auto`는 연결·점수와 함께 `display_name`을 구성원 이름으로 채우고, `suggested`는 연결·점수만 쓴다. 같은 회의에서 이번에 다른 화자에게 간 구성원을 `suggested`로 가리키던 화자는 그 제안(`member_id`·`member_source`·`match_score`)을 지운다. 한 회의에서 한 구성원이 두 화자에 연결되지 않게 하기 위해서다.
+    - **표본(`member_voice_samples`)은 만들지 않는다.** 이미 만든 요약의 화자 이름은 요약을 다시 만들어야 반영된다.
   - **실패 격리**: `applyMeetingVoices`는 merge 트랜잭션 안의 SAVEPOINT로 감싼다. 목소리 저장·승계·자동 매칭이 실패하면 그 단계만 되돌리고 스트림 메시지 "목소리 저장·매칭을 건너뛰었습니다. (원인)"을 보낸 뒤 전사·화자 저장을 계속한다.
   - 회의를 지워도 표본은 남는다(`meeting_id` SET NULL). 구성원을 지우면 그 표본도 지워지고, 연결된 화자의 `member_id`·`member_source`·`match_score`는 NULL이 된다(이름은 남는다). [목소리 삭제]는 표본만 지우고 화자 연결은 둔다.
 
@@ -448,12 +520,15 @@ interface VadAdapter {
 
 Claude Agent SDK의 `query()`를 Claude Code 구독 로그인으로 부른다. SDK lazy load, 실행 파일 찾기, 환경 변수 정리, `toFriendlyError`(미로그인·미설치 안내)는 `ai-agent.ts`와 같은 방식으로 이 파일 안에 따로 둔다. 요약은 데이터 조회가 아니라 변환이므로 도구를 모두 끈다(`tools: []`, `allowedTools: []`, `settingSources: []`, MCP 없음). 모델은 `SUMMARY_MODEL`(`claude-opus-5-5`), `maxTurns: 3`, `cwd`는 `userData`다. 구독 로그인만 쓰도록 자식 프로세스 환경에서 `ANTHROPIC_API_KEY`·`ANTHROPIC_AUTH_TOKEN`·`CLAUDE_CODE_USE_BEDROCK`·`CLAUDE_CODE_USE_VERTEX`를 뺀다. `claude` 실행 파일은 `/opt/homebrew/bin`·`/usr/local/bin`·`~/.local/bin`·`~/.claude/local` 순으로 찾는다.
 
-- 입력: 전사본을 `[mm:ss] 화자명: 텍스트` 줄로 직렬화한다(`formatTranscriptLines`, 화자명은 `display_name` → `label` → `화자`, 빈 발언 제외). 세그먼트가 없거나 텍스트가 모두 비면 Claude를 부르지 않고 오류로 끝난다. 80,000자(`MAX_TRANSCRIPT_CHARS`)를 넘으면 `fitTranscript`가 줄을 시간순으로 균등 샘플링해 앞·중간·끝을 모두 남기고, 끝에 발췌본이라는 안내를 붙인다. 앞에 `buildSummaryContextBlock(loadPromptContext(db, meetingId))`의 `[참고 정보]` 블록(참석자·용어집, §12)을 붙인다 — 비어 있으면 생략. `SummarySpec.buildPrompt(transcript, contextBlock)`.
-- 시스템 프롬프트(회의): `MEETING_SPEC.systemPrompt`. 원칙 블록 → 출력 키 블록(`MEETING_OUTPUT_KEYS`, 회의 종류별 템플릿에서 갈아끼울 수 있게 분리) 순서다.
-  - 원칙: 전사록에 없는 내용 금지(불확실하면 빈 배열·null). 시각은 근거 전사 줄의 `mm:ss`를 그대로 복사하고 계산·추정하지 않는다(못 찾으면 null). 화자명이 `화자 1` 같은 기본 라벨이면 실명을 추측하지 않고 문장 주어·assignee로 쓰지 않는다. assignee는 전사록에 이름으로 드러날 때만 채운다(`[참고 정보]`의 참석자는 표기 맞춤용). 같은 내용을 여러 키에 반복하지 않는다.
+- 입력: 전사본을 `[mm:ss] 화자명: 텍스트` 줄로 직렬화한다(`formatTranscriptLines`, 화자명은 `display_name` → `label` → `화자`, 빈 발언 제외). 세그먼트가 없거나 텍스트가 모두 비면 Claude를 부르지 않고 오류로 끝난다. 전사 예산은 80,000자(`MAX_TRANSCRIPT_CHARS`)에서 `[사용자 메모]` 블록 길이를 뺀 값이다. 넘으면 `fitTranscript(lines, {lineStartMs, keepRanges, reserveChars})`가 줄을 시간순으로 균등 샘플링해 앞·중간·끝을 모두 남기고, 끝에 발췌본이라는 안내를 붙인다. 메모가 있으면 각 메모 시각 앞 90초~뒤 10초(`[at_ms − 90000, at_ms + 10000]`)에 시작하는 줄은 샘플링에서 빼지 않고 고정으로 넣고, 나머지 예산으로 다른 줄을 균등 샘플링한다. 고정 줄만으로 예산을 넘으면 고정 없이 균등 샘플링한다.
+- 전사록 앞의 `contextBlock`은 `[참고 정보]` 블록(`buildSummaryContextBlock(loadPromptContext(db, meetingId))`, 참석자·용어집, §12)과 `[사용자 메모]` 블록(`buildMarksBlock(listMarks(db, meetingId))`, `recognition-aids.ts`)을 빈 줄로 이은 것이다. 빈 블록은 생략한다. `SummarySpec.buildPrompt(transcript, contextBlock)`.
+  - `[사용자 메모]` 블록: 메모를 `at_ms` 순으로 `[mm:ss] 메모`(북마크는 `(북마크)`) 한 줄씩 쓴다. 메모 안의 줄바꿈·연속 공백은 공백 하나로 바꾼다. 최대 200줄(`MARKS_BLOCK_MAX_LINES`)·8,000자(`MARKS_BLOCK_MAX_CHARS`)이고, 잘리면 마지막 줄에 `(메모 N개 중 M개만 표시)`를 붙인다. 시각은 전사 줄과 같은 현재 오디오 시간축이다.
+- 시스템 프롬프트(회의): `buildMeetingSpec(template).systemPrompt`(형식 선택은 §6-1). 원칙 블록 → `[회의 형식]` 블록(기본 형식은 없음) → 출력 키 블록(`MEETING_OUTPUT_KEYS`에 형식별 키 보조 지시를 끼운 `buildOutputKeys(template)`) 순서다. `MEETING_SPEC`은 기본 형식의 스펙이다.
+  - 원칙: 전사록에 없는 내용 금지(불확실하면 빈 배열·null). 시각은 근거 전사 줄의 `mm:ss`를 그대로 복사하고 계산·추정하지 않는다(못 찾으면 null). 화자명이 `화자 1` 같은 기본 라벨이면 실명을 추측하지 않고 문장 주어·assignee로 쓰지 않는다. assignee는 전사록에 이름으로 드러날 때만 채운다(`[참고 정보]`의 참석자는 표기 맞춤용). 같은 내용을 여러 키에 반복하지 않는다. `[사용자 메모]`는 사용자가 중요하다고 표시한 지점이라 각 메모 시각 앞 90초~뒤 10초 전사를 먼저 보고 알맞은 키에 반영하되, 메모 문구를 사실로 단정하지 않고 시각은 메모가 아니라 근거 전사 줄에서 복사한다.
   - 출력 키: `tldr`(결론 2~3문장), `keywords`(핵심 명사구 5~10개), `topics`(`[{title, start, points}]` 시간순 주제 3~8개, 10분 미만 회의는 1~3개, points 2~5개), `decisions`(`[{text, at}]`), `action_items`(`[{text, assignee, due, at}]`), `open_questions`(`[{text, at}]` 회의 안에서 답이 나오지 않은 질문). 옛 `key_points`는 주제별 요약으로, `next_steps`는 액션아이템·미결 질문으로 흡수해 새 요약은 둘 다 `[]`다.
   - 회의·면접 요약 시스템 프롬프트는 공통 조각 `src/main/services/writing-style.ts`의 ASD-STE100 글쓰기 규칙과 JSON 보조 안내를 포함하고, "순수 JSON만 출력" 문장을 마지막에 둔다. 회의 프롬프트는 `keywords`·`title`이 명사구라 글쓰기 규칙의 문장 규칙을 적용하지 않는다고 덧붙인다.
-- 출력 파싱: 응답에서 JSON 블록 추출(`extractJson`, 코드펜스 허용) → zod 검증·정규화(`MEETING_SPEC.validate`) → `meeting_summaries` upsert.
+- 출력 파싱: 응답에서 JSON 블록 추출(`extractJson`, 코드펜스 허용) → zod 검증·정규화(`validate`) → `meeting_summaries` upsert. upsert는 쓴 형식 id를 `template_id`에 남긴다(면접은 NULL).
+  - **할 일 연결 승계**(`carryTodoIds`): 재요약 전 행의 `action_items`에서 `todo_id`가 있는 항목을 읽어, 소문자로 바꾸고 공백·문장부호·기호를 뺀 문장이 같은 새 항목에 `todo_id`를 옮긴다. 옛 항목 하나는 새 항목 하나에만 옮긴다. 그래서 형식을 바꾸거나 메모를 반영해 다시 요약해도 이미 할 일로 옮긴 항목이 다시 등록 대상이 되지 않는다.
   - 정규화: 문자열 trim, 빈 text·title 항목 제거. `at`·`start`는 `parseTimestamp`로 `at_ms`·`start_ms`가 된다. `keywords`는 앞 `#` 제거·중복 제거·최대 10개. `topics`는 최대 12개·points 최대 8개, 모든 `start_ms`가 있으면 오름차순 정렬. 개수 하한은 프롬프트로만 요구하고 스키마로 강제하지 않는다(짧은 회의의 요약이 파싱 실패로 버려지지 않게).
   - `decisions`·`open_questions`는 문자열 항목도 받아 `at_ms: null`로 바꾼다.
 - **타임스탬프 규약**(회의·면접 공통): AI에게 ms 정수를 만들게 하지 않는다. 전사 줄의 `[mm:ss]`를 그대로 돌려받아 `summary-spec.ts`의 `parseTimestamp`가 ms로 환산한다. 받는 형식은 `mm:ss`(분 1~3자리, 초 00~59), `h:mm:ss`, 대괄호로 감싼 `[mm:ss]`다. 그 밖의 형식(`00:75`, `3분 12초`)과 빈 값은 `null`이고, 화면은 시각 버튼·표기를 숨긴다. 회귀 테스트: `summary-spec.test.ts`.
@@ -466,10 +541,24 @@ Claude Agent SDK의 `query()`를 Claude Code 구독 로그인으로 부른다. S
 
 | kind | 스펙 | 위치 |
 |---|---|---|
-| `meeting` | `MEETING_SPEC` — 키워드·TL;DR·주제별 요약·결정사항·액션아이템·미결 질문 | `meeting-summary.ts` |
+| `meeting` | `buildMeetingSpec(resolveTemplate(summary_template, title))` — 키워드·TL;DR·주제별 요약·결정사항·액션아이템·미결 질문 | `meeting-summary.ts` |
 | `interview` | `INTERVIEW_SPEC` — 면접 4분류 | `interview-summary.ts` |
 
 두 스펙 모두 **상대 종류의 컬럼을 `'[]'`로 덮어쓴다**. 종류를 바꿔 재요약했을 때 이전 종류의 잔여 데이터가 화면에 남지 않게 하기 위함이다.
+
+**요약 형식(회의 전용, `src/main/services/meeting-templates.ts`)**: 형식은 지시문만 바꾼다. 출력 키와 스키마는 모든 형식이 같다. 형식은 코드 상수 4종이다.
+
+| id | 이름 | `[회의 형식]` 목적 | 주제 이름 후보 | 키 보조 지시 | 제목 자동 판별(대소문자 무시) |
+|---|---|---|---|---|---|
+| `default` | 기본 | 없음 | 없음 | 없음 | 맞는 형식이 없을 때 |
+| `one_on_one` | 1:1 | 두 사람의 현재 상태·진행·막힌 점·피드백·성장 | 체크인, 진행 상황, 막힌 점, 피드백, 성장·커리어 | tldr: 상대의 현재 상태와 핵심 약속 / action_items: 양쪽이 한 약속 모두 | `1on1`, `1:1`, `1-on-1`, `원온원`, `일대일` |
+| `standup` | 스탠드업 | 사람별 지난 진행·오늘 할 일·블로커 | 지난 진행, 오늘 할 일, 블로커 | open_questions: 해결 담당이 정해지지 않은 블로커 | `스탠드업`, `데일리`, `daily`, `standup`, `스크럼` |
+| `review` | 리뷰·회고 | 검토 대상·잘된 점·문제점과 원인·개선안 | 검토 대상, 잘된 점, 문제점·원인, 개선안 | decisions: 승인·반려·보류 판정 명시 | `리뷰`, `review`, `회고`, `retro`, `KPT`, `포스트모템`, `post-mortem` |
+
+- **선택 규칙**(`resolveTemplate(explicit, title)`): `meetings.summary_template`이 알려진 id면 그 형식(`default` 포함)이다. NULL이면 제목으로 판별한다. 빈 제목과 기본 제목(`UNTITLED_TITLES`: `제목 없는 회의`·`제목 없는 면접`)은 `default`이고, 그 밖에는 `one_on_one` → `standup` → `review` 순으로 먼저 맞는 형식, 없으면 `default`다.
+- **`[회의 형식]` 블록**(`buildTemplateBlock`): 목적 문장과 "topics의 title은 가능하면 다음 이름 중 실제로 다뤄진 것만 그대로 쓰라, 다뤄지지 않은 이름은 만들지 말라, 목록에 없는 논의는 자유 제목으로 추가하라"는 줄이다. 기본 형식은 블록이 없다.
+- **키 보조 지시**(`buildOutputKeys`): 형식의 `keyHints`가 있는 키마다 그 키 줄(과 하위 줄) 바로 뒤에 `  - 이 회의 유형: …` 한 줄을 넣는다. 기본 형식의 출력 키 블록은 `MEETING_OUTPUT_KEYS` 그대로다.
+- 형식 목록은 `listTemplateOptions()`(`recording:listSummaryTemplates`)로 렌더러에 준다. 녹음 시작 화면과 요약 탭에서 고른다(§8).
 
 ### 6-2. 면접 기록 (kind='interview')
 
@@ -482,30 +571,39 @@ Claude Agent SDK의 `query()`를 Claude Code 구독 로그인으로 부른다. S
 - 면접관은 한 명 이상일 수 있다(다대일 면접). 요약 프롬프트가 "질문하는 쪽=면접관"을 복수로 허용하고, 화자 프리셋(`면접관`/`지원자`)을 여러 화자에 지정하면 이름이 겹치지 않게 `면접관 2`, `지원자 2`…로 자동 번호가 붙는다.
 - 녹음 시작 전 **동의 고지 체크**가 필수다(개인정보보호법상 사전 동의). 체크 전에는 시작 버튼이 비활성.
 
+### 6-3. AI 대화의 회의 질의
+
+AI 대화는 읽기 전용 도구 `search_meetings`(여러 회의의 요약·전사 검색)와 `get_meeting_excerpt`(한 회의의 요약 또는 최대 10분 구간 원문)로 회의 기록을 읽는다(정의 `src/main/services/ai-meeting-tools.ts`). 면접은 사용자가 명시적으로 요청할 때만 포함한다. 도구 결과의 출처 링크 `linkwork://recording/{id}/at/{ms}`를 누르면 녹음 상세를 열고 타임라인 탭에서 그 시각부터 재생한다(§8). 도구·상한·가드레일은 [AI_CHAT_ARCHITECTURE.md](AI_CHAT_ARCHITECTURE.md) 8.1절, [AI_GUARDRAILS.md](AI_GUARDRAILS.md) 8.10절에 있다.
+
 ## 7. 액션아이템 → 할 일
 
-`recording:actionItemToTodo(meetingId, index)`: `summary.action_items[index]`로 `todos` 행을 직접 만든다(`title=text`, `priority='medium'`). `due`가 `YYYY-MM-DD`(시각 허용) 형식일 때만 `due_date`에 넣고, 아니면 원문을 notes에 남긴다. notes는 `회의에서 추출: <회의 제목>`, `담당: <assignee>`, `기한: <원문>` 줄로 만든다. `source_link`에는 그 회의의 회의록 링크 `linkwork://note/{meetingId}`를 넣는다(할 일 행의 출처 칩이 회의록 메뉴에서 그 회의를 연다). 만든 `todo_id`를 그 항목에 기록해 다시 등록하지 않게 하고(항목의 다른 필드는 `at_ms`를 포함해 그대로 둔다), 할 일 이력(`saveTodoHistory(…, 'create')`)과 `logActivity('todo', 'create', …)`를 남긴다. 자동 등록하지 않고 사용자가 버튼을 눌러야 한다(오탐 방지).
+`recording:actionItemToTodo(meetingId, index)`: `summary.action_items[index]`로 `todos` 행을 직접 만든다(`title=text`, `priority='medium'`). `due`가 `YYYY-MM-DD`(시각 허용) 형식일 때만 `due_date`에 넣고, 아니면 원문을 notes에 남긴다. notes는 `회의에서 추출: <회의 제목>`, `담당: <assignee>`, `기한: <원문>` 줄로 만든다. `source_link`에는 그 회의의 회의록 링크 `linkwork://note/{meetingId}`를 넣는다(할 일 행의 출처 칩이 회의록 메뉴에서 그 회의를 연다). 만든 `todo_id`를 그 항목에 기록해 다시 등록하지 않게 하고(항목의 다른 필드는 `at_ms`를 포함해 그대로 둔다. 재요약 뒤에도 같은 문장의 항목이 이어받는다, §6), 할 일 이력(`saveTodoHistory(…, 'create')`)과 `logActivity('todo', 'create', …)`를 남긴다. 자동 등록하지 않고 사용자가 버튼을 눌러야 한다(오탐 방지).
 
 ## 8. 렌더러 구조
 
 ```
 stores/recorderStore.ts        # MediaRecorder 래퍼·캡처 상태(idle|recording|paused|stopped)·레벨미터 (§14)
 stores/recorderSession.ts      # 녹음 세션 수명주기 오케스트레이션 (§14)
-stores/recordingStore.ts       # 목록/상세/처리 상태/스트림 구독, kindFilter
-stores/recognitionAidsStore.ts # 용어집·구성원 CRUD, 구성원별 목소리 표본 요약 (§12)
+stores/recordingStore.ts       # 목록/상세/처리 상태/스트림 구독, kindFilter, 재생 이동 예약(pendingSeek), 화자 교정 범위·요약 형식·메모 액션
+stores/recognitionAidsStore.ts # 용어집·구성원 CRUD, 구성원별 목소리 표본 요약 (§12), 다시 찾기 previewRematch·applyRematch
 utils/audio.ts                 # blobToWav16kMono, 채널 에너지 추출
 utils/processing-progress.ts   # phase 가중치로 전체 진행률 계산 (§11)
+utils/speakerScope.ts          # planReassignIds·SCOPE_LABELS — 화자 교정 범위(main planReassign 과 같은 규칙)
+utils/talkShare.ts             # computeTalkShare·formatTalkMs — 발화 점유율(main meeting-notes.ts 와 같은 규칙·같은 테스트 표)
+utils/assignMarksToTopics.ts   # 메모를 요약 주제 구간에 배정
+utils/speakerCountPrompt.ts    # 상세 화면 참석 인원 확인 배너 노출 조건
 components/recording/
   RecordingView.tsx            # 좌: [새 녹음]으로 여는 녹음 컨트롤 + 종류 필터(전체/회의/면접) + "인식 보조" 패널 토글 + 목록, 우: 상세
-  RecognitionAidsPanel.tsx     # 용어집/구성원 탭 편집 + 텍스트 가져오기, 구성원별 "목소리 N건" + [목소리 삭제] (§12). 설정 > 회의 녹음에도 같은 패널이 있다
-  RecorderControls.tsx         # 종류(회의/면접) + 소스 선택 + 참석자 칩 + 참석 인원(비우면 자동, 참석자 수로 제안) + 무음 제거 체크 + 면접 동의 체크, 시작/일시정지/종료 + 레벨미터
+  RecognitionAidsPanel.tsx     # 용어집/구성원 탭 편집 + 텍스트 가져오기, 구성원별 "목소리 N건" + [목소리 삭제] + [지난 회의에서 찾기], 구성원 탭의 [등록된 목소리로 지난 회의 다시 찾기] (§12). 설정 > 회의 녹음에도 같은 패널이 있다
+  RematchDialog.tsx            # 다시 찾기 미리 보기(회의·화자·자동/제안 수) → [적용] (§5-4)
+  RecorderControls.tsx         # 종류(회의/면접) + 소스 선택 + 참석자 칩 + 참석 인원(비우면 자동, 참석자 수로 제안) + 요약 형식 칩(회의만) + 무음 제거 체크 + 면접 동의 체크, 시작/일시정지/종료 + 레벨미터, 녹음 중 메모·북마크, 종료 시 참석 인원 확인
   RecordingList.tsx            # 녹음 카드 목록(상태 pill, 면접 배지, 길이, 일정 제목, 처리 중 전체 진행 바 + 취소), kindFilter 적용
-  MeetingDetail.tsx            # 헤더(제목 편집/날짜/상태/무음 배지/참석자 칩) + 재처리 메뉴 + 처리 진행률·취소 + 실패 배너 + 탭(타임라인/요약/화자), kind별 패널 분기, 화자 탭의 "화자 다시 분리"
-  SpeakerTimeline.tsx          # 화자별 발언 비율 바 + 미니 타임라인(재생 위치, 클릭·드래그 시킹) + 발언 목록(클릭→오디오 점프, 재생 중 자동 스크롤, 세그먼트 화자 재할당·새 화자 즉석 추가, 발언 수정) + 컷 토글
-  SummaryPanel.tsx             # [회의] 키워드 칩(표시 전용)→TL;DR→핵심 포인트(구버전)→결정사항→액션아이템("+ TODO")→미결 질문→다음 단계(구버전)→주제별 요약. onSeek(MeetingDetail의 handleSeek)가 있고 시각이 있으면 항목마다 시각 버튼("이 시점부터 듣기", 클릭→그 시점 재생)
+  MeetingDetail.tsx            # 헤더(제목 편집/날짜/상태/무음 배지/참석자 칩) + 참석 인원 확인 배너 + 재처리 메뉴 + 처리 진행률·취소 + 실패 배너 + 탭(타임라인/요약/화자), kind별 패널 분기, 화자 탭의 "화자 다시 분리", 재생 이동 예약 소비
+  SpeakerTimeline.tsx          # 발화 점유율(막대 + 화자별 시간·비율·발언 횟수) + 미니 타임라인(재생 위치, 클릭·드래그 시킹) + 발언 목록(클릭→오디오 점프, 재생 중 자동 스크롤, 범위를 고른 화자 재할당·새 화자 즉석 추가, 발언 수정) + 컷 토글
+  SummaryPanel.tsx             # [회의] 형식 배지·형식 바꿔 다시 요약 → 키워드 칩(표시 전용)→내 메모→TL;DR→핵심 포인트(구버전)→결정사항→액션아이템("+ TODO")→미결 질문→다음 단계(구버전)→주제별 요약(주제마다 배정된 내 메모). onSeek(MeetingDetail의 handleSeek)가 있고 시각이 있으면 항목마다 시각 버튼("이 시점부터 듣기", 클릭→그 시점 재생)
   InterviewPanel.tsx           # [면접] Q&A(클릭→질문 시점 재생)/근거/추가 확인/레퍼런스 체크
-  SpeakerEditor.tsx            # 화자 실명 입력/색상/병합, 이름 프리셋(면접은 면접관/지원자 + 참석자, 회의는 참석자, 최대 8개), 목소리 매칭 배지·확인/거절·등록
-  AudioPlayer.tsx              # <audio src="linkwork-media://audio/<파일명>"> + seek, cuts enabled 구간 skip(비파괴)
+  SpeakerEditor.tsx            # 화자 실명 입력/색상/병합, 이름 프리셋(면접은 면접관/지원자 + 참석자, 회의는 참석자, 최대 8개), 목소리 매칭 배지·확인/거절·등록, 이름 없는 화자의 [등록된 목소리로 다시 찾기]
+  AudioPlayer.tsx              # <audio src="linkwork-media://audio/<파일명>"> + seek(메타데이터 로드 전 시킹은 loadedmetadata 까지 보류), cuts enabled 구간 skip(비파괴)
 ```
 
 디자인은 `components/ui/tokens.ts`(button/typo/status pill), `ui/index.tsx`(Card/Badge/IconButton/EmptyState/SectionTitle), `ui/icons.tsx`를 쓴다. 새 색이나 커스텀 CSS 없이 Tailwind v4 인라인 클래스 + 토큰으로 그린다.
@@ -523,6 +621,27 @@ components/recording/
 - `SpeakerEditor` 화자 행: `auto` → "목소리로 자동 지정 · 82%" 배지 + [맞음] [이 사람 아님]. `suggested` → "혹시 OOO?" + [지정] [아님]. `manual`이고 `voice_enrolled`(표본이 실제로 있음) → "목소리 등록됨". 이름은 있는데 구성원이 아니고 `has_voice` → [목소리 등록].
 - `MeetingDetail` 화자 탭(`canRediarize`): `source='mic'`, 상태 `transcribed`/`summarized`이고 `has_voice`인 화자가 하나도 없으면(새 화자분리 이전에 처리했거나 분리에 실패한 회의) "화자 다시 분리" 버튼을 보인다. 누르면 `reprocessMeeting(id, true)` — 빠른 재적용(`skipTranscribe`: 재전사·컷편집 없음, `pipeline_version` 유지, 발언 단위 수동 보정과 화자 속성 보존, §5-4)으로 화자분리만 다시 돌리고 이어서 요약을 다시 만든다. 버튼 옆에 요약도 다시 만든다는 문구를 보인다.
 
+**녹음 시작·녹음 중**(`RecorderControls`):
+- **요약 형식 칩**(회의만): `자동`(기본, NULL=제목으로 판별) + `recording:listSummaryTemplates`의 `default` 밖 형식(읽지 못하면 고정 목록 1:1·스탠드업·리뷰·회고). 고른 값은 `createDraft`의 `summary_template`으로 저장한다. 면접으로 바꾸면 비운다.
+- **메모·북마크**(녹음·일시정지 중): 입력란에 메모를 쓰고 Enter로 저장한다. 메모 시각(`raw_ms`)은 빈 입력란에 첫 글자를 쓴 순간의 녹음 경과 시간(일시정지 제외)이다. [북마크] 버튼이나 B 키는 지금 시각의 빈 메모를 남긴다. B 키는 녹음 중이고 글 입력 요소에 포커스가 없을 때만 동작한다(이 화면이 떠 있을 때만 듣는다. 전역 단축키가 아니다). 저장은 `recording:addMark`(`origin='live'`)이고 최근 메모 3개를 보여 준다.
+- **종료 시 참석 인원 확인**(`shouldAskHeadcountOnStop`): 회의이고 참석 인원을 비워 두고 시작했으면 [종료 및 저장]을 누를 때 "참석 인원은 몇 명이었나요?"를 버튼 자리에 띄운다(녹음은 계속된다). 2~6 칩이나 1~20 입력을 고르면 `recording:setExpectedSpeakers`로 저장한 뒤 종료·처리한다. [모르겠어요 · 자동]은 자동 추정으로 종료하고, [녹음 계속]은 닫는다. 창 닫기·앱 종료 가드의 저장 경로(§14)는 묻지 않는다.
+
+**상세 화면 참석 인원 확인 배너**(`MeetingDetail`, `speakerCountPrompt`): 회의이고 `speakers_confirmed=0`이고 `expected_speakers`가 NULL이고 상태가 `transcribed`/`summarized`이고 발언이 있으면 "화자를 자동으로 N명으로 나눴습니다. 실제 참석 인원이 맞나요?"를 머리에 띄운다(N = 발언이 있는 화자 수, 최소 1). [맞아요]는 N을 저장한다. 다른 수를 넣고 [명으로 다시 나누기]를 누르면 저장한 뒤 빠른 재적용으로 다시 나누고 요약도 다시 만든다. 닫기는 `setExpectedSpeakers(null)`이라 자동 추정을 둔 채 확인으로 친다. 처리 중에는 보이지 않는다.
+
+**요약 탭**(`SummaryPanel`, 회의):
+- 맨 위에 `형식: <이름>` 배지(`summary.template_id`, NULL이면 기본)와 "형식 바꿔 다시 요약" 셀렉트(자동 + 형식 목록)가 있다. 형식을 고르면 확인창("현재 요약을 덮어씁니다. 할 일로 옮긴 항목은 같은 문장이면 연결을 유지합니다.") 뒤에 `recording:setSummaryTemplate`으로 저장하고 다시 요약한다.
+- 메모가 있으면 **내 메모** 섹션에 메모 원문을 `[mm:ss]` 시각 버튼(그 시점부터 재생)과 함께 보이고, 북마크는 칩으로 보인다. 메모마다 인라인 수정(Enter 저장·Esc 취소, 비우면 북마크)·삭제가 있고, [+ 메모 추가]는 지금 재생 위치(`currentMs`)에 `origin='post'` 메모를 더한다.
+- 메모를 더하거나 고치거나 지우면 자동으로 다시 요약하지 않고 [메모를 반영해 다시 요약] 버튼을 보인다.
+- 메모가 있는 회의는 AI가 만든 줄에 회색 `AI` 표식을 달고, 머리에 `▌내 메모 · AI 요약` 범례를 둔다. 주제별 요약의 각 주제 카드 아래에 그 주제 구간에 배정된 메모를 노란 왼쪽 강조선으로 보인다. 배정은 렌더러가 결정론적으로 한다(`assignMarksToTopics`): 주제 i의 구간은 `[start_i, start_{i+1})`이고 마지막 주제는 끝이 없으며, 첫 주제 앞 메모는 첫 주제에 둔다. 주제 시각이 하나라도 없거나 오름차순이 아니면 배정하지 않는다(내 메모 섹션에만 보인다).
+
+**타임라인 탭**(`SpeakerTimeline`):
+- **발화 점유율**: 화자별 발화 시간(세그먼트 길이 합), 비율, 발언 횟수(같은 화자가 이어진 묶음 수)를 막대와 줄로 보인다. 규칙은 §10의 Markdown과 같다(`computeTalkShare`).
+- **화자 교정 범위**: 화자 칩을 누르면 드롭다운 위에 [이 구간만] [이 구간부터] [전체] 범위 버튼과 "<화자> 발언 N개를 바꿉니다" 안내가 있다(열 때마다 `이 구간만`). 대상 화자(또는 새 화자 즉석 추가)를 고르면 `recording:reassignSegment(segmentId, speakerId, scope)`를 부르고 상세를 새로 읽는다. `전체`에서 두 화자가 모두 있으면 화자 병합이 된다는 표시가 붙는다.
+
+**다시 찾기(Rematch) 진입점 3곳**: ① 화자 탭(`SpeakerEditor`): 목소리가 있는데 이름이 빈 화자가 있으면(`shouldOfferRematch`) [등록된 목소리로 다시 찾기], 그 회의만(`meetingIds: [id]`). ② 인식 보조 > 구성원: [등록된 목소리로 지난 회의 다시 찾기], 전체(표본이 있는 구성원이 하나도 없으면 비활성). ③ 구성원 행: [지난 회의에서 찾기], 그 구성원만(`memberIds: [id]`). 세 곳 모두 `RematchDialog`가 미리 보기(회의 수·화자 수·자동·제안 수, 회의별 화자 → 구성원 목록)를 보이고 [적용]을 누르면 적용한다. 안내 문구는 "자동 지정은 이름까지 붙이고, 제안은 화자 탭에서 확인을 기다립니다. 목소리 표본은 새로 만들지 않습니다. 이미 만든 요약의 화자 이름은 요약을 다시 만들면 반영됩니다."다. 적용 뒤 구성원 목록을 다시 읽고 열린 회의를 새로 읽는다.
+
+**재생 위치로 열기**: `linkwork://recording/{id}/at/{ms}`(AI 대화의 회의 출처 링크, §6-3)는 `openInternalLink`가 `recordingStore.setPendingSeek({meetingId, ms})`로 예약한 뒤 녹음 상세를 연다. `ms`는 0 이상 86,400,000 미만의 정수만 받고, 아니면 시각 없이 녹음만 연다. `MeetingDetail`은 그 회의의 오디오가 있으면 예약을 꺼내 타임라인 탭으로 바꾸고 그 시각부터 재생한다. 오디오가 아직 없으면 예약을 남겨 둔다.
+
 메뉴는 회의·면접 통합 단일 메뉴(사이드바 "회의" 그룹의 `녹음`)다. 종류 구분은 목록 상단 필터 탭으로 하며, 선택값은 `recordingStore.kindFilter`에 둔다 — `RecordingView`가 메뉴 전환 시 언마운트되므로 로컬 state면 필터가 초기화된다.
 
 흐름: `idle → (start) recording → (pause/resume) → (stop) → saveAudio → process → summarize`. 녹음 중엔 경과 시간/레벨미터를 보인다. 종료하면 저장 뒤 처리와 요약이 백그라운드로 이어진다(§14).
@@ -538,9 +657,9 @@ components/recording/
 
 ## 10. 회의록 메뉴
 
-요약까지 끝난 회의·면접(`meetings.status='summarized'`)을 사이드바 "회의록"(ViewId `notes`)에서 문서처럼 목록·검색·열람하고 Markdown으로 복사·저장한다. 새 테이블은 없다. `meetings` + `meeting_summaries`(1:1) 조인과 `meeting_segments`·`meeting_attendees`·`meeting_members`만 읽는다(읽기 전용).
+요약까지 끝난 회의·면접(`meetings.status='summarized'`)을 사이드바 "회의록"(ViewId `notes`)에서 문서처럼 목록·검색·열람하고 Markdown으로 복사·저장한다. 새 테이블은 없다. `meetings` + `meeting_summaries`(1:1) 조인과 `meeting_segments`·`meeting_attendees`·`meeting_members`·`meeting_marks`만 읽는다(읽기 전용).
 
-- 파일: `src/main/services/meeting-notes.ts`(순수 함수 `buildMeetingNoteMarkdown`, `countActionItems`, `escapeLike`, `parseJsonArray`, 요약 읽기 정규화 `parseTextItems`·`parseTopics`·`parseKeywords`, 컷편집용 `remapSummaryTimes`), `src/main/ipc/meeting-notes.ipc.ts`, 렌더러 `components/notes/`(`MeetingNotesView`·`MeetingNoteList`·`MeetingNoteDoc`)와 `stores/meetingNotesStore.ts`.
+- 파일: `src/main/services/meeting-notes.ts`(순수 함수 `buildMeetingNoteMarkdown`, `countActionItems`, `escapeLike`, `parseJsonArray`, 요약 읽기 정규화 `parseTextItems`·`parseTopics`·`parseKeywords`, 컷편집용 `remapSummaryTimes`, 발화 점유율 `computeTalkShare`), `src/main/ipc/meeting-notes.ipc.ts`, 렌더러 `components/notes/`(`MeetingNotesView`·`MeetingNoteList`·`MeetingNoteDoc`)와 `stores/meetingNotesStore.ts`.
 - IPC (preload `window.api.meetingNotes`):
 
 | 채널 | 입력 | 출력 |
@@ -552,8 +671,10 @@ components/recording/
 - 요약 읽기 정규화: 저장된 JSON은 요약 시점의 형식을 그대로 담으므로, 읽는 쪽(`recording.ipc.ts`의 `mapSummary`, `meetingNotes:markdown`)은 `parseTextItems`(문자열과 `{text, at_ms}` 혼재 → `{text, at_ms}`), `parseTopics`, `parseKeywords`로 한 형태로 맞춘다. 컬럼이 NULL이거나 JSON이 깨졌으면 빈 배열이다.
 - 검색 범위(부분 일치 LIKE, OR): `m.title`, `s.tldr`, `s.key_points`, `s.decisions`, `s.action_items`, `s.next_steps`, `s.topics`, `s.open_questions`, `s.keywords`, `s.qa_pairs`, 그리고 전사 `meeting_segments.text`(EXISTS 서브쿼리). JSON 컬럼은 직렬화 문자열 그대로 검색한다.
 - `MeetingNoteItem` 파생 값: `key_point_count`, `decision_count`, `action_item_count`(각 JSON 배열 길이), `open_action_count`(`todo_id`가 없는 액션아이템 수), `attendee_names`(정렬은 `listAttendees`와 같다).
-- Markdown 구조: `# 제목` → 메타 줄(일시·길이·종류·참석자) → 회의는 `## 키워드`(`a · b · c` 한 줄), `## TL;DR`, `## 핵심 포인트`(구버전 요약만), `## 결정사항`, `## 액션아이템`(`- [ ]`/`- [x]`=할 일로 옮김, 담당·기한), `## 미결 질문`, `## 다음 단계`(구버전 요약만), `## 주제별 요약`(`### n. 제목 [mm:ss]` + 포인트 불릿) / 면접은 `## 면접 개요`, `## 질문과 답변`(`### Qn. 질문 [mm:ss]`, 답변 요약, `> 인용`), `## 역량별 근거`, `## 후속 질문`, `## 확인 필요` → 마지막 `## 전사`(`[mm:ss] **화자**: 텍스트`). 빈 섹션은 생략한다. 결정사항·액션아이템·미결 질문·주제 제목은 시각이 있으면 끝에 전사 섹션과 같은 표기의 ` [mm:ss]`를 붙이고, 없으면 붙이지 않는다. 구버전 요약(새 필드 없음)의 출력은 새 필드가 생기기 전과 같다.
-- 회의록 문서 화면(`MeetingNoteDoc`)도 같은 섹션 순서로 그리고, 시각은 회색 `mm:ss` 텍스트로만 보인다(오디오 없음). 상세 화면의 요약 탭(`SummaryPanel`)은 시각을 버튼으로 그려 누르면 그 시점부터 재생한다. 키워드 칩은 표시 전용이다.
+- Markdown 구조: `# 제목` → 메타 줄(일시·길이·종류·참석자) → 회의는 `## 키워드`(`a · b · c` 한 줄), `## TL;DR`, `## 핵심 포인트`(구버전 요약만), `## 결정사항`, `## 액션아이템`(`- [ ]`/`- [x]`=할 일로 옮김, 담당·기한), `## 미결 질문`, `## 다음 단계`(구버전 요약만), `## 주제별 요약`(`### n. 제목 [mm:ss]` + 포인트 불릿) / 면접은 `## 면접 개요`, `## 질문과 답변`(`### Qn. 질문 [mm:ss]`, 답변 요약, `> 인용`), `## 역량별 근거`, `## 후속 질문`, `## 확인 필요` → (회의·면접 공통) `## 내 메모`, `## 발화 점유율` → 마지막 `## 전사`(`[mm:ss] **화자**: 텍스트`). 빈 섹션은 생략한다.
+  - `## 내 메모`: 메모를 `at_ms` 순으로 `- [mm:ss] 메모`(북마크는 `(북마크)`) 한 줄씩 쓴다.
+  - `## 발화 점유율`: 화자가 있는 줄이 2개 이상일 때만 넣는다. 줄은 `- 이름: mm:ss (n%) · 발언 k회`다. 규칙(`computeTalkShare`, 렌더러 `utils/talkShare.ts`와 같은 규칙·같은 테스트 표): 길이 0인 세그먼트는 무시하고, 발화 시간은 세그먼트 길이(`end_ms − start_ms`) 합, 발언 횟수는 시간순으로 같은 화자가 이어진 묶음 수다. 비율은 최대 나머지 방식으로 합을 정확히 100으로 맞춘다. 줄은 발화 시간 내림차순(같으면 화자 순서)이고, 화자 없는 세그먼트는 `미지정` 줄로 맨 뒤에 둔다. 컷 구간은 따로 빼지 않는다. 결정사항·액션아이템·미결 질문·주제 제목은 시각이 있으면 끝에 전사 섹션과 같은 표기의 ` [mm:ss]`를 붙이고, 없으면 붙이지 않는다. 구버전 요약(새 필드 없음)의 출력은 새 필드가 생기기 전과 같다.
+- 회의록 문서 화면(`MeetingNoteDoc`)은 요약 섹션과 전사를 같은 순서로 그리고(`## 내 메모`·`## 발화 점유율`은 Markdown 내보내기에만 있다), 시각은 회색 `mm:ss` 텍스트로만 보인다(오디오 없음). 상세 화면의 요약 탭(`SummaryPanel`)은 시각을 버튼으로 그려 누르면 그 시점부터 재생한다. 키워드 칩은 표시 전용이다.
 - 문서 화면의 [Markdown 복사]는 클립보드에, 저장은 `export:saveMarkdown`(저장 대화상자)으로 파일에 쓴다.
 
 ## 11. 무음 컷편집 (audio compaction)
@@ -571,6 +692,7 @@ components/recording/
 - 라우드니스 정규화·하이패스·노이즈 억제는 **하지 않는다**. whisper는 [-1,1] 범위 안의 음량 차이에 대체로 불변이고, 노이즈 억제는 large 계열에서 WER을 오히려 높이며 pyannote DER도 악화시킨다는 보고가 있다(SciTePress 2024, arXiv 2603.04710, pyannote-audio #1053).
 - 절감이 `minSavingsRatio` 미만이면 파일을 다시 쓰지 않는다(`applied:false`).
 - 컷편집은 **첫 전체 처리에서 정확히 1회**(`audio_compacted` 멱등 가드). "빠른 재적용"(`skipTranscribe`)은 기존 세그먼트 타임스탬프를 재사용하므로 절대 컷편집하지 않는다. 이미 요약(회의 요약의 근거 시각, 면접 `qa_pairs.start_ms`)이 있는 회의를 전체 재처리하며 컷편집이 적용되면 그 시각을 `mapMsToCompacted`로 재매핑한다.
+- **녹음 중 메모**: 녹음 중 메모(`meeting_marks.origin='live'`)의 시각은 녹음 경과 시간(`raw_ms`)이라 컷편집 전 시간축이다. 컷편집이 적용되면 `remapLiveMarks`가 `at_ms = mapMsToCompacted(raw_ms, keep)`로 다시 계산한다. `raw_ms`에서 계산하므로 여러 번 돌려도 결과가 같다. 상세 화면에서 더한 메모(`origin='post'`)는 이미 현재 시간축이라 재매핑하지 않는다. 재매핑이 실패해도 처리는 계속한다.
 - 녹음 시작 화면의 "무음 구간 자동 제거"(`compact_audio`, 기본 on)로 회의별 opt-out 가능. 상세 화면은 `original_duration_ms`로 "무음 −mm:ss (n%)" 배지를 보여준다.
 - `mic+system`의 채널 에너지 envelope(`<id>.channels.json`, 100ms hop)도 같은 keep 구간으로 재매핑해 화자 귀속이 어긋나지 않게 한다.
 
@@ -578,21 +700,23 @@ components/recording/
 
 ## 12. 인식 보조 장치 (용어집 · 구성원)
 
-회사 기밀을 코드에 두지 않는다. 구조만 제공하고 내용은 사용자가 입력하며, **로컬 SQLite에만** 저장된다. whisper initial_prompt는 로컬 추론에만 쓰이고, 요약 단계에서는 참석자 이름·용어가 전사록과 함께 Claude로 전송된다(전사록이 이미 가는 경로와 동일).
+회사 기밀을 코드에 두지 않는다. 구조만 제공하고 내용은 사용자가 입력하며, **로컬 SQLite에만** 저장된다. whisper initial_prompt는 로컬 추론에만 쓰이고, 요약 단계에서는 참석자 이름·용어와 사용자 메모(`[사용자 메모]` 블록, §6) 문구가 전사록과 함께 Claude로 전송된다(전사록이 이미 가는 경로와 동일).
 
 | 보조 장치 | 저장 | 사용처 |
 |---|---|---|
 | 용어집 `stt_glossary` (정답 표기 · 오인식 표기 aliases · 메모 · 우선순위) | 로컬 DB | ① `buildInitialPrompt({glossaryTerms})` — 프롬프트 **끝**에 ` 용어: A, B, C.`(최대 15개·120자, 전체 360자; whisper는 마지막 224토큰만 반영하므로 끝이 가장 중요, alias는 넣지 않는다) ② `applyGlossary(segments, rules)` 결정론적 후보정 ③ 요약 `[참고 정보]` 블록 |
 | 구성원 `meeting_members` (이름 · 호칭/별칭 · 역할) + 회의별 참석자 `meeting_attendees` | 로컬 DB | ① 프롬프트 참석자 힌트(`speakerNames`에 합류) ② 녹음 시작 시 참석 인원 자동 제안 ③ `SpeakerEditor` 이름 프리셋 ④ 요약 `[참고 정보]`의 담당자 매칭 ⑤ 목소리 매칭 후보(참석자가 있으면 참석자로 좁힘) |
-| 목소리 표본 `member_voice_samples` (구성원별 화자 centroid) + 회의 화자 목소리 `meeting_speaker_voices` | 로컬 DB | 다음 회의의 화자 자동 지정·제안(§5-4) |
+| 목소리 표본 `member_voice_samples` (구성원별 화자 centroid) + 회의 화자 목소리 `meeting_speaker_voices` | 로컬 DB | 다음 회의의 화자 자동 지정·제안, 지난 회의 다시 찾기(§5-4) |
 
-**목소리 표본**: 사용자가 화자에 구성원 이름을 지정하거나 [목소리 등록]·[맞음]을 누를 때만 만든다(동의 없는 수집 없음, 자동 지정은 표본을 만들지 않는다). 192차원 임베딩이며 오디오는 담지 않는다. **로컬 SQLite에만** 저장하고, 요약 프롬프트·휴대폰 열람·회의록 Markdown·렌더러 IPC 응답 어디에도 넣지 않는다(렌더러는 `has_voice`·표본 건수만 받는다). 데이터 백업 파일에는 회의 그룹으로 포함된다([DATA_BACKUP.md](DATA_BACKUP.md)). 구성원 탭의 [목소리 삭제] 버튼(`recognitionAids:clearVoiceprint`)로 그 구성원의 표본을 모두 지운다.
+**목소리 표본**: 사용자가 화자에 구성원 이름을 지정하거나 [목소리 등록]·[맞음]을 누를 때만 만든다(동의 없는 수집 없음, 자동 지정과 다시 찾기는 표본을 만들지 않는다). 192차원 임베딩이며 오디오는 담지 않는다. **로컬 SQLite에만** 저장하고, 요약 프롬프트·휴대폰 열람·회의록 Markdown·렌더러 IPC 응답 어디에도 넣지 않는다(렌더러는 `has_voice`·표본 건수만 받는다). 데이터 백업 파일에는 회의 그룹으로 포함된다([DATA_BACKUP.md](DATA_BACKUP.md)). 구성원 탭의 [목소리 삭제] 버튼(`recognitionAids:clearVoiceprint`)로 그 구성원의 표본을 모두 지운다.
 
 **후보정 규칙(`stt/glossary-correct.ts`)** — 오치환 방지가 우선: alias 2자 이상, term과 동일한 alias 제외, 긴 alias 우선. 라틴/숫자 alias는 대소문자 무시 + 양쪽 영숫자 경계. 한글 포함 alias는 경계 없음(조사 결합 허용: "링크워크를"→"LinkWork를"), 3자 이상이면 문자 사이 공백 0~1개 허용("링크 워크"). 이미 정답 표기인 부분은 재치환하지 않는다. 사용자 수정 플래그 `text_corrected`는 건드리지 않는다.
 
 **서비스(`recognition-aids.ts`)**: `listGlossary/upsertGlossary/removeGlossary/importGlossaryText(parseGlossaryText)/listMembers/upsertMember/removeMember/setAttendees/listAttendees/loadPromptContext/buildSummaryContextBlock`. 목소리 표본 조회·삭제는 `voiceprint.ts`에 있다. `loadPromptContext(db, meetingId)`는 켜진 용어 전체(전역)를 `priority DESC, updated_at DESC`로 읽고, 실패 시 빈 컨텍스트(throw 금지).
 
-**UI**: 녹음 목록 헤더 "인식 보조" → `RecognitionAidsPanel`(용어집/구성원 탭, 텍스트 가져오기 `정답 | 별칭1, 별칭2 | 메모`, 구성원별 "목소리 N건" + [목소리 삭제]). 녹음 시작 화면 참석자 칩, 상세 화면 참석자 칩 편집.
+**UI**: 녹음 목록 헤더 "인식 보조" → `RecognitionAidsPanel`(용어집/구성원 탭, 텍스트 가져오기 `정답 | 별칭1, 별칭2 | 메모`, 구성원별 "목소리 N건" + [목소리 삭제]).
+
+**지난 회의 다시 찾기**: 구성원 탭의 [등록된 목소리로 지난 회의 다시 찾기] 버튼(전체 대상)과 구성원 행의 [지난 회의에서 찾기] 버튼(그 구성원만)이 지금 등록된 목소리로 지난 회의의 이름 없는 화자를 다시 찾는다. 미리 보기 뒤 적용하고, 표본은 만들지 않는다(규칙 §5-4, 화면 §8). 녹음 시작 화면 참석자 칩, 상세 화면 참석자 칩 편집.
 
 ## 13. 파이프라인 버전과 요약 재생성
 
@@ -646,6 +770,6 @@ components/recording/
 - **겹침 발화**: 창 하나에 화자 한 명만 배정한다. 두 사람이 동시에 말한 구간은 한쪽으로 간다.
 - **세그먼트 안 화자 교대**: 창은 STT 세그먼트 안에만 깔고 귀속은 세그먼트 단위다. 한 세그먼트 안에서 화자가 바뀌면 한 명으로 귀속된다(세그먼트를 짧게 자르는 것으로 완화, §5-1).
 - **채널·2-스테이지 경로의 목소리**: `mic+system` 채널 분리와 2-스테이지 경로는 centroid를 내지 않아 목소리 매칭·등록이 되지 않는다.
-- **세그먼트 단위 화자 변경**: `recording:reassignSegment`로 발언 하나의 화자를 바꿔도 화자 centroid는 갱신하지 않는다. 화자 병합만 centroid를 합친다.
-- **다인 회의 화자 수**: 3명 이상 회의에서 자동 추정 화자 수가 실제와 다를 수 있다. 참석 인원을 지정하면(녹음 시작 화면, 상세 화면 `recording:setExpectedSpeakers`) 그 수로 정확히 나눈다 — 다인 회의는 지정을 권장한다.
+- **범위 교정과 centroid**: `recording:reassignSegment`의 `one`·`forward` 범위로 화자를 바꿔도 화자 centroid는 갱신하지 않는다. 화자 병합(`all` 범위의 병합 포함)만 centroid를 합친다. 정확한 centroid가 필요하면 참석 인원을 지정해 다시 나눈다.
+- **다인 회의 화자 수**: 3명 이상 회의에서 자동 추정 화자 수가 실제와 다를 수 있다. 참석 인원을 지정하면(녹음 시작 화면, 종료 시 확인, 상세 화면의 확인 배너·재분리 메뉴 — 모두 `recording:setExpectedSpeakers`) 그 수로 정확히 나눈다 — 다인 회의는 지정을 권장한다.
 - **정확도 근거**: 정답 화자 라벨이 있는 녹음은 1on1(2명)뿐이다. 다인 회의의 화자 수·귀속 정확도는 측정하지 못했다.

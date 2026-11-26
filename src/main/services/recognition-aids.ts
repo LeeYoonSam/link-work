@@ -481,3 +481,44 @@ export function buildSummaryContextBlock(ctx: PromptContext): string {
 
   return lines.join('\n')
 }
+
+// ── 사용자 메모 블록 ──
+
+// 요약 프롬프트에 넣는 [사용자 메모] 블록의 상한.
+export const MARKS_BLOCK_MAX_LINES = 200
+export const MARKS_BLOCK_MAX_CHARS = 8000
+
+// meeting-summary.ts formatTranscriptLines의 시각 표기와 같은 규칙이다(mm은 60을 넘을 수 있다).
+// meeting-summary.ts가 이 모듈을 import하므로 순환을 피하려고 따로 둔다. 두 표기가 같음은
+// meeting-summary.test.ts가 고정한다.
+function formatMarkTime(ms: number): string {
+  const totalSec = Math.floor(ms / 1000)
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+// 회의 중 사용자가 남긴 메모·북마크를 요약 프롬프트의 [사용자 메모] 블록으로 만든다. 없으면 ''.
+// 시각은 현재 오디오 시간축(at_ms)이라 전사 줄의 [mm:ss]와 같은 축이다.
+export function buildMarksBlock(marks: Array<{ at_ms: number; text: string }>): string {
+  if (!Array.isArray(marks) || marks.length === 0) return ''
+  const sorted = [...marks].sort((a, b) => a.at_ms - b.at_ms)
+  const total = sorted.length
+  const lines = ['[사용자 메모]']
+  let length = lines[0].length
+  let shown = 0
+  // 잘릴 때 붙는 마지막 줄의 최대 길이를 미리 비워 둔다.
+  const trailerReserve = `\n(메모 ${total}개 중 ${total}개만 표시)`.length
+  for (const mark of sorted) {
+    const text = (mark.text ?? '').replace(/\s+/g, ' ').trim()
+    const line = `[${formatMarkTime(Math.max(0, mark.at_ms))}] ${text || '(북마크)'}`
+    const isLast = shown === total - 1
+    const limit = isLast ? MARKS_BLOCK_MAX_CHARS : MARKS_BLOCK_MAX_CHARS - trailerReserve
+    if (shown >= MARKS_BLOCK_MAX_LINES || length + 1 + line.length > limit) break
+    lines.push(line)
+    length += 1 + line.length
+    shown++
+  }
+  if (shown < total) lines.push(`(메모 ${total}개 중 ${shown}개만 표시)`)
+  return lines.join('\n')
+}

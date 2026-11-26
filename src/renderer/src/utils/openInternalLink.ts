@@ -45,6 +45,10 @@ export async function openInternalLink(href: string): Promise<void> {
     case 'recording': {
       const recording = useRecordingStore.getState()
       recording.setKindFilter('all')
+      // 시각 링크면 회의를 열기 전에 재생 위치를 예약한다. 회의 상세가 열리며 소비한다
+      if (target.atMs !== undefined) {
+        recording.setPendingSeek({ meetingId: target.id, ms: target.atMs })
+      }
       void recording.openMeeting(target.id)
       requestFocus({ entity: 'recording', id: target.id })
       setView('recordings')

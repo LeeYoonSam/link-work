@@ -8,7 +8,10 @@ pyannote.metrics 미설치 시: 화자 수 정확도만 계산하고 DER/JER은 
 (안내 출력). 설치: pip install pyannote.metrics
 
 단독 실행:
-    python3 eval_diar.py --meeting 4 [--collar 0.25] [--no-skip-overlap]
+    python3 eval_diar.py --meeting 4 [--collar 0.25] [--no-skip-overlap] [--hyp <file>]
+
+--hyp: out/meeting_<id>/hyp.json 대신 이 파일(SegLST 공통 JSON, 예: diar-regress --dump-hyp 의
+hyp_<id>_<tag>.json)을 가설로 쓴다. ref 의 eval_window 로 잘라 비교한다.
 """
 from __future__ import annotations
 
@@ -98,9 +101,13 @@ def evaluate(
     return result
 
 
-def _load_pair(meeting_id: int) -> tuple[seglst.EvalDoc, seglst.EvalDoc]:
-    ref_path = os.path.join(HERE, "refs", f"meeting_{meeting_id}.json")
-    hyp_path = os.path.join(HERE, "out", f"meeting_{meeting_id}", "hyp.json")
+def ref_path_for(meeting_id: int) -> str:
+    return os.path.join(HERE, "refs", f"meeting_{meeting_id}.json")
+
+
+def _load_pair(meeting_id: int, hyp_file: Optional[str] = None) -> tuple[seglst.EvalDoc, seglst.EvalDoc]:
+    ref_path = ref_path_for(meeting_id)
+    hyp_path = hyp_file or os.path.join(HERE, "out", f"meeting_{meeting_id}", "hyp.json")
     if not os.path.exists(ref_path):
         raise FileNotFoundError(f"ref 없음: {ref_path}")
     if not os.path.exists(hyp_path):
@@ -115,9 +122,11 @@ def main() -> int:
     ap.add_argument("--collar", type=float, default=0.25)
     ap.add_argument("--no-skip-overlap", action="store_true",
                     help="겹친 발화 구간도 평가에 포함")
+    ap.add_argument("--hyp", default=None, metavar="FILE",
+                    help="가설 파일(기본 out/meeting_<id>/hyp.json). 예: out/hyp/hyp_<id>_<tag>.json")
     args = ap.parse_args()
 
-    ref_doc, hyp_doc = _load_pair(args.meeting)
+    ref_doc, hyp_doc = _load_pair(args.meeting, args.hyp)
     res = evaluate(ref_doc, hyp_doc, collar=args.collar,
                    skip_overlap=not args.no_skip_overlap)
 

@@ -89,7 +89,7 @@ vi.mock('./release-note-sync', () => ({ sortReleaseNotes: <T>(rows: T[]): T[] =>
 vi.mock('./web-fetch', () => ({ fetchUrlAsText: vi.fn() }))
 
 import { closeDatabase, getDatabase, initDatabase } from '../db/database'
-import { getLinkworkMcpServer } from './ai-tools'
+import { LINKWORK_TOOL_NAMES, MEETING_TOOL_NAMES, getLinkworkMcpServer } from './ai-tools'
 
 type ToolResult = { content: { type: 'text'; text: string }[] }
 type Handler = (args: Record<string, unknown>) => Promise<ToolResult>
@@ -140,5 +140,23 @@ describe('get_todo', () => {
       source_link: 'https://x.atlassian.net/browse/AB-1',
       link: `linkwork://todo/${id}`
     })
+  })
+})
+
+describe('자동 허용 도구 목록', () => {
+  // 기존 10종 + 회의 기록 도구 2종. (플랜은 "11 → 13"이라 적었지만 실제 기존 목록은 10종이다.)
+  it('조회 도구 12종이고 회의 기록 도구 2종을 포함한다', async () => {
+    expect(LINKWORK_TOOL_NAMES).toHaveLength(12)
+    expect(new Set(LINKWORK_TOOL_NAMES).size).toBe(12)
+    expect(MEETING_TOOL_NAMES).toEqual(['mcp__linkwork__search_meetings', 'mcp__linkwork__get_meeting_excerpt'])
+    for (const name of MEETING_TOOL_NAMES) expect(LINKWORK_TOOL_NAMES).toContain(name)
+    expect(LINKWORK_TOOL_NAMES).not.toContain('mcp__linkwork__fetch_url')
+  })
+
+  it('서버에 회의 기록 도구가 등록된다', async () => {
+    const server = (await getLinkworkMcpServer()) as unknown as { tools: Array<{ name: string }> }
+    const names = server.tools.map((t) => t.name)
+    expect(names).toContain('search_meetings')
+    expect(names).toContain('get_meeting_excerpt')
   })
 })

@@ -71,7 +71,9 @@ import {
   setAttendees,
   listAttendees,
   loadPromptContext,
-  buildSummaryContextBlock
+  buildSummaryContextBlock,
+  buildMarksBlock,
+  MARKS_BLOCK_MAX_CHARS
 } from './recognition-aids'
 
 let db: Database.Database
@@ -443,5 +445,47 @@ describe('loadPromptContext', () => {
     upsertGlossary(db, { term: '전역' })
     db.exec('DROP TABLE stt_glossary')
     expect(loadPromptContext(db, meetingId)).toEqual({ glossary: [], rules: [], attendees: [] })
+  })
+})
+
+
+describe('buildMarksBlock', () => {
+  it('메모가 없으면 빈 문자열이다', () => {
+    expect(buildMarksBlock([])).toBe('')
+  })
+
+  it('at_ms 오름차순으로 [mm:ss] 메모 줄을 만들고, 빈 메모는 (북마크)로 쓴다', () => {
+    expect(
+      buildMarksBlock([
+        { at_ms: 754_000, text: '  가격 결정  ' },
+        { at_ms: 65_500, text: '' },
+        { at_ms: 4_520_000, text: '여러\n줄 메모' }
+      ])
+    ).toBe('[사용자 메모]\n[01:05] (북마크)\n[12:34] 가격 결정\n[75:20] 여러 줄 메모')
+  })
+
+  it('200줄을 넘으면 앞 200개만 넣고 끝에 표시 개수를 적는다', () => {
+    const marks = Array.from({ length: 250 }, (_, i) => ({ at_ms: i * 1000, text: `m${i}` }))
+    const lines = buildMarksBlock(marks).split('\n')
+    expect(lines[0]).toBe('[사용자 메모]')
+    expect(lines).toHaveLength(1 + 200 + 1)
+    expect(lines[200]).toBe('[03:19] m199')
+    expect(lines.at(-1)).toBe('(메모 250개 중 200개만 표시)')
+  })
+
+  it('블록이 8,000자를 넘지 않게 앞에서부터 들어가는 만큼만 넣는다', () => {
+    const marks = Array.from({ length: 50 }, (_, i) => ({ at_ms: i * 1000, text: 'x'.repeat(400) }))
+    const block = buildMarksBlock(marks)
+    expect(block.length).toBeLessThanOrEqual(MARKS_BLOCK_MAX_CHARS)
+    const lines = block.split('\n')
+    const shown = lines.length - 2
+    expect(shown).toBeGreaterThan(0)
+    expect(shown).toBeLessThan(50)
+    expect(lines.at(-1)).toBe(`(메모 50개 중 ${shown}개만 표시)`)
+  })
+
+  it('딱 맞으면 끝 표시를 붙이지 않는다', () => {
+    const block = buildMarksBlock([{ at_ms: 0, text: 'a' }])
+    expect(block).toBe('[사용자 메모]\n[00:00] a')
   })
 })

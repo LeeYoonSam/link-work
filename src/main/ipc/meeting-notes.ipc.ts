@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db/database'
 import { listAttendees } from '../services/recognition-aids'
+import { listMarks } from '../services/meeting-marks'
 import {
   buildMeetingNoteMarkdown,
   countActionItems,
@@ -133,7 +134,8 @@ function meetingNoteMarkdown(db: Db, id: number): string {
     speakers,
     segments,
     summary,
-    attendees: listAttendees(db, id)
+    attendees: listAttendees(db, id),
+    marks: listMarks(db, id).map((m) => ({ at_ms: m.at_ms, text: m.text }))
   })
 }
 

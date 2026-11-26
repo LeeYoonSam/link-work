@@ -3,6 +3,7 @@ import { useRecordingStore } from '../../stores/recordingStore'
 import type { VoiceAction } from '../../stores/recordingStore'
 import type { Attendee, MeetingKind, MeetingSpeaker } from '../../types'
 import { Badge } from '../ui'
+import RematchDialog from './RematchDialog'
 
 interface Props {
   speakers: MeetingSpeaker[]
@@ -195,6 +196,29 @@ export function VoiceNotice({ ok, message }: { ok: boolean; message: string }): 
   )
 }
 
+// 목소리는 있는데 이름이 빈 화자가 있으면 등록된 목소리로 다시 찾기를 권한다
+export function shouldOfferRematch(
+  speakers: Array<Pick<MeetingSpeaker, 'has_voice' | 'display_name'>>
+): boolean {
+  return speakers.some((s) => s.has_voice && (s.display_name ?? '').trim() === '')
+}
+
+// 화자 목록 위 다시 찾기 안내 줄
+export function RematchPrompt({ onOpen }: { onOpen: () => void }): React.ReactNode {
+  return (
+    <div className="flex items-center gap-2 text-[11px] text-gray-400 bg-gray-50 px-3 py-1.5 rounded-md">
+      <span className="flex-1 min-w-0">이름 없는 화자를 등록된 목소리와 다시 비교합니다.</span>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors"
+      >
+        등록된 목소리로 다시 찾기
+      </button>
+    </div>
+  )
+}
+
 export default function SpeakerEditor({
   speakers,
   meetingId,
@@ -215,6 +239,7 @@ export default function SpeakerEditor({
   const [voiceBusyId, setVoiceBusyId] = useState<number | null>(null)
   // 목소리 액션 안내. ok=false는 실패(빨강), ok=true는 참고 안내(회색)
   const [voiceNotice, setVoiceNotice] = useState<{ ok: boolean; message: string } | null>(null)
+  const [rematchOpen, setRematchOpen] = useState(false)
 
   const namePresets = buildNamePresets(kind, attendees ?? [])
 
@@ -273,6 +298,8 @@ export default function SpeakerEditor({
         </p>
       ) : null}
 
+      {shouldOfferRematch(speakers) && <RematchPrompt onOpen={() => setRematchOpen(true)} />}
+
       <ul className="space-y-2">
         {speakers.map((spk) => (
           <SpeakerRow
@@ -322,6 +349,15 @@ export default function SpeakerEditor({
       {mergeError && (
         <p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-md">{mergeError}</p>
       )}
+
+      <RematchDialog
+        open={rematchOpen}
+        opts={{ meetingIds: [meetingId] }}
+        onClose={() => {
+          setRematchOpen(false)
+          void refreshCurrent()
+        }}
+      />
     </div>
   )
 }

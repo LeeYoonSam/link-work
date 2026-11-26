@@ -5,6 +5,7 @@ import { MEMO_WITH_CATEGORY_SELECT } from '../utils/memo-helpers'
 import { TODO_TAGS_SUBQUERY } from '../utils/todo-helpers'
 import { getEventsInRange } from './google-calendar'
 import { buildAssistantTools } from './ai-assistant-tools'
+import { buildMeetingTools } from './ai-meeting-tools'
 import { buildWriteTools, TRUNCATION_MARKER } from './ai-write-tools'
 import {
   BITBUCKET_NOT_CONNECTED_MESSAGE,
@@ -52,8 +53,17 @@ export const LINKWORK_TOOL_NAMES = [
   // Bitbucket 은 사용자 token 계정의 저장소를 GET 으로만 조회하므로 자동 허용 (AI_GUARDRAILS 8.7)
   'read_bitbucket',
   // 회의 액션아이템 도구는 읽기 전용 로컬 DB 만 읽는다. Jira 를 호출하지 않는다 (AI_GUARDRAILS 8.6)
-  'list_meeting_action_items'
+  'list_meeting_action_items',
+  // 회의 기록 검색·원문 도구는 읽기 전용 로컬 DB 의 전사·요약만 읽는다. 오디오는 읽지 않는다.
+  // ai-agent.ts 는 이 2종을 canUseTool 로 받아 질의 단위 누적 예산과 fetch_url 게이트에 쓴다.
+  'search_meetings',
+  'get_meeting_excerpt'
 ].map((name) => `mcp__linkwork__${name}`)
+
+// 회의 기록 도구 전체 이름. ai-agent.ts 가 누적 예산·fetch_url 게이트에 쓴다.
+export const MEETING_TOOL_NAMES = ['search_meetings', 'get_meeting_excerpt'].map(
+  (name) => `mcp__linkwork__${name}`
+)
 
 // fetch_url은 의도적으로 LINKWORK_TOOL_NAMES(자동 허용)에 넣지 않는다.
 // 도구 결과(메모 등)에 심긴 지시문이 임의 URL로 데이터를 실어 보내는 유출 경로가
@@ -464,6 +474,7 @@ const getMemo = tool(
   // ai-agent.ts의 canUseTool에서 강제한다 — docs/AI_GUARDRAILS.md 7절
   const writeTools = await buildWriteTools()
   const assistantTools = buildAssistantTools(tool)
+  const meetingTools = buildMeetingTools(tool)
 
   return createSdkMcpServer({
     name: 'linkwork',
@@ -475,6 +486,7 @@ const getMemo = tool(
       getMemo,
       getCalendarEvents,
       ...assistantTools,
+      ...meetingTools,
       listReleaseNotes,
       getReleaseNote,
       getNotionPageTool,

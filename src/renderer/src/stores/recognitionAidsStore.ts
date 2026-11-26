@@ -1,5 +1,13 @@
 import { create } from 'zustand'
-import type { GlossaryEntry, Member, MemberVoiceprint } from '../types'
+import type {
+  GlossaryEntry,
+  Member,
+  MemberVoiceprint,
+  RematchMeetingPlan,
+  RematchOptions,
+  RematchResult
+} from '../types'
+import { useRecordingStore } from './recordingStore'
 
 // 인식 보조 장치(용어집·구성원) 전역 상태.
 //
@@ -52,7 +60,16 @@ interface RecognitionAidsStore {
   removeMember: (id: number) => Promise<boolean>
   /** 구성원의 목소리 표본을 전부 지운다 */
   clearVoiceprint: (memberId: number) => Promise<boolean>
+  /** 등록된 목소리로 지난 회의의 이름 없는 화자를 다시 찾는다(저장 안 함). 실패 시 null */
+  previewRematch: (opts?: RematchOptions) => Promise<RematchMeetingPlan[] | null>
+  /** 다시 찾은 결과를 저장한다. 목소리 표본은 만들지 않는다. 실패 시 null */
+  applyRematch: (opts?: RematchOptions) => Promise<RematchResult | null>
 }
+
+// 직전 미리보기 계획. applyRematch 가 새로 읽을 열린 회의를 고르는 데 쓴다
+let lastPreview: { key: string; plan: RematchMeetingPlan[] } | null = null
+const rematchKey = (opts?: RematchOptions): string =>
+  JSON.stringify({ meetingIds: opts?.meetingIds ?? null, memberIds: opts?.memberIds ?? null })
 
 const message = (err: unknown, fallback: string): string =>
   err instanceof Error ? err.message : fallback
@@ -160,6 +177,42 @@ export const useRecognitionAidsStore = create<RecognitionAidsStore>((set, get) =
       console.error('[recognitionAidsStore] clearVoiceprint error:', err)
       set({ error: message(err, '목소리 삭제 실패') })
       return false
+    }
+  },
+
+  previewRematch: async (opts) => {
+    try {
+      const plan = await window.api.recognitionAids.previewRematch(opts)
+      lastPreview = { key: rematchKey(opts), plan }
+      return plan
+    } catch (err) {
+      console.error('[recognitionAidsStore] previewRematch error:', err)
+      return null
+    }
+  },
+
+  applyRematch: async (opts) => {
+    try {
+      // 바뀔 회의는 직전 미리보기 계획으로 안다. 이유: 적용 결과는 건수만 돌려준다.
+      // 같은 조건의 미리보기가 없으면 열린 회의를 새로 읽는다
+      const plan = lastPreview?.key === rematchKey(opts) ? lastPreview.plan : null
+      lastPreview = null
+      const result = await window.api.recognitionAids.applyRematch(opts)
+      await get().fetchAll()
+      const recording = useRecordingStore.getState()
+      const openId = recording.current?.meeting.id
+      if (
+        openId != null &&
+        (plan === null ||
+          plan.some((p) => p.meeting_id === openId) ||
+          (opts?.meetingIds?.includes(openId) ?? false))
+      ) {
+        await recording.refreshCurrent()
+      }
+      return result
+    } catch (err) {
+      console.error('[recognitionAidsStore] applyRematch error:', err)
+      return null
     }
   }
 }))

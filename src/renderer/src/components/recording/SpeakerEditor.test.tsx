@@ -8,7 +8,9 @@ import {
   SpeakerVoiceControls,
   speakerVoiceState,
   formatMatchScore,
-  VoiceNotice
+  VoiceNotice,
+  shouldOfferRematch,
+  RematchPrompt
 } from './SpeakerEditor'
 import { voiceActionOutcome } from '../../stores/recordingStore'
 import type { Attendee } from '../../types'
@@ -253,5 +255,31 @@ describe('voiceActionOutcome', () => {
     expect(html).toContain('role="alert"')
     // 참고 안내는 status로 구분한다
     expect(renderToStaticMarkup(<VoiceNotice ok message="x" />)).toContain('role="status"')
+  })
+})
+
+// 목소리는 있는데 이름이 빈 화자가 있을 때만 등록된 목소리로 다시 찾기를 권한다
+describe('shouldOfferRematch · RematchPrompt', () => {
+  it('has_voice 이고 display_name 이 빈 화자가 있으면 권한다', () => {
+    expect(shouldOfferRematch([{ has_voice: true, display_name: null }])).toBe(true)
+    expect(shouldOfferRematch([{ has_voice: true, display_name: '  ' }])).toBe(true)
+    expect(
+      shouldOfferRematch([
+        { has_voice: true, display_name: '홍길동' },
+        { has_voice: true, display_name: '' }
+      ])
+    ).toBe(true)
+  })
+
+  it('목소리가 없거나 모두 이름이 있으면 권하지 않는다', () => {
+    expect(shouldOfferRematch([])).toBe(false)
+    expect(shouldOfferRematch([{ has_voice: false, display_name: null }])).toBe(false)
+    expect(shouldOfferRematch([{ has_voice: true, display_name: '홍길동' }])).toBe(false)
+  })
+
+  it('안내 줄과 버튼 문구를 그린다', () => {
+    const html = renderToStaticMarkup(<RematchPrompt onOpen={() => {}} />)
+    expect(html).toContain('이름 없는 화자를 등록된 목소리와 다시 비교합니다.')
+    expect(html).toContain('등록된 목소리로 다시 찾기')
   })
 })

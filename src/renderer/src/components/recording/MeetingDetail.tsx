@@ -4,6 +4,7 @@ import { useRecognitionAidsStore } from '../../stores/recognitionAidsStore'
 import { formatClock } from '../../utils/processing-progress'
 import type { Meeting, MeetingSpeaker, MeetingStatus } from '../../types'
 import { Badge, IconButton, ProgressBar, TrashIcon, PencilIcon, XIcon, UndoIcon, button } from '../ui'
+import { speakerCountPrompt } from '../../utils/speakerCountPrompt'
 import AudioPlayer from './AudioPlayer'
 import SpeakerTimeline from './SpeakerTimeline'
 import SummaryPanel from './SummaryPanel'
@@ -102,7 +103,9 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
     setExpectedSpeakers,
     setAttendees,
     cancelProcessing,
-    refreshCurrent
+    refreshCurrent,
+    pendingSeek,
+    consumePendingSeek
   } = useRecordingStore()
   const { members, fetchAll: fetchAids } = useRecognitionAidsStore()
 
@@ -125,6 +128,8 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
   const [currentMs, setCurrentMs] = useState(0)
   // 처리 경과 시간 표시용 현재 시각. 처리 중일 때만 1초 간격으로 갱신된다.
   const [nowMs, setNowMs] = useState(() => Date.now())
+  // 참석 인원 확인 배너의 "N명으로 다시 나누기" 입력
+  const [confirmCount, setConfirmCount] = useState('')
 
   const audioRef = useRef<AudioPlayerHandle>(null)
 
@@ -146,6 +151,7 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
       setConfirmDelete(false)
       setEditingAttendees(false)
       setCurrentMs(0)
+      setConfirmCount('')
     }
   }, [meeting?.id])
 
@@ -158,6 +164,17 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
       setTab('timeline')
     }
   }, [meeting?.id, meeting?.status])
+
+  // 재생 이동 예약 수신(#13). 다른 화면에서 "이 시점부터 듣기"로 들어오면 타임라인 탭에서 그 시점부터 재생한다.
+  // 탭 자동 전환 effect보다 뒤에 선언해 같은 커밋에서 이 전환이 마지막에 적용되게 한다.
+  // 오디오가 아직 없으면 예약을 남겨 두고, audio_path가 준비되면 다시 시도한다.
+  useEffect(() => {
+    if (!meeting || !meeting.audio_path) return
+    const ms = consumePendingSeek(meeting.id)
+    if (ms == null) return
+    setTab('timeline')
+    handleSeek(ms)
+  }, [meeting?.id, meeting?.audio_path, pendingSeek])
 
   // 구성원 목록(참석자 편집) 로드
   useEffect(() => {
@@ -287,6 +304,24 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
 
   // 재처리/재생성 진행 중 여부 (메뉴 항목 비활성화에 사용)
   const busy = reprocessing || isProcessing
+
+  // 참석 인원 확인 배너(#8) — 자동으로 나눈 화자 수가 맞는지 한 번 묻는다
+  const countPrompt = busy ? null : speakerCountPrompt(meeting, speakers, segments)
+  const parsedConfirmCount = parseInt(confirmCount, 10)
+  const confirmCountValid =
+    /^\d+$/.test(confirmCount.trim()) && parsedConfirmCount >= 1 && parsedConfirmCount <= 20
+
+  // 배너에서 다른 인원을 고르면 그 수로 화자를 다시 나눈다(재분리 메뉴와 같은 경로)
+  const handleRediarizeWithCount = async (n: number): Promise<void> => {
+    const targetId = meeting.id
+    setReprocessingId(targetId)
+    try {
+      await setExpectedSpeakers(targetId, n)
+      await reprocessMeeting(targetId, true)
+    } finally {
+      setReprocessingId((prev) => (prev === targetId ? null : prev))
+    }
+  }
 
   const compaction = compactionSummary(meeting)
 
@@ -555,6 +590,58 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
           )}
         </div>
 
+        {/* 참석 인원 확인 — 자동으로 나눈 화자 수가 맞는지 */}
+        {countPrompt && (
+          <div className="mt-2 flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-md px-3 py-2">
+            <div className="flex-1 min-w-0 space-y-1.5">
+              <p className="text-xs text-blue-800">
+                화자를 자동으로 {countPrompt.detected}명으로 나눴습니다. 실제 참석 인원이 맞나요?
+              </p>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => void setExpectedSpeakers(meeting.id, countPrompt.detected)}
+                  className={`${button.subtle} px-2 py-0.5 text-[11px]`}
+                >
+                  맞아요
+                </button>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={confirmCount}
+                  onChange={(e) => setConfirmCount(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && confirmCountValid) {
+                      void handleRediarizeWithCount(parsedConfirmCount)
+                    }
+                  }}
+                  placeholder={String(countPrompt.detected)}
+                  aria-label="실제 참석 인원"
+                  className="w-12 text-[11px] px-1.5 py-0.5 border border-gray-200 rounded text-center bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleRediarizeWithCount(parsedConfirmCount)}
+                  disabled={!confirmCountValid}
+                  className="px-2 py-0.5 text-[11px] rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-40"
+                >
+                  명으로 다시 나누기
+                </button>
+                <span className="text-[10px] text-blue-600/70">다시 나누면 요약도 다시 만듭니다.</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void setExpectedSpeakers(meeting.id, null)}
+              title="닫기"
+              className="shrink-0 text-blue-400 hover:text-blue-600 transition-colors"
+            >
+              <XIcon size={12} />
+            </button>
+          </div>
+        )}
+
         {/* 처리 중 프로그레스 + 취소 */}
         {isProcessing && (
           <div className="mt-3 space-y-1">
@@ -650,7 +737,12 @@ export default function MeetingDetailView({ onClose }: Props): React.ReactNode {
           (isInterview ? (
             <InterviewPanel summary={summary} meetingId={meeting.id} onSeek={handleSeek} />
           ) : (
-            <SummaryPanel summary={summary} meetingId={meeting.id} onSeek={handleSeek} />
+            <SummaryPanel
+              summary={summary}
+              meetingId={meeting.id}
+              onSeek={handleSeek}
+              currentMs={currentMs}
+            />
           ))}
         {tab === 'speakers' && (
           <div className="space-y-3">

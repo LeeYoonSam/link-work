@@ -13,6 +13,31 @@ describe('parseInternalLink — 신규 항목 링크', () => {
     expect(parseInternalLink(href)).toEqual(expected)
   })
 
+  it('recording/{id}/at/{ms} 는 재생 위치를 읽는다', () => {
+    expect(parseInternalLink('linkwork://recording/7/at/754000')).toEqual({
+      kind: 'recording',
+      id: 7,
+      atMs: 754000
+    })
+    expect(parseInternalLink('linkwork://recording/7/at/0')).toEqual({ kind: 'recording', id: 7, atMs: 0 })
+    expect(parseInternalLink('linkwork://recording/7/at/86399999')).toEqual({
+      kind: 'recording',
+      id: 7,
+      atMs: 86399999
+    })
+  })
+
+  it.each(['-1', 'abc', '86400000', '1.5'])('recording/7/at/%s 는 위치 없이 녹음만 연다', (ms) => {
+    expect(parseInternalLink(`linkwork://recording/7/at/${ms}`)).toEqual({ kind: 'recording', id: 7 })
+  })
+
+  it('recording 링크의 다른 모양은 그대로다', () => {
+    expect(parseInternalLink('linkwork://recording/7')).toEqual({ kind: 'recording', id: 7 })
+    expect(parseInternalLink('linkwork://recording/0/at/100')).toBeNull()
+    expect(parseInternalLink('linkwork://recording/7/x/100')).toBeNull()
+    expect(parseInternalLink('linkwork://memo/7/at/100')).toBeNull()
+  })
+
   it('project/1/task/9 는 프로젝트 페이지 티켓 탭으로 간다', () => {
     expect(parseInternalLink('linkwork://project/1/task/9')).toEqual({
       kind: 'view',

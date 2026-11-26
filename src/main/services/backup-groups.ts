@@ -50,6 +50,7 @@ export const GROUP_TABLES: Record<BackupGroupId, readonly string[]> = {
     'meeting_segments',
     'meeting_cuts',
     'meeting_summaries',
+    'meeting_marks',
     'meeting_members',
     'meeting_attendees',
     'meeting_speaker_voices',

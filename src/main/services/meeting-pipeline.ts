@@ -22,6 +22,7 @@ import { postprocessTurns } from './diarization/postprocess'
 import { beginPipeline, endPipeline, PipelineCancelledError } from './pipeline-abort'
 import { assignSpeaker, resolvePostprocessOptions } from './speaker-assign'
 import { remapSummaryTimes } from './meeting-notes'
+import { remapLiveMarks } from './meeting-marks'
 import {
   planSpeakerCarryover,
   matchCorrectedSpeakers,
@@ -164,6 +165,13 @@ function remapExistingTimelines(
     }
   } catch {
     // 무시 — 요약 본문은 그대로 유효하다.
+  }
+
+  // 녹음 중 메모('live')의 시각도 컷편집된 시간축으로 옮긴다(raw_ms 기준이라 멱등).
+  try {
+    remapLiveMarks(db, meetingId, map)
+  } catch (err) {
+    console.warn('[meeting-pipeline] 메모 시각 재매핑 실패:', err)
   }
 
   try {

@@ -10,6 +10,7 @@
 //
 // 이 모듈은 DB 핸들을 인자로 받는다(getDatabase()를 부르지 않는다). 순수 함수는 DB 없이 테스트한다.
 import type Database from 'better-sqlite3'
+import { listAttendees } from './recognition-aids'
 
 type Db = Database.Database
 
@@ -760,4 +761,190 @@ export function applyMeetingVoicesSafe(
     db.exec('RELEASE SAVEPOINT meeting_voices')
     return { auto: 0, suggested: 0, error: err instanceof Error ? err.message : String(err) }
   }
+}
+
+// ── 다시 매칭(Rematch) ──
+// 옛 회의의 이름 없는 화자에 지금 등록된 구성원 목소리를 다시 적용한다.
+// 표본(member_voice_samples)은 만들지 않는다 — 자동 지정·제안은 사용자 확정이 아니다.
+
+export interface RematchSpeakerPlan {
+  speaker_id: number
+  speaker_label: string
+  member_id: number
+  member_name: string
+  source: 'auto' | 'suggested'
+  score: number
+}
+
+export interface RematchMeetingPlan {
+  meeting_id: number
+  title: string
+  started_at: string
+  speakers: RematchSpeakerPlan[]
+}
+
+export interface RematchOptions {
+  meetingIds?: number[]
+  memberIds?: number[]
+}
+
+export interface RematchResult {
+  meetings: number
+  auto: number
+  suggested: number
+}
+
+interface RematchSpeakerRow {
+  id: number
+  label: string | null
+  speaker_key: string
+  display_name: string | null
+  member_id: number | null
+  member_source: string | null
+  rejected_member_ids: string
+  embedding: Uint8Array | null
+  model: string | null
+  speech_ms: number | null
+}
+
+/**
+ * 다시 매칭 계획(DB를 바꾸지 않는다).
+ * - 회의: status 'transcribed'·'summarized'(meetingIds가 있으면 그 안), started_at 내림차순.
+ * - 대상 화자: 목소리가 있고 이름이 비어 있으며 member_source가 NULL 또는 'suggested'.
+ *   대상이 아닌 화자에 연결된 구성원은 후보에서 뺀다.
+ * - memberIds는 전체 구성원으로 계획한 뒤 결과만 거른다(좁혀 계획하면 2순위 차가 커져 auto가 는다).
+ * - 지금 상태와 같은 결과(같은 구성원·같은 source)는 뺀다. 변경이 있는 회의만 돌려준다.
+ */
+export function planRematch(db: Db, opts: RematchOptions = {}): RematchMeetingPlan[] {
+  const meetingFilter = opts.meetingIds
+  if (meetingFilter && meetingFilter.length === 0) return []
+  const memberFilter = opts.memberIds ? new Set(opts.memberIds) : null
+  if (memberFilter && memberFilter.size === 0) return []
+
+  const meetings = db
+    .prepare(
+      `SELECT id, title, started_at FROM meetings
+        WHERE status IN ('transcribed', 'summarized')
+          ${meetingFilter ? `AND id IN (${meetingFilter.map(() => '?').join(', ')})` : ''}
+        ORDER BY started_at DESC, id DESC`
+    )
+    .all(...(meetingFilter ?? [])) as Array<{ id: number; title: string; started_at: string | null }>
+  if (meetings.length === 0) return []
+
+  const speakerStmt = db.prepare(
+    `SELECT s.id, s.label, s.speaker_key, s.display_name, s.member_id, s.member_source, s.rejected_member_ids,
+            v.embedding, v.model, v.speech_ms
+       FROM meeting_speakers s
+       LEFT JOIN meeting_speaker_voices v ON v.speaker_id = s.id
+      WHERE s.meeting_id = ?
+      ORDER BY s.sort_order ASC, s.id ASC`
+  )
+  const profileCache = new Map<string, MatchMember[]>()
+  const profilesFor = (model: string): MatchMember[] => {
+    let cached = profileCache.get(model)
+    if (!cached) {
+      cached = loadMemberProfiles(db, model)
+      profileCache.set(model, cached)
+    }
+    return cached
+  }
+
+  const plans: RematchMeetingPlan[] = []
+  for (const meeting of meetings) {
+    const rows = speakerStmt.all(meeting.id) as RematchSpeakerRow[]
+    const targets: RematchSpeakerRow[] = []
+    const taken = new Set<number>()
+    for (const r of rows) {
+      const isTarget =
+        r.embedding !== null &&
+        r.model !== null &&
+        !(r.display_name ?? '').trim() &&
+        (r.member_source === null || r.member_source === 'suggested')
+      if (isTarget) targets.push(r)
+      else if (r.member_id !== null) taken.add(r.member_id)
+    }
+    if (targets.length === 0) continue
+
+    const byModel = new Map<string, RematchSpeakerRow[]>()
+    for (const t of targets) {
+      const list = byModel.get(t.model as string) ?? []
+      list.push(t)
+      byModel.set(t.model as string, list)
+    }
+
+    let attendeeIds: number[] | null = null
+    const changes: RematchSpeakerPlan[] = []
+    for (const [model, group] of byModel) {
+      const members = profilesFor(model)
+      if (!members.some((m) => m.profile !== null)) continue
+      if (attendeeIds === null) attendeeIds = listAttendees(db, meeting.id).map((a) => a.member_id)
+      const matches = planVoiceMatches({
+        speakers: group.map((s) => ({
+          speaker_key: String(s.id),
+          embedding: decodeEmbedding(s.embedding),
+          speech_ms: s.speech_ms ?? 0,
+          display_name: null,
+          rejected_member_ids: parseRejectedIds(s.rejected_member_ids)
+        })),
+        members,
+        attendeeIds,
+        takenMemberIds: [...taken]
+      })
+      const nameById = new Map(members.map((m) => [m.member_id, m.name]))
+      for (const s of group) {
+        const match = matches.get(String(s.id))
+        if (!match) continue
+        // 다른 모델 묶음에서 같은 구성원을 다시 고르지 않게 한다
+        taken.add(match.member_id)
+        if (memberFilter && !memberFilter.has(match.member_id)) continue
+        if (s.member_id === match.member_id && s.member_source === match.source) continue
+        changes.push({
+          speaker_id: s.id,
+          speaker_label: s.label ?? s.speaker_key,
+          member_id: match.member_id,
+          member_name: nameById.get(match.member_id) ?? '',
+          source: match.source,
+          score: match.score
+        })
+      }
+    }
+    if (changes.length > 0) {
+      plans.push({ meeting_id: meeting.id, title: meeting.title, started_at: meeting.started_at ?? '', speakers: changes })
+    }
+  }
+  return plans
+}
+
+/**
+ * 다시 매칭 계획을 적용한다. member_voice_samples는 쓰지 않는다.
+ * 'auto'는 display_name을 구성원 이름으로 채운다. 계획에 없는 화자는 그대로 둔다.
+ * 단, 같은 회의에서 이번에 다른 화자에게 간 구성원을 'suggested'로 가리키던 화자는 그 제안을 지운다
+ * (한 회의에서 한 구성원이 두 화자에 연결되지 않게 — 확정하면 남의 목소리가 표본에 들어간다).
+ * 호출하는 쪽이 트랜잭션으로 감싼다.
+ */
+export function applyRematch(db: Db, plan: RematchMeetingPlan[]): RematchResult {
+  const clearStale = db.prepare(
+    `UPDATE meeting_speakers SET member_id = NULL, member_source = NULL, match_score = NULL
+      WHERE meeting_id = ? AND member_id = ? AND member_source = 'suggested' AND id != ?`
+  )
+  const setLink = db.prepare('UPDATE meeting_speakers SET member_id = ?, member_source = ?, match_score = ? WHERE id = ?')
+  const setName = db.prepare('UPDATE meeting_speakers SET display_name = ? WHERE id = ?')
+  let meetings = 0
+  let auto = 0
+  let suggested = 0
+  for (const m of plan) {
+    if (m.speakers.length === 0) continue
+    meetings++
+    for (const s of m.speakers) {
+      clearStale.run(m.meeting_id, s.member_id, s.speaker_id)
+      setLink.run(s.member_id, s.source, s.score, s.speaker_id)
+      if (s.source === 'auto') {
+        setName.run(s.member_name, s.speaker_id)
+        auto++
+      } else {
+        suggested++
+      }
+    }
+  }
+  return { meetings, auto, suggested }
 }

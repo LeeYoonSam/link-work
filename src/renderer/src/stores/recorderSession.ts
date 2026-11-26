@@ -1,7 +1,7 @@
 import { useRecorderStore } from './recorderStore'
 import type { RecorderState } from './recorderStore'
 import { useRecordingStore } from './recordingStore'
-import type { MeetingKind, RecorderCommand } from '../types'
+import type { MeetingKind, MeetingTemplateId, RecorderCommand } from '../types'
 
 // 녹음 세션 수명주기(시작 → 종료·저장 → 후속 처리 / 취소) 오케스트레이션.
 // 컴포넌트가 아니라 모듈 함수로 둔다 — 녹음 화면이 언마운트된 상태(다른 메뉴)에서도
@@ -17,6 +17,8 @@ interface StartSessionInput {
   expected_speakers: number | null
   attendee_ids: number[]
   compact_audio: boolean
+  // 요약 형식. null·생략이면 제목으로 자동 판별(면접은 main이 무시)
+  summary_template?: MeetingTemplateId | null
 }
 
 // 진행 중인 종료·저장 — 중복 클릭이나 UI·main 명령이 겹쳐도 한 번만 저장한다.

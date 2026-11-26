@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildMeetingNoteMarkdown,
+  computeTalkShare,
   countActionItems,
   escapeLike,
   formatClock,
@@ -33,8 +34,8 @@ const base: Omit<NoteDetail, 'meeting' | 'summary'> = {
     { id: 2, label: 'SPEAKER_01', display_name: null }
   ],
   segments: [
-    { start_ms: 5000, speaker_id: 1, text: '시작합니다' },
-    { start_ms: 65000, speaker_id: 2, text: '네 좋습니다' }
+    { start_ms: 5000, end_ms: 8000, speaker_id: 1, text: '시작합니다' },
+    { start_ms: 65000, end_ms: 68000, speaker_id: 2, text: '네 좋습니다' }
   ],
   attendees: [{ name: '김철수' }, { name: '이영희' }]
 }
@@ -181,7 +182,7 @@ describe('buildMeetingNoteMarkdown — 새 요약 포맷', () => {
 
   it('주제별 요약은 번호·제목·시각 제목 아래에 포인트 불릿을 둔다', () => {
     expect(md).toContain(
-      '## 주제별 요약\n\n### 1. 결제 개편 범위 [00:12]\n\n- 카드 결제만 먼저 바꾼다\n- 간편 결제는 다음 분기\n\n### 2. 환불 정책 [12:34]\n\n## 전사'
+      '## 주제별 요약\n\n### 1. 결제 개편 범위 [00:12]\n\n- 카드 결제만 먼저 바꾼다\n- 간편 결제는 다음 분기\n\n### 2. 환불 정책 [12:34]\n\n## 발화 점유율\n\n- 김철수: 00:03 (50%) · 발언 1회\n- SPEAKER_01: 00:03 (50%) · 발언 1회\n\n## 전사'
     )
   })
 })
@@ -196,8 +197,8 @@ describe('buildMeetingNoteMarkdown — 구버전 요약', () => {
       meeting: { title: '주간 회의', kind: 'meeting', started_at: '2026-10-01 10:00:00', duration_ms: 1800000 },
       speakers: [{ id: 1, label: 'SPEAKER_00', display_name: '김철수' }],
       segments: [
-        { start_ms: 5000, speaker_id: 1, text: '시작합니다' },
-        { start_ms: 65000, speaker_id: null, text: '네' }
+        { start_ms: 5000, end_ms: 8000, speaker_id: 1, text: '시작합니다' },
+        { start_ms: 65000, end_ms: 68000, speaker_id: null, text: '네' }
       ],
       attendees: [{ name: '김철수' }],
       summary: {
@@ -278,5 +279,153 @@ describe('remapSummaryTimes', () => {
     const out = remapSummaryTimes({ topics: 'broken', decisions: '{}', action_items: '[]', open_questions: '[]' }, (ms) => ms)
     expect(out.topics).toBe('broken')
     expect(out.decisions).toBe('{}')
+  })
+})
+
+describe('computeTalkShare', () => {
+  const speakers = [
+    { id: 1, label: 'SPEAKER_00', display_name: ' 김철수 ' },
+    { id: 2, label: 'SPEAKER_01', display_name: null },
+    { id: 3, label: 'SPEAKER_02', display_name: '  ' }
+  ]
+
+  it('빈 입력이면 rows [] · totalMs 0', () => {
+    expect(computeTalkShare([], speakers)).toEqual({ rows: [], totalMs: 0 })
+    expect(computeTalkShare([{ start_ms: 1000, end_ms: 1000, speaker_id: 1 }], speakers)).toEqual({
+      rows: [],
+      totalMs: 0
+    })
+  })
+
+  it('1:1:1이면 최대 나머지로 34/33/33, 같은 ms는 speakers 순', () => {
+    const r = computeTalkShare(
+      [
+        { start_ms: 0, end_ms: 1000, speaker_id: 3 },
+        { start_ms: 1000, end_ms: 2000, speaker_id: 2 },
+        { start_ms: 2000, end_ms: 3000, speaker_id: 1 }
+      ],
+      speakers
+    )
+    expect(r.totalMs).toBe(3000)
+    expect(r.rows.map((x) => [x.speaker_id, x.pct])).toEqual([
+      [1, 34],
+      [2, 33],
+      [3, 33]
+    ])
+    expect(r.rows.reduce((a, x) => a + x.pct, 0)).toBe(100)
+  })
+
+  it('이름: display_name trim → label → 목록에 없는 id는 화자{id}, null은 미지정이며 맨 뒤', () => {
+    const r = computeTalkShare(
+      [
+        { start_ms: 0, end_ms: 5000, speaker_id: null },
+        { start_ms: 5000, end_ms: 6000, speaker_id: 1 },
+        { start_ms: 6000, end_ms: 8000, speaker_id: 3 },
+        { start_ms: 8000, end_ms: 11000, speaker_id: 9 }
+      ],
+      speakers
+    )
+    expect(r.rows.map((x) => [x.speaker_id, x.name, x.ms])).toEqual([
+      [9, '화자9', 3000],
+      [3, 'SPEAKER_02', 2000],
+      [1, '김철수', 1000],
+      [null, '미지정', 5000]
+    ])
+    expect(r.rows.reduce((a, x) => a + x.pct, 0)).toBe(100)
+  })
+
+  it('turns: 연속 같은 화자는 1회, 시작 시각 순으로 센다(입력 순서와 무관), dur 0 무시', () => {
+    const r = computeTalkShare(
+      [
+        { start_ms: 4000, end_ms: 5000, speaker_id: 1 },
+        { start_ms: 0, end_ms: 1000, speaker_id: 1 },
+        { start_ms: 1000, end_ms: 2000, speaker_id: 1 },
+        { start_ms: 2500, end_ms: 2500, speaker_id: 2 },
+        { start_ms: 3000, end_ms: 3500, speaker_id: 2 },
+        { start_ms: 3500, end_ms: 3000, speaker_id: 2 }
+      ],
+      speakers
+    )
+    expect(r.rows).toEqual([
+      { speaker_id: 1, name: '김철수', ms: 3000, pct: 86, turns: 2 },
+      { speaker_id: 2, name: 'SPEAKER_01', ms: 500, pct: 14, turns: 1 }
+    ])
+  })
+})
+
+describe('buildMeetingNoteMarkdown — 내 메모·발화 점유율', () => {
+  const meeting = { title: '회의', kind: 'meeting' as const, started_at: '2026-10-01 10:00:00', duration_ms: 600000 }
+  const speakers = [
+    { id: 1, label: 'SPEAKER_00', display_name: '김철수' },
+    { id: 2, label: 'SPEAKER_01', display_name: null }
+  ]
+  const twoSpeakers = [
+    { start_ms: 0, end_ms: 3000, speaker_id: 1, text: '하나' },
+    { start_ms: 3000, end_ms: 4000, speaker_id: 2, text: '둘' }
+  ]
+
+  it('메모는 at_ms 순, 빈 text는 (북마크), 요약 섹션 뒤·발화 점유율 앞·전사 앞', () => {
+    const md = buildMeetingNoteMarkdown({
+      meeting,
+      speakers,
+      segments: twoSpeakers,
+      attendees: [],
+      summary: { ...emptySummary, tldr: '결론' },
+      marks: [
+        { at_ms: 65000, text: ' 나중 메모 ' },
+        { at_ms: 5000, text: '' }
+      ]
+    })
+    expect(md).toContain('## 내 메모\n\n- [00:05] (북마크)\n- [01:05] 나중 메모\n')
+    const tldr = md.indexOf('## TL;DR')
+    const memo = md.indexOf('## 내 메모')
+    const share = md.indexOf('## 발화 점유율')
+    const transcript = md.indexOf('## 전사')
+    expect(tldr).toBeLessThan(memo)
+    expect(memo).toBeLessThan(share)
+    expect(share).toBeLessThan(transcript)
+    expect(md).toContain('## 발화 점유율\n\n- 김철수: 00:03 (75%) · 발언 1회\n- SPEAKER_01: 00:01 (25%) · 발언 1회\n\n## 전사')
+  })
+
+  it('요약이 없어도 메모를 넣는다', () => {
+    const md = buildMeetingNoteMarkdown({
+      meeting,
+      speakers,
+      segments: [],
+      attendees: [],
+      summary: null,
+      marks: [{ at_ms: 0, text: '메모' }]
+    })
+    expect(md).toContain('## 내 메모\n\n- [00:00] 메모')
+  })
+
+  it('메모가 없으면 섹션도 없다', () => {
+    const md = buildMeetingNoteMarkdown({ meeting, speakers, segments: twoSpeakers, attendees: [], summary: null })
+    expect(md).not.toContain('## 내 메모')
+  })
+
+  it('화자가 1명이면 발화 점유율이 없다(미지정은 세지 않는다)', () => {
+    const md = buildMeetingNoteMarkdown({
+      meeting,
+      speakers,
+      segments: [
+        { start_ms: 0, end_ms: 3000, speaker_id: 1, text: '하나' },
+        { start_ms: 3000, end_ms: 4000, speaker_id: null, text: '둘' }
+      ],
+      attendees: [],
+      summary: null
+    })
+    expect(md).not.toContain('## 발화 점유율')
+  })
+
+  it('미지정 줄도 같은 형식으로 맨 뒤에 넣는다', () => {
+    const md = buildMeetingNoteMarkdown({
+      meeting,
+      speakers,
+      segments: [...twoSpeakers, { start_ms: 4000, end_ms: 8000, speaker_id: null, text: '셋' }],
+      attendees: [],
+      summary: null
+    })
+    expect(md).toContain('- SPEAKER_01: 00:01 (12%) · 발언 1회\n- 미지정: 00:04 (50%) · 발언 1회')
   })
 })

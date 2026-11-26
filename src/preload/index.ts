@@ -126,6 +126,8 @@ const api = {
       attendee_ids?: number[]
       // 처리 시 무음 구간을 잘라낼지 (기본 true)
       compact_audio?: boolean
+      // 요약 형식('default' | 'one_on_one' | 'standup' | 'review'). null·생략이면 제목으로 자동 판별
+      summary_template?: string | null
     }) => ipcRenderer.invoke('recording:createDraft', input),
     saveAudio: (
       id: number,
@@ -150,8 +152,9 @@ const api = {
       ipcRenderer.invoke('recording:confirmSpeakerMatch', speakerId),
     rejectSpeakerMatch: (speakerId: number) =>
       ipcRenderer.invoke('recording:rejectSpeakerMatch', speakerId),
-    reassignSegment: (segmentId: number, speakerId: number | null) =>
-      ipcRenderer.invoke('recording:reassignSegment', segmentId, speakerId),
+    // scope: 'one'(기본) | 'forward' | 'all' — 반환 { success, changed, merged, error? }
+    reassignSegment: (segmentId: number, speakerId: number | null, scope?: 'one' | 'forward' | 'all') =>
+      ipcRenderer.invoke('recording:reassignSegment', segmentId, speakerId, scope),
     updateSegmentText: (segmentId: number, text: string) =>
       ipcRenderer.invoke('recording:updateSegmentText', segmentId, text),
     addSpeaker: (meetingId: number, name: string) =>
@@ -167,6 +170,16 @@ const api = {
     setAttendees: (meetingId: number, memberIds: number[]) =>
       ipcRenderer.invoke('recording:setAttendees', meetingId, memberIds),
     discardDraft: (id: number) => ipcRenderer.invoke('recording:discardDraft', id),
+    // 요약 형식 — 저장만 한다(재요약은 summarize로 따로)
+    setSummaryTemplate: (meetingId: number, templateId: string | null) =>
+      ipcRenderer.invoke('recording:setSummaryTemplate', meetingId, templateId),
+    listSummaryTemplates: () => ipcRenderer.invoke('recording:listSummaryTemplates'),
+    // 메모·북마크(text=''이면 북마크)
+    listMarks: (meetingId: number) => ipcRenderer.invoke('recording:listMarks', meetingId),
+    addMark: (input: { meetingId: number; raw_ms: number; text?: string; origin?: 'live' | 'post' }) =>
+      ipcRenderer.invoke('recording:addMark', input),
+    updateMark: (input: { id: number; text: string }) => ipcRenderer.invoke('recording:updateMark', input),
+    deleteMark: (id: number) => ipcRenderer.invoke('recording:deleteMark', id),
     onStream: (callback: (event: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => callback(data)
       ipcRenderer.on('recording:stream', handler)
@@ -223,7 +236,12 @@ const api = {
     // 구성원 목소리 표본 요약·삭제(임베딩은 오지 않는다)
     listVoiceprints: () => ipcRenderer.invoke('recognitionAids:listVoiceprints'),
     clearVoiceprint: (memberId: number) =>
-      ipcRenderer.invoke('recognitionAids:clearVoiceprint', memberId)
+      ipcRenderer.invoke('recognitionAids:clearVoiceprint', memberId),
+    // 등록된 목소리로 지난 회의 화자 다시 맞추기 — 미리 보기와 적용
+    previewRematch: (opts?: { meetingIds?: number[]; memberIds?: number[] }) =>
+      ipcRenderer.invoke('recognitionAids:previewRematch', opts ?? {}),
+    applyRematch: (opts?: { meetingIds?: number[]; memberIds?: number[] }) =>
+      ipcRenderer.invoke('recognitionAids:applyRematch', opts ?? {})
   },
   export: {
     saveMarkdown: (content: string, defaultFileName: string) =>
