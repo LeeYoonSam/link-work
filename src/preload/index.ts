@@ -78,6 +78,7 @@ const api = {
     chatList: () => ipcRenderer.invoke('ai:chatList'),
     chatCreate: () => ipcRenderer.invoke('ai:chatCreate'),
     chatDelete: (id: number) => ipcRenderer.invoke('ai:chatDelete', id),
+    chatDiscardIfEmpty: (id: number) => ipcRenderer.invoke('ai:chatDiscardIfEmpty', id),
     chatRename: (id: number, title: string) => ipcRenderer.invoke('ai:chatRename', id, title),
     messages: (chatId: number) => ipcRenderer.invoke('ai:messages', chatId),
     send: (

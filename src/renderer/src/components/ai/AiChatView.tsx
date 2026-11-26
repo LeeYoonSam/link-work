@@ -313,6 +313,12 @@ export default function AiChatView(): React.ReactNode {
     checkStatus()
     // 응답 스트림(ai:stream)은 App 의 installAiStreamSync 가 앱 수준에서 구독한다.
     // AI 쓰기 도구의 데이터 변경(ai:dataChanged)은 App 의 installDataSync 가 반영한다
+    return () => {
+      // AI 메뉴를 떠나면 보내지 않은 빈 채팅을 정리한다 (메시지·응답 여부는 discardIfEmpty 가 거른다).
+      // 개발 모드 StrictMode 의 가짜 언마운트에서도 불리지만, 지워지는 것은 빈 채팅뿐이고 다시 마운트되면 빈 화면이 보인다
+      const { currentChatId: openId, discardIfEmpty } = useAiChatStore.getState()
+      if (openId !== null) void discardIfEmpty(openId)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -388,7 +394,7 @@ export default function AiChatView(): React.ReactNode {
       )}
 
       {/* 대화 영역 */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {aiUnavailable && (
           <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 flex items-center justify-between gap-2">
             <span>{aiStatus?.error}</span>
@@ -418,32 +424,35 @@ export default function AiChatView(): React.ReactNode {
         ) : aiUnavailable ? (
           <AiUnavailableNotice error={aiStatus?.error} onRecheck={checkStatus} />
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-8">
-            <div className="text-4xl mb-3">✦</div>
-            <h3 className="text-lg font-semibold text-gray-800 mb-1">LinkWork AI</h3>
-            <p className="text-sm text-gray-500 mb-2">
-              할 일·메모를 찾아 정리하고, Jira 티켓·릴리스 노트·회의 액션아이템·캘린더 일정을 조회합니다.
-              <br />
-              Notion·Bitbucket·Slack 문서와 웹 링크를 읽고, 첨부한 이미지를 보고 답할 수 있습니다.
-              <br />
-              할 일과 메모를 만들거나 수정해 드릴 수도 있습니다.
-              (작성 방식은 입력창 아래에서 채팅별로 선택)
-            </p>
-            <p className="text-xs text-gray-400 mb-6">
-              아래 추천은 최근 할 일·회의·프로젝트·메모를 보고 바뀝니다.
-            </p>
-            {/* 채팅이 없을 때의 오류 (예: 다른 화면에서 대화 생성 실패). 새 채팅을 열면 지워진다 */}
-            {error && (
-              <p role="alert" className="mb-4 w-full max-w-xl px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                {error}
+          // 바깥은 세로 스크롤 영역, 안쪽은 넘치지 않을 때 가운데 정렬 (추천 카드 8개면 넘칠 수 있다)
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="min-h-full flex flex-col items-center justify-center p-8">
+              <div className="text-4xl mb-3">✦</div>
+              <h3 className="text-lg font-semibold text-gray-800 mb-1">LinkWork AI</h3>
+              <p className="text-sm text-gray-500 mb-2">
+                할 일·메모를 찾아 정리하고, Jira 티켓·릴리스 노트·회의 액션아이템·캘린더 일정을 조회합니다.
+                <br />
+                Notion·Bitbucket·Slack 문서와 웹 링크를 읽고, 첨부한 이미지를 보고 답할 수 있습니다.
+                <br />
+                할 일과 메모를 만들거나 수정해 드릴 수도 있습니다.
+                (작성 방식은 입력창 아래에서 채팅별로 선택)
               </p>
-            )}
-            <SuggestionGrid
-              suggestions={suggestions.items}
-              loading={suggestions.loading}
-              onSelect={(prompt) => void handleExampleClick(prompt)}
-              onRefresh={suggestions.refresh}
-            />
+              <p className="text-xs text-gray-400 mb-6">
+                아래 추천은 최근 할 일·회의·프로젝트·메모를 보고 바뀝니다.
+              </p>
+              {/* 채팅이 없을 때의 오류 (예: 다른 화면에서 대화 생성 실패). 새 채팅을 열면 지워진다 */}
+              {error && (
+                <p role="alert" className="mb-4 w-full max-w-xl px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  {error}
+                </p>
+              )}
+              <SuggestionGrid
+                suggestions={suggestions.items}
+                loading={suggestions.loading}
+                onSelect={(prompt) => void handleExampleClick(prompt)}
+                onRefresh={suggestions.refresh}
+              />
+            </div>
           </div>
         )}
       </div>
@@ -460,41 +469,43 @@ function AiUnavailableNotice({
   onRecheck: () => void
 }): React.ReactNode {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-8">
-      <Card padding="md" className="max-w-md w-full text-center">
-        <AlertTriangleIcon size={28} className="mx-auto text-amber-400 mb-3" />
-        <h3 className="text-base font-semibold text-gray-900 mb-2">
-          AI 대화를 사용할 수 없습니다
-        </h3>
-        <p className="text-sm text-gray-700 mb-4">{error}</p>
-        <ol className="text-left text-sm text-gray-600 space-y-1.5 mb-5 list-decimal pl-5">
-          <li>
-            Claude Code 설치 —{' '}
-            <a
-              href="https://claude.com/claude-code"
-              target="_blank"
-              rel="noreferrer"
-              className="text-blue-600 hover:underline"
-            >
-              claude.com/claude-code
-            </a>
-          </li>
-          <li>
-            터미널에서 <code className="px-1 bg-gray-100 rounded text-xs font-mono">claude</code>{' '}
-            실행 후 구독 계정으로 로그인
-          </li>
-          <li>아래 버튼으로 다시 확인</li>
-        </ol>
-        <button
-          onClick={onRecheck}
-          className={`px-4 py-2 text-sm rounded-lg ${button.dark}`}
-        >
-          다시 확인
-        </button>
-        <p className="mt-4 text-xs text-gray-400">
-          AI 대화 외 다른 기능(할 일·메모·프로젝트 등)은 정상적으로 사용할 수 있습니다.
-        </p>
-      </Card>
+    <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="min-h-full flex flex-col items-center justify-center p-8">
+        <Card padding="md" className="max-w-md w-full text-center">
+          <AlertTriangleIcon size={28} className="mx-auto text-amber-400 mb-3" />
+          <h3 className="text-base font-semibold text-gray-900 mb-2">
+            AI 대화를 사용할 수 없습니다
+          </h3>
+          <p className="text-sm text-gray-700 mb-4">{error}</p>
+          <ol className="text-left text-sm text-gray-600 space-y-1.5 mb-5 list-decimal pl-5">
+            <li>
+              Claude Code 설치 —{' '}
+              <a
+                href="https://claude.com/claude-code"
+                target="_blank"
+                rel="noreferrer"
+                className="text-blue-600 hover:underline"
+              >
+                claude.com/claude-code
+              </a>
+            </li>
+            <li>
+              터미널에서 <code className="px-1 bg-gray-100 rounded text-xs font-mono">claude</code>{' '}
+              실행 후 구독 계정으로 로그인
+            </li>
+            <li>아래 버튼으로 다시 확인</li>
+          </ol>
+          <button
+            onClick={onRecheck}
+            className={`px-4 py-2 text-sm rounded-lg ${button.dark}`}
+          >
+            다시 확인
+          </button>
+          <p className="mt-4 text-xs text-gray-400">
+            AI 대화 외 다른 기능(할 일·메모·프로젝트 등)은 정상적으로 사용할 수 있습니다.
+          </p>
+        </Card>
+      </div>
     </div>
   )
 }

@@ -86,6 +86,7 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 | `src/main/services/web-fetch.ts` | fetch_url용 웹 페이지 로드 + HTML→텍스트 (SSRF 가드, 단위 테스트) |
 | `src/main/services/ai-attachments.ts` | 이미지 첨부 저장/검증/정리 (`userData/ai-attachments`) |
 | `src/main/services/ai-suggestions.ts` | 빈 화면 추천 질문 8개를 AI 읽기 전용 커넥션으로 만든다 (`ai:suggestions`, 6.2절) |
+| `src/main/services/ai-chat-cleanup.ts` | 메시지 없는 빈 대화 정리. 떠날 때 지우는 `discardChatIfEmpty`(`ai:chatDiscardIfEmpty`), 앱 시작 시 지우는 `purgeEmptyChats` (6.3절) |
 | `src/main/ipc/ai.ipc.ts` | IPC 핸들러 (`ai:*` 채널), 입력/첨부 검증, 제목 자동 설정, 모델 선택 IPC, Notion·Bitbucket 연동 IPC(설정 > 연동 카드가 쓴다) |
 | `src/main/db/database.ts` | 테이블 스키마 + AI 전용 읽기 전용 커넥션 |
 | `src/preload/index.ts` | `window.api.ai` 노출 |
@@ -201,6 +202,16 @@ ai_audit_log (                      -- 감사 로그 (가드레일 문서 참고
 - 조회 시점: 빈 화면이 나타날 때마다(마운트, 채팅을 닫거나 지워 `currentChatId` 가 비었을 때) 새로 조회해 최신 데이터를 반영한다. 그리드 위 [↻ 다른 추천] 은 `variant` 를 1 올려 다시 조회한다.
 - 응답 전이나 조회가 실패하면 renderer 의 `FALLBACK_SUGGESTIONS`(일반 질문 8개)를 보인다. 다시 조회하는 동안은 지금 카드를 유지하고, 요청마다 번호를 매겨 마지막 요청의 응답만 반영한다. 형식이 틀린 항목은 버리고 모자란 칸은 폴백으로 채운다.
 - 폴백과 추천에는 사용자가 링크·대상을 따로 줘야 하는 질문을 넣지 않는다. 빈 값으로 전송되기 때문이다.
+- 빈 화면과 AI 사용 불가 안내는 내용이 창 높이보다 길면 세로로 스크롤되고, 짧으면 가운데에 놓인다.
+
+### 6.3 빈 대화 정리 (`ai:chatDiscardIfEmpty`)
+
+[새 채팅]으로 만든 뒤 메시지를 보내지 않고 떠난 대화는 목록에 남기지 않는다. `ai:chatCreate` 는 누르는 즉시 `ai_chats` 행을 만들므로, 떠날 때 지운다.
+
+- IPC: `ai:chatDiscardIfEmpty(id)` → `{ deleted: boolean }`. main(`ai-chat-cleanup.ts` 의 `discardChatIfEmpty`)은 `id` 가 양의 정수가 아니면 지우지 않는다. 그 대화가 응답 생성 중(`isAiQueryRunning`)이거나 `ai:send` 가 첨부를 저장하며 사용자 메시지 INSERT 를 기다리는 중이면 지우지 않는다. 메시지 유무 확인과 삭제는 한 문장(`DELETE ... WHERE id = ? AND NOT EXISTS (SELECT 1 FROM ai_messages ...)`)으로 처리한다. 지웠으면 `ai:chatDelete` 와 같이 첨부 폴더도 지운다(`removeChatAttachments`).
+- 부르는 때: renderer 스토어(`aiChatStore`)가 지금 열린 대화를 떠날 때 부른다. 다른 대화를 열 때, 새 채팅을 만들 때, 대화를 닫을 때(`closeChat`), AI 대화 화면이 언마운트될 때(다른 메뉴로 이동)다. 스토어는 먼저 자기 상태로 거른다: 열린 대화에 저장된 메시지(id > 0)가 있거나 응답 스트리밍 중이면 IPC 를 부르지 않는다. 전송 전에 넣는 낙관적 메시지(음수 id)는 세지 않으므로, main 이 전송을 거부해 그 메시지만 남은 대화도 떠날 때 지워진다. `startChatWith` 가 만들고 아직 보내지 않은 대화는 지우지 않는다. 추천 질문 클릭은 만든 직후 전송해 낙관적 메시지가 바로 들어가므로 지울 대상이 되지 않는다. 최종 판정은 main 이 한다. 지워졌으면 대화 목록을 다시 읽는다. 대화를 닫거나 AI 메뉴를 떠난 경우에는 지운 대화가 아직 열려 있으면 화면을 비우고 오류 문구는 남긴다. 다른 대화를 열거나 새 채팅을 만든 경우에는 화면을 비우지 않고 다음 대화로 바로 바꾼다(빈 화면이 잠깐 보이지 않게). IPC 실패는 경고만 남기고 무시한다.
+- 앱 시작 시 정리: `registerAiIpc` 가 메시지가 없는 대화를 모두 한 번 지운다(`purgeEmptyChats`). 시작 시점에는 진행 중인 응답이 없다. 지운 개수를 로그로 남긴다.
+- 메시지를 한 번이라도 보낸 대화는 `ai:send` 가 응답 실행 전에 사용자 메시지를 저장하므로 메시지가 1개 이상이다.
 
 ### 스트리밍 프로토콜 (`ai:stream` 이벤트)
 

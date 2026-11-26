@@ -349,6 +349,8 @@ export interface AiAPI {
   chatList: () => Promise<AiChat[]>
   chatCreate: () => Promise<{ id: number }>
   chatDelete: (id: number) => Promise<{ success: boolean }>
+  /** 메시지가 없고 응답 생성 중이 아니면 대화를 지운다 */
+  chatDiscardIfEmpty: (id: number) => Promise<{ deleted: boolean }>
   chatRename: (id: number, title: string) => Promise<{ success: boolean }>
   messages: (chatId: number) => Promise<AiMessage[]>
   send: (

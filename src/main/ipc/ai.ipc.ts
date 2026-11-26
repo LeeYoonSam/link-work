@@ -23,6 +23,7 @@ import {
   type AiAttachmentInput,
   type SavedAttachment
 } from '../services/ai-attachments'
+import { discardChatIfEmpty, purgeEmptyChats } from '../services/ai-chat-cleanup'
 import { getAiChatModel, isAiChatModelChoice, setAiChatModel } from '../services/ai-model'
 import {
   disconnectBitbucket,
@@ -49,6 +50,21 @@ const MAX_BITBUCKET_TOKEN_LENGTH = 1000
 
 export function registerAiIpc(): void {
   const db = getDatabase()
+
+  // 앱 시작 시 메시지 없는 대화를 지운다. 시작 시점에는 진행 중인 응답이 없다.
+  try {
+    const purged = purgeEmptyChats(db)
+    if (purged.length > 0) {
+      console.log(`[ai] 메시지 없는 빈 대화 ${purged.length}개를 정리했습니다.`)
+      for (const id of purged) void removeChatAttachments(id)
+    }
+  } catch (err) {
+    console.warn('[ai] 빈 대화 정리 실패:', err)
+  }
+
+  // ai:send 가 첨부 저장을 기다리는 동안(사용자 메시지 INSERT 전)의 채팅 id.
+  // 이 사이에 ai:chatDiscardIfEmpty 가 와도 대화를 지우지 않게 한다.
+  const sendingChats = new Set<number>()
 
   ipcMain.handle('ai:chatList', () => {
     return db
@@ -84,6 +100,18 @@ export function registerAiIpc(): void {
     db.prepare('DELETE FROM ai_chats WHERE id = ?').run(id)
     void removeChatAttachments(id)
     return { success: true }
+  })
+
+  // 메시지 없는 대화를 지운다. 렌더러가 빈 대화를 떠날 때 부른다.
+  // 응답 생성 중이거나 전송 처리 중인 대화는 지우지 않는다.
+  ipcMain.handle('ai:chatDiscardIfEmpty', (_event, id: unknown) => {
+    const deleted = discardChatIfEmpty(
+      db,
+      id,
+      (chatId) => isAiQueryRunning(chatId) || sendingChats.has(chatId)
+    )
+    if (deleted) void removeChatAttachments(id as number)
+    return { deleted }
   })
 
   ipcMain.handle('ai:chatRename', (_event, id: number, title: string) => {
@@ -124,9 +152,11 @@ export function registerAiIpc(): void {
 
       let saved: SavedAttachment[] = []
       if (atts.length > 0) {
+        sendingChats.add(chatId)
         try {
           saved = await saveAttachments(chatId, atts)
         } catch {
+          sendingChats.delete(chatId)
           return { started: false, error: '이미지 파일 저장에 실패했습니다.' }
         }
       }
@@ -138,9 +168,13 @@ export function registerAiIpc(): void {
               attachments: saved.map(({ file, name, type }) => ({ file, name, type }))
             })
           : null
-      db.prepare(
-        "INSERT INTO ai_messages (chat_id, role, content, meta) VALUES (?, 'user', ?, ?)"
-      ).run(chatId, trimmed, meta)
+      try {
+        db.prepare(
+          "INSERT INTO ai_messages (chat_id, role, content, meta) VALUES (?, 'user', ?, ?)"
+        ).run(chatId, trimmed, meta)
+      } finally {
+        sendingChats.delete(chatId)
+      }
 
       // 첫 사용자 메시지면 대화 제목으로 자동 설정
       const userCount = (

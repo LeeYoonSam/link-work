@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installAiStreamSync, useAiChatStore } from './aiChatStore'
 import { useNavigationStore } from './navigationStore'
+import type { AiChat, AiMessage } from '../types'
 
 // 다른 화면에서 AI 대화를 여는 startChatWith 와 앱 수준 스트림 구독을 고정한다.
 // node 환경이라 window.api.ai 를 목으로 바꾼다.
@@ -23,6 +24,10 @@ function mockAi(over: Record<string, unknown> = {}, calls: Calls = []): Record<s
     send: vi.fn(async (chatId: number, text: string) => {
       calls.push(`send:${chatId}:${text}`)
       return { started: true }
+    }),
+    chatDiscardIfEmpty: vi.fn(async (id: number) => {
+      calls.push(`discard:${id}`)
+      return { deleted: true }
     }),
     ...over
   }
@@ -193,6 +198,175 @@ describe('startChatWith 실패·연타·쓰기 모드', () => {
     expect(useAiChatStore.getState().isStreaming).toBe(false)
     expect(useAiChatStore.getState().error).toContain('쓰기 모드')
     expect(useNavigationStore.getState().view).toBe('ai')
+  })
+})
+
+describe('빈 새 채팅 정리 (discardIfEmpty)', () => {
+  beforeEach(resetStores)
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const msg = (chatId: number): AiMessage => ({
+    id: 1,
+    chat_id: chatId,
+    role: 'user',
+    content: '안녕',
+    meta: null,
+    created_at: '2026-11-26T00:00:00.000Z'
+  })
+
+  it('빈 채팅에서 다른 채팅을 열면 떠나는 채팅을 지우고 목록을 다시 읽는다', async () => {
+    const calls: Calls = []
+    const ai = mockAi(
+      {
+        chatList: vi.fn(async () => {
+          calls.push('chatList')
+          return [{ id: 2, title: '기존 대화' }]
+        }),
+        messages: vi.fn(async (id: number) => {
+          calls.push(`messages:${id}`)
+          return [msg(id)]
+        })
+      },
+      calls
+    )
+    useAiChatStore.setState({ currentChatId: 5, chats: [{ id: 5 } as AiChat, { id: 2 } as AiChat] })
+
+    await useAiChatStore.getState().openChat(2)
+
+    expect(ai.chatDiscardIfEmpty).toHaveBeenCalledWith(5)
+    expect(calls).toEqual(['discard:5', 'chatList', 'messages:2'])
+    const s = useAiChatStore.getState()
+    expect(s.currentChatId).toBe(2)
+    expect(s.chats.map((c) => c.id)).toEqual([2])
+  })
+
+  it('같은 채팅을 다시 열면 지우지 않는다', async () => {
+    const ai = mockAi()
+    useAiChatStore.setState({ currentChatId: 5 })
+    await useAiChatStore.getState().openChat(5)
+    expect(ai.chatDiscardIfEmpty).not.toHaveBeenCalled()
+  })
+
+  it('빈 채팅을 연 채로 새 채팅을 누르면 이전 채팅을 지운 뒤 새로 만든다 (새 채팅은 지우지 않는다)', async () => {
+    const calls: Calls = []
+    const ai = mockAi({}, calls)
+    useAiChatStore.setState({ currentChatId: 5 })
+
+    const id = await useAiChatStore.getState().createChat()
+
+    expect(id).toBe(7)
+    expect(calls).toEqual(['discard:5', 'chatCreate'])
+    expect(ai.chatDiscardIfEmpty).toHaveBeenCalledTimes(1)
+    expect(useAiChatStore.getState().currentChatId).toBe(7)
+  })
+
+  it('메시지가 있는 채팅은 화면 상태로 걸러 IPC 를 부르지 않는다', async () => {
+    const ai = mockAi()
+    useAiChatStore.setState({ currentChatId: 5, messages: [msg(5)] })
+    await useAiChatStore.getState().openChat(2)
+    expect(ai.chatDiscardIfEmpty).not.toHaveBeenCalled()
+  })
+
+  it('응답 중인 채팅은 지우지 않는다', async () => {
+    const ai = mockAi()
+    useAiChatStore.setState({ currentChatId: 5, isStreaming: true })
+    await useAiChatStore.getState().createChat()
+    expect(ai.chatDiscardIfEmpty).not.toHaveBeenCalled()
+  })
+
+  it('main 이 deleted:false 면 화면과 목록을 건드리지 않는다', async () => {
+    const ai = mockAi({ chatDiscardIfEmpty: vi.fn(async () => ({ deleted: false })) })
+    useAiChatStore.setState({ currentChatId: 5, chats: [{ id: 5 } as AiChat] })
+    await useAiChatStore.getState().discardIfEmpty(5)
+    expect(ai.chatDiscardIfEmpty).toHaveBeenCalledWith(5)
+    expect(ai.chatList).not.toHaveBeenCalled()
+    expect(useAiChatStore.getState().currentChatId).toBe(5)
+  })
+
+  it('보고 있는 채팅이 지워지면 화면을 비우되 오류 문구는 남긴다', async () => {
+    mockAi()
+    useAiChatStore.setState({ currentChatId: 5, error: 'x' })
+    await useAiChatStore.getState().discardIfEmpty(5)
+    const s = useAiChatStore.getState()
+    expect(s.currentChatId).toBeNull()
+    expect(s.error).toBe('x')
+  })
+
+  it('keepView 면 지워도 화면을 비우지 않는다', async () => {
+    mockAi()
+    useAiChatStore.setState({ currentChatId: 5 })
+    await useAiChatStore.getState().discardIfEmpty(5, { keepView: true })
+    expect(useAiChatStore.getState().currentChatId).toBe(5)
+  })
+
+  it.each([
+    ['openChat', () => useAiChatStore.getState().openChat(2)],
+    ['createChat', () => useAiChatStore.getState().createChat()]
+  ])('%s 로 빈 채팅을 떠날 때 중간에 빈 화면(currentChatId null)을 거치지 않는다', async (_label, act) => {
+    const ai = mockAi()
+    useAiChatStore.setState({ currentChatId: 5 })
+    const seen: Array<number | null> = []
+    const unsub = useAiChatStore.subscribe((st) => seen.push(st.currentChatId))
+    await act()
+    unsub()
+    expect(ai.chatDiscardIfEmpty).toHaveBeenCalledWith(5)
+    expect(seen).not.toContain(null)
+    expect(useAiChatStore.getState().currentChatId).not.toBe(5)
+  })
+
+  it('전송이 거절돼 낙관적 메시지만 남은 채팅은 빈 채팅으로 보고 정리한다', async () => {
+    const ai = mockAi({ send: vi.fn(async () => ({ started: false, error: '동시 실행 한도' })) })
+    useAiChatStore.setState({ currentChatId: 5 })
+    await useAiChatStore.getState().sendMessage('안녕')
+    expect(useAiChatStore.getState().messages).toHaveLength(1)
+    expect(useAiChatStore.getState().messages[0].id).toBeLessThan(0)
+
+    await useAiChatStore.getState().openChat(2)
+    expect(ai.chatDiscardIfEmpty).toHaveBeenCalledWith(5)
+  })
+
+  it('IPC 가 실패해도 throw 하지 않는다', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockAi({ chatDiscardIfEmpty: vi.fn(async () => Promise.reject(new Error('ipc'))) })
+    useAiChatStore.setState({ currentChatId: 5 })
+    await expect(useAiChatStore.getState().discardIfEmpty(5)).resolves.toBeUndefined()
+    expect(useAiChatStore.getState().currentChatId).toBe(5)
+  })
+
+  it('closeChat 은 바로 닫고 떠나는 빈 채팅 정리를 시작한다', async () => {
+    const ai = mockAi()
+    useAiChatStore.setState({ currentChatId: 5 })
+    useAiChatStore.getState().closeChat()
+    expect(useAiChatStore.getState().currentChatId).toBeNull()
+    expect(ai.chatDiscardIfEmpty).toHaveBeenCalledWith(5)
+    await vi.waitFor(() => expect(ai.chatList).toHaveBeenCalled())
+  })
+
+  it('startChatWith 는 생성~전송 사이에 새 채팅을 지우지 않는다', async () => {
+    let resolveMode: (v: { success: boolean }) => void = () => {}
+    const ai = mockAi({
+      setChatWriteMode: vi.fn(() => new Promise((r) => (resolveMode = r)))
+    })
+    const started = useAiChatStore.getState().startChatWith('이번 주 일정 알려줘', { writeMode: 'ask' })
+    await vi.waitFor(() => expect(ai.setChatWriteMode).toHaveBeenCalled())
+    // 모드 변경을 기다리는 동안 다른 곳에서 정리를 시도해도 지우지 않는다
+    await useAiChatStore.getState().discardIfEmpty(7)
+    expect(ai.chatDiscardIfEmpty).not.toHaveBeenCalled()
+    resolveMode({ success: true })
+    await started
+    expect(ai.send).toHaveBeenCalledWith(7, '이번 주 일정 알려줘', undefined)
+    expect(ai.chatDiscardIfEmpty).not.toHaveBeenCalled()
+  })
+
+  it('startChatWith 는 열려 있던 빈 채팅을 정리하고 새 채팅으로 보낸다', async () => {
+    const calls: Calls = []
+    mockAi({}, calls)
+    useAiChatStore.setState({ currentChatId: 5 })
+    await useAiChatStore.getState().startChatWith('오늘 마감인 할 일 알려줘')
+    expect(calls).toEqual(['status', 'discard:5', 'chatCreate', 'send:7:오늘 마감인 할 일 알려줘'])
   })
 })
 

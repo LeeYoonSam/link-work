@@ -17,7 +17,7 @@
     {
       "name": "AI 대화",
       "patterns": [
-        "src/main/services/ai-{agent,tools,write-tools,assistant-tools,meeting-tools,attachments,audit,model,suggestions}.ts",
+        "src/main/services/ai-{agent,tools,write-tools,assistant-tools,meeting-tools,attachments,audit,model,suggestions,chat-cleanup}.ts",
         "src/main/services/web-fetch.ts",
         "src/main/ipc/ai.ipc.ts",
         "src/renderer/src/components/ai/**",

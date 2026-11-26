@@ -25,6 +25,21 @@ interface StartChatOptions {
 
 // startChatWith 실행 중 잠금. 연타로 채팅이 2개 생기지 않게 한다
 let startingChat = false
+// startChatWith 가 만들고 아직 첫 메시지를 보내지 않은 채팅. 생성~전송 사이에 빈 채팅 정리로 지우지 않는다
+const startingChatIds = new Set<number>()
+
+// 보던 채팅이 지워졌을 때 비우는 화면 상태
+function clearedChatState(): Partial<AiChatStore> {
+  return {
+    currentChatId: null,
+    messages: [],
+    streamingText: '',
+    toolStatus: null,
+    isStreaming: false,
+    error: null,
+    pendingApproval: null
+  }
+}
 
 interface AiChatStore {
   chats: AiChat[]
@@ -45,7 +60,12 @@ interface AiChatStore {
   deleteChat: (id: number) => Promise<void>
   renameChat: (id: number, title: string) => Promise<void>
   openChat: (id: number) => Promise<void>
+  // 채팅을 닫는다. 메시지 없이 떠나는 빈 채팅은 정리한다 (비동기, 기다리지 않는다)
   closeChat: () => void
+  // 메시지가 없고 응답 중이 아닌 채팅을 지운다. 최종 판정은 main(ai:chatDiscardIfEmpty)이 한다.
+  // "+ 새 채팅" 후 보내지 않고 떠난 채팅이 목록에 "새 대화"로 남지 않게 한다. 실패는 무시한다
+  // keepView: 곧 다른 채팅으로 화면을 바꾸는 호출(openChat·createChat)은 화면을 비우지 않는다 (빈 화면 깜빡임 방지)
+  discardIfEmpty: (id: number, options?: { keepView?: boolean }) => Promise<void>
   sendMessage: (text: string, attachments?: AiAttachmentInput[]) => Promise<void>
   cancelStream: () => Promise<void>
   // 성공 여부를 돌려준다 (startChatWith 가 실패 시 전송을 멈춘다)
@@ -82,18 +102,47 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
   },
 
   createChat: async () => {
+    // 보던 채팅이 비어 있으면 먼저 정리한다 (새 채팅 연타로 빈 채팅이 쌓이지 않게)
+    const prev = get().currentChatId
+    if (prev !== null) await get().discardIfEmpty(prev, { keepView: true })
     const { id } = await window.api.ai.chatCreate()
     await get().fetchChats()
-    await get().openChat(id)
+    // openChat 을 거치지 않는다: 이전 채팅 정리는 위에서 했다
+    await loadChat(id, get, set)
     return id
   },
 
   deleteChat: async (id) => {
     await window.api.ai.chatDelete(id)
-    if (get().currentChatId === id) {
-      set({ currentChatId: null, messages: [], streamingText: '', toolStatus: null, isStreaming: false, error: null, pendingApproval: null })
-    }
+    if (get().currentChatId === id) set(clearedChatState())
     await get().fetchChats()
+  },
+
+  discardIfEmpty: async (id, options) => {
+    // 생성 직후 첫 메시지를 보내는 중인 채팅은 지우지 않는다
+    if (startingChatIds.has(id)) return
+    // 화면이 아는 상태로 먼저 거른다 (보고 있는 채팅만 메시지·응답 상태를 안다).
+    // 저장된 메시지만 센다: 전송이 거절(started:false)되면 낙관적 메시지(음수 id)만 남는데, 그 채팅은 실제로 비어 있다
+    const s = get()
+    if (s.currentChatId === id && (s.messages.some((m) => m.id > 0) || s.isStreaming)) return
+    let deleted = false
+    try {
+      deleted = (await window.api.ai.chatDiscardIfEmpty(id))?.deleted === true
+    } catch (e) {
+      console.warn('[aiChat] 빈 채팅 정리 실패:', e)
+      return
+    }
+    if (!deleted) return
+    // 그 사이 다른 채팅을 열었거나 호출자가 곧 화면을 바꾸면 화면은 그대로 둔다.
+    // 비울 때도 error 는 남긴다 (startChatWith 등이 남긴 오류를 빈 화면이 보여 준다)
+    if (!options?.keepView && get().currentChatId === id) {
+      set({ ...clearedChatState(), error: get().error })
+    }
+    try {
+      await get().fetchChats()
+    } catch (e) {
+      console.warn('[aiChat] 채팅 목록 갱신 실패:', e)
+    }
   },
 
   renameChat: async (id, title) => {
@@ -102,30 +151,16 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
   },
 
   openChat: async (id) => {
-    const messages = await window.api.ai.messages(id)
-    // 이 채팅에서 진행 중인 응답이 있으면 스트리밍 표시 복원
-    const progress = await window.api.ai.progress(id)
-    set({
-      currentChatId: id,
-      messages,
-      isStreaming: progress.running,
-      streamingText: progress.running ? progress.text : '',
-      toolStatus: progress.running ? progress.toolLabel : null,
-      pendingApproval: progress.running ? (progress.pendingApproval ?? null) : null,
-      pendingApprovalChatId: progress.running && progress.pendingApproval ? id : null,
-      error: null
-    })
-    if (progress.running) {
-      // progress 조회와 set 사이에 done 이벤트가 끼어든 경우(놓친 완료) 보정
-      const recheck = await window.api.ai.progress(id)
-      if (!recheck.running && get().currentChatId === id && get().isStreaming) {
-        const fresh = await window.api.ai.messages(id)
-        set({ messages: fresh, isStreaming: false, streamingText: '', toolStatus: null, pendingApproval: null })
-      }
-    }
+    // 다른 채팅으로 옮기면 떠나는 채팅이 비어 있을 때 정리한다
+    const prev = get().currentChatId
+    if (prev !== null && prev !== id) await get().discardIfEmpty(prev, { keepView: true })
+    await loadChat(id, get, set)
   },
 
   closeChat: () => {
+    // 상태를 비우기 전에 정리를 시작해야 화면 상태(메시지 수)로 거를 수 있다
+    const prev = get().currentChatId
+    if (prev !== null) void get().discardIfEmpty(prev)
     set({ currentChatId: null, messages: [], streamingText: '', toolStatus: null, error: null, pendingApproval: null })
   },
 
@@ -286,6 +321,7 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
         set({ error: `새 대화를 만들지 못했습니다: ${errorText(e)}` })
         return
       }
+      startingChatIds.add(chatId)
 
       const mode = options?.writeMode
       if (mode) {
@@ -307,6 +343,8 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
         set({ isStreaming: false, error: `메시지 전송에 실패했습니다: ${errorText(e)}` })
       }
     } finally {
+      // 전송했으면 메시지가 있어 정리 대상이 아니다. 전송 전에 멈췄으면 이후 떠날 때 정리된다
+      startingChatIds.clear()
       startingChat = false
       // 실패해도 AI 화면을 연다. 오류는 AI 화면(채팅 안 또는 빈 화면)에 보인다
       goAi()
@@ -362,6 +400,33 @@ export const useAiChatStore = create<AiChatStore>((set, get) => ({
     }
   }
 }))
+
+type StoreSet = (partial: Partial<AiChatStore>) => void
+
+// 채팅 메시지와 진행 중 응답을 읽어 화면에 띄운다 (이전 채팅 정리는 호출자가 한다)
+async function loadChat(id: number, get: () => AiChatStore, set: StoreSet): Promise<void> {
+  const messages = await window.api.ai.messages(id)
+  // 이 채팅에서 진행 중인 응답이 있으면 스트리밍 표시 복원
+  const progress = await window.api.ai.progress(id)
+  set({
+    currentChatId: id,
+    messages,
+    isStreaming: progress.running,
+    streamingText: progress.running ? progress.text : '',
+    toolStatus: progress.running ? progress.toolLabel : null,
+    pendingApproval: progress.running ? (progress.pendingApproval ?? null) : null,
+    pendingApprovalChatId: progress.running && progress.pendingApproval ? id : null,
+    error: null
+  })
+  if (progress.running) {
+    // progress 조회와 set 사이에 done 이벤트가 끼어든 경우(놓친 완료) 보정
+    const recheck = await window.api.ai.progress(id)
+    if (!recheck.running && get().currentChatId === id && get().isStreaming) {
+      const fresh = await window.api.ai.messages(id)
+      set({ messages: fresh, isStreaming: false, streamingText: '', toolStatus: null, pendingApproval: null })
+    }
+  }
+}
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
