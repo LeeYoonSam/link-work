@@ -67,4 +67,5 @@ LinkWork는 개인 업무와 회의 일정·기록을 관리하는 macOS 데스�
 - [docs/PROJECT_BOARD.md](docs/PROJECT_BOARD.md) — 프로젝트 화면(티켓·릴리스·문서 탭): 티켓 수집·로컬 저장·증분 동기화·연결 문서 수집·IPC 계약·표시 규칙·가드레일
 - [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md) — 릴리스 노트(프로젝트 화면의 릴리스 탭): Jira 릴리스 동기화·변경분 동기화 규칙
 - [docs/SETTINGS.md](docs/SETTINGS.md) — 통합 설정 화면 섹션·진입 경로·연동 카드 상태·토큰 팝업·`settings:verifyIntegration` IPC 계약
+- [docs/ROADMAP.md](docs/ROADMAP.md) — 기능 로드맵: 아직 만들지 않은 기능 후보·근거 기반 점수·진행 순서. 완료한 항목은 지우고 해당 구역 문서로 옮긴다
 - [docs/MOBILE_VIEW.md](docs/MOBILE_VIEW.md) — 휴대폰 열람: 메인 HTTP 서버·오늘 스냅샷 발행·모바일 화면 3개·보안 모델(토큰·쿠키·Host 검사)·HTTP/IPC 계약·포트

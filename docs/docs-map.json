@@ -249,5 +249,7 @@
       "docs": []
     }
   ],
-  "unmappedDocs": {}
+  "unmappedDocs": {
+    "docs/ROADMAP.md": "아직 만들지 않은 기능 후보와 순서다. 대응하는 코드 구역이 없다"
+  }
 }
