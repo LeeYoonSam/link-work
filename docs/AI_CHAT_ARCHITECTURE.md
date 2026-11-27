@@ -81,7 +81,7 @@ LinkWork의 "AI 대화" 메뉴가 어떤 구조와 흐름으로 동작하는지 
 | `src/main/services/ai-headless.ts` | 창 없이 Claude 를 1회 실행하고 JSON 을 zod 로 검증하는 `runHeadlessJson`, 헤드리스 LLM 직렬화 줄 `runLlmSerialized`. AI 대화가 아니라 회의 전 브리핑·에픽 AI 요약이 쓴다. 도구는 0개다 |
 | `src/main/services/notion.ts` | Notion 연동 (토큰 safeStorage 저장, 페이지/DB 조회 API) |
 | `src/main/services/notion-markdown.ts` | Notion 블록 → 마크다운 변환 (순수 함수, 단위 테스트) |
-| `src/main/services/bitbucket.ts` | Bitbucket 연동. 이메일과 API token 을 safeStorage 로 암호화해 저장하고, 저장소 폴더 목록·파일 내용을 읽는다 |
+| `src/main/services/bitbucket.ts` | Bitbucket 연동. 이메일과 API token 을 safeStorage 로 암호화해 저장하고, 저장소 폴더 목록·파일 내용을 읽는다. 오늘 화면의 리뷰 요청 PR 조회(`listReviewRequests`)도 여기 있다 |
 | `src/main/services/bitbucket-url.ts` | bitbucket.org 웹 URL 을 workspace·저장소·ref·경로로 나누는 파서 (순수 함수, 단위 테스트) |
 | `src/main/services/web-fetch.ts` | fetch_url용 웹 페이지 로드 + HTML→텍스트 (SSRF 가드, 단위 테스트) |
 | `src/main/services/ai-attachments.ts` | 이미지 첨부 저장/검증/정리 (`userData/ai-attachments`) |

@@ -77,9 +77,9 @@ export function saveTodoHistory(
   )
 }
 
-// ── 할 일 추가 (todo:create 와 같은 INSERT·이력). 모바일 열람 서버가 쓴다 ──
+// ── 할 일 추가 (todo:create 와 같은 INSERT·이력). 모바일 열람 서버와 나에게 온 요청(할 일로)이 쓴다 ──
 // todo.ipc.ts 의 todo:create 와 같은 SQL 이다 — 한쪽을 바꾸면 다른 쪽도 바꾼다.
-// 다만 출처 링크(source_link)는 받지 않는다. 모바일 추가는 출처 없이 만든다.
+// 출처 링크는 normalizeSourceLink 로 검증한다(모바일 추가는 넘기지 않는다).
 // 활동 로그·변경 알림은 호출자가 남긴다.
 
 export interface TodoInsertInput {
@@ -88,13 +88,22 @@ export interface TodoInsertInput {
   due_date?: string | null
   due_reminder?: number
   notes?: string | null
+  source_link?: string | null
   tag_ids?: number[]
 }
 
 export function insertTodo(db: Database.Database, input: TodoInsertInput): number {
+  const sourceLink = normalizeSourceLink(input.source_link)
   const result = db
-    .prepare('INSERT INTO todos (title, priority, due_date, due_reminder, notes) VALUES (?, ?, ?, ?, ?)')
-    .run(input.title, input.priority || 'medium', input.due_date || null, input.due_reminder ?? 0, input.notes ?? null)
+    .prepare('INSERT INTO todos (title, priority, due_date, due_reminder, notes, source_link) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(
+      input.title,
+      input.priority || 'medium',
+      input.due_date || null,
+      input.due_reminder ?? 0,
+      input.notes ?? null,
+      sourceLink
+    )
   const todoId = Number(result.lastInsertRowid)
   if (input.tag_ids && input.tag_ids.length > 0) saveTodoTags(db, todoId, input.tag_ids)
   saveTodoHistory(db, todoId, 'create')

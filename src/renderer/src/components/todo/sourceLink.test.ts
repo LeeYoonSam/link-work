@@ -21,6 +21,12 @@ describe('sourceLinkLabel', () => {
     expect(sourceLinkLabel('https://x.atlassian.net/browse/AB-123?focusedCommentId=1')).toBe('AB-123')
     expect(sourceLinkLabel('https://docs.example.com/page/1')).toBe('docs.example.com')
   })
+
+  it('Bitbucket PR 주소는 저장소 #번호', () => {
+    expect(sourceLinkLabel('https://bitbucket.org/ws/app/pull-requests/12')).toBe('app #12')
+    expect(sourceLinkLabel('https://bitbucket.org/ws/app/pull-requests/12/overview')).toBe('app #12')
+    expect(sourceLinkLabel('https://bitbucket.org/ws/app/src/main')).toBe('bitbucket.org')
+  })
 })
 
 describe('isSafeSourceLink', () => {

@@ -1,12 +1,14 @@
 import { safeStorage } from 'electron'
 import { getDatabase } from '../db/database'
+import { adfToPlainText } from './jira-adf'
 
 // Jira Cloud REST 연동 (읽기 전용 사용).
 //
 // [가드레일]
 // - API 토큰은 app_settings에 safeStorage로 암호화해 저장한다 (notion.ts와 동일 패턴).
 // - renderer에는 연결 여부·계정 표시명·만료일만 내보내고 토큰 값은 절대 노출하지 않는다.
-// - 이 모듈은 조회 API(myself, project, version, search/jql, issue/{key}/remotelink)만 호출한다 — 쓰기 API 호출 금지.
+// - 이 모듈은 조회 API(myself, project, version, search/jql, issue/{key}/remotelink)만 호출한다
+//   (나에게 온 요청도 search/jql 로 읽는다) — 쓰기 API 호출 금지.
 //   프로젝트 보드도 Jira를 읽기만 하고 DB에 쓰지 않는다.
 // - Jira REST 호출은 전부 이 파일에만 둔다. 엔드포인트가 또 바뀌어도 수정 지점이 하나다
 //   (구 /rest/api/3/search 제거 전례 — 아래 searchJql 주석 참고).
@@ -880,4 +882,132 @@ export async function listChildIssues(
   parentKeys: string[]
 ): Promise<{ issues: JiraSearchIssue[]; truncated: boolean }> {
   return searchByKeyChunks('parent', parentKeys)
+}
+
+// ── 나에게 온 요청 (services/request-inbox.ts, docs/ASSISTANT.md §11.6) ──
+
+/** 요청으로 보는 기간(일). 이보다 오래된 할당·멘션은 모으지 않는다 */
+export const REQUEST_WINDOW_DAYS = 7
+/** 원본별 요청 조회 상한 */
+const MAX_REQUEST_ISSUES = 100
+/** 멘션 댓글 미리보기 길이 */
+const MENTION_EXCERPT_CHARS = 120
+
+// accountId 는 JQL 따옴표 안에 들어간다. 따옴표·공백을 막는다
+const ACCOUNT_ID_RE = /^[A-Za-z0-9:_-]{1,128}$/
+
+/** 다른 사람이 최근 나에게 할당한 미완료 이슈 */
+export interface JiraAssignedRequest {
+  key: string
+  summary: string
+  /** 보고자 표시 이름. 할당한 사람은 아닐 수 있다 */
+  reporterName: string | null
+  /** Jira updated 원본 ISO */
+  updated: string
+}
+
+/**
+ * 최근 REQUEST_WINDOW_DAYS 일 안에 나에게 할당됐거나(남이 할당), 그 안에 만들어지며 나를 담당자로 둔 미완료 이슈.
+ * 기간 안에 스스로 담당자를 바꾼 것(BY currentUser())과 내가 만든 이슈는 요청이 아니라 두 갈래 모두에서 뺀다.
+ */
+export async function listAssignedRequests(): Promise<{ issues: JiraAssignedRequest[]; truncated: boolean }> {
+  const d = REQUEST_WINDOW_DAYS
+  const jql =
+    `assignee = currentUser() AND statusCategory != Done AND reporter != currentUser()` +
+    ` AND NOT assignee CHANGED TO currentUser() BY currentUser() AFTER -${d}d` +
+    ` AND (assignee CHANGED TO currentUser() AFTER -${d}d OR created >= -${d}d) ORDER BY updated DESC`
+  return searchJql<RawRequestIssue, JiraAssignedRequest>(jql, 'summary,reporter,updated', MAX_REQUEST_ISSUES, (raw) =>
+    raw.key
+      ? {
+          key: raw.key,
+          summary: raw.fields?.summary ?? '',
+          reporterName: raw.fields?.reporter?.displayName || null,
+          updated: raw.fields?.updated ?? ''
+        }
+      : null
+  )
+}
+
+/** 나를 멘션한 다른 사람의 댓글 */
+export interface JiraMentionRequest {
+  key: string
+  summary: string
+  commentId: string
+  authorName: string | null
+  /** 댓글 작성 원본 ISO */
+  created: string
+  excerpt: string | null
+}
+
+interface RawComment {
+  id?: string | number
+  author?: { accountId?: string; displayName?: string } | null
+  created?: string
+  body?: unknown
+}
+
+interface RawRequestIssue {
+  key?: string
+  fields?: {
+    summary?: string
+    reporter?: { displayName?: string } | null
+    updated?: string
+    comment?: { comments?: Array<RawComment | null> | null } | null
+  }
+}
+
+function adfMentions(node: unknown, accountId: string): boolean {
+  if (!node || typeof node !== 'object') return false
+  const n = node as { type?: unknown; attrs?: { id?: unknown }; content?: unknown }
+  if (n.type === 'mention' && n.attrs?.id === accountId) return true
+  return Array.isArray(n.content) && n.content.some((c) => adfMentions(c, accountId))
+}
+
+/**
+ * 검색 결과 이슈 1건에서 나를 멘션한 댓글을 고른다. 내가 쓴 댓글과 sinceMs 보다 오래된 댓글은 뺀다.
+ * 같은 이슈의 멘션은 가장 최근 1건만 돌려준다(목록이 한 이슈로 채워지지 않게)
+ */
+export function pickMentionComment(raw: unknown, myAccountId: string, sinceMs: number): JiraMentionRequest | null {
+  const issue = raw as RawRequestIssue
+  if (!issue?.key) return null
+  let best: { c: RawComment; t: number } | null = null
+  for (const c of issue.fields?.comment?.comments ?? []) {
+    if (!c || c.id === undefined || c.id === null) continue
+    if (c.author?.accountId === myAccountId) continue
+    const t = Date.parse(c.created ?? '')
+    if (!Number.isFinite(t) || t < sinceMs) continue
+    if (!adfMentions(c.body, myAccountId)) continue
+    if (!best || t > best.t) best = { c, t }
+  }
+  if (!best) return null
+  const text = adfToPlainText(best.c.body)?.replace(/\s+/g, ' ').trim() ?? ''
+  return {
+    key: issue.key,
+    summary: issue.fields?.summary ?? '',
+    commentId: String(best.c.id),
+    authorName: best.c.author?.displayName || null,
+    created: best.c.created ?? '',
+    excerpt: text ? text.slice(0, MENTION_EXCERPT_CHARS) : null
+  }
+}
+
+/**
+ * 최근 REQUEST_WINDOW_DAYS 일 안에 다른 사람이 나를 멘션한 댓글.
+ * Jira 는 멘션을 댓글 본문에 accountId 로 저장한다. `comment ~ "<accountId>"` 로 후보 이슈를 찾고,
+ * 댓글 ADF 의 mention 노드로 실제 멘션인지 다시 확인한다.
+ */
+export async function listMentionRequests(
+  myAccountId: string,
+  now: Date = new Date()
+): Promise<{ mentions: JiraMentionRequest[]; truncated: boolean }> {
+  if (!ACCOUNT_ID_RE.test(myAccountId)) throw new Error('잘못된 Jira 계정 id 입니다.')
+  const sinceMs = now.getTime() - REQUEST_WINDOW_DAYS * 86_400_000
+  const jql = `comment ~ "${myAccountId}" AND updated >= -${REQUEST_WINDOW_DAYS}d ORDER BY updated DESC`
+  const { issues, truncated } = await searchJql<RawRequestIssue, JiraMentionRequest>(
+    jql,
+    'summary,comment',
+    MAX_REQUEST_ISSUES,
+    (raw) => pickMentionComment(raw, myAccountId, sinceMs)
+  )
+  return { mentions: issues, truncated }
 }

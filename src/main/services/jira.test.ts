@@ -50,6 +50,9 @@ import {
   listRemoteLinks,
   listUpdatedProjectIssues,
   listUpdatedReleaseIssues,
+  listAssignedRequests,
+  listMentionRequests,
+  pickMentionComment,
   MAX_ISSUES,
   MAX_SEARCH_ISSUES,
   MAX_UPDATED_MINUTES,
@@ -918,3 +921,122 @@ describe('릴리스 변경분 조회 listUpdatedReleaseIssues', () => {
   })
 })
 
+
+describe('나에게 온 요청 (할당·멘션)', () => {
+  beforeEach(connect)
+
+  const ME = '5ef0-me'
+  const mentionBody = (id: string): unknown => ({
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'mention', attrs: { id, text: '@나' } },
+          { type: 'text', text: ' 이것 확인 부탁드려요' }
+        ]
+      }
+    ]
+  })
+  const NOW = new Date('2026-11-27T03:00:00.000Z')
+  const SINCE = NOW.getTime() - 7 * 86_400_000
+
+  it('할당: 자기 할당·내가 만든 이슈를 두 갈래 모두에서 빼는 JQL 로 조회한다', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        issues: [
+          { key: 'ICA-1', fields: { summary: 'QA', reporter: { displayName: '김명환' }, updated: '2026-11-27T12:00:00.000+0900' } },
+          { fields: { summary: '키 없음' } }
+        ]
+      })
+    )
+    const { issues, truncated } = await listAssignedRequests()
+    const params = new URL(calledUrls()[0]).searchParams
+    expect(params.get('jql')).toBe(
+      'assignee = currentUser() AND statusCategory != Done AND reporter != currentUser()' +
+        ' AND NOT assignee CHANGED TO currentUser() BY currentUser() AFTER -7d' +
+        ' AND (assignee CHANGED TO currentUser() AFTER -7d OR created >= -7d) ORDER BY updated DESC'
+    )
+    expect(params.get('fields')).toBe('summary,reporter,updated')
+    expect(truncated).toBe(false)
+    expect(issues).toEqual([
+      { key: 'ICA-1', summary: 'QA', reporterName: '김명환', updated: '2026-11-27T12:00:00.000+0900' }
+    ])
+  })
+
+  it('멘션: 남이 기간 안에 나를 멘션한 댓글 중 가장 최근 1건을 고른다', () => {
+    const raw = {
+      key: 'ICA-2',
+      fields: {
+        summary: '스킴',
+        comment: {
+          comments: [
+            { id: '1', author: { accountId: 'other', displayName: '갑' }, created: '2026-11-25T10:00:00.000+0900', body: mentionBody(ME) },
+            { id: '2', author: { accountId: 'other2', displayName: '을' }, created: '2026-11-26T10:00:00.000+0900', body: mentionBody(ME) },
+            // 내가 쓴 댓글은 뺀다
+            { id: '3', author: { accountId: ME }, created: '2026-11-27T10:00:00.000+0900', body: mentionBody(ME) },
+            // 다른 사람 멘션은 뺀다
+            { id: '4', author: { accountId: 'other' }, created: '2026-11-27T11:00:00.000+0900', body: mentionBody('someone') },
+            // 기간 밖
+            { id: '5', author: { accountId: 'other' }, created: '2026-11-01T10:00:00.000+0900', body: mentionBody(ME) },
+            null
+          ]
+        }
+      }
+    }
+    expect(pickMentionComment(raw, ME, SINCE)).toEqual({
+      key: 'ICA-2',
+      summary: '스킴',
+      commentId: '2',
+      authorName: '을',
+      created: '2026-11-26T10:00:00.000+0900',
+      excerpt: '@나 이것 확인 부탁드려요'
+    })
+  })
+
+  it('멘션: 본문에 accountId 만 있고 mention 노드가 아니면 고르지 않는다', () => {
+    const raw = {
+      key: 'ICA-3',
+      fields: {
+        comment: {
+          comments: [
+            {
+              id: '9',
+              author: { accountId: 'other' },
+              created: '2026-11-26T10:00:00.000+0900',
+              body: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: ME }] }] }
+            }
+          ]
+        }
+      }
+    }
+    expect(pickMentionComment(raw, ME, SINCE)).toBeNull()
+  })
+
+  it('멘션: accountId 로 후보를 찾고 멘션이 없는 이슈는 건너뛴다', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        issues: [
+          {
+            key: 'ICA-2',
+            fields: {
+              summary: '스킴',
+              comment: { comments: [{ id: '2', author: { accountId: 'x', displayName: '을' }, created: '2026-11-26T10:00:00.000+0900', body: mentionBody(ME) }] }
+            }
+          },
+          { key: 'ICA-4', fields: { summary: '멘션 없음', comment: { comments: [] } } }
+        ]
+      })
+    )
+    const { mentions } = await listMentionRequests(ME, NOW)
+    const params = new URL(calledUrls()[0]).searchParams
+    expect(params.get('jql')).toBe(`comment ~ "${ME}" AND updated >= -7d ORDER BY updated DESC`)
+    expect(params.get('fields')).toBe('summary,comment')
+    expect(mentions.map((m) => m.key)).toEqual(['ICA-2'])
+  })
+
+  it('멘션: JQL 에 들어가는 accountId 를 네트워크 전에 검증한다', async () => {
+    await expect(listMentionRequests('a" OR project = X', NOW)).rejects.toThrow('잘못된 Jira 계정 id')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})

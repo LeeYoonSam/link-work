@@ -28,9 +28,12 @@ import { getAiChatModel, isAiChatModelChoice, setAiChatModel } from '../services
 import {
   disconnectBitbucket,
   getBitbucketEmail,
+  getBitbucketWorkspace,
   isBitbucketConnected,
-  saveBitbucketCredentials
+  saveBitbucketCredentials,
+  setBitbucketWorkspace
 } from '../services/bitbucket'
+import { markRequestInboxStale } from '../services/request-inbox'
 import { disconnectNotion, isNotionConnected, saveNotionToken } from '../services/notion'
 import {
   buildAiSuggestions,
@@ -287,7 +290,22 @@ export function registerAiIpc(): void {
   // ── Bitbucket 연동 (AI 조회 도구 read_bitbucket 용) ──
 
   ipcMain.handle('ai:bitbucketStatus', () => {
-    return { connected: isBitbucketConnected(), email: getBitbucketEmail() }
+    return { connected: isBitbucketConnected(), email: getBitbucketEmail(), workspace: getBitbucketWorkspace() }
+  })
+
+  // 나에게 온 요청이 리뷰 요청을 찾을 워크스페이스(docs/ASSISTANT.md §11.6). 빈 값이면 지운다
+  ipcMain.handle('ai:bitbucketSetWorkspace', (_event, workspace: unknown) => {
+    if (typeof workspace === 'string' && workspace.length > 200) {
+      return { success: false, error: '워크스페이스 이름이 너무 깁니다.' }
+    }
+    try {
+      const saved = setBitbucketWorkspace(workspace)
+      // 다음 오늘 화면 갱신이 자동 동기화 간격과 무관하게 리뷰 요청을 다시 읽게 한다
+      markRequestInboxStale()
+      return { success: true, workspace: saved }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
   })
 
   // 이메일과 API token 을 Bitbucket API 로 검증한 뒤 저장한다 (services/bitbucket.ts)

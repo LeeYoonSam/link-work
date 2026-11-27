@@ -48,6 +48,7 @@
 | Jira 사이트 URL, 이메일, API 토큰, 만료일 | 연동 > Jira 팝업 | `jira_site_url`, `jira_email`, `jira_api_token`(safeStorage), `jira_token_expires_at`, `jira_account_name` | `jira:status`, `jira:saveCredentials`(저장 전 `/myself` 검증), `jira:disconnect` |
 | Jira 기본 프로젝트(릴리스 동기화·프로젝트 보드·비서 Jira 범위가 쓴다) | 연동 > Jira 카드 | `jira_default_project_key` | `jira:listProjects`, `jira:setDefaultProject` |
 | Bitbucket 이메일, API token | 연동 > Bitbucket 팝업 | `bitbucket_email`(평문), `bitbucket_api_token`(safeStorage) | `ai:bitbucketStatus`, `ai:bitbucketSaveToken`(`/user` 검증), `ai:bitbucketDisconnect` |
+| Bitbucket 리뷰 요청 워크스페이스(나에게 온 요청, [ASSISTANT.md](ASSISTANT.md) §11.6) | 연동 > Bitbucket 팝업의 '리뷰 요청을 찾을 워크스페이스 (선택)' 와 [저장]. token 과 따로 저장한다 | `bitbucket_workspace`(평문). slug 또는 `https://bitbucket.org/{slug}` 를 받아 slug 로 저장, 빈 값이면 지운다. 저장하면 다음 오늘 화면 갱신이 리뷰 요청을 바로 다시 읽는다. 연결 해제해도 남는다 | `ai:bitbucketStatus`(`workspace`), `ai:bitbucketSetWorkspace` |
 | Notion 토큰 | 연동 > Notion 팝업 | `notion_token`(safeStorage) | `ai:notionStatus`, `ai:notionSaveToken`(`/users/me` 검증), `ai:notionDisconnect` |
 | Claude Code 사용 가능 여부 | AI | 저장값 없음(`~/.claude.json` 읽기) | `ai:status` |
 | AI 대화 모델 | AI(입력창 아래 select 와 같은 값) | `ai_model`, `ai_model_labels` | `ai:getModel`, `ai:setModel`, `ai:getModelOptions` |
@@ -82,7 +83,7 @@ AI 대화에는 연동 설정 UI 가 없다. 미연동이면 AI 가 답변에서
 
 1. 제목과 용도 한 줄
 2. 필요한 권한 표(범위 → 왜 필요한지)
-   - Bitbucket: `read:repository:bitbucket`(필수, 저장소 파일 읽기), `read:pullrequest:bitbucket`(권장, PR 링크 읽기), `read:user:bitbucket`(권장, 연결 계정 이름 표시). 쓰기 범위는 필요 없다
+   - Bitbucket: `read:repository:bitbucket`(필수, 저장소 파일 읽기), `read:pullrequest:bitbucket`(권장, PR 링크 읽기·나에게 온 리뷰 요청 모으기), `read:user:bitbucket`(권장, 연결 계정 이름 표시). 쓰기 범위는 필요 없다
    - Jira: Atlassian API token. 범위 없음, 계정 권한 그대로 읽기만 사용. 만료일은 발급할 때 정한 날짜
    - Notion: 내부 통합의 "콘텐츠 읽기" 권한, 페이지 ⋯ → 연결에서 통합 추가. claude.ai 커넥터 대안 안내
    - Google: `calendar.readonly`. redirect URI `http://localhost:8945/callback` 과 [복사]. 연결 순서를 번호 목록 6단계로 안내한다(프로젝트 선택 → Calendar API·동의 화면 → OAuth 클라이언트 '웹 애플리케이션' → 리디렉션 URI 등록 → ID·Secret 입력 → 계정 선택. 처음에는 기본 캘린더만 읽고, 연결 후 카드의 "가져올 캘린더"에서 더 고른다)

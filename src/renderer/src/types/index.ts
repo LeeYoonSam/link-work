@@ -299,6 +299,8 @@ export interface AiNotionStatus {
 export interface AiBitbucketStatus {
   connected: boolean
   email: string | null
+  /** 리뷰 요청을 찾을 워크스페이스(나에게 온 요청). 없으면 null. 옛 main 은 보내지 않는다 */
+  workspace?: string | null
 }
 
 export type AiBitbucketSaveResult =
@@ -379,6 +381,9 @@ export interface AiAPI {
   bitbucketStatus: () => Promise<AiBitbucketStatus>
   bitbucketSaveToken: (email: string, token: string) => Promise<AiBitbucketSaveResult>
   bitbucketDisconnect: () => Promise<{ success: true }>
+  bitbucketSetWorkspace: (
+    workspace: string
+  ) => Promise<{ success: true; workspace: string | null } | { success: false; error: string }>
   onStream: (callback: (event: AiStreamEvent) => void) => () => void
   onDataChanged: (callback: (data: { entity: string }) => void) => () => void
 }
@@ -1061,6 +1066,54 @@ export interface JiraEpicAiSummary {
   bullets: string[]
   /** ISO */
   generatedAt: string
+}
+
+// ── 나에게 온 요청 (docs/ASSISTANT.md §11.6). 모양은 main services/request-inbox.ts 와 같다 ──
+
+export type RequestSource = 'jira' | 'bitbucket'
+export type RequestKind = 'assigned' | 'mention' | 'review'
+
+export interface RequestInboxItem {
+  id: string
+  source: RequestSource
+  kind: RequestKind
+  title: string
+  /** Jira 키 또는 'repo #12' */
+  ref: string
+  actor: string | null
+  excerpt: string | null
+  url: string
+  /** UTC ISO. 모르면 null */
+  requestedAt: string | null
+  /** 처음 본 시각(UTC ISO) */
+  firstSeenAt: string
+}
+
+export interface InboxSourceStatus {
+  state: 'ok' | 'not_connected' | 'no_workspace' | 'error'
+  error: string | null
+}
+
+export interface RequestInboxSnapshot {
+  items: RequestInboxItem[]
+  jira: InboxSourceStatus
+  bitbucket: InboxSourceStatus
+  syncedAt: string | null
+}
+
+type InboxResult<T> = ({ success: true } & T) | { success: false; error: string }
+
+export interface InboxAPI {
+  /** DB 저장본만 읽는다 */
+  cached: () => Promise<InboxResult<{ snapshot: RequestInboxSnapshot }>>
+  /** 원본과 동기화한다. 마지막 동기화 10분(force 면 30초) 안의 재호출은 저장본을 돌려준다 */
+  sync: (force?: boolean) => Promise<InboxResult<{ snapshot: RequestInboxSnapshot }>>
+  /** 할 일로 바꾼다. dueDate 'YYYY-MM-DD' 또는 null */
+  toTodo: (id: string, dueDate: string | null) => Promise<InboxResult<{ todoId: number }>>
+  /** 처리함. 다시 보이지 않는다 */
+  dismiss: (id: string) => Promise<InboxResult<object>>
+  /** 원본(Jira·Bitbucket)을 브라우저로 연다 */
+  open: (id: string) => Promise<InboxResult<object>>
 }
 
 export interface JiraBoardAPI {

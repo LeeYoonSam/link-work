@@ -10,7 +10,7 @@
 
 | 그룹 | 메뉴 | 내용 |
 |---|---|---|
-| — | 오늘 | 오늘 대시보드. 신호·다음 배포·Jira 작업·할 일·일정·메모를 한 화면에 모은다 |
+| — | 오늘 | 오늘 대시보드. 신호·다음 배포·나에게 온 요청(Jira 할당·멘션, Bitbucket 리뷰 요청)·Jira 작업·할 일·일정·메모를 한 화면에 모은다 |
 | — | AI 대화 | Claude Code 구독 로그인으로 앱 데이터(할 일·메모·일정·Jira 등)를 묻고 고친다 ([AI_CHAT_ARCHITECTURE.md](docs/AI_CHAT_ARCHITECTURE.md)) |
 | 업무 | 프로젝트 | Jira 프로젝트 화면. 티켓·릴리스·문서 탭 ([PROJECT_BOARD.md](docs/PROJECT_BOARD.md), [RELEASE_NOTES.md](docs/RELEASE_NOTES.md)) |
 | 업무 | 할 일 | 할 일과 태그. 오늘·예정·전체·완료 뷰, 한 줄 빠른 추가(`내일 3시 #태그 !높음` 인식) |
@@ -30,8 +30,8 @@
 | 연동 | 쓰는 곳 | 필요한 것 |
 |---|---|---|
 | Google 캘린더 | 캘린더, 오늘 일정, 회의 알림·회의 전 브리핑 | Google Cloud OAuth 클라이언트(웹 애플리케이션, 리디렉션 URI `http://localhost:8945/callback`, 범위 `calendar.readonly`) |
-| Jira | 프로젝트 화면(티켓·릴리스), 오늘의 Jira 작업 | 사이트 URL, 이메일, Atlassian API token |
-| Bitbucket | AI 대화의 저장소·PR 읽기 | 이메일, Atlassian API token(`read:repository:bitbucket` 등) |
+| Jira | 프로젝트 화면(티켓·릴리스), 오늘의 Jira 작업·나에게 온 요청 | 사이트 URL, 이메일, Atlassian API token |
+| Bitbucket | AI 대화의 저장소·PR 읽기, 오늘의 나에게 온 리뷰 요청(워크스페이스 지정) | 이메일, Atlassian API token(`read:repository:bitbucket`, 리뷰 요청은 `read:pullrequest:bitbucket` 도) |
 | Notion | AI 대화의 Notion 문서 읽기 | 내부 통합 토큰 |
 | Claude Code | AI 대화, 회의 요약, 회의 전 브리핑 | 이 Mac 에 Claude Code 를 설치하고 구독 계정으로 로그인. 앱에 API 키를 넣지 않는다 |
 

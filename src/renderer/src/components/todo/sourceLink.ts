@@ -13,6 +13,8 @@ const INTERNAL_LABELS: Record<string, string> = {
 
 // Jira 티켓 웹 주소의 키. 예: /browse/AB-123
 const JIRA_KEY_RE = /\/browse\/([A-Za-z][A-Za-z0-9_]*-\d+)(?:[/?#]|$)/
+// Bitbucket PR 웹 주소. 예: bitbucket.org/ws/repo/pull-requests/12
+const BITBUCKET_PR_RE = /^\/[^/]+\/([^/]+)\/pull-requests\/(\d+)(?:[/?#]|$)/
 
 /** 열어도 되는 출처 링크인가. linkwork:// 또는 https:// 만 true 다(javascript: 등 차단) */
 export function isSafeSourceLink(link: string): boolean {
@@ -20,7 +22,7 @@ export function isSafeSourceLink(link: string): boolean {
   return link.startsWith(INTERNAL) || link.startsWith(HTTPS)
 }
 
-/** 출처 칩에 보일 짧은 이름. 메모·회의록·녹음, Jira 키, 아니면 호스트 이름 */
+/** 출처 칩에 보일 짧은 이름. 메모·회의록·녹음, Jira 키, Bitbucket 'repo #12', 아니면 호스트 이름 */
 export function sourceLinkLabel(link: string): string {
   if (link.startsWith(INTERNAL)) {
     const kind = link.slice(INTERNAL.length).split('/')[0]
@@ -30,6 +32,8 @@ export function sourceLinkLabel(link: string): string {
     const url = new URL(link)
     const m = JIRA_KEY_RE.exec(url.pathname)
     if (m) return m[1]
+    const pr = url.hostname === 'bitbucket.org' ? BITBUCKET_PR_RE.exec(url.pathname) : null
+    if (pr) return `${decodeURIComponent(pr[1])} #${pr[2]}`
     return url.hostname || '링크'
   } catch {
     return '링크'

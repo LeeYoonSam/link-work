@@ -48,6 +48,14 @@ const assistant = {
   setFocus: vi.fn(),
   regenerateMeetingBriefing: vi.fn(async () => {})
 }
+const inbox = {
+  snapshot: null as unknown,
+  busyIds: [] as string[],
+  error: null as string | null,
+  toTodo: vi.fn(async (_id: string, _due: string | null) => true),
+  dismiss: vi.fn(async (_id: string) => true),
+  open: vi.fn(async (_id: string) => {})
+}
 const focus = { requestFocus: vi.fn() }
 const notesStore = { setFilter: vi.fn(), select: vi.fn(async (_id: number | null) => {}) }
 const toast = vi.hoisted(() => ({ showToast: vi.fn(() => 1) }))
@@ -59,6 +67,7 @@ vi.mock('../../stores/todayStore', () => ({ useTodayStore: fakeStore(today) }))
 vi.mock('../../stores/assistantStore', () => ({ useAssistantStore: fakeStore(assistant) }))
 vi.mock('../../stores/jiraBoardStore', () => ({ useJiraBoardStore: fakeStore({ snapshot: null, errorCode: null }) }))
 vi.mock('../../stores/releaseNoteStore', () => ({ useReleaseNoteStore: fakeStore({ allNotes: [] }) }))
+vi.mock('../../stores/inboxStore', () => ({ useInboxStore: fakeStore(inbox) }))
 vi.mock('../../stores/focusStore', () => ({ useFocusStore: fakeStore(focus) }))
 vi.mock('../../stores/meetingNotesStore', () => ({ useMeetingNotesStore: fakeStore(notesStore) }))
 vi.mock('../ui/toastStore', async (importOriginal) => ({
@@ -167,7 +176,7 @@ vi.mock('./todayModel', async (importOriginal) => {
 })
 
 const mod = await import('./TodayView')
-const { default: TodayView, copyShareText, openNote, dateHeading, headerErrorText, releaseUnknownReason, meetingFocusEventId, openIssue, openTodo, openRelease, syncedClock } = mod
+const { default: TodayView, copyShareText, openNote, dateHeading, headerErrorText, releaseUnknownReason, meetingFocusEventId, openIssue, openTodo, openRelease, syncedClock, toTodoFromInbox } = mod
 
 const NOW = new Date(2026, 10, 19, 13, 20, 0)
 const render = (): string => renderToStaticMarkup(<TodayView now={NOW} />)
@@ -223,7 +232,7 @@ describe('TodayView 화면', () => {
     expect(html).toContain('업무 공유')
     expect(html).toContain('결제 버그 수정')
     expect(html).toMatch(/@min-\[1000px\]:col-span-2 @min-\[1000px\]:col-start-2 @min-\[1000px\]:row-start-4"><div[^>]*><section id="today-share"/)
-    // 일정 열은 배포·[Jira|할 일]·업무 공유 세 행에 걸친다
+    // 나에게 온 요청 칸이 없으면 일정 열은 배포·[Jira|할 일]·업무 공유 세 행에 걸친다
     expect(html).toMatch(/@min-\[1000px\]:col-start-1 @min-\[1000px\]:row-span-3 @min-\[1000px\]:row-start-2/)
     today.pastEvents = []
     today.meetingNotes = []
@@ -347,6 +356,33 @@ describe('TodayView 이동', () => {
     const html = render()
     expect(html).toMatch(/self-start @min-\[1000px\]:col-start-2 @min-\[1000px\]:row-start-3/)
     expect(html).toMatch(/self-start @min-\[1000px\]:col-start-3 @min-\[1000px\]:row-start-3/)
+  })
+
+  it('나에게 온 요청: 연결된 원본이 있으면 배포 아래·Jira 위 오른쪽 2열 전체 폭에 두고, 없으면 칸째 그리지 않는다', () => {
+    expect(render()).not.toContain('id="today-inbox"')
+    inbox.snapshot = {
+      items: [],
+      jira: { state: 'ok', error: null },
+      bitbucket: { state: 'not_connected', error: null },
+      syncedAt: null
+    }
+    const html = render()
+    const pos = ['today-release', 'today-inbox', 'today-jira'].map((id) => html.search(new RegExp(`id="${id}"`)))
+    expect(pos.every((p) => p >= 0)).toBe(true)
+    expect([...pos].sort((a, b) => a - b)).toEqual(pos)
+    expect(html).toMatch(/@min-\[1000px\]:col-span-2 @min-\[1000px\]:col-start-2 @min-\[1000px\]:row-start-3"><div[^>]*><section id="today-inbox"/)
+    // 아래 카드는 한 행씩 내려가고 일정 열은 네 행에 걸친다
+    expect(html).toMatch(/self-start @min-\[1000px\]:col-start-2 @min-\[1000px\]:row-start-4/)
+    expect(html).toMatch(/@min-\[1000px\]:col-start-2 @min-\[1000px\]:row-start-5"><div[^>]*><section id="today-share"/)
+    expect(html).toMatch(/@min-\[1000px\]:col-start-1 @min-\[1000px\]:row-span-4 @min-\[1000px\]:row-start-2/)
+    inbox.snapshot = null
+  })
+
+  it('나에게 온 요청 → 할 일: 마감 오늘로 바꾸고 성공하면 토스트로 알린다', async () => {
+    toast.showToast.mockClear()
+    await toTodoFromInbox('jira:assigned:ICA-1', new Date(2026, 10, 27, 9))
+    expect(inbox.toTodo).toHaveBeenCalledWith('jira:assigned:ICA-1', '2026-11-27')
+    expect(toast.showToast).toHaveBeenCalledWith({ message: '할 일에 추가했어요' })
   })
 
   it('헬퍼: dateHeading·syncedClock', () => {

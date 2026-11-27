@@ -42,7 +42,8 @@ const google = (): string =>
 describe('ConnectDialogs', () => {
   it('Bitbucket 팝업은 용도·필요 권한 3개·발급 페이지 링크·입력 칸을 한 화면에 그린다', () => {
     const html = bitbucket()
-    expect(html).toContain('Bitbucket 저장소의 파일과 폴더를 읽습니다')
+    expect(html).toContain('Bitbucket 저장소의 파일과 폴더를 읽고, 오늘 화면이 나에게 온 리뷰 요청을 모읍니다')
+    expect(html).toContain('리뷰 요청을 찾을 워크스페이스')
     expect(html).toContain('필요한 권한')
     for (const scope of ['read:repository:bitbucket', 'read:pullrequest:bitbucket', 'read:user:bitbucket']) {
       expect(html).toContain(scope)

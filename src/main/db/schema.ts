@@ -48,6 +48,31 @@ export const JIRA_BOARD_SCHEMA = `
 `
 
 /**
+ * 나에게 온 요청(services/request-inbox-store.ts, docs/ASSISTANT.md §11.6). Jira 할당·멘션 댓글과
+ * Bitbucket 리뷰 요청을 한 행씩 둔다. 사용자 처리 상태(state)를 들고 있어 백업 work 그룹이다.
+ * - id: 'jira:assigned:<키>' · 'jira:mention:<키>:<댓글 id>' · 'bitbucket:review:<ws>/<repo>#<PR id>'
+ * - state: open(보임) | todo(할 일로 바꿈, todo_id) | dismissed(처리함). open 이 아니면 다시 보이지 않는다
+ * - requested_at·first_seen_at·last_seen_at: UTC ISO. last_seen_at 은 원본 조회에 마지막으로 잡힌 시각
+ */
+export const REQUEST_INBOX_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS request_inbox (
+    id            TEXT PRIMARY KEY,
+    source        TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    ref           TEXT NOT NULL,
+    actor         TEXT,
+    excerpt       TEXT,
+    url           TEXT NOT NULL,
+    requested_at  TEXT,
+    state         TEXT NOT NULL DEFAULT 'open',
+    todo_id       INTEGER,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at  TEXT NOT NULL
+  );
+`
+
+/**
  * 릴리스 노트에서 project_id를 걷어낸다.
  *
  * 릴리스 노트는 Jira 릴리스의 미러라 LinkWork 프로젝트와 이어 둘 이유가 없었는데, 프로젝트마다
@@ -491,6 +516,8 @@ export function applySchema(db: Database.Database): void {
   migrateAssistantSchema(db)
   // 프로젝트 보드 캐시. 새 테이블만 만든다(기존 DB에도 IF NOT EXISTS 로 안전하게 붙는다)
   db.exec(JIRA_BOARD_SCHEMA)
+  // 나에게 온 요청. 새 테이블만 만든다
+  db.exec(REQUEST_INBOX_SCHEMA)
 
   // Migrations for existing databases
   const memoColumns = db.prepare("PRAGMA table_info(memos)").all() as { name: string }[]

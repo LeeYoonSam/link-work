@@ -13,6 +13,7 @@
 | 비서 설정 | 날짜 경계·AI 브리핑·첫 화면·로그인 시 실행 등 10개 | §4 |
 | 알림 클릭 이동 | 회의 브리핑 알림과 트레이 '오늘 보기'가 메인 창의 오늘 화면을 연다 | §6.3 |
 | 오늘 화면 페이로드 | 오늘 대시보드가 읽는 비서 이벤트·설정·연결 상태 | §11, §12 |
+| 나에게 온 요청 | Jira 할당·멘션 댓글과 Bitbucket 리뷰 요청을 모아 오늘 화면에 보이고, 할 일로 바꾸거나 처리함으로 지운다 | §11.6 |
 
 비서와 함께 두는 모듈이 2개 더 있다. 일정·할 일 알림(§9)과 트레이 위젯(§10)이다. 둘은 비서 스케줄러와 별개로 돈다.
 
@@ -39,6 +40,11 @@
 | `src/main/services/tray-widget.ts` | 메뉴 막대 트레이 아이콘과 패널 창 |
 | `src/main/ipc/assistant.ipc.ts` | `assistant:*` IPC |
 | `src/main/ipc/morning-sync.ipc.ts` | `morningSync:status` IPC |
+| `src/main/services/request-inbox.ts` | 나에게 온 요청 동기화·할 일로 바꾸기·처리함 |
+| `src/main/services/request-inbox-store.ts` | `request_inbox` 읽기·쓰기(병합·정리). electron 을 쓰지 않는다 |
+| `src/main/ipc/request-inbox.ipc.ts` | `inbox:*` IPC |
+| `src/renderer/src/stores/inboxStore.ts` | 나에게 온 요청 스냅샷·할 일로·처리함 |
+| `src/renderer/src/components/today/RequestInboxCard.tsx` | '나에게 온 요청' 카드 |
 | `src/renderer/src/stores/assistantStore.ts` | 오늘 페이로드·알림 focus·브리핑 다시 만들기 |
 | `src/renderer/src/stores/todayStore.ts` | 오늘 대시보드 데이터 불러오기와 캘린더 범위 |
 | `src/renderer/src/stores/morningSyncStore.ts` | 아침 동기화 상태와 '새 릴리스' 배지 |
@@ -93,6 +99,7 @@
 | `plan_items` | 위와 같다 |
 | `assistant_exclusions` | 제거된 '계속 제외' 기능의 과거 기록. 비서 코드는 읽거나 쓰지 않는다 |
 
+- 나에게 온 요청은 `request_inbox` 테이블에 둔다(DDL 은 `schema.ts` 의 `REQUEST_INBOX_SCHEMA`, §11.6). 처리 상태를 들고 있어 백업 그룹 `work` 에 든다.
 - 과거 기록 3개 테이블은 백업 그룹 `work` 에 들어 있다(`backup-groups.ts`). 백업 복원(`backup-restore-db.ts`)은 `plan_items.candidate_id` 를 맞춘다.
 - `migrateAssistantSchema(db)` 는 옛 DB 에 없는 `daily_plans`·`plan_items` 컬럼을 더한다. 여러 번 실행해도 결과가 같다.
 
@@ -288,12 +295,12 @@
 
 ## 11. 오늘 대시보드
 
-오늘 화면(`components/today/TodayView.tsx`)은 오늘 챙길 것과 팀에 공유할 업무를 한눈에 읽는 화면이다. 화면에서 직접 하는 동작은 할 일 체크·빠른 추가, 이동 링크, 회의 브리핑 펼침, 업무 공유 복사, 새로고침(↻)뿐이다.
+오늘 화면(`components/today/TodayView.tsx`)은 오늘 챙길 것과 팀에 공유할 업무를 한눈에 읽는 화면이다. 화면에서 직접 하는 동작은 할 일 체크·빠른 추가, 받은 요청의 할 일로·처리함, 이동 링크, 회의 브리핑 펼침, 업무 공유 복사, 새로고침(↻)뿐이다.
 
 ### 11.1 데이터
 
 - 조립은 렌더러 순수 모델이 한다. `todayModel.ts` 의 `buildTodayDashboard` 가 헤드라인·카드 행·신호를 만들고, `releaseModel.ts` 의 `resolveNextRelease` 가 다음 배포를 판정한다. 메인의 집계 IPC 는 없다.
-- 입력: `todayStore.events`(캘린더), `todoStore`(진행 중·완료 할 일), `jiraBoardStore.snapshot`(Jira 보드), `releaseNoteStore.allNotes`(릴리스), `assistantStore.today`(회의 브리핑 이벤트·연결 상태·AI 가능 여부).
+- 입력: `todayStore.events`(캘린더), `todoStore`(진행 중·완료 할 일), `jiraBoardStore.snapshot`(Jira 보드), `releaseNoteStore.allNotes`(릴리스), `assistantStore.today`(회의 브리핑 이벤트·연결 상태·AI 가능 여부), `inboxStore.snapshot`(나에게 온 요청, §11.6).
 - 캘린더는 `calendar:range` 로 오늘 0시부터 21일(`CALENDAR_RANGE_DAYS`)을 받는다. 다음 주 배포·QA 일정까지 보려는 범위다.
 - 다음 배포 판정 규칙은 [RELEASE_NOTES.md](RELEASE_NOTES.md) §8.4 '오늘 화면의 다음 배포 판정'이다.
 - '업무 공유' 카드는 `shareModel.ts` 의 `buildWorkShare` 가 조립한다. 데일리 스탠드업에서 팀에 공유할 작업 완료·작업 중·작업 예정·회의·리뷰를 모은다. 새 IPC 없이 렌더러에 있는 값만 쓴다. 카드와 복사 글은 이것을 '어제'(지난 근무일 완료·지난 회의)와 '오늘'(작업 중·작업 예정·오늘 회의·오늘 완료)로 나눠 보인다. 어제 쪽 제목(`pastTitle`)은 구간이 하루면 '어제', 여러 날이면 '지난 근무일 이후' 다.
@@ -306,22 +313,24 @@
 
 ### 11.2 갱신
 
-- 화면 진입: `todayStore.load()`. 비서·할 일·Jira 보드·릴리스·캘린더(오늘 범위와 지난 근무일 범위)·회의록 목록을 함께 읽는다. 캐시를 허용한다. 지난 근무일 일정과 회의록은 실패하면 직전 값을 그대로 둔다.
-- ↻: `todayStore.refresh()`. 캘린더를 강제로 다시 받고, Jira 보드는 증분 동기화, 릴리스는 변경분 동기화를 강제한다.
+- 화면 진입: `todayStore.load()`. 비서·할 일·Jira 보드·릴리스·캘린더(오늘 범위와 지난 근무일 범위)·회의록 목록·나에게 온 요청을 함께 읽는다. 캐시를 허용한다. 나에게 온 요청은 저장본을 먼저 보이고, 메인이 10분 안의 재동기화를 거른다(§11.6). 지난 근무일 일정과 회의록은 실패하면 직전 값을 그대로 둔다.
+- ↻: `todayStore.refresh()`. 캘린더를 강제로 다시 받고, Jira 보드는 증분 동기화, 릴리스는 변경분 동기화, 나에게 온 요청은 원본 동기화를 강제한다(30초 안의 연타만 거른다).
 - 하나가 실패해도 나머지는 반영한다. 늦게 끝난 옛 요청은 새 결과를 덮지 않는다.
 - `stores/dataSync.ts`: 창 focus(30초 간격 제한)와 아침 동기화 완료 때 오늘 화면이 열려 있으면 `todayStore.load()` 를 부른다. `assistant:changed` 는 `assistantStore.load()` 를 부른다.
 - 화면의 '지금'은 60초마다 다시 읽는다.
 
 ### 11.3 배치
 
-- 좁은 창은 한 열이다. DOM 순서는 헤더 → 다음 배포 → 내 Jira 작업 → 할 일 → 업무 공유 → 일정 → 중요 메모다.
-- 본문 컨테이너 폭이 1000px 이상(`@min-[1000px]`)이면 같은 DOM 을 격자로 옮긴다. 일정은 왼쪽 좁은 열(sticky, 헤더 아래 세 행에 걸침)에, 오른쪽에 다음 배포, 그 아래 [내 Jira 작업 | 할 일], 그 아래 오른쪽 두 열 전체 폭으로 업무 공유를 둔다.
+- 좁은 창은 한 열이다. DOM 순서는 헤더 → 다음 배포 → 나에게 온 요청 → 내 Jira 작업 → 할 일 → 업무 공유 → 일정 → 중요 메모다.
+- 본문 컨테이너 폭이 1000px 이상(`@min-[1000px]`)이면 같은 DOM 을 격자로 옮긴다. 일정은 왼쪽 좁은 열(sticky, 헤더 아래 네 행에 걸침)에, 오른쪽에 다음 배포, 그 아래 오른쪽 두 열 전체 폭으로 나에게 온 요청, 그 아래 [내 Jira 작업 | 할 일], 그 아래 오른쪽 두 열 전체 폭으로 업무 공유를 둔다.
+- 나에게 온 요청은 Jira·Bitbucket 이 둘 다 연결되지 않았으면 칸째 그리지 않고, 아래 카드를 한 행씩 올린다(일정 열은 세 행에 걸친다. `TodayView.tsx` 의 `gridRows`).
 - 헤더는 날짜, 마지막 동기화 시각, ↻, 헤드라인 1줄, 오류 줄이다. 캘린더 미연결은 일정 카드가 안내하므로 오류 줄에 쓰지 않는다.
 - 시각 상수(위계·severity 색과 모양·행 모양)는 `todayTokens.ts` 에만 둔다. severity 는 색과 모양을 함께 쓴다: critical 빨강 ◆, warn 앰버 ▲, info 파랑 ●.
 
 | 카드 | 내용 | 이동 |
 |------|------|------|
 | 다음 배포(`ReleaseCard`) | 버전·D-day·날짜, 개발─QA─배포 단계 선, 내 작업 막대, 이슈 행(위험 행 전부 + 3행) | 이슈 키 → 그 이슈, '외 n건' → 릴리스 탭 |
+| 나에게 온 요청(`RequestInboxCard`) | 요청 시각 최신순 6행(`INBOX_VISIBLE`), 넘으면 '외 n건 더 보기' 로 펼친다. 행: 종류(담당·멘션·리뷰) · 출처(Jira 키 또는 'repo #번호') · 제목, 멘션이면 댓글 앞부분, 요청자·상대 시각, [할 일로]·[처리함]. 0건이면 '새로 온 요청이 없어요'. 원본 오류와 Bitbucket 워크스페이스 미지정은 카드 아래 한 줄로 알린다(미연결은 말하지 않는다) | 출처 → 원본(Jira 이슈·댓글, Bitbucket PR)을 브라우저로, 워크스페이스 안내 → 설정 > 연동 |
 | 내 Jira 작업(`JiraWorkCard`) | 지남 → 오늘 마감 → 진행 중 → 리뷰·QA → 나머지, 7행. 다음 배포 카드에 보인 이슈는 뺀다 | 이슈 키 → 그 이슈, '외 n건' → 티켓 탭, 미연결이면 설정 > 연동 |
 | 할 일(`TodoCard`) | 지남 → 오늘 → 마감 있음 → 마감 없음, 6행. 체크, 빠른 추가(Enter. 빈 값·한글 조합 중은 무시, 자연어 인식 — 아래), 오늘 완료 수 | 제목 → 할 일 화면의 그 항목, '외 n건' → 할 일 화면 |
 | 업무 공유(`WorkShareCard`) | 제목·건수·오늘 날짜와 '복사'. 본문은 어제 / 오늘 2열이다(카드 폭 560px 미만이면 1열로 쌓는다. 어제 열은 옅은 배경과 구분선으로 갈린다). 어제 열: `pastTitle`·기간, 지난 근무일에 완료한 항목(이슈는 키·제목, 할 일은 제목)을 한 줄씩 말줄임, 그 아래 지난 회의를 '시각 제목'(여러 날이면 요일 포함) 한 줄씩. 메모·요약·배지는 없다. 상한은 완료 8(`PAST_DONE_LIMIT`)·회의 5(`PAST_MEETING_LIMIT`). 오늘 열: 작업 중 → 작업 예정 → 회의·리뷰 → 오늘 완료 섹션. 행 옆에 흐린 메모(상태 이름·'기한 지남', 오늘 완료는 메모 없음), 회의는 시각·제목, 리뷰면 '리뷰' 배지, 회의록이 있으면 한 줄 요약. 섹션마다 8행(`SHARE_SECTION_LIMIT`). 상한을 넘으면 '외 n건'. 빈 섹션은 그리지 않고, 한 열이 통째로 비면 그 열에 흐린 한 줄('<pastTitle> 완료한 작업이 없어요.' / '진행 중·예정 작업이 없어요.')을 보인다. 0건이면 '공유할 작업이 없어요' 와 비활성 복사 버튼. Jira 를 모르면 안내 한 줄 | 이슈 → 그 이슈, 할 일 → 할 일 화면의 그 항목, 회의록이 있는 회의 → 회의록 화면의 그 회의록 |
@@ -365,6 +374,25 @@
 - '다시 만들기'는 `aiAvailable` 이고 `llmEnabled` 일 때 쓸 수 있다. 행 단위로 중복 클릭을 막는다.
 - 알림 클릭 focus 가 `meeting` 이면 `meeting-briefing-<eventId>` 를 펼치고 스크롤한다. 그 밖의 focus kind 는 무시한다.
 
+### 11.6 나에게 온 요청
+
+다른 사람이 나에게 보낸 요청을 한곳에 모은다. 원본은 읽기만 하고, 처리 상태는 로컬 `request_inbox` 에 둔다. Slack 멘션은 아직 모으지 않는다(앱에 Slack 연동이 없다).
+
+| 종류 | 원본 | 조건 | 행 id |
+|------|------|------|------|
+| 담당(`assigned`) | Jira `search/jql` | 미완료, 내 담당, 최근 7일(`REQUEST_WINDOW_DAYS`) 안에 나에게 할당됐거나 만들어진 이슈. 그 기간에 스스로 담당자를 바꾼 것(`BY currentUser()`)과 내가 만든 이슈는 뺀다. 요청자 칸은 보고자다 | `jira:assigned:<키>` |
+| 멘션(`mention`) | Jira `search/jql` | `comment ~ "<내 accountId>"` 로 최근 7일 갱신된 후보를 찾고, 댓글 ADF 의 mention 노드가 나를 가리키는지 다시 본다. 내가 쓴 댓글과 7일보다 오래된 댓글은 뺀다. 이슈당 가장 최근 1건 | `jira:mention:<키>:<댓글 id>` |
+| 리뷰(`review`) | Bitbucket Cloud | 설정한 워크스페이스에서 최근 갱신된 저장소 30개(`REVIEW_REPO_LIMIT`)의 열린 PR 중 나를 리뷰어로 둔 것(BBQL `reviewers.uuid`, `read:user` 가 없으면 Jira accountId 로 `reviewers.account_id`). 내가 이미 승인했거나 변경 요청한 PR 은 뺀다. 승인 확인(PR 상세 GET)은 40개(`REVIEW_DETAIL_LIMIT`)까지이고, 이미 할 일로 바꾸거나 처리한 PR 은 확인하지 않는다 | `bitbucket:review:<ws>/<repo>#<번호>` |
+
+- 상한: Jira 종류별 100건, Bitbucket 동시 요청 5개, 저장소당 PR 목록 1페이지(50건). 다음 페이지가 남거나 일부 저장소가 실패하면 그 조회는 미완료다. 저장소 일부의 403 은 그 저장소 실패로 세고, 모든 저장소가 403 일 때만 `read:pullrequest` 범위 부족으로 알린다.
+- 동기화(`syncRequestInbox`): 화면 진입·focus 재로드는 마지막 동기화 10분(`MIN_SYNC_INTERVAL_MS`) 안이면 저장본만 돌려준다. Bitbucket 은 동기화 1번에 수십 번 GET 하고 시간당 요청 한도를 AI 조회와 나눠 쓰기 때문이다. ↻ 는 30초(`FORCE_MIN_INTERVAL_MS`) 안의 연타만 거른다. Bitbucket 워크스페이스를 저장하면(`markRequestInboxStale`) 다음 자동 동기화는 간격과 무관하게 돈다. 실행 중이면 그 결과를 함께 기다린다. Jira 가 먼저 돌고(내 accountId 를 동기화마다 `/myself` 로 다시 읽는다) Bitbucket 이 뒤따른다. 한 원본이 실패해도 다른 원본은 반영하고, 실패한 원본은 카드에 오류 한 줄로 알린다.
+- 병합(`mergeFetchedRequests`): 새 요청은 `open` 으로 넣는다. 이미 있는 행은 제목·링크·요청자·미리보기·`last_seen_at` 만 고치고 상태는 그대로 둔다. 조회가 잘리거나 일부 실패하지 않았을 때만 이번에 잡히지 않은 `open` 행을 지운다(원본에서 사라진 요청: 승인·머지·완료·담당 변경·기간 지남).
+- 할 일로(`inbox:toTodo`): 제목 '[키] 제목'(멘션은 뒤에 '댓글 답하기', 리뷰는 '[리뷰] repo #번호 제목'), 출처 링크는 원본 주소, 마감은 오늘(오늘 화면 빠른 추가와 같다)로 할 일을 만들고 같은 트랜잭션에서 요청을 `todo` 로 둔다. 할 일 출처 칩은 Bitbucket PR 이면 'repo #번호' 다.
+- 처리함(`inbox:dismiss`): 요청을 `dismissed` 로 둔다. `todo`·`dismissed` 는 다시 잡혀도 보이지 않는다. 마지막으로 조회에 잡힌 지 30일(`HANDLED_KEEP_DAYS`)이 지나면 행을 지운다. 이 정리는 그 원본 조회가 온전했을 때만 그 원본 행에 한다.
+- 연결을 끊었거나 워크스페이스를 지운 원본의 저장 행은 보이지 않는다(행은 남는다).
+- 원본 열기(`inbox:open`)는 렌더러가 보낸 주소를 쓰지 않는다. id 로 저장된 행의 https 주소를 꺼내 `open-target` 검사를 거쳐 연다.
+- Bitbucket 워크스페이스와 필요한 token 범위는 [SETTINGS.md](SETTINGS.md) 의 Bitbucket 카드에 있다. 상태 `not_connected`(미연결)·`no_workspace`(워크스페이스 없음)·`error`·`ok` 를 원본별로 돌려준다.
+
 ## 12. IPC 계약
 
 인자 형식은 서비스가 검증한다. 렌더러 값은 신뢰하지 않는다.
@@ -377,6 +405,11 @@
 | `assistant:saveSettings` | `(patch)` | `{ success: true; settings } \| { success: false; error }` |
 | `assistant:takePendingNavigate` | `()` | `{ success: true; pending: AssistantNavigateEvent \| null } \| { success: false; error }` |
 | `morningSync:status` | `()` | `{ success: true; status: MorningSyncStatus } \| { success: false; error }` |
+| `inbox:cached` | `()` | `{ success: true; snapshot: RequestInboxSnapshot } \| { success: false; error }`. 원본을 부르지 않는다 |
+| `inbox:sync` | `(force: boolean)` | 위와 같다. 마지막 동기화 10분(force 면 30초) 안의 재호출은 저장본 |
+| `inbox:toTodo` | `(id: string, dueDate: 'YYYY-MM-DD' \| null)` | `{ success: true; todoId } \| { success: false; error }` |
+| `inbox:dismiss` | `(id: string)` | `{ success: true } \| { success: false; error }` |
+| `inbox:open` | `(id: string)` | `{ success: true } \| { success: false; error }` |
 | `tray:getData` | `()` | `TrayData` |
 | `tray:openApp` | `()` | 없음 |
 | `tray:openToday` | `()` | 없음 |
@@ -388,12 +421,12 @@
 | `tray:data` | `TrayData` |
 | `ai:dataChanged` | 아침 동기화는 `{ entity: 'sync_status' }` 를 보낸다 |
 
-`TodayPayload` 는 `{ events: AssistantEvent[]; settings; aiAvailable; calendarConnected }` 다. `events` 는 오늘 논리 날짜의 비서 이벤트 전부다. 연결 상태와 헤드리스 가능 여부는 부를 때마다 실제 값으로 읽고, 읽다가 실패하면 `false` 다. preload 는 `window.api.assistant`·`window.api.morningSync`·`window.api.tray` 로 노출한다. 렌더러 타입은 `src/renderer/src/types/index.ts` 에 있다.
+`TodayPayload` 는 `{ events: AssistantEvent[]; settings; aiAvailable; calendarConnected }` 다. `events` 는 오늘 논리 날짜의 비서 이벤트 전부다. 연결 상태와 헤드리스 가능 여부는 부를 때마다 실제 값으로 읽고, 읽다가 실패하면 `false` 다. `RequestInboxSnapshot` 은 `{ items: RequestInboxItem[]; jira: InboxSourceStatus; bitbucket: InboxSourceStatus; syncedAt }` 다. preload 는 `window.api.assistant`·`window.api.morningSync`·`window.api.tray`·`window.api.inbox` 로 노출한다. 렌더러 타입은 `src/renderer/src/types/index.ts` 에 있다.
 
 ## 13. 불변식
 
 - **실패 격리**: 스케줄러 처리기, `runMorningSyncIfDue`, `collectMeetingContext`, `requestLlmMeetingBriefing`, AI 본문 백그라운드 작업은 throw 하지 않는다. 실패는 로그·`errors`·payload 의 상태로 남는다.
-- **쓰기 범위**: 비서 서비스·저장소는 비서 테이블과 `assistant_*` 설정만 쓴다. 지난 회의·할 일 같은 원본 테이블은 읽기만 한다. 아침 동기화는 예외로 릴리스 동기화를 부르며, 그래서 파일 이름에 `assistant-` 를 붙이지 않았다.
+- **쓰기 범위**: 나에게 온 요청은 `request_inbox` 와, 할 일로 바꿀 때 `todos`(이력 포함)만 쓴다. Jira·Bitbucket 에는 GET 만 한다. 비서 서비스·저장소는 비서 테이블과 `assistant_*` 설정만 쓴다. 지난 회의·할 일 같은 원본 테이블은 읽기만 한다. 아침 동기화는 예외로 릴리스 동기화를 부르며, 그래서 파일 이름에 `assistant-` 를 붙이지 않았다.
 - **순수 모듈**: `assistant-day.ts`·`assistant-settings.ts`·`assistant-schedule.ts`·`assistant-meeting.ts`·`todayModel.ts`·`releaseModel.ts` 는 DB·네트워크·전역 시각을 쓰지 않는다. 시각은 인자로 받는다.
 - **한 번만**: 회의 브리핑과 아침 동기화는 `event_key` UNIQUE 로 하루 1번을 보장한다. 행 INSERT 가 알림보다 먼저다.
 - **직렬화**: 회의 브리핑 쓰기는 서비스의 쓰기 줄 하나로 처리한다. 헤드리스 LLM 호출은 `runLlmSerialized` 로 한 번에 하나씩 돈다. 회의 브리핑 판정은 `dueInFlight`, 아침 동기화는 모듈의 `inFlight` 로 동시에 1개만 돈다.

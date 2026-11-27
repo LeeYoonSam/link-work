@@ -24,15 +24,16 @@
 
 | 그룹 ID | 화면 이름 (메뉴) | 테이블 | `app_settings` 키 | 파일 |
 |---|---|---|---|---|
-| `work` | 오늘·업무 (오늘, 프로젝트(릴리스 탭 포함), 할 일). `activity_log` 는 화면에 보이지 않지만 활동 기록으로 계속 쌓이고 이 그룹에 든다 | projects, tasks, todos, todo_tags, todo_tag_map, todo_history, release_notes, release_note_items, activity_log, daily_plans, plan_items, assistant_events, assistant_exclusions | `project_sync_created_keys` | 없음 |
+| `work` | 오늘·업무 (오늘, 프로젝트(릴리스 탭 포함), 할 일). `activity_log` 는 화면에 보이지 않지만 활동 기록으로 계속 쌓이고 이 그룹에 든다 | projects, tasks, todos, todo_tags, todo_tag_map, todo_history, release_notes, release_note_items, activity_log, daily_plans, plan_items, assistant_events, assistant_exclusions, request_inbox | `project_sync_created_keys` | 없음 |
 | `meetings` | 회의 (녹음, 회의록, 용어집·구성원) | meetings, meeting_speakers, meeting_segments, meeting_cuts, meeting_summaries, meeting_marks, meeting_attendees, meeting_members, stt_glossary, meeting_speaker_voices, member_voice_samples | 없음 | `recordings/` |
 | `library` | 자료 (메모, 변수, 예전 문서 메뉴의 문서) | documents, memos, memo_categories, variables | 없음 | 없음 |
 | `ai` | AI 대화 | ai_chats, ai_messages, ai_audit_log | 없음 | `ai-attachments/` |
-| `settings` | 설정·연동 | (없음 — `app_settings` 를 키 단위로) | `assistant_*`, `ai_model`, `ai_model_labels`, `google_client_id`, `jira_site_url`, `jira_email`, `jira_token_expires_at`, `jira_account_name`, `jira_default_project_key`, `bitbucket_email`, 그리고 분류되지 않은 모든 키(기본값) | 없음 |
+| `settings` | 설정·연동 | (없음 — `app_settings` 를 키 단위로) | `assistant_*`, `ai_model`, `ai_model_labels`, `google_client_id`, `jira_site_url`, `jira_email`, `jira_token_expires_at`, `jira_account_name`, `jira_default_project_key`, `bitbucket_email`, `bitbucket_workspace`, 그리고 분류되지 않은 모든 키(기본값) | 없음 |
 | (백업 제외) | — | auth_tokens, jira_board_issues, jira_board_sync, jira_epic_summaries | 시크릿 4개(위 표), `mobile_server_token`, `mobile_server_enabled` | models/, Electron 캐시 |
 
 - `documents` 는 메뉴가 없는 옛 문서 테이블이다. 남은 데이터를 `library` 그룹으로 백업·복원한다. 화면 라벨의 "예전 문서 메뉴의 문서"가 이 테이블이다.
 - 비서 테이블(`daily_plans`·`plan_items`·`assistant_events`·`assistant_exclusions`)은 업무와 같은 그룹이다. 옛 계획 항목(`plan_items.candidate_id`)이 `todo:<id>`(더 옛 행은 `task:<id>`)로 할 일을 가리키기 때문이다.
+- `request_inbox`(나에게 온 요청, [ASSISTANT.md](ASSISTANT.md) §11.6)는 업무 그룹이다. 원본에서 다시 받을 수 있지만 할 일로 바꿈·처리함 상태를 들고 있어, 빼면 복원 뒤 처리한 요청이 다시 보인다. `todo_id` 가 같은 그룹의 `todos` 를 가리킨다.
 - `jira_board_issues`·`jira_board_sync` 는 프로젝트 보드의 Jira 캐시다(docs/PROJECT_BOARD.md §3). Jira 에서 다시 받을 수 있어 백업하지 않는다(`NON_GROUP_TABLES`, `CACHE_TABLES`).
 - `jira_epic_summaries` 는 보드 캐시로 만든 에픽 AI 요약이다(docs/PROJECT_BOARD.md §5.1). 버튼으로 다시 만들 수 있어 보드 캐시와 같이 취급한다(`NON_GROUP_TABLES`, `CACHE_TABLES`).
   내보낼 때 사본에서 세 테이블의 행을 지운다(`stripCaches`). 복원은 이 기기의 캐시를 그대로 두되, 복원으로 Jira 계정이 바뀌면 함께 지운다(아래 연동 묶음 규칙). 캐시가 비면 다음 화면 진입 때 보드가 전체 동기화를 한다.

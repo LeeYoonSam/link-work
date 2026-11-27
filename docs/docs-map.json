@@ -47,12 +47,14 @@
       "patterns": [
         "src/main/services/assistant-*.ts",
         "src/main/ipc/assistant.ipc.ts",
+        "src/main/services/request-inbox*.ts",
+        "src/main/ipc/request-inbox.ipc.ts",
         "src/main/services/tray-widget.ts",
         "src/main/services/notification.ts",
         "src/renderer/src/components/today/**",
         "src/renderer/src/components/dashboard/**",
         "src/renderer/src/components/tray/**",
-        "src/renderer/src/stores/{assistantStore,todayStore,dataSync}.ts",
+        "src/renderer/src/stores/{assistantStore,todayStore,dataSync,inboxStore}.ts",
         "src/renderer/src/utils/{startView,schedule}.ts"
       ],
       "docs": ["docs/ASSISTANT.md"]

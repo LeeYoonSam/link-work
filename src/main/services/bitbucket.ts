@@ -3,7 +3,8 @@ import { getDatabase } from '../db/database'
 import { parseBitbucketUrl } from './bitbucket-url'
 import { getUrlBlockReason } from './web-fetch'
 
-// Bitbucket Cloud 저장소 조회 (AI read_bitbucket·fetch_url 도구용, 읽기 전용).
+// Bitbucket Cloud 조회 (읽기 전용). AI read_bitbucket·fetch_url 도구의 저장소 읽기와
+// 나에게 온 요청의 리뷰 요청 PR 조회(listReviewRequests, docs/ASSISTANT.md §11.6)가 쓴다.
 //
 // [가드레일] — docs/AI_GUARDRAILS.md 8.7
 // - 인증은 Atlassian 이메일 + Bitbucket API token 의 Basic 인증이다.
@@ -28,6 +29,8 @@ const MAX_REF_RETRIES = 3
 
 const EMAIL_KEY = 'bitbucket_email'
 const TOKEN_KEY = 'bitbucket_api_token'
+// 리뷰 요청을 찾을 워크스페이스 slug. 비밀값이 아니라 암호화하지 않는다
+const WORKSPACE_KEY = 'bitbucket_workspace'
 
 export const BITBUCKET_NOT_CONNECTED_MESSAGE =
   'Bitbucket 이 연동되어 있지 않습니다. 설정 > 연동(linkwork://view/settings)의 Bitbucket 카드에서 Atlassian 이메일과 Bitbucket API token 을 등록하도록 사용자에게 안내하세요.'
@@ -457,4 +460,240 @@ export async function readBitbucketSource(url: string): Promise<BitbucketSourceR
     return { ...base, type: 'file', ...file }
   }
   throw lastError instanceof Error ? lastError : new Error(NOT_FOUND_MESSAGE)
+}
+
+// ── 리뷰 요청 (나에게 온 요청, docs/ASSISTANT.md §11.6) ──
+//
+// Bitbucket Cloud 에는 "내가 리뷰어인 PR 전체" API 가 없다(작성자 기준 API 만 있다).
+// 그래서 워크스페이스에서 최근 갱신된 저장소 REVIEW_REPO_LIMIT 개를 골라, 저장소마다 열린 PR 중
+// 나를 리뷰어로 둔 것을 BBQL(q=)로 찾는다. 이미 승인했거나 변경 요청한 PR 은 처리한 것으로 보고 뺀다.
+// 필요한 token 스코프: read:repository(저장소 목록), read:pullrequest(PR). 내 uuid 는 read:user 로 읽고,
+// 그 스코프가 없으면 호출자가 넘긴 Atlassian accountId(Jira 와 같은 값)로 찾는다.
+
+/** 리뷰 요청을 찾을 저장소 수(최근 갱신순) */
+export const REVIEW_REPO_LIMIT = 30
+/** 승인 여부를 확인할 PR 수 상한(이미 처리한 PR 은 세지 않는다) */
+const REVIEW_DETAIL_LIMIT = 40
+/** 동시에 보내는 요청 수 */
+const REVIEW_CONCURRENCY = 5
+
+const WORKSPACE_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,61}$/
+const UUID_RE = /^\{[0-9a-fA-F-]{36}\}$/
+const ACCOUNT_ID_RE = /^[A-Za-z0-9:_-]{1,128}$/
+
+export const BITBUCKET_NO_WORKSPACE_MESSAGE =
+  '리뷰 요청을 찾을 Bitbucket 워크스페이스가 정해지지 않았습니다. 설정 > 연동의 Bitbucket 카드에서 워크스페이스를 입력해 주세요.'
+const PR_SCOPE_MESSAGE =
+  'Bitbucket token 에 PR 읽기 권한(read:pullrequest)이 없습니다. 이 범위를 넣은 token 으로 다시 등록해 주세요.'
+const WORKSPACE_NOT_FOUND_MESSAGE =
+  'Bitbucket 워크스페이스를 찾을 수 없습니다. 설정 > 연동의 Bitbucket 카드에서 워크스페이스 이름을 확인해 주세요.'
+
+export function getBitbucketWorkspace(): string | null {
+  const v = readSetting(WORKSPACE_KEY)
+  return v && WORKSPACE_RE.test(v) ? v : null
+}
+
+/**
+ * 워크스페이스를 저장한다. slug 또는 https://bitbucket.org/{slug}/... 주소를 받는다. 빈 값이면 지운다.
+ * 반환: 저장한 slug(지웠으면 null). 형식이 틀리면 throw
+ */
+export function setBitbucketWorkspace(input: unknown): string | null {
+  if (input === null || input === undefined) {
+    getDatabase().prepare('DELETE FROM app_settings WHERE key = ?').run(WORKSPACE_KEY)
+    return null
+  }
+  if (typeof input !== 'string') throw new Error('워크스페이스 형식이 올바르지 않습니다.')
+  let value = input.trim()
+  if (value === '') return setBitbucketWorkspace(null)
+  const m = /^https:\/\/bitbucket\.org\/([^/?#]+)/i.exec(value)
+  if (m) value = m[1]
+  if (!WORKSPACE_RE.test(value)) throw new Error('워크스페이스 이름은 영문·숫자·-·_·. 만 쓸 수 있습니다.')
+  writeSetting(WORKSPACE_KEY, value)
+  return value
+}
+
+export interface BitbucketReviewRequest {
+  workspace: string
+  repo: string
+  id: number
+  title: string
+  authorName: string | null
+  /** PR 웹 주소(https://bitbucket.org/...) */
+  url: string
+  /** PR 생성 시각 원본 ISO */
+  createdOn: string
+}
+
+interface RawUser {
+  uuid?: unknown
+  account_id?: unknown
+  display_name?: unknown
+}
+
+interface RawPullRequest {
+  id?: unknown
+  title?: unknown
+  created_on?: unknown
+  author?: RawUser | null
+  links?: { html?: { href?: unknown } | null } | null
+  participants?: Array<{ user?: RawUser | null; approved?: unknown; state?: unknown } | null> | null
+}
+
+/** 나를 찾는 BBQL 조건. uuid 를 먼저 쓰고, 없으면 accountId 를 쓴다 */
+export function reviewerQuery(me: { uuid: string | null; accountId: string | null }): string | null {
+  if (me.uuid && UUID_RE.test(me.uuid)) return `state="OPEN" AND reviewers.uuid="${me.uuid}"`
+  if (me.accountId && ACCOUNT_ID_RE.test(me.accountId)) {
+    return `state="OPEN" AND reviewers.account_id="${me.accountId}"`
+  }
+  return null
+}
+
+/** PR 상세의 참여자 중 내가 이미 승인했거나 변경 요청했는가 */
+export function reviewHandledByMe(
+  pr: unknown,
+  me: { uuid: string | null; accountId: string | null }
+): boolean {
+  const parts = (pr as RawPullRequest)?.participants ?? []
+  return parts.some((p) => {
+    if (!p?.user) return false
+    const mine =
+      (me.uuid !== null && p.user.uuid === me.uuid) || (me.accountId !== null && p.user.account_id === me.accountId)
+    return mine && (p.approved === true || p.state === 'approved' || p.state === 'changes_requested')
+  })
+}
+
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const i = next++
+      out[i] = await fn(items[i])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return out
+}
+
+async function whoAmI(auth: string, fallbackAccountId: string | null): Promise<{ uuid: string | null; accountId: string | null }> {
+  try {
+    const me = await getJson<RawUser>(`${API_BASE}/user`, auth)
+    return {
+      uuid: typeof me.uuid === 'string' ? me.uuid : null,
+      accountId: typeof me.account_id === 'string' ? me.account_id : fallbackAccountId
+    }
+  } catch (err) {
+    // 403 은 read:user 스코프만 없는 것이다. Atlassian accountId 로 찾는다
+    if (err instanceof BitbucketHttpError && err.status === 403) return { uuid: null, accountId: fallbackAccountId }
+    throw err
+  }
+}
+
+/**
+ * 워크스페이스의 최근 저장소에서 나에게 리뷰를 요청한 열린 PR.
+ * complete 는 모든 저장소 조회가 온전했는지다(하나라도 실패하거나 잘리면 false — 호출자가 사라진 요청을 지우지 않는다).
+ * isHandled 가 true 인 PR(이미 할 일로 바꾸거나 처리함)은 승인 여부 상세 GET 을 건너뛰고 그대로 돌려준다.
+ */
+export async function listReviewRequests(
+  fallbackAccountId: string | null,
+  isHandled: (workspace: string, repo: string, id: number) => boolean = () => false
+): Promise<{ requests: BitbucketReviewRequest[]; complete: boolean }> {
+  const auth = getStoredAuth()
+  const workspace = getBitbucketWorkspace()
+  if (!workspace) throw new Error(BITBUCKET_NO_WORKSPACE_MESSAGE)
+  const me = await whoAmI(auth, fallbackAccountId)
+  const q = reviewerQuery(me)
+  if (!q) {
+    throw new Error(
+      'Bitbucket 계정을 확인하지 못했습니다. token 에 read:user 범위를 넣거나 Jira 를 연결해 주세요.'
+    )
+  }
+
+  const ws = encodeURIComponent(workspace)
+  let repos: string[]
+  try {
+    const page = await getJson<{ values?: Array<{ slug?: unknown } | null> }>(
+      `${API_BASE}/repositories/${ws}?${new URLSearchParams({
+        role: 'member',
+        sort: '-updated_on',
+        pagelen: String(REVIEW_REPO_LIMIT),
+        fields: 'values.slug'
+      })}`,
+      auth
+    )
+    repos = (page.values ?? [])
+      .map((v) => v?.slug)
+      .filter((s): s is string => typeof s === 'string' && s.length > 0)
+  } catch (err) {
+    if (err instanceof BitbucketHttpError && err.status === 404) throw new Error(WORKSPACE_NOT_FOUND_MESSAGE)
+    throw err
+  }
+
+  let failures = 0
+  let forbidden = 0
+  let morePages = false
+  let firstError: unknown = null
+  const listed = await mapLimit(repos, REVIEW_CONCURRENCY, async (repo) => {
+    try {
+      const page = await getJson<{ values?: Array<RawPullRequest | null>; next?: unknown }>(
+        `${API_BASE}/repositories/${ws}/${encodeURIComponent(repo)}/pullrequests?${new URLSearchParams({
+          q,
+          pagelen: '50'
+        })}`,
+        auth
+      )
+      // 다음 페이지는 읽지 않는다. 남은 PR 이 있으면 미완료로 둔다
+      if (typeof page.next === 'string') morePages = true
+      return (page.values ?? []).flatMap((pr) => (pr ? [{ repo, pr }] : []))
+    } catch (err) {
+      // 403 은 저장소 하나의 권한 제한일 수 있다. 전부 403 일 때만 스코프 부족으로 본다
+      if (err instanceof BitbucketHttpError && err.status === 403) forbidden += 1
+      failures += 1
+      firstError ??= err
+      return []
+    }
+  })
+  if (repos.length > 0 && failures === repos.length) {
+    if (forbidden === repos.length) throw new Error(PR_SCOPE_MESSAGE)
+    throw firstError instanceof Error ? firstError : new Error('Bitbucket PR 을 읽지 못했습니다.')
+  }
+
+  const candidates = listed.flat()
+  let complete = failures === 0 && !morePages
+  let detailCalls = 0
+  const checked = await mapLimit(candidates, REVIEW_CONCURRENCY, async ({ repo, pr }) => {
+    const id = typeof pr.id === 'number' ? pr.id : null
+    const href = pr.links?.html?.href
+    if (id === null || typeof href !== 'string' || !href.startsWith('https://bitbucket.org/')) return null
+    const handled = isHandled(workspace, repo, id)
+    if (!handled && detailCalls >= REVIEW_DETAIL_LIMIT) {
+      complete = false
+      return null
+    }
+    if (!handled) {
+      detailCalls += 1
+      try {
+        const detail = await getJson<RawPullRequest>(
+          `${API_BASE}/repositories/${ws}/${encodeURIComponent(repo)}/pullrequests/${id}`,
+          auth
+        )
+        if (reviewHandledByMe(detail, me)) return null
+      } catch {
+        // 상세를 못 읽으면 이번에는 넣지 않는다. 이미 있던 행이 지워지지 않게 미완료로 둔다
+        complete = false
+        return null
+      }
+    }
+    const request: BitbucketReviewRequest = {
+      workspace,
+      repo,
+      id,
+      title: typeof pr.title === 'string' ? pr.title : '',
+      authorName: typeof pr.author?.display_name === 'string' ? pr.author.display_name : null,
+      url: href,
+      createdOn: typeof pr.created_on === 'string' ? pr.created_on : ''
+    }
+    return request
+  })
+  return { requests: checked.filter((r): r is BitbucketReviewRequest => r !== null), complete }
 }

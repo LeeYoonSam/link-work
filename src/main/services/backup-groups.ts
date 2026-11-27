@@ -42,7 +42,8 @@ export const GROUP_TABLES: Record<BackupGroupId, readonly string[]> = {
     'daily_plans',
     'plan_items',
     'assistant_events',
-    'assistant_exclusions'
+    'assistant_exclusions',
+    'request_inbox'
   ],
   meetings: [
     'meetings',

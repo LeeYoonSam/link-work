@@ -104,6 +104,8 @@ const api = {
     bitbucketSaveToken: (email: string, token: string) =>
       ipcRenderer.invoke('ai:bitbucketSaveToken', email, token),
     bitbucketDisconnect: () => ipcRenderer.invoke('ai:bitbucketDisconnect'),
+    // 리뷰 요청을 찾을 워크스페이스. 빈 값이면 지운다. 검증은 main 이 한다
+    bitbucketSetWorkspace: (workspace: string) => ipcRenderer.invoke('ai:bitbucketSetWorkspace', workspace),
     onStream: (callback: (event: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => callback(data)
       ipcRenderer.on('ai:stream', handler)
@@ -291,6 +293,16 @@ const api = {
     summarizeEpic: (epicKey: string) => ipcRenderer.invoke('jiraBoard:summarizeEpic', epicKey),
     // 저장된 스냅샷의 links 에 든 http(s) URL 만 연다. 검증은 main 이 한다
     openLink: (url: string) => ipcRenderer.invoke('jiraBoard:openLink', url)
+  },
+  // 나에게 온 요청(docs/ASSISTANT.md §11.6). 원본은 읽기만 하고 처리 상태는 로컬 DB 에 둔다
+  inbox: {
+    cached: () => ipcRenderer.invoke('inbox:cached'),
+    // 마지막 동기화 10분(force 면 30초) 안의 재호출은 저장본을 돌려준다
+    sync: (force?: boolean) => ipcRenderer.invoke('inbox:sync', force === true),
+    toTodo: (id: string, dueDate: string | null) => ipcRenderer.invoke('inbox:toTodo', id, dueDate),
+    dismiss: (id: string) => ipcRenderer.invoke('inbox:dismiss', id),
+    // 저장된 요청의 원본 주소를 연다. 주소는 main 이 DB 에서 꺼낸다
+    open: (id: string) => ipcRenderer.invoke('inbox:open', id)
   },
   // 아침 자동 동기화 상태(docs/ASSISTANT.md §8.3). 읽기 전용이다
   morningSync: {

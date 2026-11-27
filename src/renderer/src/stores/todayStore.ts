@@ -5,9 +5,10 @@ import { useAssistantStore } from './assistantStore'
 import { useTodoStore } from './todoStore'
 import { useJiraBoardStore } from './jiraBoardStore'
 import { useReleaseNoteStore } from './releaseNoteStore'
+import { useInboxStore } from './inboxStore'
 
 // 오늘 대시보드의 데이터 스토어. 화면 조립은 components/today/todayModel.ts 가 한다.
-// 여기서는 기존 스토어(비서·할 일·Jira 보드·릴리스)를 한꺼번에 불러오고, 오늘 대시보드만 쓰는
+// 여기서는 기존 스토어(비서·할 일·Jira 보드·릴리스·나에게 온 요청)를 한꺼번에 불러오고, 오늘 대시보드만 쓰는
 // 캘린더 범위(오늘 0시 ~ +21일)를 들고 있다. 업무 공유 카드용으로 지난 근무일 일정(pastEvents)과 회의록 목록도 따로 받는다. 한 줄 브리핑·신호 문구는 규칙(todayModel)이 만든다. 캘린더 스토어는 주 단위라 다음 주 배포를 못 본다.
 
 /** 캘린더를 받는 기간(일). 다음 주 배포·QA 일정까지 본다 */
@@ -111,6 +112,8 @@ export const useTodayStore = create<TodayStore>((set) => {
         await release.fetchAllReleaseNotes()
         await useReleaseNoteStore.getState().syncChanges(force)
       })(),
+      // 나에게 온 요청. force 가 아니면 main 이 10분 간격으로 원본 호출을 거른다
+      useInboxStore.getState().load(force),
       fetchRange(force),
       fetchPast(force),
       fetchNotes()

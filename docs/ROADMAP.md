@@ -22,7 +22,7 @@
 
 | 순서 | 기능 | 점수 | 근거/빈도/자동화/구현 | 상태 |
 |---|---|---|---|---|
-| 1 | 나에게 온 요청 모아보기 | 85 | 23/24/22/16 | 대기 |
+| 1 | 나에게 온 요청 모아보기 | 85 | 23/24/22/16 | 진행 중 |
 | 2 | 전역 단축키 빠른 캡처 | 83 | 20/23/16/24 | 대기 |
 | 3 | PR 리뷰 대기 알림 | 79 | 21/19/20/19 | 대기 |
 | 4 | 주간 업무 보고 자동 초안 | 81 | 18/18/23/22 | 대기 |
@@ -44,8 +44,9 @@
 ### 3.1 나에게 온 요청 모아보기
 
 - **내용**: Slack 멘션, Jira 할당·멘션 댓글, Bitbucket 리뷰 요청을 한 목록에 모은다. 한 번 눌러 할 일로 바꾸고 출처 링크를 저장한다. 이미 할 일로 바꾼 요청과 처리한 요청은 다시 보이지 않는다.
-- **재활용**: Jira·Bitbucket 직접 연동(`src/main/services/jira.ts`, `src/main/services/bitbucket.ts`), 할 일 출처 링크(`src/renderer/src/components/todo/sourceLink.ts`).
-- **주의**: Slack 은 앱에 직접 연동이 없다. AI 대화가 claude.ai Slack 커넥터로 읽기만 하고, 검색 도구는 가드레일이 막는다(`docs/AI_GUARDRAILS.md` §8.9). Slack 멘션을 모으려면 Slack 사용자 토큰 연동을 새로 붙이거나 Jira·Bitbucket 부터 한다.
+- **현재**: Jira 할당·멘션 댓글과 Bitbucket 리뷰 요청은 오늘 화면 '나에게 온 요청' 카드로 있다(`docs/ASSISTANT.md` §11.6). 남은 것은 Slack 멘션이다.
+- **재활용**: 요청 목록·처리 상태(`src/main/services/request-inbox.ts`, `request_inbox` 테이블)에 원본 하나를 더한다.
+- **주의**: Slack 은 앱에 직접 연동이 없다. AI 대화가 claude.ai Slack 커넥터로 읽기만 하고, 검색 도구는 가드레일이 막는다(`docs/AI_GUARDRAILS.md` §8.9). Slack 멘션을 모으려면 Slack 사용자 토큰 연동을 새로 붙여야 한다.
 - **근거**: 업무 중 약 2분마다(하루 275회) 회의·메일·메신저로 끊긴다(Microsoft Work Trend Index 2025, M365 텔레메트리). 하루 약 1,200회 앱을 오가며 업무시간의 약 9%를 재집중에 쓴다(HBR 2022, 137명).
 
 ### 3.2 전역 단축키 빠른 캡처
@@ -57,7 +58,7 @@
 ### 3.3 PR 리뷰 대기 알림
 
 - **내용**: 내가 리뷰할 PR, 승인됐지만 머지 안 된 내 PR이 정한 시간을 넘기면 알린다. 오늘 화면에 리뷰 행으로 보인다.
-- **재활용**: `src/main/services/bitbucket.ts`, 알림(`src/main/services/notification.ts`), 업무 공유 카드의 리뷰 행(`src/renderer/src/components/today/shareModel.ts`).
+- **재활용**: 나에게 온 요청의 리뷰 요청 조회(`src/main/services/bitbucket.ts` 의 `listReviewRequests`), 알림(`src/main/services/notification.ts`), 업무 공유 카드의 리뷰 행(`src/renderer/src/components/today/shareModel.ts`). 내 PR 의 승인→머지 대기는 아직 읽지 않는다.
 - **근거**: Microsoft의 주기적 넛지 봇이 PR 8,500건의 해결 시간을 60% 줄였다. 승인→머지 대기만 줄여도 리뷰가 29~63% 빨라진다(arXiv 2203.05048, 리뷰 약 57만 건).
 
 ### 3.4 주간 업무 보고 자동 초안

@@ -35,7 +35,13 @@ import {
   isBitbucketConnected,
   MAX_CONTENT_CHARS,
   readBitbucketSource,
-  saveBitbucketCredentials
+  saveBitbucketCredentials,
+  BITBUCKET_NO_WORKSPACE_MESSAGE,
+  getBitbucketWorkspace,
+  listReviewRequests,
+  reviewerQuery,
+  reviewHandledByMe,
+  setBitbucketWorkspace
 } from './bitbucket'
 
 const EMAIL = 'me@example.com'
@@ -347,5 +353,176 @@ describe('readBitbucketSource', () => {
     installFetch(() => json({}))
     await expect(readBitbucketSource('https://bitbucket.org/ws/repo/pull-requests/1')).rejects.toThrow()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('리뷰 요청 (나에게 온 요청)', () => {
+  const UUID = '{11111111-2222-3333-4444-555555555555}'
+  const me = { uuid: UUID, accountId: 'acc-me' }
+
+  it('워크스페이스는 slug 나 bitbucket.org 주소를 받고 빈 값이면 지운다', () => {
+    expect(setBitbucketWorkspace(' backpackr ')).toBe('backpackr')
+    expect(getBitbucketWorkspace()).toBe('backpackr')
+    expect(setBitbucketWorkspace('https://bitbucket.org/idus-team/repo/src')).toBe('idus-team')
+    expect(() => setBitbucketWorkspace('a b')).toThrow('워크스페이스 이름')
+    expect(() => setBitbucketWorkspace('x"y')).toThrow()
+    expect(setBitbucketWorkspace('')).toBeNull()
+    expect(getBitbucketWorkspace()).toBeNull()
+  })
+
+  it('BBQL 은 uuid 를 먼저 쓰고, 없으면 accountId 를 쓴다. 형식이 틀리면 null', () => {
+    expect(reviewerQuery(me)).toBe(`state="OPEN" AND reviewers.uuid="${UUID}"`)
+    expect(reviewerQuery({ uuid: null, accountId: 'acc-me' })).toBe('state="OPEN" AND reviewers.account_id="acc-me"')
+    expect(reviewerQuery({ uuid: '{bad"}', accountId: 'a"b' })).toBeNull()
+  })
+
+  it('내가 승인했거나 변경 요청한 PR 은 처리한 것으로 본다', () => {
+    const pr = (p: unknown): unknown => ({ participants: [p] })
+    expect(reviewHandledByMe(pr({ user: { uuid: UUID }, approved: true }), me)).toBe(true)
+    expect(reviewHandledByMe(pr({ user: { account_id: 'acc-me' }, state: 'changes_requested' }), me)).toBe(true)
+    expect(reviewHandledByMe(pr({ user: { uuid: UUID }, approved: false, state: null }), me)).toBe(false)
+    expect(reviewHandledByMe(pr({ user: { uuid: '{other}' }, approved: true }), me)).toBe(false)
+  })
+
+  it('워크스페이스가 없으면 네트워크 전에 알린다', async () => {
+    connect()
+    installFetch(() => undefined)
+    await expect(listReviewRequests(null)).rejects.toThrow(BITBUCKET_NO_WORKSPACE_MESSAGE)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('최근 저장소에서 나를 리뷰어로 둔 열린 PR 을 찾고, 이미 승인한 PR 은 뺀다', async () => {
+    connect()
+    setBitbucketWorkspace('ws')
+    installFetch((url) => {
+      const u = new URL(url)
+      if (u.pathname === '/2.0/user') return json({ uuid: UUID, account_id: 'acc-me' })
+      if (u.pathname === '/2.0/repositories/ws') return json({ values: [{ slug: 'app' }, { slug: 'web' }] })
+      if (u.pathname === '/2.0/repositories/ws/app/pullrequests') {
+        return json({
+          values: [
+            { id: 1, title: '로그인 수정', created_on: '2026-11-26T01:00:00+00:00', author: { display_name: '갑' }, links: { html: { href: 'https://bitbucket.org/ws/app/pull-requests/1' } } },
+            { id: 2, title: '승인함', created_on: '2026-11-26T02:00:00+00:00', links: { html: { href: 'https://bitbucket.org/ws/app/pull-requests/2' } } }
+          ]
+        })
+      }
+      if (u.pathname === '/2.0/repositories/ws/web/pullrequests') return json({ values: [] })
+      if (u.pathname === '/2.0/repositories/ws/app/pullrequests/1') return json({ participants: [{ user: { uuid: UUID }, approved: false }] })
+      if (u.pathname === '/2.0/repositories/ws/app/pullrequests/2') return json({ participants: [{ user: { uuid: UUID }, approved: true }] })
+      return undefined
+    })
+
+    const { requests, complete } = await listReviewRequests(null)
+
+    expect(complete).toBe(true)
+    expect(requests).toEqual([
+      {
+        workspace: 'ws',
+        repo: 'app',
+        id: 1,
+        title: '로그인 수정',
+        authorName: '갑',
+        url: 'https://bitbucket.org/ws/app/pull-requests/1',
+        createdOn: '2026-11-26T01:00:00+00:00'
+      }
+    ])
+    const repoCall = calls().find((c) => new URL(c.url).pathname === '/2.0/repositories/ws')!
+    const repoParams = new URL(repoCall.url).searchParams
+    expect(repoParams.get('sort')).toBe('-updated_on')
+    expect(repoParams.get('role')).toBe('member')
+    const prCall = calls().find((c) => new URL(c.url).pathname === '/2.0/repositories/ws/app/pullrequests')!
+    expect(new URL(prCall.url).searchParams.get('q')).toBe(`state="OPEN" AND reviewers.uuid="${UUID}"`)
+    // 인증 헤더는 api.bitbucket.org 에만 간다
+    for (const c of calls()) expect(header(c.init, 'Authorization')).toBe(AUTH)
+  })
+
+  it('read:user 가 없으면(403) 넘겨받은 Atlassian accountId 로 찾는다', async () => {
+    connect()
+    setBitbucketWorkspace('ws')
+    installFetch((url) => {
+      const u = new URL(url)
+      if (u.pathname === '/2.0/user') return json({ type: 'error' }, 403)
+      if (u.pathname === '/2.0/repositories/ws') return json({ values: [{ slug: 'app' }] })
+      if (u.pathname === '/2.0/repositories/ws/app/pullrequests') return json({ values: [] })
+      return undefined
+    })
+    const res = await listReviewRequests('acc-jira')
+    expect(res).toEqual({ requests: [], complete: true })
+    const prCall = calls().find((c) => new URL(c.url).pathname === '/2.0/repositories/ws/app/pullrequests')!
+    expect(new URL(prCall.url).searchParams.get('q')).toBe('state="OPEN" AND reviewers.account_id="acc-jira"')
+  })
+
+  it('PR 조회가 403 이면 read:pullrequest 범위를 안내한다', async () => {
+    connect()
+    setBitbucketWorkspace('ws')
+    installFetch((url) => {
+      const u = new URL(url)
+      if (u.pathname === '/2.0/user') return json({ uuid: UUID })
+      if (u.pathname === '/2.0/repositories/ws') return json({ values: [{ slug: 'app' }] })
+      if (u.pathname === '/2.0/repositories/ws/app/pullrequests') return json({ type: 'error' }, 403)
+      return undefined
+    })
+    await expect(listReviewRequests(null)).rejects.toThrow('read:pullrequest')
+  })
+
+  it('저장소 일부만 403 이면 스코프 탓으로 보지 않고 나머지를 돌려주되 complete 는 false 다', async () => {
+    connect()
+    setBitbucketWorkspace('ws')
+    installFetch((url) => {
+      const u = new URL(url)
+      if (u.pathname === '/2.0/user') return json({ uuid: UUID })
+      if (u.pathname === '/2.0/repositories/ws') return json({ values: [{ slug: 'app' }, { slug: 'locked' }] })
+      if (u.pathname === '/2.0/repositories/ws/app/pullrequests') return json({ values: [] })
+      if (u.pathname === '/2.0/repositories/ws/locked/pullrequests') return json({ type: 'error' }, 403)
+      return undefined
+    })
+    expect(await listReviewRequests(null)).toEqual({ requests: [], complete: false })
+  })
+
+  it('PR 목록에 다음 페이지가 있으면 complete 는 false 다', async () => {
+    connect()
+    setBitbucketWorkspace('ws')
+    installFetch((url) => {
+      const u = new URL(url)
+      if (u.pathname === '/2.0/user') return json({ uuid: UUID })
+      if (u.pathname === '/2.0/repositories/ws') return json({ values: [{ slug: 'app' }] })
+      if (u.pathname === '/2.0/repositories/ws/app/pullrequests') {
+        return json({ values: [], next: 'https://api.bitbucket.org/2.0/repositories/ws/app/pullrequests?page=2' })
+      }
+      return undefined
+    })
+    expect((await listReviewRequests(null)).complete).toBe(false)
+  })
+
+  it('이미 처리한 PR 은 상세 GET 없이 그대로 돌려준다', async () => {
+    connect()
+    setBitbucketWorkspace('ws')
+    installFetch((url) => {
+      const u = new URL(url)
+      if (u.pathname === '/2.0/user') return json({ uuid: UUID })
+      if (u.pathname === '/2.0/repositories/ws') return json({ values: [{ slug: 'app' }] })
+      if (u.pathname === '/2.0/repositories/ws/app/pullrequests') {
+        return json({ values: [{ id: 7, title: '처리함', links: { html: { href: 'https://bitbucket.org/ws/app/pull-requests/7' } } }] })
+      }
+      return undefined
+    })
+    const res = await listReviewRequests(null, (ws, repo, id) => ws === 'ws' && repo === 'app' && id === 7)
+    expect(res.complete).toBe(true)
+    expect(res.requests.map((r) => r.id)).toEqual([7])
+    expect(calls().some((c) => new URL(c.url).pathname.endsWith('/pullrequests/7'))).toBe(false)
+  })
+
+  it('저장소 하나가 실패하면 나머지는 돌려주되 complete 는 false 다', async () => {
+    connect()
+    setBitbucketWorkspace('ws')
+    installFetch((url) => {
+      const u = new URL(url)
+      if (u.pathname === '/2.0/user') return json({ uuid: UUID })
+      if (u.pathname === '/2.0/repositories/ws') return json({ values: [{ slug: 'app' }, { slug: 'broken' }] })
+      if (u.pathname === '/2.0/repositories/ws/app/pullrequests') return json({ values: [] })
+      if (u.pathname === '/2.0/repositories/ws/broken/pullrequests') return json({ error: { message: 'boom' } }, 500)
+      return undefined
+    })
+    expect(await listReviewRequests(null)).toEqual({ requests: [], complete: false })
   })
 })

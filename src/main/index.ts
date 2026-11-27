@@ -17,6 +17,7 @@ import { registerExportIpc } from './ipc/export.ipc'
 import { registerReleaseNoteIpc } from './ipc/release-note.ipc'
 import { registerBackupIpc } from './ipc/backup.ipc'
 import { registerJiraBoardIpc } from './ipc/jira-board.ipc'
+import { registerRequestInboxIpc } from './ipc/request-inbox.ipc'
 import { registerMorningSyncIpc } from './ipc/morning-sync.ipc'
 import { registerAssistantIpc } from './ipc/assistant.ipc'
 import { registerSettingsIpc } from './ipc/settings.ipc'
@@ -360,6 +361,7 @@ app.whenReady().then(() => {
   registerReleaseNoteIpc()
   registerBackupIpc()
   registerJiraBoardIpc()
+  registerRequestInboxIpc()
   registerMorningSyncIpc()
   registerAssistantIpc()
   registerSettingsIpc()

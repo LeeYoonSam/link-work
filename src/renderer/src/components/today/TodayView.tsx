@@ -4,8 +4,9 @@
 //
 // 신호(todayModel 의 signals)는 패널로 그리지 않는다. 헤드라인 선택과 카드 행 강조(signaled)에만 쓰인다.
 //
-// 배치: DOM 순서는 좁은 창 순서(헤더 → 배포 → Jira → 할 일 → 업무 공유 → 일정 → 메모)다.
-// 컨테이너 폭이 1000px 이상이면 격자로 일정을 왼쪽 좁은 열에 두고 오른쪽에 배포 → [Jira | 할 일] → 업무 공유 를 둔다.
+// 배치: DOM 순서는 좁은 창 순서(헤더 → 배포 → 나에게 온 요청 → Jira → 할 일 → 업무 공유 → 일정 → 메모)다.
+// 컨테이너 폭이 1000px 이상이면 격자로 일정을 왼쪽 좁은 열에 두고 오른쪽에 배포 → 나에게 온 요청 → [Jira | 할 일] → 업무 공유 를 둔다.
+// 나에게 온 요청은 Jira·Bitbucket 이 둘 다 연결되지 않았으면 칸째 그리지 않는다.
 import { useEffect, useMemo, useState } from 'react'
 import type { AssistantNavigateEvent } from '../../types'
 import { useAssistantStore } from '../../stores/assistantStore'
@@ -17,6 +18,8 @@ import { useNavigationStore } from '../../stores/navigationStore'
 import { useFocusStore } from '../../stores/focusStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useMeetingNotesStore } from '../../stores/meetingNotesStore'
+import { useInboxStore } from '../../stores/inboxStore'
+import { localDateKey } from '../todo/todoModel'
 import { showToast } from '../ui'
 import { openReleaseForVersion, revealInTickets } from '../project/projectNav'
 import { RefreshIcon } from '../project/BoardBits'
@@ -28,6 +31,7 @@ import JiraWorkCard from './JiraWorkCard'
 import TodoCard from './TodoCard'
 import ScheduleCard, { localClock } from './ScheduleCard'
 import WorkShareCard from './WorkShareCard'
+import RequestInboxCard, { inboxVisible } from './RequestInboxCard'
 import { buildWorkShare } from './shareModel'
 
 // 화면의 '지금' 을 다시 읽는 간격
@@ -88,6 +92,22 @@ export function openNote(noteId: number): void {
   void notes.select(noteId)
   useFocusStore.getState().requestFocus({ entity: 'note', id: noteId })
   useNavigationStore.getState().setView('notes')
+}
+
+/**
+ * 넓은 창의 격자 행. 나에게 온 요청 칸이 없으면 그 행을 비워 두지 않고 아래 카드를 한 행 올린다
+ * (빈 트랙에도 gap 이 들어가 배포와 Jira 사이가 벌어진다). Tailwind 가 읽도록 클래스는 문자열 그대로 둔다
+ */
+export function gridRows(showInbox: boolean): { work: string; share: string; span: string } {
+  return showInbox
+    ? { work: '@min-[1000px]:row-start-4', share: '@min-[1000px]:row-start-5', span: '@min-[1000px]:row-span-4' }
+    : { work: '@min-[1000px]:row-start-3', share: '@min-[1000px]:row-start-4', span: '@min-[1000px]:row-span-3' }
+}
+
+/** 나에게 온 요청 → 할 일(마감 오늘, 오늘 화면 빠른 추가와 같다). 성공하면 토스트로 알린다 */
+export async function toTodoFromInbox(id: string, now: Date = new Date()): Promise<void> {
+  const ok = await useInboxStore.getState().toTodo(id, localDateKey(now))
+  if (ok) showToast({ message: '할 일에 추가했어요' })
 }
 
 /** 업무 공유 글을 클립보드에 쓰고 토스트로 알린다. 실패해도 화면은 그대로다 */
@@ -160,6 +180,9 @@ export default function TodayView({
   const boardLoading = useJiraBoardStore((s) => s.loading)
   const boardError = useJiraBoardStore((s) => s.error)
   const notes = useReleaseNoteStore((s) => s.allNotes)
+  const inbox = useInboxStore((s) => s.snapshot)
+  const inboxBusyIds = useInboxStore((s) => s.busyIds)
+  const inboxError = useInboxStore((s) => s.error)
 
   const [forceOpenEventId, setForceOpenEventId] = useState<number | null>(null)
 
@@ -219,6 +242,8 @@ export default function TodayView({
   const synced = syncedClock(lastSyncedAt)
   const headerError = headerErrorText(eventsError, dashboard.schedule.connected, assistantError)
   const openSettings = (): void => useSettingsStore.getState().open('integrations')
+  const showInbox = inboxVisible(inbox)
+  const rows = gridRows(showInbox)
 
   return (
     <div className="@container mx-auto w-full max-w-6xl">
@@ -234,7 +259,7 @@ export default function TodayView({
                 onClick={onRefresh}
                 disabled={loading}
                 aria-label="새로고침"
-                title="일정·Jira·릴리스를 다시 받아요"
+                title="일정·Jira·릴리스·받은 요청을 다시 받아요"
                 className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <RefreshIcon size={14} className={loading ? 'animate-spin' : ''} />
@@ -257,7 +282,22 @@ export default function TodayView({
           />
         </div>
 
-        <div className="min-w-0 self-start @min-[1000px]:col-start-2 @min-[1000px]:row-start-3">
+        {showInbox ? (
+          <div className="min-w-0 @min-[1000px]:col-span-2 @min-[1000px]:col-start-2 @min-[1000px]:row-start-3">
+            <RequestInboxCard
+              snapshot={inbox}
+              now={now}
+              busyIds={inboxBusyIds}
+              error={inboxError}
+              onOpen={(id) => void useInboxStore.getState().open(id)}
+              onToTodo={(id) => void toTodoFromInbox(id)}
+              onDismiss={(id) => void useInboxStore.getState().dismiss(id)}
+              onOpenSettings={openSettings}
+            />
+          </div>
+        ) : null}
+
+        <div className={`min-w-0 self-start @min-[1000px]:col-start-2 ${rows.work}`}>
           <JiraWorkCard
             jira={dashboard.jira}
             onOpenIssue={(row) => openIssue(row.key)}
@@ -269,7 +309,7 @@ export default function TodayView({
           />
         </div>
 
-        <div className="min-w-0 self-start @min-[1000px]:col-start-3 @min-[1000px]:row-start-3">
+        <div className={`min-w-0 self-start @min-[1000px]:col-start-3 ${rows.work}`}>
           <TodoCard
             todos={dashboard.todos}
             onComplete={(id) => useTodoStore.getState().completeTodo(id)}
@@ -283,7 +323,7 @@ export default function TodayView({
         </div>
 
         {/* 넓은 창: Jira·할 일 행 아래에 오른쪽 2열 전체 폭 */}
-        <div className="min-w-0 @min-[1000px]:col-span-2 @min-[1000px]:col-start-2 @min-[1000px]:row-start-4">
+        <div className={`min-w-0 @min-[1000px]:col-span-2 @min-[1000px]:col-start-2 ${rows.share}`}>
           <WorkShareCard
             share={share}
             onOpenIssue={openIssue}
@@ -295,7 +335,7 @@ export default function TodayView({
 
         {/* 넓은 창: 일정 열을 sticky 로 두어 오른쪽 카드가 길어도 아래에 빈 칸이 남지 않게 보인다.
             창보다 길면 열 안에서 스크롤한다 */}
-        <div className="min-w-0 self-start @min-[1000px]:sticky @min-[1000px]:top-4 @min-[1000px]:col-start-1 @min-[1000px]:row-span-3 @min-[1000px]:row-start-2 @min-[1000px]:max-h-[calc(100vh-7.5rem)] @min-[1000px]:overflow-y-auto @min-[1000px]:rounded-lg">
+        <div className={`min-w-0 self-start @min-[1000px]:sticky @min-[1000px]:top-4 @min-[1000px]:col-start-1 ${rows.span} @min-[1000px]:row-start-2 @min-[1000px]:max-h-[calc(100vh-7.5rem)] @min-[1000px]:overflow-y-auto @min-[1000px]:rounded-lg`}>
           <ScheduleCard
             schedule={dashboard.schedule}
             now={now}
