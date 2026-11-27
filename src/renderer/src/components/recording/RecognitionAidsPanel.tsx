@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRecognitionAidsStore } from '../../stores/recognitionAidsStore'
 import type { GlossaryEntry, Member, MemberVoiceprint, RematchOptions } from '../../types'
 import { Badge, IconButton, TrashIcon } from '../ui'
 import RematchDialog from './RematchDialog'
+import { isCommitEnter } from '../../utils/imeEnter'
 
 type AidsTab = 'glossary' | 'members'
 
@@ -157,9 +158,12 @@ function GlossaryTab({
     skipped: number
   } | null>(null)
 
+  // 같은 틱에 두 번 불려도 한 번만 추가한다. adding state 는 다음 렌더 전까지 바뀌지 않아 막지 못한다
+  const addingRef = useRef(false)
   const handleAdd = async (): Promise<void> => {
     const term = newTerm.trim()
-    if (!term) return
+    if (!term || addingRef.current) return
+    addingRef.current = true
     setAdding(true)
     try {
       const ok = await onUpsert({ term, aliases: parseCsvList(newAliases) })
@@ -168,6 +172,7 @@ function GlossaryTab({
         setNewAliases('')
       }
     } finally {
+      addingRef.current = false
       setAdding(false)
     }
   }
@@ -210,7 +215,7 @@ function GlossaryTab({
           value={newTerm}
           onChange={(ev) => setNewTerm(ev.target.value)}
           onKeyDown={(ev) => {
-            if (ev.key === 'Enter') void handleAdd()
+            if (isCommitEnter(ev)) void handleAdd()
           }}
           placeholder="정답 표기"
           className={`w-32 ${input}`}
@@ -220,7 +225,7 @@ function GlossaryTab({
           value={newAliases}
           onChange={(ev) => setNewAliases(ev.target.value)}
           onKeyDown={(ev) => {
-            if (ev.key === 'Enter') void handleAdd()
+            if (isCommitEnter(ev)) void handleAdd()
           }}
           placeholder="오인식 표기 (쉼표로 구분)"
           className={`flex-1 ${input}`}
@@ -334,7 +339,7 @@ function GlossaryRow({
           onChange={(ev) => setTerm(ev.target.value)}
           onBlur={() => void save({})}
           onKeyDown={(ev) => {
-            if (ev.key === 'Enter') ev.currentTarget.blur()
+            if (isCommitEnter(ev)) ev.currentTarget.blur()
           }}
           placeholder="정답 표기"
           title="전사에 남길 올바른 표기"
@@ -349,7 +354,7 @@ function GlossaryRow({
           onChange={(ev) => setAliases(ev.target.value)}
           onBlur={() => void save({})}
           onKeyDown={(ev) => {
-            if (ev.key === 'Enter') ev.currentTarget.blur()
+            if (isCommitEnter(ev)) ev.currentTarget.blur()
           }}
           placeholder="오인식 표기 (쉼표로 구분)"
           title="이렇게 들린 부분을 정답 표기로 바꿉니다"
@@ -375,7 +380,7 @@ function GlossaryRow({
           onChange={(ev) => setNote(ev.target.value)}
           onBlur={() => void save({})}
           onKeyDown={(ev) => {
-            if (ev.key === 'Enter') ev.currentTarget.blur()
+            if (isCommitEnter(ev)) ev.currentTarget.blur()
           }}
           placeholder="메모 (선택) — 요약이 뜻을 잡는 데 씁니다"
           className={`flex-1 min-w-0 ${input}`}
@@ -386,7 +391,7 @@ function GlossaryRow({
           onChange={(ev) => setPriority(ev.target.value)}
           onBlur={() => void save({})}
           onKeyDown={(ev) => {
-            if (ev.key === 'Enter') ev.currentTarget.blur()
+            if (isCommitEnter(ev)) ev.currentTarget.blur()
           }}
           title="우선순위 — 높을수록 전사 힌트에 먼저 들어갑니다"
           className={`w-14 shrink-0 text-center ${input}`}
@@ -429,9 +434,12 @@ function MembersTab({
   const [newRole, setNewRole] = useState('')
   const [adding, setAdding] = useState(false)
 
+  // 같은 틱에 두 번 불려도 한 번만 추가한다. adding state 는 다음 렌더 전까지 바뀌지 않아 막지 못한다
+  const addingRef = useRef(false)
   const handleAdd = async (): Promise<void> => {
     const name = newName.trim()
-    if (!name) return
+    if (!name || addingRef.current) return
+    addingRef.current = true
     setAdding(true)
     try {
       const ok = await onUpsert({
@@ -445,6 +453,7 @@ function MembersTab({
         setNewRole('')
       }
     } finally {
+      addingRef.current = false
       setAdding(false)
     }
   }
@@ -496,7 +505,7 @@ function MembersTab({
           value={newName}
           onChange={(ev) => setNewName(ev.target.value)}
           onKeyDown={(ev) => {
-            if (ev.key === 'Enter') void handleAdd()
+            if (isCommitEnter(ev)) void handleAdd()
           }}
           placeholder="이름"
           className={`w-32 ${input}`}
@@ -506,7 +515,7 @@ function MembersTab({
           value={newRole}
           onChange={(ev) => setNewRole(ev.target.value)}
           onKeyDown={(ev) => {
-            if (ev.key === 'Enter') void handleAdd()
+            if (isCommitEnter(ev)) void handleAdd()
           }}
           placeholder="역할 (선택)"
           className={`flex-1 ${input}`}
@@ -586,7 +595,7 @@ function MemberRow({
         onChange={(ev) => setName(ev.target.value)}
         onBlur={() => void save({})}
         onKeyDown={(ev) => {
-          if (ev.key === 'Enter') ev.currentTarget.blur()
+          if (isCommitEnter(ev)) ev.currentTarget.blur()
         }}
         placeholder="이름"
         className={`w-28 shrink-0 font-medium ${input}`}
@@ -597,7 +606,7 @@ function MemberRow({
         onChange={(ev) => setAliases(ev.target.value)}
         onBlur={() => void save({})}
         onKeyDown={(ev) => {
-          if (ev.key === 'Enter') ev.currentTarget.blur()
+          if (isCommitEnter(ev)) ev.currentTarget.blur()
         }}
         placeholder="호칭·별칭 (쉼표로 구분)"
         title="'김 대리', 영문명처럼 회의에서 불리는 표기"
@@ -609,7 +618,7 @@ function MemberRow({
         onChange={(ev) => setRole(ev.target.value)}
         onBlur={() => void save({})}
         onKeyDown={(ev) => {
-          if (ev.key === 'Enter') ev.currentTarget.blur()
+          if (isCommitEnter(ev)) ev.currentTarget.blur()
         }}
         placeholder="역할"
         className={`w-24 shrink-0 ${input}`}
