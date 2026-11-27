@@ -160,6 +160,8 @@ function GlossaryTab({
 
   // 같은 틱에 두 번 불려도 한 번만 추가한다. adding state 는 다음 렌더 전까지 바뀌지 않아 막지 못한다
   const addingRef = useRef(false)
+  // 추가한 뒤 다음 항목을 첫 칸부터 이어서 쓰게 정답 표기 칸으로 포커스를 돌린다
+  const termInputRef = useRef<HTMLInputElement>(null)
   const handleAdd = async (): Promise<void> => {
     const term = newTerm.trim()
     if (!term || addingRef.current) return
@@ -170,6 +172,7 @@ function GlossaryTab({
       if (ok) {
         setNewTerm('')
         setNewAliases('')
+        termInputRef.current?.focus()
       }
     } finally {
       addingRef.current = false
@@ -211,6 +214,7 @@ function GlossaryTab({
       {/* 추가 입력줄 */}
       <div className="flex items-center gap-1.5">
         <input
+          ref={termInputRef}
           type="text"
           value={newTerm}
           onChange={(ev) => setNewTerm(ev.target.value)}
@@ -436,6 +440,8 @@ function MembersTab({
 
   // 같은 틱에 두 번 불려도 한 번만 추가한다. adding state 는 다음 렌더 전까지 바뀌지 않아 막지 못한다
   const addingRef = useRef(false)
+  // 추가한 뒤 다음 구성원을 이름부터 이어서 쓰게 이름 칸으로 포커스를 돌린다(역할 칸에서 Enter 를 눌러도)
+  const nameInputRef = useRef<HTMLInputElement>(null)
   const handleAdd = async (): Promise<void> => {
     const name = newName.trim()
     if (!name || addingRef.current) return
@@ -451,6 +457,7 @@ function MembersTab({
       if (ok) {
         setNewName('')
         setNewRole('')
+        nameInputRef.current?.focus()
       }
     } finally {
       addingRef.current = false
@@ -501,6 +508,7 @@ function MembersTab({
 
       <div className="flex items-center gap-1.5">
         <input
+          ref={nameInputRef}
           type="text"
           value={newName}
           onChange={(ev) => setNewName(ev.target.value)}

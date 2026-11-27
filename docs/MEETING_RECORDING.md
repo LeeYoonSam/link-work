@@ -726,7 +726,7 @@ components/recording/
 
 **서비스(`recognition-aids.ts`)**: `listGlossary/upsertGlossary/removeGlossary/importGlossaryText(parseGlossaryText)/listMembers/upsertMember/removeMember/setAttendees/listAttendees/loadPromptContext/buildSummaryContextBlock`. 목소리 표본 조회·삭제는 `voiceprint.ts`에 있다. `loadPromptContext(db, meetingId)`는 켜진 용어 전체(전역)를 `priority DESC, updated_at DESC`로 읽고, 실패 시 빈 컨텍스트(throw 금지).
 
-**UI**: 녹음 목록 헤더 "인식 보조" → `RecognitionAidsPanel`(용어집/구성원 탭, 텍스트 가져오기 `정답 | 별칭1, 별칭2 | 메모`, 구성원별 "목소리 N건" + [목소리 삭제]). 추가 입력줄은 Enter 나 [추가]로 1건을 더한다. 한글 조합을 확정하는 Enter(keydown 이 두 번 온다)는 무시하고(`utils/imeEnter.ts` 의 `isCommitEnter`), 추가가 끝나기 전의 재호출도 무시한다.
+**UI**: 녹음 목록 헤더 "인식 보조" → `RecognitionAidsPanel`(용어집/구성원 탭, 텍스트 가져오기 `정답 | 별칭1, 별칭2 | 메모`, 구성원별 "목소리 N건" + [목소리 삭제]). 추가 입력줄은 Enter 나 [추가]로 1건을 더하고, 다음 항목을 이어 쓰도록 첫 칸(이름·정답 표기)에 포커스를 돌린다. 한글 조합을 확정하는 Enter(keydown 이 두 번 온다)는 무시하고(`utils/imeEnter.ts` 의 `isCommitEnter`), 추가가 끝나기 전의 재호출도 무시한다.
 
 **지난 회의 다시 찾기**: 구성원 탭의 [등록된 목소리로 지난 회의 다시 찾기] 버튼(전체 대상)과 구성원 행의 [지난 회의에서 찾기] 버튼(그 구성원만)이 지금 등록된 목소리로 지난 회의의 이름 없는 화자를 다시 찾는다. 미리 보기 뒤 적용하고, 표본은 만들지 않는다(규칙 §5-4, 화면 §8). 녹음 시작 화면 참석자 칩, 상세 화면 참석자 칩 편집.
 
