@@ -151,7 +151,7 @@ const errText = (e: unknown): string => (e instanceof Error && e.message ? e.mes
 
 export default function TodoView({
   now,
-  initialView = 'today'
+  initialView = 'all'
 }: {
   /** 테스트용 기준 시각. 없으면 지금 */
   now?: Date

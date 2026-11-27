@@ -73,8 +73,13 @@ const selectedTab = (html: string): string | undefined =>
   html.match(/<button[^>]*role="tab"[^>]*aria-selected="true"[^>]*data-view="(\w+)"/)?.[1]
 
 describe('TodoView 뷰', () => {
-  it('기본 뷰는 오늘: 지난 항목 + 오늘 구획. 상단 입력·뷰 탭(개수)·검색이 있다', () => {
-    const html = render()
+  it('기본 뷰는 전체', () => {
+    expect(selectedTab(render())).toBe('all')
+    expect(rowIds(render())).toEqual([1, 2, 3, 4])
+  })
+
+  it('오늘 뷰: 지난 항목 + 오늘 구획. 상단 입력·뷰 탭(개수)·검색이 있다', () => {
+    const html = render('today')
     expect(selectedTab(html)).toBe('today')
     expect(rowIds(html)).toEqual([1, 2])
     expect(html.indexOf('data-section="overdue"')).toBeLessThan(html.indexOf('data-section="today"'))
@@ -106,14 +111,14 @@ describe('TodoView 뷰', () => {
 
   it('오늘 뷰가 비면 안내와 전체 뷰로 가는 버튼', () => {
     useTodoStore.setState({ todos: [active[3]] })
-    const html = render()
+    const html = render('today')
     expect(html).toContain('오늘 할 일이 없어요')
     expect(html).toContain('전체 할 일 보기')
   })
 
   it('삭제 대기(pendingDeleteIds) 항목은 목록과 개수에서 숨긴다', () => {
     useTodoStore.setState({ pendingDeleteIds: [2] })
-    const html = render()
+    const html = render('today')
     expect(rowIds(html)).toEqual([1])
     const counts = [...html.matchAll(/role="tab"[^>]*>[^<]*<span[^>]*>(\d+)<\/span>/g)].map((m) => Number(m[1]))
     expect(counts).toEqual([1, 1, 3, 1])
@@ -139,7 +144,7 @@ describe('TodoView 딥링크(selectedTodoId)', () => {
 
   it('아직 목록에 없으면(조회 전) 현재 뷰를 유지한다', () => {
     useTodoStore.setState({ selectedTodoId: 99 })
-    expect(selectedTab(render())).toBe('today')
+    expect(selectedTab(render())).toBe('all')
     expect(deepLinkView(99, active, done, TODAY)).toBeNull()
   })
 })
@@ -147,7 +152,7 @@ describe('TodoView 딥링크(selectedTodoId)', () => {
 describe('TodoView 태그 필터·검색', () => {
   it('태그 필터는 현재 뷰 안에서 걸린다(개수도 같이)', () => {
     useTodoStore.setState({ filterTagId: 7 })
-    const html = render()
+    const html = render('today')
     expect(rowIds(html)).toEqual([2])
     expect(render('all')).not.toContain('data-todo-id="4"')
     expect(html).toMatch(/aria-pressed="true"[^>]*>.*업무/)

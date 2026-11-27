@@ -17,9 +17,13 @@ const errText = (e: unknown): string => (e instanceof Error && e.message ? e.mes
 
 type QuickAddTag = Pick<TodoTag, 'id' | 'name'>
 
-/** 빠른 추가 입력을 할 일 입력으로 바꾼다. 날짜·시각·우선순위·#태그(있는 태그만)를 알아보고 나머지를 제목으로 둔다 */
+/**
+ * 빠른 추가 입력을 할 일 입력으로 바꾼다. 날짜·시각·우선순위·#태그(있는 태그만)를 알아보고 나머지를 제목으로 둔다.
+ * 날짜를 적지 않았으면 마감을 오늘로 둔다(오늘 화면에서 추가한 할 일은 오늘 할 일이다)
+ */
 export function quickAddInput(raw: string, now: Date, tags: QuickAddTag[] = []): TodoInput {
-  return toTodoInput(parseTodoInput(raw, { now, tags }))
+  const input = toTodoInput(parseTodoInput(raw, { now, tags }))
+  return input.due_date ? input : { ...input, due_date: localDateKey(now) }
 }
 
 /**
