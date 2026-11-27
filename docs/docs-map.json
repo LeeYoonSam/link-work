@@ -201,7 +201,7 @@
     {
       "name": "에이전트·문서 검사 설정",
       "patterns": [".claude/settings.json", ".claude/agents/**", ".claude/skills/**", "scripts/check-docs*.mjs", "scripts/docs-stop-hook.mjs", "docs/docs-map.json"],
-      "docs": ["CLAUDE.md"]
+      "docs": ["CLAUDE.md", "docs/DEV_GUIDELINES.md", "docs/DEV_WORKFLOW.md"]
     },
     {
       "name": "평가 하네스",

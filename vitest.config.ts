@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config'
+import { defineConfig, configDefaults } from 'vitest/config'
 
 export default defineConfig({
   // .tsx 테스트에서 React 자동 JSX 런타임을 쓰도록 esbuild에 알린다
@@ -7,6 +7,8 @@ export default defineConfig({
     jsx: 'automatic'
   },
   test: {
-    globals: true
+    globals: true,
+    // 워크트리 사본(.claude/worktrees)의 테스트가 중복 수집되지 않게 한다
+    exclude: [...configDefaults.exclude, '.claude/worktrees/**']
   }
 })

@@ -29,32 +29,13 @@ LinkWork는 개인 업무와 회의 일정·기록을 관리하는 macOS 데스�
 - **IPC 네임스페이스 삭제**: IPC 네임스페이스(`접두사:`)를 통째로 지우면 `docs/docs-map.json`의 `retiredIpcPrefixes`에 그 접두사를 더한다. 그래야 문서에 남은 그 접두사의 채널을 `check:docs`가 잡는다.
 - **새 문서**: 만들면 `docs/docs-map.json`의 구역과 아래 "기존 문서" 목록에 함께 넣는다. 매핑이 필요 없는 문서는 `unmappedDocs`에 사유와 함께 적는다.
 - **고칠 것이 없으면**: 최종 보고에 그 근거를 한 줄로 쓴다(예: "내부 구현만 바뀌어 PROJECT_BOARD.md 서술과 무관").
-- **자동 확인**: `.claude/settings.json`의 Stop 훅(`scripts/docs-stop-hook.mjs`)이 턴 종료 시 확인 대상 문서와 `check:docs` 오류를 알리고 한 번 멈춰 세운다. 두 번째 종료 시도는 통과한다.
+- **자동 확인**: Stop 훅(`scripts/docs-stop-hook.mjs`)이 턴 종료 시 확인 대상 문서와 `check:docs` 오류를 알리고 한 번 멈춰 세운다.
 - **완료 조건**: 코드를 바꾸는 플랜은 `npm run check:docs` 종료 코드 0을 완료 조건에 넣는다.
 
-## 에이전트팀 활용 정책
-- **적극 활용 대상**: 코드 설계·구현이 포함된 작업은 규모(파일 수·줄 수)와 무관하게 에이전트팀(리더 + 팀원)으로 수행한다. 인터페이스 변경, 동작 설계, 다파일 구현, 리뷰가 필요한 작업이 모두 해당한다.
-- **활성화 조건**: 에이전트팀은 실험적 기능이며 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`(settings.json `env` 또는 환경변수)일 때만 사용 가능하다.
-- **폴백**: 위 환경변수가 없으면 서브에이전트(`Agent` 도구)로 planner·implementer·reviewer 역할을 동일하게 구성한다.
-- **단독 수행 대상**: 설계 판단이 전혀 없는 기계적 수정만 직접 처리한다 — 오타·문구·상수 변경, 문서 수정 등. 경계 기준은 파일 수가 아니라 **설계 판단 유무**다. 애매하면 팀으로 간다.
-- **팀 구성 규칙**: 팀 규모는 3–5명. 팀원별로 서로 다른 파일 세트를 소유해 편집 충돌을 막는다. 팀원은 리더의 대화 히스토리를 상속하지 않으므로 스폰 프롬프트에 작업 컨텍스트(플랜, 완료 조건, 소유 파일, 관련 배경)를 반드시 포함한다.
+## 개발 방식
+개발 규칙은 아래 지침 문서에 있고 매 세션 함께 로드된다. 사용법은 [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)에 있다.
 
-## 모델 선택 정책
-- **설계·플랜·리서치**: Fable5 사용. 불가 시 Opus. 별칭 `best` 권장(Fable5 지원 시 Fable5, 아니면 최신 Opus로 자동 폴백).
-- **코드 구현·리뷰**: Opus 사용. 불가 시 Sonnet.
-
-## 검증 루프 정책
-- **완료 조건은 플랜 단계에서 반드시 정의한다.** 각 조건은 명령 실행 결과로 기계적으로 판정 가능해야 한다.
-  - 좋은 예: "`npx vitest run` 종료 코드 0", "`npm run typecheck` 에러 0건"
-  - 금지: "동작이 자연스러움"처럼 주관적으로만 판정되는 조건
-- **최대 반복 횟수 설정 필수**: 구현 → 검증 → 수정 루프는 최대 반복 횟수(기본 5회)를 반드시 설정한다.
-- **초과 시**: 루프를 중단하고 미충족 항목, 시도한 내용, 원인 분석을 사용자에게 보고한다.
-- **조기 중단**: 같은 실패가 2회 연속 반복되면 접근 방식을 바꾸거나 조기에 보고한다.
-
-## 레퍼런스
-- 에이전트팀 공식 사용법: [docs/references/claude-agent-teams.md](docs/references/claude-agent-teams.md)
-- 팀 기반 개발 워크플로 스킬: `/team-dev [작업 설명]` — 플랜(완료 조건 정의) → 팀 구성 → 구현 → 검증 루프 → 종합 보고를 자동으로 수행한다.
-- 팀원 정의: `.claude/agents/planner.md`, `.claude/agents/implementer.md`, `.claude/agents/reviewer.md`
+@docs/DEV_GUIDELINES.md
 
 ## 기존 문서
 코드 구역과 문서의 대응은 [docs/docs-map.json](docs/docs-map.json)에 있다.
@@ -69,3 +50,5 @@ LinkWork는 개인 업무와 회의 일정·기록을 관리하는 macOS 데스�
 - [docs/SETTINGS.md](docs/SETTINGS.md) — 통합 설정 화면 섹션·진입 경로·연동 카드 상태·토큰 팝업·`settings:verifyIntegration` IPC 계약
 - [docs/ROADMAP.md](docs/ROADMAP.md) — 기능 로드맵: 아직 만들지 않은 기능 후보·근거 기반 점수·진행 순서. 완료한 항목은 지우고 해당 구역 문서로 옮긴다
 - [docs/MOBILE_VIEW.md](docs/MOBILE_VIEW.md) — 휴대폰 열람: 메인 HTTP 서버·오늘 스냅샷 발행·모바일 화면 3개·보안 모델(토큰·쿠키·Host 검사)·HTTP/IPC 계약·포트
+- [docs/DEV_GUIDELINES.md](docs/DEV_GUIDELINES.md) — 개발 지침: 작업 경로·완료 조건·검증 반복·위임·마무리 규칙(이 파일이 import해 상시 로드)
+- [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) — 개발 워크플로 가이드: 경로 고르기·reviewer 호출·내장 명령·Workflow 도구·문서 동기화·함정
