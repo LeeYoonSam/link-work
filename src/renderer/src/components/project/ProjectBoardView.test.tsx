@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { JiraBoardIssue, JiraBoardSnapshot, JiraEpicAiSummary } from '../../types'
 import type { JiraBoardState } from '../../stores/jiraBoardStore'
@@ -6,6 +6,16 @@ import { CLOSED_SECTION_ID, DEFAULT_FILTER, EMPTY_FILTER, doneFoldId } from './b
 
 // 프로젝트 화면 루트의 상태 분기와 트리·상세 마크업을 잠근다.
 // zustand v5 는 서버 렌더에서 setState 가 반영되지 않으므로 스토어 훅을 모킹한다.
+
+// '최근 완료'(recentDoneDays) 판정은 오늘 날짜에 기대므로, 픽스처 날짜(updated 11-10, fetchedAt 11-18)에 맞춰 시계를 고정한다.
+// 고정하지 않으면 11-24 이후 닫힌 픽스처가 이전 완료로 숨어 닫힘 묶음 테스트가 깨진다.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-11-18T10:00:00+09:00'))
+})
+afterAll(() => {
+  vi.useRealTimers()
+})
 
 let n = 0
 const issue = (over: Partial<JiraBoardIssue> = {}): JiraBoardIssue => ({
