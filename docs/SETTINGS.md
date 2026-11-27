@@ -31,7 +31,7 @@
 
 | 섹션 | 한 줄 설명 | 내용 |
 |---|---|---|
-| 연동 | 캘린더, Jira, Bitbucket, Notion을 연결합니다 | 카드 4개(Google 캘린더 + 가져올 캘린더 체크 목록, Jira + 기본 프로젝트 select, Bitbucket, Notion). 위쪽에 [모두 다시 확인]. Google·Jira 가 연결돼 있으면 캘린더 목록·기본 프로젝트 목록을 화면에 들어올 때 한 번 가져온다 |
+| 연동 | 캘린더, Jira, Bitbucket, Notion을 연결합니다 | 카드 4개(Google 캘린더 + 가져올 캘린더 체크 목록, Jira + 기본 프로젝트 select, Bitbucket + 리뷰 요청 워크스페이스 칸, Notion). 위쪽에 [모두 다시 확인]. Google·Jira 가 연결돼 있으면 캘린더 목록·기본 프로젝트 목록을 화면에 들어올 때 한 번 가져온다 |
 | AI | Claude Code 상태와 AI 모델 | Claude Code 상태(`ai:status`, [다시 확인]), AI 대화 모델(`ai:setModel`), 비서 AI 브리핑 사용과 비서 요약 모델(`llmEnabled`, `llmModel`). 둘 다 회의 전 브리핑의 AI 본문에만 쓴다(오늘 화면 문구는 규칙으로만 만든다) |
 | 비서 | 하루 경계, 알림, 자동 동기화 | 동작(비서 사용, 로그인 시 실행, 첫 화면) / 시간(날짜 경계, 아침 자동 동기화와 시각) / 알림(회의 전 브리핑, 회의 전 알림 분) 3개 그룹. `assistant:saveSettings` 는 모르는 키가 섞인 patch 를 거부한다. 토글·select 는 바로 저장, 숫자·시각은 blur 때 검증 후 저장(`assistant:saveSettings` 부분 patch). 저장에 실패한 칸은 화면 값을 실제 저장값으로 되돌린다. 같은 칸을 연달아 바꾸면 마지막 요청의 결과만 화면에 반영한다
 | 회의 녹음 | 전사 정확도를 높이는 용어집과 구성원 | `RecognitionAidsPanel`. 녹음 화면의 "인식 보조"도 같은 패널이다([MEETING_RECORDING.md](MEETING_RECORDING.md) §12) |
@@ -48,7 +48,7 @@
 | Jira 사이트 URL, 이메일, API 토큰, 만료일 | 연동 > Jira 팝업 | `jira_site_url`, `jira_email`, `jira_api_token`(safeStorage), `jira_token_expires_at`, `jira_account_name` | `jira:status`, `jira:saveCredentials`(저장 전 `/myself` 검증), `jira:disconnect` |
 | Jira 기본 프로젝트(릴리스 동기화·프로젝트 보드·비서 Jira 범위가 쓴다) | 연동 > Jira 카드 | `jira_default_project_key` | `jira:listProjects`, `jira:setDefaultProject` |
 | Bitbucket 이메일, API token | 연동 > Bitbucket 팝업 | `bitbucket_email`(평문), `bitbucket_api_token`(safeStorage) | `ai:bitbucketStatus`, `ai:bitbucketSaveToken`(`/user` 검증), `ai:bitbucketDisconnect` |
-| Bitbucket 리뷰 요청 워크스페이스(나에게 온 요청, [ASSISTANT.md](ASSISTANT.md) §11.6) | 연동 > Bitbucket 팝업의 '리뷰 요청을 찾을 워크스페이스 (선택)' 와 [저장]. token 과 따로 저장한다 | `bitbucket_workspace`(평문). slug 또는 `https://bitbucket.org/{slug}` 를 받아 slug 로 저장, 빈 값이면 지운다. 저장하면 다음 오늘 화면 갱신이 리뷰 요청을 바로 다시 읽는다. 연결 해제해도 남는다 | `ai:bitbucketStatus`(`workspace`), `ai:bitbucketSetWorkspace` |
+| Bitbucket 리뷰 요청 워크스페이스(나에게 온 요청, [ASSISTANT.md](ASSISTANT.md) §11.6) | 연동 > Bitbucket 카드(연결됨일 때) 안의 '리뷰 요청 워크스페이스' 칸(`BitbucketWorkspaceInput`). Enter·칸 벗어남·[저장]으로 저장하고, 비어 있으면 '정하지 않으면 리뷰 요청을 모으지 않습니다' 를 보인다. Jira·Bitbucket 연동을 바꾸면 오늘 화면의 나에게 온 요청을 다시 읽는다 | `bitbucket_workspace`(평문). slug 또는 `https://bitbucket.org/{slug}` 를 받아 slug 로 저장, 빈 값이면 지운다. 저장하면 다음 오늘 화면 갱신이 리뷰 요청을 바로 다시 읽는다. 연결 해제해도 남는다 | `ai:bitbucketStatus`(`workspace`), `ai:bitbucketSetWorkspace` |
 | Notion 토큰 | 연동 > Notion 팝업 | `notion_token`(safeStorage) | `ai:notionStatus`, `ai:notionSaveToken`(`/users/me` 검증), `ai:notionDisconnect` |
 | Claude Code 사용 가능 여부 | AI | 저장값 없음(`~/.claude.json` 읽기) | `ai:status` |
 | AI 대화 모델 | AI(입력창 아래 select 와 같은 값) | `ai_model`, `ai_model_labels` | `ai:getModel`, `ai:setModel`, `ai:getModelOptions` |

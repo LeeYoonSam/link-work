@@ -128,6 +128,26 @@ describe('RequestInboxCard', () => {
     ])
     expect(sourceNotes(snap({ bitbucket: { state: 'not_connected', error: null } }))).toEqual([])
   })
+
+  it('워크스페이스가 정해져 있고 오류가 없으면 안내 줄·설정 링크를 그리지 않는다', () => {
+    const html = renderToStaticMarkup(
+      <RequestInboxCard snapshot={snap()} now={NOW} busyIds={[]} error={null} {...handlers} />
+    )
+    expect(html).not.toContain('워크스페이스를 정하면')
+    expect(html).not.toContain('설정 →')
+  })
+
+  it('워크스페이스가 없거나 원본 오류면 설정으로 가는 링크를 붙인다', () => {
+    const onOpenSettings = vi.fn()
+    for (const s of [
+      snap({ bitbucket: { state: 'no_workspace', error: null } }),
+      snap({ jira: { state: 'error', error: '토큰 만료' } })
+    ]) {
+      const tree = RequestInboxCard({ snapshot: s, now: NOW, busyIds: [], error: null, ...handlers, onOpenSettings })
+      click(findButton(tree, '설정 →'))
+    }
+    expect(onOpenSettings).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('relativeTime', () => {

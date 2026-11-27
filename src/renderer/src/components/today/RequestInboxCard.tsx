@@ -40,7 +40,7 @@ export function inboxVisible(snapshot: RequestInboxSnapshot | null): boolean {
   return snapshot.jira.state !== 'not_connected' || snapshot.bitbucket.state !== 'not_connected'
 }
 
-/** 카드 아래 안내 줄. 오류와 워크스페이스 미지정만 말한다. 미연결은 말하지 않는다 */
+/** 카드 아래 안내 줄. 오류와 워크스페이스 미지정만 말한다(줄마다 설정 > 연동 링크). 연결돼 있고 정상이면, 또 미연결이면 말하지 않는다 */
 export function sourceNotes(snapshot: RequestInboxSnapshot): { text: string; tone: 'error' | 'hint' }[] {
   const notes: { text: string; tone: 'error' | 'hint' }[] = []
   const add = (name: string, s: InboxSourceStatus): void => {
@@ -184,11 +184,9 @@ export default function RequestInboxCard({
             {notes.map((n) => (
               <p key={n.text} className={`break-words ${n.tone === 'error' ? 'text-amber-700' : 'text-gray-400'}`}>
                 {n.text}
-                {n.tone === 'hint' ? (
-                  <button type="button" onClick={onOpenSettings} className={`ml-1 ${MORE_LINK}`}>
-                    설정 →
-                  </button>
-                ) : null}
+                <button type="button" onClick={onOpenSettings} className={`ml-1 ${MORE_LINK}`}>
+                  설정 →
+                </button>
               </p>
             ))}
             {error ? <p className="break-words text-amber-700">{error}</p> : null}

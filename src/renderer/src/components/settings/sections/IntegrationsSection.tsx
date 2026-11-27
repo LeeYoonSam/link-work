@@ -15,10 +15,21 @@ import JiraConnectDialog from '../integrations/JiraConnectDialog'
 import JiraDefaultProjectSelect from '../integrations/JiraDefaultProjectSelect'
 import CalendarPicker from '../integrations/CalendarPicker'
 import BitbucketConnectDialog from '../integrations/BitbucketConnectDialog'
+import BitbucketWorkspaceInput from '../integrations/BitbucketWorkspaceInput'
+import { useInboxStore } from '../../../stores/inboxStore'
 import NotionConnectDialog from '../integrations/NotionConnectDialog'
 
 // 설정 > 연동. 카드 4장과 [모두 다시 확인].
 // 화면에 들어올 때는 저장된 상태만 읽는다. 외부 API 확인은 버튼을 눌렀을 때만 한다.
+
+/** 나에게 온 요청을 다시 읽는다. 실패해도 설정 화면은 그대로다 */
+async function refreshInbox(): Promise<void> {
+  try {
+    await useInboxStore.getState().load(false)
+  } catch {
+    // 오늘 화면이 다음 갱신 때 다시 읽는다
+  }
+}
 
 async function disconnect(id: IntegrationId): Promise<void> {
   const api = window.api
@@ -49,6 +60,8 @@ export default function IntegrationsSection(): React.ReactNode {
   const changed = (id: IntegrationId): void => {
     clearVerify(id)
     void refreshStatuses()
+    // 오늘 화면 '나에게 온 요청' 의 연결 상태·안내 줄을 바로 맞춘다(설정은 같은 창이라 focus 재로드가 없다)
+    if (id === 'jira' || id === 'bitbucket') void refreshInbox()
   }
 
   const handleAction = async (id: IntegrationId, action: CardActionId): Promise<void> => {
@@ -126,6 +139,9 @@ export default function IntegrationsSection(): React.ReactNode {
             onAction={(a) => void handleAction(id, a)}
           >
             {id === 'google' && statuses.google?.connected ? <CalendarPicker connected /> : null}
+            {id === 'bitbucket' && statuses.bitbucket?.connected ? (
+              <BitbucketWorkspaceInput status={statuses.bitbucket} onChanged={() => changed('bitbucket')} />
+            ) : null}
             {id === 'jira' && statuses.jira?.connected ? (
               <JiraDefaultProjectSelect status={statuses.jira} onChanged={() => void refreshStatuses()} />
             ) : null}
